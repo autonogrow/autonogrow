@@ -1,0 +1,261 @@
+﻿{
+  "demo-manicura": {
+    "name": "Luna Nails Studio",
+    "category": "Manicura y estética",
+    "headline": "Reserva tu cita y consulta nuestros servicios e información práctica.",
+    "description": "Especialistas en manicura semipermanente, pedicura y diseños personalizados.",
+    "phone": "34600000000",
+    "city": "Madrid",
+    "address": "Calle Ejemplo 12, Madrid",
+    "schedule": "Lunes a viernes, 10:00 - 20:00 · Sábados, 10:00 - 14:00",
+    "mapsUrl": "https://www.google.com/maps",
+    "instagramUrl": "https://www.instagram.com/",
+    "reviewsUrl": "https://www.google.com/",
+    "primaryColor": "#c026d3",
+    "services": [
+      {
+        "name": "Manicura semipermanente",
+        "price": "18 €",
+        "duration": "60 min",
+        "description": "Esmaltado semipermanente con preparación básica de la uña."
+      },
+      {
+        "name": "Manicura con decoración",
+        "price": "desde 22 €",
+        "duration": "75 min",
+        "description": "Diseños personalizados, detalles decorativos y acabado profesional."
+      },
+      {
+        "name": "Pedicura completa",
+        "price": "25 €",
+        "duration": "75 min",
+        "description": "Cuidado completo de pies, limado, esmaltado y acabado."
+      },
+      {
+        "name": "Retirada de esmalte",
+        "price": "6 €",
+        "duration": "20 min",
+        "description": "Retirada segura de semipermanente sin dañar la uña."
+      }
+    ],
+    "promotions": [
+      {
+        "title": "Promo primera visita",
+        "description": "Manicura semipermanente desde 15 € esta semana."
+      }
+    ],
+    "gallery": [
+      "https://images.unsplash.com/photo-1604654894610-df63bc536371?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1607779097040-26e80aa78e66?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1610992015732-2449b76344bc?q=80&w=1200&auto=format&fit=crop"
+    ]
+  },
+
+  "barberia-juan": {
+    "name": "Barbería Juan",
+    "category": "Barbería y peluquería masculina",
+    "headline": "Reserva tu corte, arreglo de barba o servicio completo en pocos segundos.",
+    "description": "Barbería moderna con cortes clásicos, degradados, arreglo de barba y atención personalizada.",
+    "phone": "34611111111",
+    "city": "Madrid",
+    "address": "Calle Barbería 24, Madrid",
+    "schedule": "Lunes a sábado, 10:00 - 21:00",
+    "mapsUrl": "https://www.google.com/maps",
+    "instagramUrl": "https://www.instagram.com/",
+    "reviewsUrl": "https://www.google.com/",
+    "primaryColor": "#111827",
+    "services": [
+      {
+        "name": "Corte de pelo",
+        "price": "14 €",
+        "duration": "30 min",
+        "description": "Corte personalizado con acabado profesional."
+      },
+      {
+        "name": "Arreglo de barba",
+        "price": "10 €",
+        "duration": "25 min",
+        "description": "Perfilado, rebaje y acabado de barba."
+      },
+      {
+        "name": "Corte + barba",
+        "price": "22 €",
+        "duration": "50 min",
+        "description": "Servicio completo de corte y barba."
+      },
+      {
+        "name": "Degradado premium",
+        "price": "18 €",
+        "duration": "45 min",
+        "description": "Degradado trabajado con detalle y acabado limpio."
+      }
+    ],
+    "promotions": [
+      {
+        "title": "Pack corte + barba",
+        "description": "Corte y barba por 20 € de lunes a jueves."
+      }
+    ],
+    "gallery": [
+      "https://images.unsplash.com/photo-1622287162716-f311baa1a2b8?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1517832606299-7ae9b720a186?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?q=80&w=1200&auto=format&fit=crop"
+    ]
+  },
+
+  "fisio-centro": {
+    "name": "Fisio Centro Activa",
+    "category": "Fisioterapia y recuperación",
+    "headline": "Reserva tu sesión de fisioterapia, descarga muscular o valoración inicial.",
+    "description": "Tratamientos personalizados para dolor muscular, lesiones, movilidad y recuperación funcional.",
+    "phone": "34622222222",
+    "city": "Madrid",
+    "address": "Avenida Salud 8, Madrid",
+    "schedule": "Lunes a viernes, 09:00 - 20:00",
+    "mapsUrl": "https://www.google.com/maps",
+    "instagramUrl": "https://www.instagram.com/",
+    "reviewsUrl": "https://www.google.com/",
+    "primaryColor": "#0f766e",
+    "services": [
+      {
+        "name": "Sesión de fisioterapia",
+        "price": "35 €",
+        "duration": "50 min",
+        "description": "Tratamiento personalizado según valoración del fisioterapeuta."
+      },
+      {
+        "name": "Descarga muscular",
+        "price": "30 €",
+        "duration": "45 min",
+        "description": "Ideal para deportistas o tensión muscular acumulada."
+      },
+      {
+        "name": "Valoración inicial",
+        "price": "25 €",
+        "duration": "30 min",
+        "description": "Evaluación inicial para orientar el tratamiento."
+      },
+      {
+        "name": "Bono 5 sesiones",
+        "price": "160 €",
+        "duration": "5 sesiones",
+        "description": "Pack para continuidad de tratamiento."
+      }
+    ],
+    "promotions": [
+      {
+        "title": "Primera valoración",
+        "description": "Valoración inicial con precio especial durante esta semana."
+      }
+    ],
+    "gallery": [
+      "https://images.unsplash.com/photo-1576091160550-2173dba999ef?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1600334129128-685c5582fd35?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1519823551278-64ac92734fb1?q=80&w=1200&auto=format&fit=crop"
+    ]
+  },
+
+  "peluqueria-laura": {
+    "name": "Peluquería Laura",
+    "category": "Peluquería y color",
+    "headline": "Reserva corte, color, peinado o tratamiento capilar de forma rápida.",
+    "description": "Peluquería cercana especializada en color, corte, peinado y cuidado del cabello.",
+    "phone": "34633333333",
+    "city": "Madrid",
+    "address": "Calle Belleza 15, Madrid",
+    "schedule": "Martes a sábado, 10:00 - 19:30",
+    "mapsUrl": "https://www.google.com/maps",
+    "instagramUrl": "https://www.instagram.com/",
+    "reviewsUrl": "https://www.google.com/",
+    "primaryColor": "#be123c",
+    "services": [
+      {
+        "name": "Corte mujer",
+        "price": "desde 18 €",
+        "duration": "45 min",
+        "description": "Corte adaptado a estilo, rostro y tipo de cabello."
+      },
+      {
+        "name": "Color raíz",
+        "price": "desde 28 €",
+        "duration": "90 min",
+        "description": "Aplicación de color en raíz con acabado profesional."
+      },
+      {
+        "name": "Mechas",
+        "price": "desde 45 €",
+        "duration": "120 min",
+        "description": "Servicio de iluminación y color personalizado."
+      },
+      {
+        "name": "Peinado",
+        "price": "desde 16 €",
+        "duration": "40 min",
+        "description": "Peinado para eventos, ocasiones especiales o mantenimiento."
+      }
+    ],
+    "promotions": [
+      {
+        "title": "Pack color + peinado",
+        "description": "Consulta promoción activa para color y acabado."
+      }
+    ],
+    "gallery": [
+      "https://images.unsplash.com/photo-1560066984-138dadb4c035?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1487412947147-5cebf100ffc2?q=80&w=1200&auto=format&fit=crop"
+    ]
+  },
+
+  "entrenador-personal": {
+    "name": "Coach Álex Fitness",
+    "category": "Entrenamiento personal",
+    "headline": "Entrena con planificación, seguimiento y sesiones adaptadas a tu objetivo.",
+    "description": "Entrenamiento personal para fuerza, pérdida de grasa, movilidad y mejora física general.",
+    "phone": "34644444444",
+    "city": "Madrid",
+    "address": "Zona Retiro y entrenamiento online",
+    "schedule": "Lunes a viernes, 07:00 - 21:00",
+    "mapsUrl": "https://www.google.com/maps",
+    "instagramUrl": "https://www.instagram.com/",
+    "reviewsUrl": "https://www.google.com/",
+    "primaryColor": "#ea580c",
+    "services": [
+      {
+        "name": "Sesión individual",
+        "price": "30 €",
+        "duration": "60 min",
+        "description": "Entrenamiento presencial personalizado."
+      },
+      {
+        "name": "Plan mensual online",
+        "price": "desde 60 €",
+        "duration": "mensual",
+        "description": "Planificación semanal, seguimiento y ajustes."
+      },
+      {
+        "name": "Pack 4 sesiones",
+        "price": "110 €",
+        "duration": "4 sesiones",
+        "description": "Pack para entrenar de forma constante con mejor precio."
+      },
+      {
+        "name": "Valoración inicial",
+        "price": "20 €",
+        "duration": "30 min",
+        "description": "Evaluación de objetivos, estado inicial y propuesta de plan."
+      }
+    ],
+    "promotions": [
+      {
+        "title": "Primera valoración",
+        "description": "Valoración inicial bonificada al contratar un plan mensual."
+      }
+    ],
+    "gallery": [
+      "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1200&auto=format&fit=crop"
+    ]
+  }
+}

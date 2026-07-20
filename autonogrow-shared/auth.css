@@ -1,0 +1,10 @@
+.auth-gate { width: min(520px, calc(100% - 32px)); margin: 10vh auto; padding: 32px; border: 1px solid #dfe4ea; border-radius: 22px; background: #fff; text-align: center; box-shadow: 0 18px 55px rgba(15, 23, 42, .10); }
+.auth-gate h1 { margin: 0 0 10px; }
+.auth-gate p { color: #64748b; }
+.auth-google-button { display: flex; justify-content: center; min-height: 44px; margin-top: 22px; }
+.auth-error { color: #b91c1c; font-size: .92rem; }
+.auth-user { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: .9rem; }
+.auth-user img { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; }
+.auth-strip { width: min(1120px, calc(100% - 32px)); margin: 14px auto 0; display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.auth-strip button, .auth-strip a { border: 1px solid #d7dde5; border-radius: 999px; padding: 8px 14px; background: #fff; color: #1f2937; cursor: pointer; text-decoration: none; font: inherit; }
+[hidden] { display: none !important; }

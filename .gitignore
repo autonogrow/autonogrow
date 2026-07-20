@@ -1,0 +1,75 @@
+# Python virtual environments and generated files
+.venv/
+venv/
+env/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environment files and secrets (examples remain versioned)
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!*.env.example
+!deploy/*.example
+
+# Credentials, tokens, and private keys
+credentials/
+**/credentials/
+tokens/
+**/tokens/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# Databases and runtime data
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+backend/data/
+autonogrow-core/data/
+
+# User uploads
+uploads/
+**/uploads/
+
+# Backups and archives
+backups/
+**/backups/
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.tbz
+*.tbz2
+*.7z
+
+# Logs and runtime output
+logs/
+**/logs/
+*.log
+*.log.*
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo

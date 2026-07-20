@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Panel AutonoGrow</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="../autonogrow-shared/auth.css" />
+</head>
+<body>
+  <section id="owner-auth-gate" class="auth-gate" hidden>
+    <h1>Acceso interno AutonoGrow</h1><p id="owner-auth-message">Inicia sesión con una cuenta autorizada.</p>
+    <div id="owner-google-button" class="auth-google-button"></div>
+    <button id="owner-gate-logout" class="button button-secondary" type="button" hidden>Salir</button>
+  </section>
+  <main id="owner-app" class="owner-page" hidden>
+    <header class="owner-header">
+      <div>
+        <p class="eyebrow">Control interno AutonoGrow</p>
+        <h1>Panel AutonoGrow</h1>
+        <p class="subtitle">Tus clientes, su actividad y lo que falta para ponerlos en marcha.</p>
+      </div>
+      <button id="refresh-button" class="button button-secondary" type="button">Actualizar</button>
+      <div class="auth-user"><span id="owner-auth-user"></span><button id="owner-logout" class="button button-secondary" type="button">Salir</button></div>
+    </header>
+
+    <section class="summary-grid" aria-label="Resumen global">
+      <article class="summary-card"><span>Total negocios</span><strong id="total-businesses">—</strong></article>
+      <article class="summary-card"><span>Negocios activos</span><strong id="active-businesses">—</strong></article>
+      <article class="summary-card"><span>Reservas pendientes</span><strong id="pending-bookings">—</strong></article>
+      <article class="summary-card"><span>Mensajes pendientes</span><strong id="pending-messages">—</strong></article>
+      <article class="summary-card"><span>Reseñas pendientes</span><strong id="pending-reviews">—</strong></article>
+    </section>
+
+    <nav class="tabs" aria-label="Secciones del panel">
+      <button class="tab active" type="button" data-tab="businesses">Negocios</button>
+      <button class="tab" type="button" data-tab="new-business">Nuevo negocio</button>
+    </nav>
+
+    <section id="businesses-section" class="panel active" data-panel="businesses">
+      <div class="section-heading">
+        <div><h2>Negocios</h2><p>Vista rápida del estado de cada cliente.</p></div>
+        <span id="list-status" class="status-text" aria-live="polite">Cargando…</span>
+      </div>
+      <div id="business-list" class="business-grid"></div>
+    </section>
+
+    <section class="panel" data-panel="new-business">
+      <div class="section-heading">
+        <div><h2>Nuevo negocio</h2><p>Crea la base del cliente; después podrás afinarla desde su admin.</p></div>
+      </div>
+
+      <form id="business-form" class="business-form">
+        <fieldset>
+          <legend>Datos básicos</legend>
+          <div class="form-grid">
+            <label>Plantilla de alta<select id="business-type-template"><option value="">Desde cero</option><option value="barberia">Barbería</option><option value="manicura">Manicura</option><option value="fisioterapia">Fisioterapia</option><option value="taller">Taller</option><option value="peluqueria">Peluquería</option><option value="estetica">Estética</option><option value="entrenamiento_personal">Entrenamiento personal</option><option value="psicologia">Psicología</option><option value="clinica_dental">Clínica dental</option><option value="masajes">Masajes</option></select></label>
+            <label>Nombre <input name="name" required maxlength="200" placeholder="Estudio Aurora" /></label>
+            <label>Slug <input name="slug" maxlength="120" placeholder="Se genera automáticamente" /></label>
+            <label>Categoría <input name="category" placeholder="Estética, barbería, taller…" /></label>
+            <label>Teléfono WhatsApp <input name="phone" placeholder="34600000000" /></label>
+            <label class="wide">Titular <input name="headline" placeholder="Una frase clara para la landing" /></label>
+            <label class="wide">Descripción <textarea name="description" rows="3"></textarea></label>
+            <label>Ciudad <input name="city" /></label>
+            <label>Dirección <input name="address" /></label>
+            <label class="wide">Horario visible <input name="schedule" placeholder="Lunes a viernes, 10:00–20:00" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Marca y apariencia</legend>
+          <div class="form-grid">
+            <label>Paleta<select name="theme_key" id="owner-create-theme"><option value="slate_gold">Slate Gold</option><option value="rose_beauty">Rose Beauty</option><option value="emerald_clean">Emerald Clean</option><option value="blue_clinic">Blue Clinic</option><option value="amber_barber">Amber Barber</option><option value="violet_modern">Violet Modern</option><option value="custom">Personalizado</option></select></label>
+            <label>Plantilla visual<select name="template_key"><option value="classic">Classic</option><option value="elegant">Elegant</option><option value="beauty">Beauty</option><option value="clinic">Clinic</option><option value="urban">Urban</option><option value="minimal">Minimal</option></select></label>
+            <p id="owner-create-template-description" class="wide helper">Estructura equilibrada para cualquier negocio.</p>
+            <label>Principal<input name="primary_color" type="color" value="#334155" /></label><label>Secundario<input name="secondary_color" type="color" value="#0f172a" /></label><label>Acento<input name="accent_color" type="color" value="#f59e0b" /></label><label>Fondo<input name="background_color" type="color" value="#f8fafc" /></label>
+          </div>
+          <p class="helper">Después de crear el negocio podrás añadir logo y fotos desde su tarjeta.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Enlaces</legend>
+          <div class="form-grid">
+            <label>Google Maps URL <input name="maps_url" type="url" placeholder="https://…" /></label>
+            <label>Instagram URL <input name="instagram_url" type="url" placeholder="https://…" /></label>
+            <label>Google Reviews URL <input name="reviews_url" type="url" placeholder="https://…" /></label>
+            <label>Plantilla de horario
+              <select name="schedule_template">
+                <option value="default_business_hours">Horario comercial</option>
+                <option value="barberia">Barbería</option>
+                <option value="manicura">Manicura</option>
+                <option value="taller">Taller</option>
+                <option value="peluqueria">Peluquería</option>
+                <option value="estetica">Estética</option>
+                <option value="fisioterapia">Fisioterapia</option>
+                <option value="entrenamiento_personal">Entrenamiento personal</option>
+                <option value="psicologia">Psicología</option>
+                <option value="clinica_dental">Clínica dental</option>
+                <option value="masajes">Masajes</option>
+              </select>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <div class="fieldset-heading">
+            <legend>Servicios iniciales</legend>
+            <button id="add-service" class="button button-secondary button-small" type="button">+ Añadir servicio</button>
+          </div>
+          <p class="helper">Opcional. También puedes crearlos más tarde desde el admin.</p>
+          <div id="service-list" class="service-list"></div>
+        </fieldset>
+
+        <label class="checkbox-row"><input name="active" type="checkbox" checked /> Publicar negocio como activo</label>
+        <div class="form-actions">
+          <button id="submit-button" class="button button-primary" type="submit">Crear negocio</button>
+          <span id="form-status" class="status-text" aria-live="polite"></span>
+        </div>
+      </form>
+
+      <article id="creation-result" class="creation-result" hidden></article>
+    </section>
+  </main>
+  <script src="https://accounts.google.com/gsi/client" async></script>
+  <script src="../autonogrow-shared/auth.js"></script>
+  <script src="owner.js"></script>
+</body>
+</html>

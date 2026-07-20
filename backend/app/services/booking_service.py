@@ -1,0 +1,328 @@
+import json
+import secrets
+from datetime import datetime, timedelta
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.models import Booking, Business, BusinessService, Customer, SyncJob, User
+from app.schemas.booking import BookingRequestCreate
+from app.services.availability_service import get_available_slots
+from app.services.message_outbox_service import (
+    create_booking_rescheduled_message,
+)
+
+
+def get_business_by_slug(db: Session, slug: str) -> Business | None:
+    return db.query(Business).filter(Business.slug == slug, Business.status == "active").first()
+
+
+def get_or_create_customer(
+    db: Session,
+    *,
+    business_id: int,
+    name: str,
+    phone: str | None,
+    notes: str | None,
+) -> Customer:
+    clean_phone = phone.strip() if phone else None
+
+    if clean_phone:
+        existing = (
+            db.query(Customer)
+            .filter(Customer.business_id == business_id, Customer.phone == clean_phone)
+            .first()
+        )
+
+        if existing:
+            existing.name = name
+            if notes:
+                existing.notes = notes
+            existing.updated_at = datetime.utcnow()
+            db.flush()
+            return existing
+
+    customer = Customer(
+        business_id=business_id,
+        name=name,
+        phone=clean_phone,
+        notes=notes,
+    )
+
+    db.add(customer)
+    db.flush()
+
+    return customer
+
+
+def find_service_by_name(
+    db: Session,
+    *,
+    business_id: int,
+    service_name: str,
+) -> BusinessService | None:
+    return (
+        db.query(BusinessService)
+        .filter(
+            BusinessService.business_id == business_id,
+            BusinessService.name == service_name,
+            BusinessService.active == True,  # noqa: E712
+        )
+        .first()
+    )
+
+
+def find_service_by_id(
+    db: Session,
+    *,
+    business_id: int,
+    service_id: int,
+) -> BusinessService | None:
+    return (
+        db.query(BusinessService)
+        .filter(
+            BusinessService.business_id == business_id,
+            BusinessService.id == service_id,
+            BusinessService.active == True,  # noqa: E712
+        )
+        .first()
+    )
+
+
+def resolve_service(
+    db: Session,
+    *,
+    business_id: int,
+    payload: BookingRequestCreate,
+) -> BusinessService | None:
+    if payload.service_id is not None:
+        return find_service_by_id(
+            db,
+            business_id=business_id,
+            service_id=payload.service_id,
+        )
+
+    if payload.service_name:
+        return find_service_by_name(
+            db,
+            business_id=business_id,
+            service_name=payload.service_name,
+        )
+
+    return None
+
+
+def parse_booking_start(payload: BookingRequestCreate) -> datetime:
+    if payload.start_datetime:
+        try:
+            return datetime.fromisoformat(payload.start_datetime)
+        except ValueError as exc:
+            raise ValueError("invalid_start_datetime") from exc
+
+    if payload.preferred_date and payload.preferred_time:
+        try:
+            return datetime.fromisoformat(f"{payload.preferred_date}T{payload.preferred_time}:00")
+        except ValueError as exc:
+            raise ValueError("invalid_start_datetime") from exc
+
+    raise ValueError("missing_slot")
+
+
+def ensure_slot_available(
+    db: Session,
+    *,
+    business_slug: str,
+    service_id: int,
+    start_datetime: datetime,
+    exclude_booking_id: int | None = None,
+) -> None:
+    slots = get_available_slots(
+        db,
+        business_slug=business_slug,
+        service_id=service_id,
+        date=start_datetime.date().isoformat(),
+        exclude_booking_id=exclude_booking_id,
+    )
+    requested_start = start_datetime.replace(second=0, microsecond=0).isoformat()
+
+    if not any(slot["start"] == requested_start for slot in slots):
+        raise ValueError("slot_unavailable")
+
+
+def serialize_booking(booking: Booking) -> dict[str, Any]:
+    return {
+        "id": booking.id,
+        "customer_name": booking.customer.name,
+        "customer_phone": booking.customer.phone,
+        "service_id": booking.service_id,
+        "service_name": booking.service_name,
+        "duration_minutes": booking.duration_minutes,
+        "start_datetime": booking.start_datetime.isoformat() if booking.start_datetime else None,
+        "end_datetime": booking.end_datetime.isoformat() if booking.end_datetime else None,
+        "preferred_date": booking.preferred_date,
+        "preferred_day_label": booking.preferred_day_label,
+        "preferred_time": booking.preferred_time,
+        "notes": booking.notes,
+        "status": booking.status,
+        "google_sync_status": booking.google_sync_status,
+        "created_at": booking.created_at.isoformat() if booking.created_at else None,
+    }
+
+
+def create_booking_request(
+    db: Session,
+    *,
+    business_slug: str,
+    payload: BookingRequestCreate,
+    current_user: User | None = None,
+) -> Booking:
+    business = get_business_by_slug(db, business_slug)
+
+    if business is None:
+        raise ValueError("business_not_found")
+
+    service = resolve_service(db, business_id=business.id, payload=payload)
+
+    if service is None:
+        raise ValueError("service_not_found")
+
+    start_datetime = parse_booking_start(payload)
+    duration_minutes = service.duration_minutes or 30
+    end_datetime = start_datetime + timedelta(minutes=duration_minutes)
+
+    ensure_slot_available(
+        db,
+        business_slug=business_slug,
+        service_id=service.id,
+        start_datetime=start_datetime,
+    )
+
+    customer = get_or_create_customer(
+        db,
+        business_id=business.id,
+        name=payload.customer_name,
+        phone=payload.customer_phone,
+        notes=payload.notes,
+    )
+
+    booking = Booking(
+        business_id=business.id,
+        customer_id=customer.id,
+        customer_user_id=current_user.id if current_user and current_user.is_active else None,
+        customer_email=current_user.email if current_user and current_user.is_active else None,
+        public_manage_token=secrets.token_urlsafe(32),
+        created_by_user=bool(current_user and current_user.is_active),
+        service_id=service.id,
+        service_name=service.name,
+        duration_minutes=duration_minutes,
+        start_datetime=start_datetime,
+        end_datetime=end_datetime,
+        preferred_date=start_datetime.date().isoformat(),
+        preferred_day_label=payload.preferred_day_label,
+        preferred_time=start_datetime.strftime("%H:%M"),
+        notes=payload.notes,
+        source=payload.source,
+        status="requested",
+        google_sync_status="pending",
+    )
+
+    db.add(booking)
+    db.flush()
+
+    sync_payload = {
+        "booking_id": booking.id,
+        "business_slug": business.slug,
+        "business_name": business.name,
+        "customer_name": customer.name,
+        "customer_phone": customer.phone,
+        "service_name": booking.service_name,
+        "duration_minutes": booking.duration_minutes,
+        "start_datetime": booking.start_datetime.isoformat() if booking.start_datetime else None,
+        "end_datetime": booking.end_datetime.isoformat() if booking.end_datetime else None,
+        "preferred_date": booking.preferred_date,
+        "preferred_day_label": booking.preferred_day_label,
+        "preferred_time": booking.preferred_time,
+        "notes": booking.notes,
+    }
+
+    sync_job = SyncJob(
+        business_id=business.id,
+        booking_id=booking.id,
+        provider="google_calendar",
+        operation="create_event",
+        status="pending",
+        payload_json=json.dumps(sync_payload, ensure_ascii=False),
+    )
+
+    db.add(sync_job)
+    db.commit()
+    db.refresh(booking)
+
+    return booking
+
+
+def reschedule_existing_booking(
+    db: Session,
+    *,
+    booking: Booking,
+    business_slug: str,
+    new_start_datetime: datetime,
+    preferred_day_label: str | None = None,
+) -> Booking:
+    if booking.status in {"completed", "rejected", "cancelled"}:
+        raise ValueError("booking_closed")
+
+    if booking.service_id is None:
+        raise ValueError("booking_without_service")
+
+    ensure_slot_available(
+        db,
+        business_slug=business_slug,
+        service_id=booking.service_id,
+        start_datetime=new_start_datetime,
+        exclude_booking_id=booking.id,
+    )
+
+    duration_minutes = booking.duration_minutes
+
+    if duration_minutes is None and booking.service and booking.service.duration_minutes:
+        duration_minutes = booking.service.duration_minutes
+
+    if duration_minutes is None:
+        duration_minutes = 30
+
+    booking.duration_minutes = duration_minutes
+    booking.start_datetime = new_start_datetime
+    booking.end_datetime = new_start_datetime + timedelta(minutes=duration_minutes)
+    booking.preferred_date = new_start_datetime.date().isoformat()
+    booking.preferred_day_label = preferred_day_label
+    booking.preferred_time = new_start_datetime.strftime("%H:%M")
+    booking.status = "requested"
+    booking.updated_at = datetime.utcnow()
+
+    create_booking_rescheduled_message(
+        db,
+        business=booking.business,
+        booking=booking,
+    )
+
+    db.commit()
+    db.refresh(booking)
+
+    return booking
+
+
+def list_bookings_for_business(db: Session, *, business_slug: str) -> list[dict[str, Any]]:
+    business = get_business_by_slug(db, business_slug)
+
+    if business is None:
+        raise ValueError("business_not_found")
+
+    bookings = (
+        db.query(Booking)
+        .filter(Booking.business_id == business.id)
+        .order_by(Booking.created_at.desc())
+        .all()
+    )
+
+    return [serialize_booking(booking) for booking in bookings]

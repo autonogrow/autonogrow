@@ -1,0 +1,22 @@
+[Unit]
+Description=AutonoGrow FastAPI
+After=network.target
+
+[Service]
+Type=simple
+User=autonogrow
+Group=autonogrow
+WorkingDirectory=/opt/autonogrow/backend
+EnvironmentFile=/etc/autonogrow/backend.env
+ExecStart=/opt/autonogrow/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/autonogrow
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

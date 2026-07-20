@@ -1,0 +1,188 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>AutonoGrow | Página de negocio</title>
+
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="../autonogrow-shared/auth.css" />
+</head>
+<body>
+  <div class="auth-strip">
+    <span id="landing-auth-user"></span>
+    <div id="landing-google-button"></div>
+    <a href="../autonogrow-customer/index.html">Mis citas</a>
+    <button id="landing-logout" type="button" hidden>Salir</button>
+  </div>
+  <main class="page landing-layout">
+    <section class="hero landing-section hero-section">
+      <div class="badge" id="business-category">Negocio local</div>
+
+      <div class="brand-heading">
+        <img id="business-logo" class="business-logo" alt="" hidden />
+        <h1 id="business-name">Cargando...</h1>
+      </div>
+      <p id="business-headline"></p>
+      <p id="business-description"></p>
+
+      <div class="hero-actions">
+        <a id="hero-booking-button" href="#booking" class="btn btn-primary">Reservar cita</a>
+        <a id="hero-services-button" href="#services" class="btn btn-secondary">Ver servicios</a>
+      </div>
+    </section>
+
+    <nav class="quick-actions landing-section" aria-label="Accesos principales">
+      <a href="#booking" class="quick-card">
+        <strong id="quick-booking-label">Reservar cita</strong>
+        <span>Disponibilidad</span>
+      </a>
+
+      <a href="#services" class="quick-card">
+        <strong id="quick-services-label">Servicios</strong>
+        <span>Opciones y precios</span>
+      </a>
+
+      <a href="#information" class="quick-card">
+        <strong>Información</strong>
+        <span>Sobre el negocio</span>
+      </a>
+
+      <a href="#location" class="quick-card">
+        <strong>Contacto</strong>
+        <span>Horario y ubicación</span>
+      </a>
+    </nav>
+
+    <section class="section landing-section information-section" id="information">
+      <h2 id="information-title">Sobre el negocio</h2>
+      <div id="promotions-list" class="promo-list"></div>
+    </section>
+
+    <section class="section landing-section services-section" id="services">
+      <h2 id="services-title">Servicios</h2>
+      <p id="services-subtitle" class="section-subtitle">
+        Elige un servicio, selecciona un hueco disponible y envía tu solicitud.
+      </p>
+
+      <div id="services-list" class="services-grid"></div>
+    </section>
+
+    <section id="gallery-section" class="section landing-section gallery-section" hidden>
+      <h2 id="gallery-title">Galería</h2>
+
+      <div class="gallery">
+        <button class="gallery-btn" id="prev-image" type="button">‹</button>
+        <img id="gallery-image" src="" alt="Imagen de la galería" />
+        <button class="gallery-btn" id="next-image" type="button">›</button>
+      </div>
+      <div id="gallery-indicators" class="gallery-indicators" aria-label="Seleccionar imagen"></div>
+    </section>
+
+    <section class="section landing-section booking-section" id="booking">
+      <h2 id="booking-title">Reservar cita</h2>
+      <p id="booking-subtitle" class="section-subtitle">
+        Selecciona un servicio, elige un hueco disponible y añade cualquier detalle importante.
+      </p>
+
+      <form id="booking-form" class="booking-form">
+        <label>
+          Nombre
+          <input type="text" id="client-name" placeholder="Ej: Marta" required />
+        </label>
+
+        <label>
+          Teléfono / WhatsApp
+          <input type="tel" id="client-phone" placeholder="Ej: 612 345 678" required />
+        </label>
+
+        <label>
+          Servicio
+          <select id="service-select" required>
+            <option value="">Selecciona un servicio</option>
+          </select>
+        </label>
+
+        <input type="hidden" id="preferred-day" />
+        <input type="hidden" id="preferred-time" />
+
+        <label>
+          Comentarios
+          <textarea
+            id="notes"
+            placeholder="Indica cualquier detalle relevante para el servicio."
+          ></textarea>
+        </label>
+
+        <label>
+          Fotos de referencia o del problema
+          <input
+            type="file"
+            id="booking-photos"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+          />
+        </label>
+
+        <p class="form-hint">
+          Puedes adjuntar hasta 5 fotos. Se usarán solo para gestionar esta solicitud y se eliminarán automáticamente tras 14 días.
+        </p>
+
+        <button id="booking-submit" type="submit" class="btn btn-primary btn-full">
+          Confirmar reserva
+        </button>
+
+        <div id="booking-feedback" class="booking-feedback" style="display: none;"></div>
+      </form>
+    </section>
+
+    <section class="section landing-section contact-section location-section" id="location">
+      <h2 id="contact-title">Contacto</h2>
+
+      <div class="info-card">
+        <p><strong>Dirección:</strong> <span id="business-address"></span></p>
+        <p><strong>Horario:</strong> <span id="business-schedule"></span></p>
+        <p><strong>Ciudad:</strong> <span id="business-city"></span></p>
+
+        <div class="info-actions">
+          <a id="maps-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+            Cómo llegar
+          </a>
+
+          <a id="instagram-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+            Instagram
+          </a>
+
+          <a id="reviews-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+            Reseñas
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="final-cta landing-section contact-cta-section">
+      <h2>¿Tienes una duda concreta?</h2>
+      <p>
+        Para cambios, dudas urgentes o consultas especiales, puedes contactar directamente por WhatsApp.
+      </p>
+      <a
+        id="whatsapp-direct-link"
+        class="btn btn-primary btn-full"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Hablar por WhatsApp
+      </a>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Impulsado por <strong>AutonoGrow</strong></p>
+  </footer>
+
+  <script src="https://accounts.google.com/gsi/client" async></script>
+  <script src="../autonogrow-shared/auth.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

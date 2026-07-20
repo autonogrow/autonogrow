@@ -1,0 +1,75 @@
+﻿from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from app.core.config import get_settings, get_uploads_dir, migrate_legacy_uploads
+from app.core.database import create_db_and_tables
+from app.middleware.csrf import CSRFMiddleware
+from app.middleware.audit import FailedAccessAuditMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.routers.admin_availability import router as admin_availability_router
+from app.routers.admin import router as admin_router
+from app.routers.attachments import router as attachments_router
+from app.routers.availability import router as availability_router
+from app.routers.bookings import router as bookings_router
+from app.routers.businesses import router as businesses_router
+from app.routers.customers import router as customers_router
+from app.routers.health import router as health_router
+from app.routers.owner import router as owner_router
+from app.routers.media import router as media_router
+from app.routers.services import router as services_router
+from app.routers.auth import router as auth_router
+from app.routers.config import router as config_router
+from app.routers.customer import router as customer_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    migrate_legacy_uploads()
+    create_db_and_tables()
+    yield
+
+
+settings = get_settings()
+
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+    lifespan=lifespan,
+)
+
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(CSRFMiddleware)
+app.add_middleware(FailedAccessAuditMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.frontend_origin_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["Content-Type", "X-CSRF-Token", "X-Booking-Token"],
+)
+
+uploads_dir = get_uploads_dir()
+public_uploads_dir = uploads_dir / "businesses"
+public_uploads_dir.mkdir(parents=True, exist_ok=True)
+
+app.mount("/uploads/businesses", StaticFiles(directory=public_uploads_dir), name="public-uploads")
+
+app.include_router(health_router)
+app.include_router(config_router)
+app.include_router(auth_router)
+app.include_router(businesses_router)
+app.include_router(services_router)
+app.include_router(availability_router)
+app.include_router(bookings_router)
+app.include_router(attachments_router)
+app.include_router(customers_router)
+app.include_router(admin_availability_router)
+app.include_router(admin_router)
+app.include_router(owner_router)
+app.include_router(media_router)
+app.include_router(customer_router)
