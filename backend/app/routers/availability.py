@@ -55,6 +55,7 @@ def list_available_slots(
     service_id: int = Query(..., ge=1),
     date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
     exclude_booking_id: int | None = Query(default=None, ge=1),
+    staff_business_user_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
     try:
@@ -68,6 +69,7 @@ def list_available_slots(
                 service_id=service_id,
                 date=date,
                 exclude_booking_id=exclude_booking_id,
+                staff_business_user_id=staff_business_user_id,
             ),
         }
     except ValueError as exc:
@@ -75,6 +77,8 @@ def list_available_slots(
             raise HTTPException(status_code=404, detail="Business not found") from exc
         if str(exc) == "service_not_found":
             raise HTTPException(status_code=404, detail="Service not found") from exc
+        if str(exc) == "staff_not_found":
+            raise HTTPException(status_code=404, detail="Staff member not found") from exc
         if str(exc) == "invalid_date":
             raise HTTPException(status_code=400, detail="Invalid date") from exc
         raise
@@ -86,6 +90,7 @@ def list_calendar_days(
     date_from: str = Query(..., alias="from", pattern=r"^\d{4}-\d{2}-\d{2}$"),
     date_to: str = Query(..., alias="to", pattern=r"^\d{4}-\d{2}-\d{2}$"),
     service_id: int | None = Query(default=None, ge=1),
+    staff_business_user_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
     try:
@@ -94,12 +99,14 @@ def list_calendar_days(
             "from": date_from,
             "to": date_to,
             "service_id": service_id,
+            "staff_business_user_id": staff_business_user_id,
             "days": build_calendar_days(
                 db,
                 business_slug=business_slug,
                 date_from=date_from,
                 date_to=date_to,
                 service_id=service_id,
+                staff_business_user_id=staff_business_user_id,
             ),
         }
     except ValueError as exc:
@@ -107,6 +114,8 @@ def list_calendar_days(
             raise HTTPException(status_code=404, detail="Business not found") from exc
         if str(exc) == "service_not_found":
             raise HTTPException(status_code=404, detail="Service not found") from exc
+        if str(exc) == "staff_not_found":
+            raise HTTPException(status_code=404, detail="Staff member not found") from exc
         if str(exc) in {"invalid_date", "invalid_date_range"}:
             raise HTTPException(status_code=400, detail="Invalid date range") from exc
         raise

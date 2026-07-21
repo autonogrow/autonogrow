@@ -18,6 +18,9 @@ class Booking(Base):
     public_manage_token: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
     created_by_user: Mapped[bool] = mapped_column(default=False, nullable=False)
     service_id: Mapped[int | None] = mapped_column(ForeignKey("services.id", ondelete="SET NULL"), nullable=True)
+    staff_business_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("business_users.id", ondelete="SET NULL"), index=True
+    )
 
     service_name: Mapped[str] = mapped_column(String(200), nullable=False)
     duration_minutes: Mapped[int | None] = mapped_column(Integer)
@@ -29,6 +32,7 @@ class Booking(Base):
     preferred_time: Mapped[str] = mapped_column(String(20), nullable=False)
 
     notes: Mapped[str | None] = mapped_column(Text)
+    internal_notes: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(40), default="requested", nullable=False)
     source: Mapped[str] = mapped_column(String(40), default="landing", nullable=False)
 
@@ -42,6 +46,7 @@ class Booking(Base):
     customer = relationship("Customer", back_populates="bookings")
     customer_user = relationship("User", back_populates="bookings")
     service = relationship("BusinessService", back_populates="bookings")
+    staff_business_user = relationship("BusinessUser", back_populates="assigned_bookings")
     sync_jobs = relationship("SyncJob", back_populates="booking", cascade="all, delete-orphan")
     review_request = relationship(
         "ReviewRequest", back_populates="booking", cascade="all, delete-orphan", uselist=False

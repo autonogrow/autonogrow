@@ -61,6 +61,8 @@ def run_lightweight_migrations() -> None:
         "customer_email": "VARCHAR(320)",
         "public_manage_token": "VARCHAR(255)",
         "created_by_user": "BOOLEAN NOT NULL DEFAULT 0",
+        "staff_business_user_id": "INTEGER",
+        "internal_notes": "TEXT",
     }
 
     with engine.begin() as connection:
@@ -79,6 +81,26 @@ def run_lightweight_migrations() -> None:
         connection.execute(
             text("CREATE UNIQUE INDEX IF NOT EXISTS ix_bookings_public_manage_token ON bookings (public_manage_token)")
         )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_bookings_staff_business_user_id ON bookings (staff_business_user_id)")
+        )
+
+        if "business_users" in table_names:
+            business_user_columns = {
+                column["name"] for column in inspector.get_columns("business_users")
+            }
+            staff_columns = {
+                "public_name": "VARCHAR(200)",
+                "bookable": "BOOLEAN NOT NULL DEFAULT 0",
+                "show_schedule": "BOOLEAN NOT NULL DEFAULT 1",
+                "bio": "TEXT",
+                "avatar_url": "TEXT",
+            }
+            for column_name, column_type in staff_columns.items():
+                if column_name not in business_user_columns:
+                    connection.execute(
+                        text(f"ALTER TABLE business_users ADD COLUMN {column_name} {column_type}")
+                    )
 
         if "businesses" in table_names:
             business_columns = {column["name"] for column in inspector.get_columns("businesses")}

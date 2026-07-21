@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings, get_uploads_dir
 from app.core.database import get_db
 from app.core.audit import record_audit
-from app.core.security import get_current_user, require_business_access, require_owner
+from app.core.security import get_current_user, require_business_admin, require_owner
 from app.models import Business, BusinessGalleryImage, User
 from app.schemas.branding import GalleryImageUpdate
 
@@ -146,7 +146,7 @@ def public_gallery(business_slug: str, db: Session = Depends(get_db)):
     return list_gallery_impl(business_slug, db, public=True)
 
 
-@router.post("/api/admin/businesses/{business_slug}/media/logo", dependencies=[Depends(require_business_access)])
+@router.post("/api/admin/businesses/{business_slug}/media/logo", dependencies=[Depends(require_business_admin)])
 @router.post("/api/owner/businesses/{business_slug}/media/logo", dependencies=[Depends(require_owner)])
 async def upload_logo(business_slug: str, request: Request, file: UploadFile = File(...), actor: User = Depends(get_current_user), db: Session = Depends(get_db)):
     result = await upload_logo_impl(business_slug, file, db)
@@ -155,7 +155,7 @@ async def upload_logo(business_slug: str, request: Request, file: UploadFile = F
     return result
 
 
-@router.delete("/api/admin/businesses/{business_slug}/media/logo", dependencies=[Depends(require_business_access)])
+@router.delete("/api/admin/businesses/{business_slug}/media/logo", dependencies=[Depends(require_business_admin)])
 @router.delete("/api/owner/businesses/{business_slug}/media/logo", dependencies=[Depends(require_owner)])
 def delete_logo(business_slug: str, request: Request, actor: User = Depends(get_current_user), db: Session = Depends(get_db)):
     business = business_or_404(db, business_slug)
@@ -164,13 +164,13 @@ def delete_logo(business_slug: str, request: Request, actor: User = Depends(get_
     return result
 
 
-@router.get("/api/admin/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_business_access)])
+@router.get("/api/admin/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_business_admin)])
 @router.get("/api/owner/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_owner)])
 def list_gallery(business_slug: str, db: Session = Depends(get_db)):
     return list_gallery_impl(business_slug, db)
 
 
-@router.post("/api/admin/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_business_access)])
+@router.post("/api/admin/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_business_admin)])
 @router.post("/api/owner/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_owner)])
 async def upload_gallery(
     business_slug: str,
@@ -186,13 +186,13 @@ async def upload_gallery(
     return result
 
 
-@router.patch("/api/admin/businesses/{business_slug}/media/gallery/{image_id}", dependencies=[Depends(require_business_access)])
+@router.patch("/api/admin/businesses/{business_slug}/media/gallery/{image_id}", dependencies=[Depends(require_business_admin)])
 @router.patch("/api/owner/businesses/{business_slug}/media/gallery/{image_id}", dependencies=[Depends(require_owner)])
 def patch_gallery(business_slug: str, image_id: int, payload: GalleryImageUpdate, db: Session = Depends(get_db)):
     return patch_gallery_impl(business_slug, image_id, payload, db)
 
 
-@router.delete("/api/admin/businesses/{business_slug}/media/gallery/{image_id}", dependencies=[Depends(require_business_access)])
+@router.delete("/api/admin/businesses/{business_slug}/media/gallery/{image_id}", dependencies=[Depends(require_business_admin)])
 @router.delete("/api/owner/businesses/{business_slug}/media/gallery/{image_id}", dependencies=[Depends(require_owner)])
 def delete_gallery(business_slug: str, image_id: int, request: Request, actor: User = Depends(get_current_user), db: Session = Depends(get_db)):
     business = business_or_404(db, business_slug)

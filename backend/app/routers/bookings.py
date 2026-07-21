@@ -30,6 +30,7 @@ def map_booking_error(exc: ValueError) -> HTTPException:
     errors = {
         "business_not_found": (404, "Business not found"),
         "service_not_found": (404, "Service not found"),
+        "staff_not_found": (404, "Staff member not found"),
         "missing_slot": (400, "Missing booking slot"),
         "invalid_start_datetime": (400, "Invalid start_datetime"),
         "slot_unavailable": (409, "Ese hueco ya no está disponible"),

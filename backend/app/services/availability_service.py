@@ -4,6 +4,7 @@ from datetime import datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -12,6 +13,9 @@ from app.models import (
     Booking,
     Business,
     BusinessService,
+    BusinessUser,
+    BusinessUserAvailability,
+    BusinessUserAvailabilityException,
     WeeklyAvailability,
 )
 
@@ -255,6 +259,45 @@ def get_service_or_none(
     )
 
 
+def get_public_bookable_staff(db: Session, business_id: int) -> list[BusinessUser]:
+    return (
+        db.query(BusinessUser)
+        .filter(
+            BusinessUser.business_id == business_id,
+            BusinessUser.active.is_(True),
+            BusinessUser.bookable.is_(True),
+            BusinessUser.show_schedule.is_(True),
+        )
+        .order_by(BusinessUser.id.asc())
+        .all()
+    )
+
+
+def serialize_public_staff(member: BusinessUser) -> dict[str, Any]:
+    return {
+        "id": member.id,
+        "public_name": member.public_name or member.user.preferred_name or member.user.name or "Profesional",
+        "bio": member.bio,
+        "avatar_url": member.avatar_url or member.user.picture_url,
+    }
+
+
+def get_public_staff_or_none(
+    db: Session, *, business_id: int, business_user_id: int
+) -> BusinessUser | None:
+    return (
+        db.query(BusinessUser)
+        .filter(
+            BusinessUser.id == business_user_id,
+            BusinessUser.business_id == business_id,
+            BusinessUser.active.is_(True),
+            BusinessUser.bookable.is_(True),
+            BusinessUser.show_schedule.is_(True),
+        )
+        .first()
+    )
+
+
 def get_exception_for_date(
     db: Session,
     *,
@@ -322,6 +365,7 @@ def get_blocking_bookings(
     business_id: int,
     target_date: date_cls,
     exclude_booking_id: int | None = None,
+    staff_business_user_id: int | None = None,
 ) -> list[Booking]:
     query = db.query(Booking).filter(
         Booking.business_id == business_id,
@@ -330,6 +374,15 @@ def get_blocking_bookings(
 
     if exclude_booking_id is not None:
         query = query.filter(Booking.id != exclude_booking_id)
+
+    if staff_business_user_id is not None:
+        # Legacy unassigned reservations conservatively block every professional.
+        query = query.filter(
+            or_(
+                Booking.staff_business_user_id == staff_business_user_id,
+                Booking.staff_business_user_id.is_(None),
+            )
+        )
 
     rows = query.all()
     result = []
@@ -374,6 +427,43 @@ def get_windows_for_date(
     return windows
 
 
+def get_staff_windows_for_date(
+    db: Session,
+    *,
+    business: Business,
+    settings: AvailabilitySettings | None,
+    staff: BusinessUser,
+    target_date: date_cls,
+) -> list[dict[str, str]]:
+    exception = (
+        db.query(BusinessUserAvailabilityException)
+        .filter(
+            BusinessUserAvailabilityException.business_user_id == staff.id,
+            BusinessUserAvailabilityException.date == target_date.isoformat(),
+        )
+        .first()
+    )
+    if exception and exception.type == "closed":
+        return []
+    if exception and exception.type == "custom_hours":
+        return parse_windows_from_json(exception.windows_json)
+
+    row = (
+        db.query(BusinessUserAvailability)
+        .filter(
+            BusinessUserAvailability.business_user_id == staff.id,
+            BusinessUserAvailability.weekday == business_weekday(target_date),
+            BusinessUserAvailability.active.is_(True),
+        )
+        .first()
+    )
+    if row is not None:
+        return parse_windows_from_json(row.windows_json)
+    return get_windows_for_date(
+        db, business=business, settings=settings, target_date=target_date
+    )
+
+
 def get_available_slots(
     db: Session,
     *,
@@ -381,6 +471,8 @@ def get_available_slots(
     service_id: int,
     date: str,
     exclude_booking_id: int | None = None,
+    staff_business_user_id: int | None = None,
+    allow_nonpublic_staff: bool = False,
 ) -> list[dict[str, str]]:
     business = get_business_or_none(db, business_slug)
 
@@ -391,6 +483,46 @@ def get_available_slots(
 
     if service is None:
         raise ValueError("service_not_found")
+
+    public_staff = get_public_bookable_staff(db, business.id)
+    if public_staff and staff_business_user_id is None:
+        slots_by_start: dict[str, dict[str, Any]] = {}
+        for member in public_staff:
+            member_slots = get_available_slots(
+                db,
+                business_slug=business_slug,
+                service_id=service_id,
+                date=date,
+                exclude_booking_id=exclude_booking_id,
+                staff_business_user_id=member.id,
+            )
+            for slot in member_slots:
+                key = slot["start"]
+                aggregate = slots_by_start.setdefault(
+                    key,
+                    {**slot, "staff_business_user_id": None, "available_staff_ids": []},
+                )
+                aggregate["available_staff_ids"].append(member.id)
+        return [slots_by_start[key] for key in sorted(slots_by_start)]
+
+    selected_staff = None
+    if staff_business_user_id is not None:
+        if allow_nonpublic_staff:
+            selected_staff = (
+                db.query(BusinessUser)
+                .filter(
+                    BusinessUser.id == staff_business_user_id,
+                    BusinessUser.business_id == business.id,
+                    BusinessUser.active.is_(True),
+                )
+                .first()
+            )
+        else:
+            selected_staff = get_public_staff_or_none(
+                db, business_id=business.id, business_user_id=staff_business_user_id
+            )
+        if selected_staff is None:
+            raise ValueError("staff_not_found")
 
     try:
         target_date = datetime.strptime(date, "%Y-%m-%d").date()
@@ -415,18 +547,28 @@ def get_available_slots(
     slot_interval = settings.slot_interval_minutes if settings else DEFAULT_SLOT_INTERVAL_MINUTES
     min_notice = settings.min_notice_minutes if settings else DEFAULT_MIN_NOTICE_MINUTES
     buffer_minutes = settings.buffer_between_bookings_minutes if settings else DEFAULT_BUFFER_BETWEEN_BOOKINGS_MINUTES
-    windows = get_windows_for_date(
-        db,
-        business=business,
-        settings=settings,
-        target_date=target_date,
-    )
+    if selected_staff is not None:
+        windows = get_staff_windows_for_date(
+            db,
+            business=business,
+            settings=settings,
+            staff=selected_staff,
+            target_date=target_date,
+        )
+    else:
+        windows = get_windows_for_date(
+            db,
+            business=business,
+            settings=settings,
+            target_date=target_date,
+        )
 
     blocking_bookings = get_blocking_bookings(
         db,
         business_id=business.id,
         target_date=target_date,
         exclude_booking_id=exclude_booking_id,
+        staff_business_user_id=selected_staff.id if selected_staff else None,
     )
 
     earliest_allowed_start = now + timedelta(minutes=min_notice)
@@ -460,6 +602,8 @@ def get_available_slots(
                         "start": current_start.isoformat(),
                         "end": current_end.isoformat(),
                         "label": current_start.strftime("%H:%M"),
+                        "staff_business_user_id": selected_staff.id if selected_staff else None,
+                        "available_staff_ids": [selected_staff.id] if selected_staff else [],
                     }
                 )
 
@@ -475,6 +619,7 @@ def build_calendar_days(
     date_from: str,
     date_to: str,
     service_id: int | None = None,
+    staff_business_user_id: int | None = None,
 ) -> list[dict[str, Any]]:
     business = get_business_or_none(db, business_slug)
 
@@ -528,6 +673,7 @@ def build_calendar_days(
                 business_slug=business_slug,
                 service_id=service_id,
                 date=current_day.isoformat(),
+                staff_business_user_id=staff_business_user_id,
             )
 
         has_slots = len(slots) > 0

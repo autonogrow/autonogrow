@@ -7,6 +7,8 @@ from app.models.availability import (
     AvailabilityException,
     AvailabilitySettings,
     BlockedDate,
+    BusinessUserAvailability,
+    BusinessUserAvailabilityException,
     WeeklyAvailability,
 )
 from app.models.google_integration import GoogleIntegration
@@ -28,6 +30,8 @@ __all__ = [
     "BlockedDate",
     "AvailabilitySettings",
     "AvailabilityException",
+    "BusinessUserAvailability",
+    "BusinessUserAvailabilityException",
     "GoogleIntegration",
     "SyncJob",
     "ReviewRequest",

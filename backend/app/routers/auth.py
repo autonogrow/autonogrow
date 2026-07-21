@@ -38,7 +38,15 @@ def serialize_user(db: Session, user: User) -> dict:
         .all()
     )
     businesses = [
-        {"slug": item.business.slug, "name": item.business.name, "role": item.role}
+        {
+            "slug": item.business.slug,
+            "name": item.business.name,
+            "role": item.role,
+            "business_user_id": item.id,
+            "bookable": item.bookable,
+            "show_schedule": item.show_schedule,
+            "public_name": item.public_name,
+        }
         for item in memberships
         if item.business is not None
     ]

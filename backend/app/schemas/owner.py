@@ -127,6 +127,10 @@ class OwnerBusinessUpdate(BaseModel):
 class OwnerBusinessUserCreate(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     role: str = "business_admin"
+    public_name: str | None = Field(default=None, max_length=200)
+    bookable: bool = False
+    show_schedule: bool = True
+    bio: str | None = Field(default=None, max_length=2000)
 
     @field_validator("email")
     @classmethod
@@ -147,6 +151,10 @@ class OwnerBusinessUserCreate(BaseModel):
 class OwnerBusinessUserUpdate(BaseModel):
     role: str | None = None
     active: bool | None = None
+    public_name: str | None = Field(default=None, max_length=200)
+    bookable: bool | None = None
+    show_schedule: bool | None = None
+    bio: str | None = Field(default=None, max_length=2000)
 
     @field_validator("role")
     @classmethod

@@ -26,6 +26,9 @@ let currentBookingView = "pending";
 let previousGrowthTaskStates = null;
 let previousGrowthAllComplete = null;
 let adminGallery = [];
+let adminMembership = null;
+let staffMembers = [];
+let selectedStaffFilter = "";
 const TEMPLATE_DESCRIPTIONS = {
   classic: "Estructura equilibrada para cualquier negocio.", elegant: "Diseño más premium y visual.",
   beauty: "Pensada para estética, manicura y peluquería.", clinic: "Limpia y profesional para centros de salud o consulta.",
@@ -52,6 +55,26 @@ let rescheduleState = {
 function getBusinessSlug() {
   const params = new URLSearchParams(window.location.search);
   return params.get("b") || "demo-manicura";
+}
+
+function isBusinessStaff() {
+  return adminMembership?.role === "business_staff" && !adminAuthUser?.is_owner;
+}
+
+function applyRoleVisibility() {
+  const staffOnly = isBusinessStaff();
+  const allowed = new Set(["summary", "bookings"]);
+  document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
+    tab.hidden = staffOnly && !allowed.has(tab.dataset.section);
+  });
+  document.querySelectorAll("[data-admin-section]").forEach((section) => {
+    if (staffOnly && !allowed.has(section.dataset.adminSection)) section.hidden = true;
+  });
+  document.getElementById("booking-staff-filter-field").hidden = staffOnly;
+  document.querySelector(".growth-summary-card").hidden = staffOnly;
+  ["stat-reviews-pending", "stat-reviews-copied", "stat-reviews-sent", "stat-messages-pending", "stat-messages-opened", "stat-messages-sent", "stat-services-active"]
+    .forEach((id) => { document.getElementById(id)?.closest(".stat-card")?.toggleAttribute("hidden", staffOnly); });
+  if (staffOnly && !allowed.has(window.location.hash.slice(1))) showAdminSection("bookings");
 }
 
 function resolveMediaUrl(url, cacheBust = false) {
@@ -303,6 +326,16 @@ async function loadAdminPanel() {
   const slug = getBusinessSlug();
 
   try {
+    if (isBusinessStaff()) {
+      const panelResponse = await fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/panel`);
+      if (!panelResponse.ok) throw new Error("No se pudo cargar tu agenda.");
+      const panel = await panelResponse.json();
+      currentBusiness = { ...panel.business, active: panel.business.status === "active" };
+      applyBusinessData(currentBusiness);
+      document.getElementById("business-subtitle").textContent = "Mi agenda y reservas asignadas";
+      await Promise.all([loadBookings(), loadMyStaffAvailability()]);
+      return;
+    }
     const businessResponse = await fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/settings`);
 
     if (!businessResponse.ok) {
@@ -317,6 +350,7 @@ async function loadAdminPanel() {
     renderBusinessSettings();
     await Promise.all([
       loadAdminServices(),
+      loadStaffMembers(),
       loadAvailabilitySettings(),
       loadAvailabilityExceptions(),
       loadBookings(),
@@ -1042,6 +1076,144 @@ async function createAdminService() {
   }
 }
 
+async function loadStaffMembers() {
+  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff`);
+  if (!response.ok) throw new Error("No se pudo cargar el equipo.");
+  const data = await response.json();
+  staffMembers = data.staff || [];
+  renderStaffMembers();
+  const filter = document.getElementById("booking-staff-filter");
+  filter.innerHTML = `<option value="">Todos</option>` + staffMembers
+    .filter((member) => member.active)
+    .map((member) => `<option value="${member.id}">${escapeHtml(member.public_name || member.name || member.email)}</option>`)
+    .join("");
+}
+
+async function loadMyStaffAvailability() {
+  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/my-staff-availability`);
+  if (!response.ok) return;
+  const data = await response.json();
+  let panel = document.getElementById("my-staff-availability");
+  if (!panel) {
+    panel = document.createElement("article");
+    panel.id = "my-staff-availability";
+    panel.className = "growth-summary-card my-staff-availability";
+    document.querySelector('[data-admin-section="summary"] .stats-grid').after(panel);
+  }
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="growth-summary-copy">
+      <span class="stat-label">Mi horario semanal</span>
+      <strong>${data.inherits_business_schedule ? "Horario general del negocio" : "Horario propio"}</strong>
+      <div class="my-schedule-grid">
+        ${WEEKDAYS.map((day) => {
+          const windows = data.weekly_schedule[day.value] || [];
+          const text = windows.length ? windows.map((item) => `${item.start}-${item.end}`).join(", ") : "Cerrado";
+          return `<span><b>${escapeHtml(day.label)}</b>${escapeHtml(text)}</span>`;
+        }).join("")}
+      </div>
+    </div>`;
+}
+
+function renderStaffMembers() {
+  const container = document.getElementById("admin-staff-list");
+  if (!staffMembers.length) {
+    container.innerHTML = `<p class="empty-state">Todavia no hay miembros asignados.</p>`;
+    return;
+  }
+  container.innerHTML = staffMembers.map((member) => `
+    <article class="admin-service-item staff-member-card" data-staff-id="${member.id}">
+      <div class="service-edit-grid">
+        <label>Email<input value="${escapeHtml(member.email)}" disabled /></label>
+        <label>Nombre publico<input class="staff-public-name" value="${escapeHtml(member.public_name || "")}" /></label>
+        <label>Rol<select class="staff-role"><option value="business_staff" ${member.role === "business_staff" ? "selected" : ""}>Personal</option><option value="business_admin" ${member.role === "business_admin" ? "selected" : ""}>Administrador</option></select></label>
+        <label class="active-setting"><input class="staff-active" type="checkbox" ${member.active ? "checked" : ""} />Activo</label>
+        <label class="active-setting"><input class="staff-bookable" type="checkbox" ${member.bookable ? "checked" : ""} />Reservable</label>
+        <label class="active-setting"><input class="staff-show-schedule" type="checkbox" ${member.show_schedule ? "checked" : ""} />Mostrar/usar horario</label>
+        <label class="field-wide">Bio<textarea class="staff-bio" rows="2">${escapeHtml(member.bio || "")}</textarea></label>
+      </div>
+      <div class="settings-actions">
+        <button class="btn btn-small btn-primary" type="button" onclick="saveStaffMember(${member.id})">Guardar ficha</button>
+        <button class="btn btn-small btn-secondary" type="button" onclick="editStaffSchedule(${member.id})">Editar horario</button>
+      </div>
+    </article>
+  `).join("");
+}
+
+async function createStaffMember() {
+  const feedback = document.getElementById("staff-feedback");
+  const payload = {
+    email: document.getElementById("new-staff-email").value.trim(),
+    role: document.getElementById("new-staff-role").value,
+    public_name: document.getElementById("new-staff-public-name").value.trim() || null,
+    bookable: document.getElementById("new-staff-bookable").checked,
+    show_schedule: true,
+    active: true
+  };
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(result?.detail || "No se pudo añadir el miembro.");
+    feedback.className = "inline-feedback success";
+    feedback.textContent = "Miembro añadido.";
+    await loadStaffMembers();
+  } catch (error) {
+    feedback.className = "inline-feedback error";
+    feedback.textContent = error.message;
+  }
+}
+
+async function saveStaffMember(memberId) {
+  const card = document.querySelector(`[data-staff-id="${memberId}"]`);
+  const payload = {
+    public_name: card.querySelector(".staff-public-name").value.trim() || null,
+    role: card.querySelector(".staff-role").value,
+    active: card.querySelector(".staff-active").checked,
+    bookable: card.querySelector(".staff-bookable").checked,
+    show_schedule: card.querySelector(".staff-show-schedule").checked,
+    bio: card.querySelector(".staff-bio").value.trim() || null
+  };
+  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) return alert(result?.detail || "No se pudo guardar la ficha.");
+  await loadStaffMembers();
+}
+
+function parseStaffWindows(value) {
+  if (!value.trim()) return [];
+  return value.split(",").map((segment) => {
+    const [start, end] = segment.trim().split("-");
+    if (!/^\d{2}:\d{2}$/.test(start || "") || !/^\d{2}:\d{2}$/.test(end || "")) throw new Error("Usa HH:MM-HH:MM y separa tramos con comas.");
+    return { start, end };
+  });
+}
+
+async function editStaffSchedule(memberId) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}/availability`);
+  if (!response.ok) return alert("No se pudo cargar el horario.");
+  const data = await response.json();
+  const weeklySchedule = {};
+  try {
+    for (const day of WEEKDAYS) {
+      const current = (data.weekly_schedule[day.value] || []).map((window) => `${window.start}-${window.end}`).join(",");
+      const value = window.prompt(`Tramos de ${day.label} (HH:MM-HH:MM, separados por comas). Vacio = cerrado.`, current);
+      if (value === null) return;
+      weeklySchedule[day.value] = parseStaffWindows(value);
+    }
+  } catch (error) {
+    return alert(error.message);
+  }
+  const saveResponse = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}/availability`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ weekly_schedule: weeklySchedule })
+  });
+  if (!saveResponse.ok) return alert("No se pudo guardar el horario.");
+  alert("Horario del profesional guardado.");
+}
+
 async function loadBookings() {
   const slug = getBusinessSlug();
   const list = document.getElementById("bookings-list");
@@ -1058,13 +1230,18 @@ async function loadBookings() {
     const data = await response.json();
     allBookings = data.bookings || [];
 
-    await Promise.all([enrichBookingsWithAttachments(), loadReviewRequests()]);
+    if (isBusinessStaff()) {
+      reviewRequestsByBooking = new Map();
+      await enrichBookingsWithAttachments();
+    } else {
+      await Promise.all([enrichBookingsWithAttachments(), loadReviewRequests()]);
+    }
     growthDataReady.bookings = true;
     renderStats(allBookings);
     renderReviewStats();
     renderReviewRequests();
     renderBookings();
-    renderGrowth();
+    if (!isBusinessStaff()) renderGrowth();
   } catch (error) {
     console.error(error);
     list.innerHTML = `<p class="empty-state">Error conectando con el backend.</p>`;
@@ -1304,6 +1481,10 @@ function replaceOutboxMessage(updatedMessage) {
 }
 
 async function refreshOperationalData() {
+  if (isBusinessStaff()) {
+    await loadBookings();
+    return;
+  }
   await Promise.all([loadBookings(), loadMessageOutbox()]);
 }
 
@@ -1400,7 +1581,7 @@ function getBookingsForView(view) {
   const today = getMadridDateKey();
   const tomorrow = addDaysToDateKey(today, 1);
   const isPending = (booking) => ["requested", "pending"].includes(booking.status);
-  const isClosed = (booking) => ["completed", "rejected", "cancelled"].includes(booking.status);
+  const isClosed = (booking) => ["completed", "rejected", "cancelled", "no_show"].includes(booking.status);
   const bookingDate = (booking) => getBookingDateKey(booking);
   let bookings;
 
@@ -1418,6 +1599,10 @@ function getBookingsForView(view) {
     bookings = allBookings.filter((booking) =>
       !isPending(booking) && (isClosed(booking) || (bookingDate(booking) && bookingDate(booking) < today))
     );
+  }
+
+  if (selectedStaffFilter) {
+    bookings = bookings.filter((booking) => String(booking.staff_business_user_id || "") === selectedStaffFilter);
   }
 
   if (["today", "tomorrow", "upcoming"].includes(view)) {
@@ -1475,8 +1660,16 @@ function renderBookings() {
           <span>Creada</span>
           <strong>${formatDateTime(booking.created_at)}</strong>
         </div>
+        <div class="booking-field">
+          <span>Profesional</span>
+          <strong>${escapeHtml(booking.staff_display_name || "Sin asignar")}</strong>
+        </div>
       </div>
       ${renderNotes(booking.notes)}
+      <div class="booking-notes internal-notes-editor">
+        <label>Notas internas<textarea data-internal-notes="${booking.id}" rows="2">${escapeHtml(booking.internal_notes || "")}</textarea></label>
+        <button class="btn btn-small btn-secondary" type="button" onclick="saveInternalNotes(${booking.id})">Guardar notas</button>
+      </div>
       ${renderBookingActions(booking)}
       ${renderReviewRequest(booking)}
       ${renderAttachments(booking.attachments || [])}
@@ -1487,6 +1680,9 @@ function renderBookings() {
 }
 
 function renderReviewRequest(booking) {
+  if (isBusinessStaff()) {
+    return "";
+  }
   if (booking.status !== "completed") {
     return "";
   }
@@ -1723,7 +1919,8 @@ function renderBookingActions(booking) {
   const isCompleted = booking.status === "completed";
   const isRejected = booking.status === "rejected";
   const isCancelled = booking.status === "cancelled";
-  const isClosed = isCompleted || isRejected || isCancelled;
+  const isNoShow = booking.status === "no_show";
+  const isClosed = isCompleted || isRejected || isCancelled || isNoShow;
 
   return `
     <div class="booking-actions">
@@ -1736,11 +1933,31 @@ function renderBookingActions(booking) {
       <button class="btn btn-small btn-danger" type="button" onclick="updateBookingStatus(${booking.id}, 'rejected')" ${booking.status === "rejected" || isCompleted || isCancelled ? "disabled" : ""}>
         Rechazar
       </button>
+      <button class="btn btn-small btn-danger" type="button" onclick="updateBookingStatus(${booking.id}, 'cancelled')" ${isClosed ? "disabled" : ""}>
+        Cancelar
+      </button>
       <button class="btn btn-small btn-secondary" type="button" onclick="updateBookingStatus(${booking.id}, 'completed')" ${booking.status === "completed" || isRejected || isCancelled ? "disabled" : ""}>
         Completada
       </button>
+      <button class="btn btn-small btn-secondary" type="button" onclick="updateBookingStatus(${booking.id}, 'no_show')" ${isClosed ? "disabled" : ""}>
+        No presentado
+      </button>
     </div>
   `;
+}
+
+async function saveInternalNotes(bookingId) {
+  const field = document.querySelector(`[data-internal-notes="${bookingId}"]`);
+  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/bookings/${bookingId}/internal-notes`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ internal_notes: field.value.trim() || null })
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) return alert(result?.detail || "No se pudieron guardar las notas.");
+  const index = allBookings.findIndex((item) => item.id === bookingId);
+  if (index >= 0) allBookings[index] = { ...allBookings[index], ...result.booking };
+  alert("Notas internas guardadas.");
 }
 
 function rescheduleBooking(bookingId) {
@@ -1834,9 +2051,13 @@ async function loadRescheduleSlots() {
   container.innerHTML = `<p class="empty-state">Cargando huecos disponibles...</p>`;
 
   try {
-    const response = await fetch(
-      `${API_BASE_URL}/api/businesses/${getBusinessSlug()}/available-slots?service_id=${encodeURIComponent(booking.service_id)}&date=${encodeURIComponent(rescheduleState.date)}&exclude_booking_id=${encodeURIComponent(booking.id)}`
-    );
+    const params = new URLSearchParams({
+      service_id: booking.service_id,
+      date: rescheduleState.date,
+      exclude_booking_id: booking.id
+    });
+    if (booking.staff_business_user_id) params.set("staff_business_user_id", booking.staff_business_user_id);
+    const response = await fetch(`${API_BASE_URL}/api/businesses/${getBusinessSlug()}/available-slots?${params.toString()}`);
 
     if (!response.ok) {
       throw new Error("No se pudo cargar la disponibilidad.");
@@ -2000,7 +2221,8 @@ function getStatusClass(status) {
     confirmed: "status-confirmed",
     completed: "status-completed",
     rejected: "status-rejected",
-    cancelled: "status-rejected"
+    cancelled: "status-rejected",
+    no_show: "status-rejected"
   };
 
   return classes[status] || "status-requested";
@@ -2013,7 +2235,8 @@ function getStatusLabel(status) {
     confirmed: "Confirmada",
     completed: "Completada",
     rejected: "Rechazada",
-    cancelled: "Cancelada"
+    cancelled: "Cancelada",
+    no_show: "No presentado"
   };
 
   return labels[status] || status;
@@ -2058,6 +2281,11 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("message-status-filter").addEventListener("change", renderMessageOutbox);
   document.getElementById("save-business-settings").addEventListener("click", saveBusinessSettings);
   document.getElementById("create-service").addEventListener("click", createAdminService);
+  document.getElementById("create-staff-member").addEventListener("click", createStaffMember);
+  document.getElementById("booking-staff-filter").addEventListener("change", (event) => {
+    selectedStaffFilter = event.target.value;
+    renderBookings();
+  });
   document.getElementById("save-availability-settings").addEventListener("click", saveAvailabilitySettings);
   document.getElementById("save-availability-exception").addEventListener("click", saveAvailabilityException);
   setupExceptionForm();
@@ -2084,11 +2312,13 @@ async function bootstrapAdminAuth() {
     adminAuthUser = await AutonoGrowAuth.getMe();
     if (!adminAuthUser) return showAdminLogin();
     const slug = getBusinessSlug();
-    const allowed = adminAuthUser.is_owner || adminAuthUser.businesses.some((item) => item.slug === slug);
+    adminMembership = adminAuthUser.businesses.find((item) => item.slug === slug) || null;
+    const allowed = adminAuthUser.is_owner || Boolean(adminMembership);
     if (!allowed) return showAdminLogin("Tu cuenta no tiene acceso a este negocio.", true);
     document.getElementById("admin-auth-gate").hidden = true;
     document.getElementById("admin-app").hidden = false;
     document.getElementById("admin-auth-user").textContent = adminAuthUser.name || adminAuthUser.email;
+    applyRoleVisibility();
     await loadAdminPanel();
   } catch (error) {
     console.error("Admin authentication failed", error);

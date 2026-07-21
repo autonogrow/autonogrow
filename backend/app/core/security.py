@@ -79,13 +79,64 @@ def require_business_access(
     return user
 
 
+def get_business_membership(
+    db: Session,
+    *,
+    business_slug: str,
+    user_id: int,
+) -> BusinessUser | None:
+    return (
+        db.query(BusinessUser)
+        .join(Business, Business.id == BusinessUser.business_id)
+        .filter(
+            Business.slug == business_slug,
+            BusinessUser.user_id == user_id,
+            BusinessUser.active.is_(True),
+            BusinessUser.role.in_(("business_admin", "business_staff")),
+        )
+        .first()
+    )
+
+
 def require_business_admin(
     business_slug: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
-    """Business roles currently share permissions; kept separate for future refinement."""
-    return require_business_access(business_slug=business_slug, user=user, db=db)
+    if user.is_owner:
+        return user
+    membership = get_business_membership(
+        db, business_slug=business_slug, user_id=user.id
+    )
+    if membership is None:
+        raise HTTPException(status_code=403, detail="You do not have access to this business")
+    if membership.role != "business_admin":
+        raise HTTPException(status_code=403, detail="Business administrator access required")
+    return user
+
+
+require_business_member = require_business_access
+require_business_staff_or_admin = require_business_access
+require_can_manage_business_settings = require_business_admin
+
+
+def ensure_can_manage_booking(
+    db: Session,
+    *,
+    business_slug: str,
+    booking: Booking,
+    user: User,
+) -> BusinessUser | None:
+    if user.is_owner:
+        return None
+    membership = get_business_membership(
+        db, business_slug=business_slug, user_id=user.id
+    )
+    if membership is None:
+        raise HTTPException(status_code=403, detail="You do not have access to this booking")
+    if membership.role == "business_staff" and booking.staff_business_user_id != membership.id:
+        raise HTTPException(status_code=403, detail="This booking is not assigned to you")
+    return membership
 
 
 def require_booking_business_access(
@@ -99,13 +150,7 @@ def require_booking_business_access(
     business = db.query(Business).filter(Business.id == booking.business_id).first()
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
-    if user.is_owner:
-        return user
-    membership = db.query(BusinessUser).filter(
-        BusinessUser.business_id == business.id,
-        BusinessUser.user_id == user.id,
-        BusinessUser.active.is_(True),
-    ).first()
-    if membership is None:
-        raise HTTPException(status_code=403, detail="You do not have access to this booking")
+    ensure_can_manage_booking(
+        db, business_slug=business.slug, booking=booking, user=user
+    )
     return user

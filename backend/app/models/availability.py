@@ -1,7 +1,7 @@
 ﻿from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
@@ -60,3 +60,46 @@ class AvailabilityException(Base):
     reason: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class BusinessUserAvailability(Base):
+    __tablename__ = "business_user_availability"
+    __table_args__ = (
+        UniqueConstraint("business_user_id", "weekday", name="uq_business_user_availability_day"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    business_user_id: Mapped[int] = mapped_column(
+        ForeignKey("business_users.id", ondelete="CASCADE"), index=True
+    )
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False)
+    windows_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    business_user = relationship("BusinessUser", back_populates="availability")
+
+
+class BusinessUserAvailabilityException(Base):
+    __tablename__ = "business_user_availability_exceptions"
+    __table_args__ = (
+        UniqueConstraint("business_user_id", "date", name="uq_business_user_availability_exception_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    business_user_id: Mapped[int] = mapped_column(
+        ForeignKey("business_users.id", ondelete="CASCADE"), index=True
+    )
+    date: Mapped[str] = mapped_column(String(20), index=True, nullable=False)
+    type: Mapped[str] = mapped_column(String(40), nullable=False)
+    windows_json: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    business_user = relationship("BusinessUser", back_populates="availability_exceptions")

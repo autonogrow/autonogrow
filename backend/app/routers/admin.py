@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.audit import record_audit
-from app.core.security import require_business_access
+from app.core.security import (
+    ensure_can_manage_booking,
+    get_business_membership,
+    require_business_access,
+    require_business_admin,
+)
 from app.models import (
     Booking,
     Business,
@@ -59,6 +64,10 @@ class BookingRescheduleUpdate(BaseModel):
     start_datetime: str | None = None
 
 
+class BookingInternalNotesUpdate(BaseModel):
+    internal_notes: str | None = None
+
+
 def serialize_business_settings(business: Business) -> dict:
     return {
         "id": business.id,
@@ -86,6 +95,39 @@ def serialize_business_settings(business: Business) -> dict:
     }
 
 
+@router.patch("/bookings/{booking_id}/internal-notes")
+def update_booking_internal_notes(
+    business_slug: str,
+    booking_id: int,
+    payload: BookingInternalNotesUpdate,
+    request: Request,
+    actor: User = Depends(require_business_access),
+    db: Session = Depends(get_db),
+):
+    business = get_admin_business_or_404(db, business_slug)
+    booking = (
+        db.query(Booking)
+        .filter(Booking.id == booking_id, Booking.business_id == business.id)
+        .first()
+    )
+    if booking is None:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    ensure_can_manage_booking(
+        db, business_slug=business_slug, booking=booking, user=actor
+    )
+    notes = payload.internal_notes.strip() if payload.internal_notes else None
+    if notes and len(notes) > 4000:
+        raise HTTPException(status_code=422, detail="Internal notes are too long")
+    booking.internal_notes = notes
+    db.commit()
+    db.refresh(booking)
+    record_audit(
+        db, action="booking_internal_notes_changed", request=request, actor=actor,
+        business_id=business.id, resource_type="booking", resource_id=booking.id,
+    )
+    return {"ok": True, "booking": serialize_booking(booking)}
+
+
 def serialize_admin_service(service: BusinessService) -> dict:
     return {
         "id": service.id,
@@ -106,7 +148,7 @@ def get_admin_business_or_404(db: Session, business_slug: str) -> Business:
     return business
 
 
-@router.get("/settings")
+@router.get("/settings", dependencies=[Depends(require_business_admin)])
 def get_business_settings(business_slug: str, db: Session = Depends(get_db)):
     return serialize_business_settings(get_admin_business_or_404(db, business_slug))
 
@@ -116,7 +158,7 @@ def update_business_settings(
     business_slug: str,
     payload: BusinessSettingsUpdate,
     request: Request,
-    actor: User = Depends(require_business_access),
+    actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
     business = get_admin_business_or_404(db, business_slug)
@@ -147,7 +189,7 @@ def update_business_settings(
     return {"ok": True, "settings": serialize_business_settings(business)}
 
 
-@router.get("/services")
+@router.get("/services", dependencies=[Depends(require_business_admin)])
 def admin_list_services(business_slug: str, db: Session = Depends(get_db)):
     business = get_admin_business_or_404(db, business_slug)
     services = (
@@ -162,7 +204,7 @@ def admin_list_services(business_slug: str, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/services", status_code=201)
+@router.post("/services", status_code=201, dependencies=[Depends(require_business_admin)])
 def admin_create_service(
     business_slug: str,
     payload: AdminServiceCreate,
@@ -195,7 +237,7 @@ def admin_create_service(
     return {"ok": True, "service": serialize_admin_service(service)}
 
 
-@router.patch("/services/{service_id}")
+@router.patch("/services/{service_id}", dependencies=[Depends(require_business_admin)])
 def admin_update_service(
     business_slug: str,
     service_id: int,
@@ -243,9 +285,19 @@ def admin_update_service(
 
 
 @router.get("/bookings")
-def admin_list_bookings(business_slug: str, db: Session = Depends(get_db)):
+def admin_list_bookings(
+    business_slug: str,
+    actor: User = Depends(require_business_access),
+    db: Session = Depends(get_db),
+):
+    membership = None if actor.is_owner else get_business_membership(
+        db, business_slug=business_slug, user_id=actor.id
+    )
+    staff_id = membership.id if membership and membership.role == "business_staff" else None
     try:
-        bookings = list_bookings_for_business(db, business_slug=business_slug)
+        bookings = list_bookings_for_business(
+            db, business_slug=business_slug, staff_business_user_id=staff_id
+        )
     except ValueError as exc:
         if str(exc) == "business_not_found":
             raise HTTPException(status_code=404, detail="Business not found") from exc
@@ -258,27 +310,36 @@ def admin_list_bookings(business_slug: str, db: Session = Depends(get_db)):
 
 
 @router.get("/panel")
-def admin_panel(business_slug: str, db: Session = Depends(get_db)):
+def admin_panel(
+    business_slug: str,
+    actor: User = Depends(require_business_access),
+    db: Session = Depends(get_db),
+):
     business = db.query(Business).filter(Business.slug == business_slug).first()
 
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
 
-    total_bookings = db.query(Booking).filter(Booking.business_id == business.id).count()
+    membership = None if actor.is_owner else get_business_membership(
+        db, business_slug=business_slug, user_id=actor.id
+    )
+    is_staff = bool(membership and membership.role == "business_staff")
+    booking_query = db.query(Booking).filter(Booking.business_id == business.id)
+    if is_staff:
+        booking_query = booking_query.filter(Booking.staff_business_user_id == membership.id)
+    total_bookings = booking_query.count()
 
     pending_bookings = (
-        db.query(Booking)
+        booking_query
         .filter(
-            Booking.business_id == business.id,
             Booking.status.in_(["requested", "pending"]),
         )
         .count()
     )
 
     upcoming_bookings = (
-        db.query(Booking)
+        booking_query
         .filter(
-            Booking.business_id == business.id,
             Booking.status.in_(["requested", "pending", "confirmed"]),
             Booking.start_datetime >= datetime.utcnow(),
         )
@@ -352,16 +413,16 @@ def admin_panel(business_slug: str, db: Session = Depends(get_db)):
             "total_bookings": total_bookings,
             "pending_bookings": pending_bookings,
             "upcoming_bookings": upcoming_bookings,
-            "active_services": active_services,
-            "total_customers": total_customers,
-            "pending_sync_jobs": pending_sync_jobs,
-            "review_requests_pending": review_requests_pending,
-            "review_requests_copied": review_requests_copied,
-            "review_requests_sent": review_requests_sent,
-            "message_outbox_pending": message_outbox_pending,
-            "message_outbox_opened": message_outbox_opened,
-            "message_outbox_sent": message_outbox_sent,
-            "message_outbox_skipped": message_outbox_skipped,
+            "active_services": 0 if is_staff else active_services,
+            "total_customers": 0 if is_staff else total_customers,
+            "pending_sync_jobs": 0 if is_staff else pending_sync_jobs,
+            "review_requests_pending": 0 if is_staff else review_requests_pending,
+            "review_requests_copied": 0 if is_staff else review_requests_copied,
+            "review_requests_sent": 0 if is_staff else review_requests_sent,
+            "message_outbox_pending": 0 if is_staff else message_outbox_pending,
+            "message_outbox_opened": 0 if is_staff else message_outbox_opened,
+            "message_outbox_sent": 0 if is_staff else message_outbox_sent,
+            "message_outbox_skipped": 0 if is_staff else message_outbox_skipped,
         },
         "commands": [
             "/panel",
@@ -370,6 +431,7 @@ def admin_panel(business_slug: str, db: Session = Depends(get_db)):
             "/pendientes",
             "/huecos",
         ],
+        "access": {"role": membership.role if membership else "owner", "staff_scope": is_staff},
     }
 
 
@@ -389,6 +451,7 @@ def update_booking_status(
         "rejected",
         "completed",
         "cancelled",
+        "no_show",
     }
 
     if payload.status not in allowed_statuses:
@@ -413,6 +476,10 @@ def update_booking_status(
 
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
+
+    ensure_can_manage_booking(
+        db, business_slug=business_slug, booking=booking, user=actor
+    )
 
     booking.status = payload.status
     review_request = None
@@ -472,7 +539,7 @@ def update_booking_status(
     }
 
 
-@router.get("/message-outbox")
+@router.get("/message-outbox", dependencies=[Depends(require_business_admin)])
 def list_message_outbox(
     business_slug: str,
     status: str | None = Query(default=None),
@@ -520,7 +587,7 @@ def _get_outbox_message(
     )
 
 
-@router.patch("/message-outbox/{message_id}/opened")
+@router.patch("/message-outbox/{message_id}/opened", dependencies=[Depends(require_business_admin)])
 def open_outbox_message(
     business_slug: str,
     message_id: int,
@@ -551,7 +618,7 @@ def open_outbox_message(
     return {"ok": True, "message": serialize_message_outbox(message)}
 
 
-@router.patch("/message-outbox/{message_id}/status")
+@router.patch("/message-outbox/{message_id}/status", dependencies=[Depends(require_business_admin)])
 def update_outbox_message_status(
     business_slug: str,
     message_id: int,
@@ -583,7 +650,7 @@ def update_outbox_message_status(
     return {"ok": True, "message": serialize_message_outbox(message)}
 
 
-@router.get("/review-requests")
+@router.get("/review-requests", dependencies=[Depends(require_business_admin)])
 def list_review_requests(business_slug: str, db: Session = Depends(get_db)):
     business = db.query(Business).filter(Business.slug == business_slug).first()
 
@@ -604,7 +671,7 @@ def list_review_requests(business_slug: str, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/bookings/{booking_id}/review-request")
+@router.post("/bookings/{booking_id}/review-request", dependencies=[Depends(require_business_admin)])
 def create_review_request_for_booking(
     business_slug: str,
     booking_id: int,
@@ -651,7 +718,7 @@ def create_review_request_for_booking(
     }
 
 
-@router.patch("/review-requests/{review_request_id}/status")
+@router.patch("/review-requests/{review_request_id}/status", dependencies=[Depends(require_business_admin)])
 def update_review_request_status(
     business_slug: str,
     review_request_id: int,
@@ -716,6 +783,10 @@ def reschedule_booking(
 
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
+
+    ensure_can_manage_booking(
+        db, business_slug=business_slug, booking=booking, user=actor
+    )
 
     try:
         booking = reschedule_existing_booking(

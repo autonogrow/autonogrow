@@ -24,6 +24,11 @@ from app.routers.services import router as services_router
 from app.routers.auth import router as auth_router
 from app.routers.config import router as config_router
 from app.routers.customer import router as customer_router
+from app.routers.staff import (
+    admin_router as admin_staff_router,
+    member_router as member_staff_router,
+    public_router as public_staff_router,
+)
 
 
 @asynccontextmanager
@@ -73,3 +78,6 @@ app.include_router(admin_router)
 app.include_router(owner_router)
 app.include_router(media_router)
 app.include_router(customer_router)
+app.include_router(public_staff_router)
+app.include_router(admin_staff_router)
+app.include_router(member_staff_router)

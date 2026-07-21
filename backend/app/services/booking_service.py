@@ -3,6 +3,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models import Booking, Business, BusinessService, Customer, SyncJob, User
@@ -15,6 +16,15 @@ from app.services.message_outbox_service import (
 
 def get_business_by_slug(db: Session, slug: str) -> Business | None:
     return db.query(Business).filter(Business.slug == slug, Business.status == "active").first()
+
+
+def begin_serialized_booking_write(db: Session) -> None:
+    """Serialize SQLite availability-check + write to avoid concurrent double booking."""
+    bind = db.get_bind()
+    if bind.dialect.name == "sqlite":
+        # Dependencies may already have opened a read transaction. It contains no writes.
+        db.commit()
+        db.execute(text("BEGIN IMMEDIATE"))
 
 
 def get_or_create_customer(
@@ -135,27 +145,60 @@ def ensure_slot_available(
     service_id: int,
     start_datetime: datetime,
     exclude_booking_id: int | None = None,
-) -> None:
+    staff_business_user_id: int | None = None,
+    allow_nonpublic_staff: bool = False,
+) -> int | None:
     slots = get_available_slots(
         db,
         business_slug=business_slug,
         service_id=service_id,
         date=start_datetime.date().isoformat(),
         exclude_booking_id=exclude_booking_id,
+        staff_business_user_id=staff_business_user_id,
+        allow_nonpublic_staff=allow_nonpublic_staff,
     )
     requested_start = start_datetime.replace(second=0, microsecond=0).isoformat()
 
-    if not any(slot["start"] == requested_start for slot in slots):
+    selected_slot = next((slot for slot in slots if slot["start"] == requested_start), None)
+    if selected_slot is None:
         raise ValueError("slot_unavailable")
+
+    candidate_ids = selected_slot.get("available_staff_ids") or []
+    if not candidate_ids:
+        return None
+    if staff_business_user_id is not None:
+        return staff_business_user_id
+
+    # "Cualquiera": least blocking reservations that day, then lowest membership id.
+    counts = {
+        candidate_id: db.query(Booking)
+        .filter(
+            Booking.staff_business_user_id == candidate_id,
+            Booking.preferred_date == start_datetime.date().isoformat(),
+            Booking.status.in_(("requested", "pending", "confirmed")),
+        )
+        .count()
+        for candidate_id in candidate_ids
+    }
+    return min(candidate_ids, key=lambda candidate_id: (counts[candidate_id], candidate_id))
 
 
 def serialize_booking(booking: Booking) -> dict[str, Any]:
+    staff_display_name = None
+    if booking.staff_business_user:
+        staff_display_name = (
+            booking.staff_business_user.public_name
+            or booking.staff_business_user.user.preferred_name
+            or booking.staff_business_user.user.name
+        )
     return {
         "id": booking.id,
         "customer_name": booking.customer.name,
         "customer_phone": booking.customer.phone,
         "service_id": booking.service_id,
         "service_name": booking.service_name,
+        "staff_business_user_id": booking.staff_business_user_id,
+        "staff_display_name": staff_display_name,
         "duration_minutes": booking.duration_minutes,
         "start_datetime": booking.start_datetime.isoformat() if booking.start_datetime else None,
         "end_datetime": booking.end_datetime.isoformat() if booking.end_datetime else None,
@@ -163,6 +206,7 @@ def serialize_booking(booking: Booking) -> dict[str, Any]:
         "preferred_day_label": booking.preferred_day_label,
         "preferred_time": booking.preferred_time,
         "notes": booking.notes,
+        "internal_notes": booking.internal_notes,
         "status": booking.status,
         "google_sync_status": booking.google_sync_status,
         "created_at": booking.created_at.isoformat() if booking.created_at else None,
@@ -176,6 +220,7 @@ def create_booking_request(
     payload: BookingRequestCreate,
     current_user: User | None = None,
 ) -> Booking:
+    begin_serialized_booking_write(db)
     business = get_business_by_slug(db, business_slug)
 
     if business is None:
@@ -190,11 +235,12 @@ def create_booking_request(
     duration_minutes = service.duration_minutes or 30
     end_datetime = start_datetime + timedelta(minutes=duration_minutes)
 
-    ensure_slot_available(
+    selected_staff_id = ensure_slot_available(
         db,
         business_slug=business_slug,
         service_id=service.id,
         start_datetime=start_datetime,
+        staff_business_user_id=payload.staff_business_user_id,
     )
 
     customer = get_or_create_customer(
@@ -213,6 +259,7 @@ def create_booking_request(
         public_manage_token=secrets.token_urlsafe(32),
         created_by_user=bool(current_user and current_user.is_active),
         service_id=service.id,
+        staff_business_user_id=selected_staff_id,
         service_name=service.name,
         duration_minutes=duration_minutes,
         start_datetime=start_datetime,
@@ -269,18 +316,21 @@ def reschedule_existing_booking(
     new_start_datetime: datetime,
     preferred_day_label: str | None = None,
 ) -> Booking:
-    if booking.status in {"completed", "rejected", "cancelled"}:
+    begin_serialized_booking_write(db)
+    if booking.status in {"completed", "rejected", "cancelled", "no_show"}:
         raise ValueError("booking_closed")
 
     if booking.service_id is None:
         raise ValueError("booking_without_service")
 
-    ensure_slot_available(
+    selected_staff_id = ensure_slot_available(
         db,
         business_slug=business_slug,
         service_id=booking.service_id,
         start_datetime=new_start_datetime,
         exclude_booking_id=booking.id,
+        staff_business_user_id=booking.staff_business_user_id,
+        allow_nonpublic_staff=True,
     )
 
     duration_minutes = booking.duration_minutes
@@ -294,6 +344,7 @@ def reschedule_existing_booking(
     booking.duration_minutes = duration_minutes
     booking.start_datetime = new_start_datetime
     booking.end_datetime = new_start_datetime + timedelta(minutes=duration_minutes)
+    booking.staff_business_user_id = selected_staff_id
     booking.preferred_date = new_start_datetime.date().isoformat()
     booking.preferred_day_label = preferred_day_label
     booking.preferred_time = new_start_datetime.strftime("%H:%M")
@@ -312,17 +363,17 @@ def reschedule_existing_booking(
     return booking
 
 
-def list_bookings_for_business(db: Session, *, business_slug: str) -> list[dict[str, Any]]:
+def list_bookings_for_business(
+    db: Session, *, business_slug: str, staff_business_user_id: int | None = None
+) -> list[dict[str, Any]]:
     business = get_business_by_slug(db, business_slug)
 
     if business is None:
         raise ValueError("business_not_found")
 
-    bookings = (
-        db.query(Booking)
-        .filter(Booking.business_id == business.id)
-        .order_by(Booking.created_at.desc())
-        .all()
-    )
+    query = db.query(Booking).filter(Booking.business_id == business.id)
+    if staff_business_user_id is not None:
+        query = query.filter(Booking.staff_business_user_id == staff_business_user_id)
+    bookings = query.order_by(Booking.created_at.desc()).all()
 
     return [serialize_booking(booking) for booking in bookings]

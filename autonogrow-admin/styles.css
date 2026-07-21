@@ -1286,3 +1286,9 @@ input {
 .brand-gallery-list article { display: grid; grid-template-columns: 72px minmax(0, 1fr) 70px auto auto; align-items: center; gap: 8px; min-width: 0; }
 .brand-gallery-list img { width: 72px; height: 56px; object-fit: cover; border-radius: 8px; }
 @media (max-width: 720px) { .brand-media-grid { grid-template-columns: 1fr; } .brand-gallery-list article { grid-template-columns: 64px 1fr; } }
+.staff-member-card { display: grid; gap: 14px; }
+.internal-notes-editor { display: grid; gap: 10px; margin-top: 14px; }
+.internal-notes-editor textarea { width: 100%; margin-top: 6px; }
+#booking-staff-filter-field { display: grid; gap: 6px; min-width: 220px; }
+.my-schedule-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 10px; }
+.my-schedule-grid span { display: grid; gap: 3px; }

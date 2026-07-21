@@ -2,7 +2,7 @@
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import require_business_access
+from app.core.security import require_business_admin
 from app.models import Business, BusinessService
 from app.schemas.service import ServiceCreate, ServiceOut
 
@@ -48,7 +48,7 @@ def list_services(business_slug: str, db: Session = Depends(get_db)):
     ]
 
 
-@router.post("", response_model=ServiceOut, status_code=201, dependencies=[Depends(require_business_access)])
+@router.post("", response_model=ServiceOut, status_code=201, dependencies=[Depends(require_business_admin)])
 def create_service(
     business_slug: str,
     payload: ServiceCreate,

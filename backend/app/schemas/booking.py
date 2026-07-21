@@ -6,6 +6,7 @@ class BookingRequestCreate(BaseModel):
     customer_phone: str | None = Field(default=None, max_length=40)
     service_id: int | None = None
     service_name: str | None = Field(default=None, min_length=2, max_length=200)
+    staff_business_user_id: int | None = Field(default=None, ge=1)
     preferred_date: str | None = Field(default=None, max_length=20)
     preferred_day_label: str | None = Field(default=None, max_length=100)
     preferred_time: str | None = Field(default=None, min_length=2, max_length=20)
@@ -20,6 +21,8 @@ class BookingOut(BaseModel):
     customer_phone: str | None
     service_id: int | None = None
     service_name: str
+    staff_business_user_id: int | None = None
+    staff_display_name: str | None = None
     duration_minutes: int | None = None
     start_datetime: str | None = None
     end_datetime: str | None = None
@@ -27,6 +30,7 @@ class BookingOut(BaseModel):
     preferred_day_label: str | None
     preferred_time: str
     notes: str | None
+    internal_notes: str | None = None
     status: str
     google_sync_status: str
     created_at: str | None = None

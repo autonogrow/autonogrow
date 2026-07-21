@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.audit import record_audit
-from app.core.security import require_business_access
+from app.core.security import require_business_admin
 from app.models import AvailabilityException, AvailabilitySettings, Business, User
 from app.services.availability_service import (
     DEFAULT_BUFFER_BETWEEN_BOOKINGS_MINUTES,
@@ -23,7 +23,7 @@ from app.services.availability_service import (
 )
 
 
-router = APIRouter(prefix="/api/admin/{business_slug}", tags=["admin-availability"], dependencies=[Depends(require_business_access)])
+router = APIRouter(prefix="/api/admin/{business_slug}", tags=["admin-availability"], dependencies=[Depends(require_business_admin)])
 
 
 class AvailabilitySettingsUpdate(BaseModel):
@@ -80,7 +80,7 @@ def update_availability_settings(
     business_slug: str,
     payload: AvailabilitySettingsUpdate,
     request: Request,
-    actor: User = Depends(require_business_access),
+    actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
     business = get_business_or_404(db, business_slug)
@@ -134,7 +134,7 @@ def create_availability_exception(
     business_slug: str,
     payload: AvailabilityExceptionCreate,
     request: Request,
-    actor: User = Depends(require_business_access),
+    actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
     business = get_business_or_404(db, business_slug)
@@ -187,7 +187,7 @@ def delete_availability_exception(
     business_slug: str,
     exception_id: int,
     request: Request,
-    actor: User = Depends(require_business_access),
+    actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
     business = get_business_or_404(db, business_slug)

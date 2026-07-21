@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings, get_uploads_dir
 from app.core.database import get_db
 from app.core.audit import record_audit
-from app.core.security import get_optional_current_user, require_business_access
+from app.core.security import (
+    ensure_can_manage_booking,
+    get_optional_current_user,
+    require_business_access,
+)
 from app.models import Booking, BookingAttachment, Business, BusinessUser, User
 
 router = APIRouter(
@@ -52,7 +56,10 @@ def can_upload_booking_attachments(
             BusinessUser.active.is_(True),
         ).first()
         if membership is not None:
-            return True
+            return membership.role == "business_admin" or (
+                membership.role == "business_staff"
+                and booking.staff_business_user_id == membership.id
+            )
     return bool(
         booking.public_manage_token
         and booking_token
@@ -200,14 +207,18 @@ async def upload_booking_attachments(
     }
 
 
-@router.get("", dependencies=[Depends(require_business_access)])
+@router.get("")
 def list_booking_attachments(
     business_slug: str,
     booking_id: int,
+    actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
 ):
     business = get_business_or_404(db, business_slug)
     booking = get_booking_or_404(db, business.id, booking_id)
+    ensure_can_manage_booking(
+        db, business_slug=business_slug, booking=booking, user=actor
+    )
 
     attachments = (
         db.query(BookingAttachment)

@@ -41,6 +41,7 @@
       <button class="admin-tab" type="button" data-section="bookings" aria-selected="false">Reservas</button>
       <button class="admin-tab" type="button" data-section="messages" aria-selected="false">Mensajes WhatsApp</button>
       <button class="admin-tab" type="button" data-section="services" aria-selected="false">Servicios</button>
+      <button class="admin-tab" type="button" data-section="staff" aria-selected="false">Equipo</button>
       <button class="admin-tab" type="button" data-section="schedule" aria-selected="false">Horarios</button>
       <button class="admin-tab" type="button" data-section="business" aria-selected="false">Datos del negocio</button>
       <button class="admin-tab" type="button" data-section="reviews" aria-selected="false">Reseñas</button>
@@ -237,6 +238,24 @@
       </div>
     </section>
 
+    <section class="section admin-section staff-settings-section" data-admin-section="staff">
+      <div class="section-header">
+        <div>
+          <h2>Equipo y profesionales</h2>
+          <p>Gestiona el acceso, la visibilidad publica y el horario de cada miembro.</p>
+        </div>
+      </div>
+      <div class="new-service-form">
+        <label>Email<input id="new-staff-email" type="email" /></label>
+        <label>Rol<select id="new-staff-role"><option value="business_staff">Personal</option><option value="business_admin">Administrador</option></select></label>
+        <label>Nombre publico<input id="new-staff-public-name" type="text" /></label>
+        <label class="active-setting"><input id="new-staff-bookable" type="checkbox" />Reservable</label>
+        <button id="create-staff-member" class="btn btn-primary" type="button">Añadir miembro</button>
+      </div>
+      <p id="staff-feedback" class="inline-feedback"></p>
+      <div id="admin-staff-list" class="admin-services-list"><p class="empty-state">Cargando equipo...</p></div>
+    </section>
+
     <section class="section admin-section message-outbox-section" data-admin-section="messages">
       <div class="section-header">
         <div>
@@ -391,6 +410,10 @@
         </div>
 
       </div>
+
+      <label id="booking-staff-filter-field">Profesional
+        <select id="booking-staff-filter"><option value="">Todos</option></select>
+      </label>
 
       <nav class="booking-view-tabs" aria-label="Vistas de reservas">
         <button class="booking-view-tab booking-view-tab-active" type="button" data-booking-view="pending">Pendientes</button>

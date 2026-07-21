@@ -13,6 +13,8 @@ let calendarDays = [];
 let galleryTimer = null;
 let landingAuthUser = null;
 let currentLabels = null;
+let bookableStaff = [];
+let selectedStaffId = "";
 
 const LANDING_LABELS = {
   default: {
@@ -92,6 +94,9 @@ async function loadBusiness() {
     const settings = settingsResponse.ok ? await settingsResponse.json() : null;
     const galleryResponse = await fetch(`${API_BASE_URL}/api/businesses/${slug}/media/gallery`);
     const galleryData = galleryResponse.ok ? await galleryResponse.json() : { images: [] };
+    const staffResponse = await fetch(`${API_BASE_URL}/api/businesses/${slug}/staff`);
+    const staffData = staffResponse.ok ? await staffResponse.json() : { staff: [] };
+    bookableStaff = staffData.staff || [];
 
     currentBusiness = {
       ...business,
@@ -106,6 +111,7 @@ async function loadBusiness() {
     };
 
     applyBusinessData(currentBusiness);
+    renderStaffOptions();
   } catch (error) {
     console.error("Error cargando negocio:", error);
     renderBackendError();
@@ -284,6 +290,20 @@ function renderServiceOptions(services) {
   });
 }
 
+function renderStaffOptions() {
+  const field = document.getElementById("staff-select-field");
+  const select = document.getElementById("staff-select");
+  field.hidden = bookableStaff.length === 0;
+  select.innerHTML = `<option value="">Cualquiera disponible</option>`;
+  bookableStaff.forEach((member) => {
+    const option = document.createElement("option");
+    option.value = String(member.id);
+    option.textContent = member.public_name;
+    select.appendChild(option);
+  });
+  selectedStaffId = "";
+}
+
 function renderGallery(gallery) {
   const section = document.getElementById("gallery-section");
   const image = document.getElementById("gallery-image");
@@ -330,9 +350,9 @@ function getServiceById(serviceId) {
 
 async function fetchAvailableSlots(serviceId, date) {
   const slug = getBusinessSlug();
-  const response = await fetch(
-    `${API_BASE_URL}/api/businesses/${slug}/available-slots?service_id=${encodeURIComponent(serviceId)}&date=${encodeURIComponent(date)}`
-  );
+  const params = new URLSearchParams({ service_id: serviceId, date });
+  if (selectedStaffId) params.set("staff_business_user_id", selectedStaffId);
+  const response = await fetch(`${API_BASE_URL}/api/businesses/${slug}/available-slots?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error("No se pudo cargar la disponibilidad.");
@@ -352,6 +372,7 @@ async function fetchCalendarDays(serviceId) {
   if (serviceId) {
     params.set("service_id", serviceId);
   }
+  if (selectedStaffId) params.set("staff_business_user_id", selectedStaffId);
 
   const response = await fetch(`${API_BASE_URL}/api/businesses/${slug}/calendar-days?${params.toString()}`);
 
@@ -665,9 +686,16 @@ async function uploadBookingPhotos(slug, bookingId, bookingManageToken) {
 function setupBookingForm() {
   const form = document.getElementById("booking-form");
   const serviceSelect = document.getElementById("service-select");
+  const staffSelect = document.getElementById("staff-select");
 
   serviceSelect.addEventListener("change", () => {
     selectedService = getServiceById(serviceSelect.value);
+    resetSelectedSlot();
+    renderAvailableDays();
+  });
+
+  staffSelect.addEventListener("change", () => {
+    selectedStaffId = staffSelect.value;
     resetSelectedSlot();
     renderAvailableDays();
   });
@@ -705,6 +733,7 @@ function setupBookingForm() {
           customer_name: name,
           customer_phone: phone,
           service_id: selectedService.id,
+          staff_business_user_id: selectedStaffId ? Number(selectedStaffId) : null,
           start_datetime: selectedSlot.start,
           preferred_day_label: selectedDateLabel,
           notes: notes || null,
@@ -742,6 +771,7 @@ function setupBookingForm() {
 
       form.reset();
       selectedService = null;
+      selectedStaffId = "";
       resetSelectedSlot();
       renderAvailableDays();
     } catch (error) {

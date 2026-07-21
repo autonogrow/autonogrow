@@ -143,6 +143,11 @@ def serialize_business_user(item: BusinessUser) -> dict:
         "picture_url": item.user.picture_url,
         "role": item.role,
         "active": item.active,
+        "public_name": item.public_name,
+        "bookable": item.bookable,
+        "show_schedule": item.show_schedule,
+        "bio": item.bio,
+        "avatar_url": item.avatar_url,
         "pending": item.user.google_sub is None,
         "created_at": item.created_at.isoformat(),
     }
@@ -337,11 +342,24 @@ def add_business_user(
     if membership and membership.active:
         raise HTTPException(status_code=409, detail="El usuario ya está asignado a este negocio")
     if membership is None:
-        membership = BusinessUser(business_id=business.id, user_id=user.id, role=payload.role, active=True)
+        membership = BusinessUser(
+            business_id=business.id,
+            user_id=user.id,
+            role=payload.role,
+            active=True,
+            public_name=payload.public_name,
+            bookable=payload.bookable,
+            show_schedule=payload.show_schedule,
+            bio=payload.bio,
+        )
         db.add(membership)
     else:
         membership.role = payload.role
         membership.active = True
+        membership.public_name = payload.public_name
+        membership.bookable = payload.bookable
+        membership.show_schedule = payload.show_schedule
+        membership.bio = payload.bio
     db.commit()
     db.refresh(membership)
     record_audit(db, action="user_assigned_to_business", request=request, actor=actor, business_id=business.id, resource_type="business_user", resource_id=membership.id, metadata={"role": membership.role})
