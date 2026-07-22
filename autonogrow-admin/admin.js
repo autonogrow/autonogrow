@@ -116,6 +116,9 @@ function setupBookingViews() {
   document.querySelectorAll("[data-booking-view]").forEach((tab) => {
     tab.addEventListener("click", () => {
       currentBookingView = tab.dataset.bookingView;
+      const url = new URL(window.location.href);
+      url.searchParams.delete("booking");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}#bookings`);
       document.querySelectorAll("[data-booking-view]").forEach((item) => {
         item.classList.toggle("booking-view-tab-active", item === tab);
       });
@@ -1121,20 +1124,23 @@ function renderStaffMembers() {
     container.innerHTML = `<p class="empty-state">Todavia no hay miembros asignados.</p>`;
     return;
   }
+  const canRemoveMembers = adminMembership?.role === "business_admin";
   container.innerHTML = staffMembers.map((member) => `
     <article class="admin-service-item staff-member-card" data-staff-id="${member.id}">
       <div class="service-edit-grid">
         <label>Email<input value="${escapeHtml(member.email)}" disabled /></label>
-        <label>Nombre publico<input class="staff-public-name" value="${escapeHtml(member.public_name || "")}" /></label>
-        <label>Rol<select class="staff-role"><option value="business_staff" ${member.role === "business_staff" ? "selected" : ""}>Personal</option><option value="business_admin" ${member.role === "business_admin" ? "selected" : ""}>Administrador</option></select></label>
-        <label class="active-setting"><input class="staff-active" type="checkbox" ${member.active ? "checked" : ""} />Activo</label>
-        <label class="active-setting"><input class="staff-bookable" type="checkbox" ${member.bookable ? "checked" : ""} />Reservable</label>
-        <label class="active-setting"><input class="staff-show-schedule" type="checkbox" ${member.show_schedule ? "checked" : ""} />Mostrar/usar horario</label>
-        <label class="field-wide">Bio<textarea class="staff-bio" rows="2">${escapeHtml(member.bio || "")}</textarea></label>
+        <label>Nombre publico<input class="staff-public-name" value="${escapeHtml(member.public_name || "")}" ${member.active ? "" : "disabled"} /></label>
+        <label>Rol<select class="staff-role" ${member.active ? "" : "disabled"}><option value="business_staff" ${member.role === "business_staff" ? "selected" : ""}>Personal</option><option value="business_admin" ${member.role === "business_admin" ? "selected" : ""}>Administrador</option></select></label>
+        <label class="active-setting"><input class="staff-active" type="checkbox" ${member.active ? "checked" : ""} disabled />${member.active ? "Activo" : "Fuera del equipo"}</label>
+        <label class="active-setting"><input class="staff-bookable" type="checkbox" ${member.bookable ? "checked" : ""} ${member.active ? "" : "disabled"} />Reservable</label>
+        <label class="active-setting"><input class="staff-show-schedule" type="checkbox" ${member.show_schedule ? "checked" : ""} ${member.active ? "" : "disabled"} />Mostrar/usar horario</label>
+        <label class="field-wide">Bio<textarea class="staff-bio" rows="2" ${member.active ? "" : "disabled"}>${escapeHtml(member.bio || "")}</textarea></label>
       </div>
       <div class="settings-actions">
-        <button class="btn btn-small btn-primary" type="button" onclick="saveStaffMember(${member.id})">Guardar ficha</button>
-        <button class="btn btn-small btn-secondary" type="button" onclick="editStaffSchedule(${member.id})">Editar horario</button>
+        ${member.active ? `<button class="btn btn-small btn-primary" type="button" onclick="saveStaffMember(${member.id})">Guardar ficha</button>` : ""}
+        ${member.active ? `<button class="btn btn-small btn-secondary" type="button" onclick="editStaffSchedule(${member.id})">Editar horario</button>` : ""}
+        ${canRemoveMembers && member.active ? `<button class="btn btn-small btn-danger" type="button" onclick="removeStaffMember(${member.id})">Eliminar del equipo</button>` : ""}
+        ${canRemoveMembers && !member.active ? `<button class="btn btn-small btn-secondary" type="button" onclick="reactivateStaffMember(${member.id})">Reactivar</button>` : ""}
       </div>
     </article>
   `).join("");
@@ -1170,7 +1176,6 @@ async function saveStaffMember(memberId) {
   const payload = {
     public_name: card.querySelector(".staff-public-name").value.trim() || null,
     role: card.querySelector(".staff-role").value,
-    active: card.querySelector(".staff-active").checked,
     bookable: card.querySelector(".staff-bookable").checked,
     show_schedule: card.querySelector(".staff-show-schedule").checked,
     bio: card.querySelector(".staff-bio").value.trim() || null
@@ -1181,6 +1186,77 @@ async function saveStaffMember(memberId) {
   const result = await response.json().catch(() => null);
   if (!response.ok) return alert(result?.detail || "No se pudo guardar la ficha.");
   await loadStaffMembers();
+}
+
+async function reactivateStaffMember(memberId) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ active: true })
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) return alert(result?.detail || "No se pudo reactivar al miembro.");
+  await loadStaffMembers();
+}
+
+async function removeStaffMember(memberId) {
+  const member = staffMembers.find((item) => item.id === memberId);
+  if (!member) return;
+  const displayName = member.public_name || member.name || member.email;
+  if (!window.confirm(`¿Eliminar a ${displayName} del equipo? Perderá el acceso y dejará de estar disponible para nuevas reservas.`)) return;
+
+  const feedback = document.getElementById("staff-feedback");
+  feedback.className = "inline-feedback";
+  feedback.textContent = "Comprobando citas asignadas...";
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}`, {
+      method: "DELETE"
+    });
+    const result = await response.json().catch(() => null);
+    if (response.status === 409 && result?.detail === "member_has_future_bookings") {
+      feedback.textContent = "";
+      openStaffRemovalModal(member, result);
+      return;
+    }
+    if (!response.ok) throw new Error(result?.message || result?.detail || "No se pudo eliminar al miembro del equipo.");
+    feedback.className = "inline-feedback success";
+    feedback.textContent = `${displayName} ya no forma parte del equipo.`;
+    await loadStaffMembers();
+  } catch (error) {
+    console.error(error);
+    feedback.className = "inline-feedback error";
+    feedback.textContent = error.message || "No se pudo eliminar al miembro del equipo.";
+  }
+}
+
+function openStaffRemovalModal(member, result) {
+  const modal = document.getElementById("staff-removal-modal");
+  const bookings = result.bookings || [];
+  document.getElementById("staff-removal-modal-title").textContent = `No se puede eliminar a ${member.public_name || member.name || member.email}`;
+  document.getElementById("staff-removal-modal-message").textContent = result.message || "Gestiona primero las citas asignadas.";
+  document.getElementById("staff-removal-bookings").innerHTML = bookings.map((booking) => `
+    <article class="staff-removal-booking">
+      <div>
+        <strong>${escapeHtml(formatBlockingBookingDate(booking.date, booking.start_time))}</strong>
+        <span>${escapeHtml(booking.customer_name)}${booking.customer_phone ? ` · ${escapeHtml(booking.customer_phone)}` : ""}</span>
+        <span>${escapeHtml(booking.service_name)} · ${escapeHtml(getStatusLabel(booking.status))}</span>
+        <small>Reserva #${booking.id}</small>
+      </div>
+      <button class="btn btn-small btn-primary" type="button" onclick="goToBooking(${booking.id})">Ir a la cita</button>
+    </article>
+  `).join("");
+  modal.classList.add("open");
+}
+
+function closeStaffRemovalModal() {
+  document.getElementById("staff-removal-modal")?.classList.remove("open");
+}
+
+function formatBlockingBookingDate(date, time) {
+  if (!date) return time || "Fecha pendiente";
+  const value = new Date(`${date}T${time || "00:00"}:00`);
+  if (Number.isNaN(value.getTime())) return `${date} · ${time || ""}`.trim();
+  return value.toLocaleString("es-ES", { dateStyle: "medium", timeStyle: time ? "short" : undefined });
 }
 
 function parseStaffWindows(value) {
@@ -1241,6 +1317,10 @@ async function loadBookings() {
     renderReviewStats();
     renderReviewRequests();
     renderBookings();
+    const requestedBookingId = Number(new URLSearchParams(window.location.search).get("booking"));
+    if (Number.isInteger(requestedBookingId) && requestedBookingId > 0) {
+      goToBooking(requestedBookingId, false);
+    }
     if (!isBusinessStaff()) renderGrowth();
   } catch (error) {
     console.error(error);
@@ -1635,6 +1715,8 @@ function renderBookings() {
   bookings.forEach((booking) => {
     const card = document.createElement("article");
     card.className = "booking-card";
+    card.id = `booking-${booking.id}`;
+    card.dataset.bookingId = booking.id;
     card.innerHTML = `
       <div class="booking-top">
         <div class="booking-title">
@@ -1677,6 +1759,49 @@ function renderBookings() {
 
     list.appendChild(card);
   });
+}
+
+function getViewForBooking(booking) {
+  if (["requested", "pending"].includes(booking.status)) return "pending";
+  const isClosed = ["completed", "rejected", "cancelled", "no_show"].includes(booking.status);
+  const date = getBookingDateKey(booking);
+  const today = getMadridDateKey();
+  const tomorrow = addDaysToDateKey(today, 1);
+  if (isClosed || (date && date < today)) return "history";
+  if (date === today) return "today";
+  if (date === tomorrow) return "tomorrow";
+  return "upcoming";
+}
+
+function goToBooking(bookingId, updateUrl = true) {
+  // TODO: sustituir esta navegacion por una accion de reasignacion cuando exista
+  // un endpoint para cambiar el profesional de una reserva.
+  const booking = allBookings.find((item) => item.id === bookingId);
+  if (!booking) {
+    alert(`No se encontró la reserva #${bookingId}.`);
+    return;
+  }
+
+  closeStaffRemovalModal();
+  selectedStaffFilter = "";
+  document.getElementById("booking-staff-filter").value = "";
+  currentBookingView = getViewForBooking(booking);
+  document.querySelectorAll("[data-booking-view]").forEach((tab) => {
+    tab.classList.toggle("booking-view-tab-active", tab.dataset.bookingView === currentBookingView);
+  });
+  if (updateUrl) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("booking", bookingId);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}#bookings`);
+  }
+  showAdminSection("bookings");
+  renderBookings();
+
+  const card = document.getElementById(`booking-${bookingId}`);
+  if (!card) return;
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  card.classList.add("booking-card-highlight");
+  window.setTimeout(() => card.classList.remove("booking-card-highlight"), 4000);
 }
 
 function renderReviewRequest(booking) {

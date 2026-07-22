@@ -95,6 +95,7 @@ def run_lightweight_migrations() -> None:
                 "show_schedule": "BOOLEAN NOT NULL DEFAULT 1",
                 "bio": "TEXT",
                 "avatar_url": "TEXT",
+                "removed_at": "DATETIME",
             }
             for column_name, column_type in staff_columns.items():
                 if column_name not in business_user_columns:

@@ -1125,6 +1125,10 @@ input {
     animation: none;
   }
 
+  .booking-card-highlight {
+    animation: none !important;
+  }
+
   .growth-progress span,
   .growth-summary-progress span {
     transition: none;
@@ -1287,6 +1291,13 @@ input {
 .brand-gallery-list img { width: 72px; height: 56px; object-fit: cover; border-radius: 8px; }
 @media (max-width: 720px) { .brand-media-grid { grid-template-columns: 1fr; } .brand-gallery-list article { grid-template-columns: 64px 1fr; } }
 .staff-member-card { display: grid; gap: 14px; }
+.staff-removal-bookings { display: grid; gap: 12px; }
+.staff-removal-booking { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 18px; background: #f8fafc; }
+.staff-removal-booking > div { display: grid; gap: 4px; }
+.staff-removal-booking span, .staff-removal-booking small { color: var(--muted); }
+.booking-card-highlight { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.2); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 22%, transparent); animation: booking-highlight-pulse 1s ease-in-out 2; }
+@keyframes booking-highlight-pulse { 50% { transform: translateY(-3px); } }
+@media (max-width: 720px) { .staff-removal-booking { align-items: stretch; flex-direction: column; } }
 .internal-notes-editor { display: grid; gap: 10px; margin-top: 14px; }
 .internal-notes-editor textarea { width: 100%; margin-top: 6px; }
 #booking-staff-filter-field { display: grid; gap: 6px; min-width: 220px; }

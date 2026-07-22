@@ -477,6 +477,22 @@
     </div>
   </div>
 
+  <div id="staff-removal-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="staff-removal-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Citas pendientes</p>
+          <h2 id="staff-removal-modal-title">No se puede eliminar este miembro</h2>
+        </div>
+        <button class="modal-close" type="button" onclick="closeStaffRemovalModal()" aria-label="Cerrar">x</button>
+      </div>
+      <div class="modal-content">
+        <p id="staff-removal-modal-message"></p>
+        <div id="staff-removal-bookings" class="staff-removal-bookings"></div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
   <script src="admin.js"></script>

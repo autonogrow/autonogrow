@@ -1,7 +1,9 @@
 import json
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
@@ -10,6 +12,7 @@ from app.core.database import get_db
 from app.core.security import get_business_membership, require_business_access, require_business_admin
 from app.models import (
     AvailabilitySettings,
+    Booking,
     Business,
     BusinessUser,
     BusinessUserAvailability,
@@ -93,6 +96,10 @@ class StaffExceptionCreate(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+BLOCKING_BOOKING_STATUSES = {"requested", "pending", "confirmed"}
+TERMINAL_BOOKING_STATUSES = {"cancelled", "rejected", "completed", "no_show"}
+
+
 def get_business_or_404(db: Session, business_slug: str, *, public: bool = False) -> Business:
     query = db.query(Business).filter(Business.slug == business_slug)
     if public:
@@ -134,7 +141,73 @@ def serialize_member(member: BusinessUser) -> dict:
         "show_schedule": member.show_schedule,
         "bio": member.bio,
         "avatar_url": member.avatar_url,
+        "removed_at": member.removed_at.isoformat() if member.removed_at else None,
         "pending": member.user.google_sub is None,
+    }
+
+
+def get_business_now(db: Session, business_id: int) -> datetime:
+    settings = (
+        db.query(AvailabilitySettings)
+        .filter(AvailabilitySettings.business_id == business_id)
+        .first()
+    )
+    timezone_name = settings.timezone if settings else "Europe/Madrid"
+    try:
+        return datetime.now(ZoneInfo(timezone_name)).replace(tzinfo=None)
+    except ZoneInfoNotFoundError:
+        return datetime.utcnow()
+
+
+def get_booking_start(booking: Booking) -> datetime | None:
+    if booking.start_datetime:
+        return booking.start_datetime
+    if not booking.preferred_date or not booking.preferred_time:
+        return None
+    try:
+        return datetime.fromisoformat(
+            f"{booking.preferred_date}T{booking.preferred_time}"
+        )
+    except ValueError:
+        return None
+
+
+def get_staff_removal_blockers(
+    db: Session, *, business_id: int, business_user_id: int
+) -> list[Booking]:
+    now = get_business_now(db, business_id)
+    candidates = (
+        db.query(Booking)
+        .filter(
+            Booking.business_id == business_id,
+            Booking.staff_business_user_id == business_user_id,
+            ~Booking.status.in_(TERMINAL_BOOKING_STATUSES),
+        )
+        .all()
+    )
+    blockers = []
+    for booking in candidates:
+        starts_at = get_booking_start(booking)
+        if booking.status in BLOCKING_BOOKING_STATUSES or bool(
+            starts_at and starts_at > now
+        ):
+            blockers.append(booking)
+    return sorted(
+        blockers,
+        key=lambda booking: (get_booking_start(booking) or datetime.max, booking.id),
+    )
+
+
+def serialize_removal_blocker(booking: Booking) -> dict:
+    starts_at = get_booking_start(booking)
+    return {
+        "id": booking.id,
+        "date": starts_at.date().isoformat() if starts_at else booking.preferred_date,
+        "start_time": starts_at.strftime("%H:%M") if starts_at else booking.preferred_time,
+        "customer_name": booking.customer.name,
+        "customer_phone": booking.customer.phone,
+        "service_name": booking.service_name,
+        "status": booking.status,
     }
 
 
@@ -280,6 +353,7 @@ def create_staff(
     else:
         for field, value in values.items():
             setattr(member, field, value)
+        member.removed_at = None
     db.commit()
     db.refresh(member)
     record_audit(
@@ -304,8 +378,36 @@ def update_staff(
         db, business_id=business.id, business_user_id=business_user_id
     )
     updates = payload.model_dump(exclude_unset=True)
+    if member.removed_at is not None and updates.get("active") is not True:
+        raise HTTPException(
+            status_code=409,
+            detail="Reactivate the team member before editing their profile",
+        )
+    if updates.get("active") is False and member.active:
+        raise HTTPException(
+            status_code=409,
+            detail="Use DELETE /staff/{business_user_id} to remove an active team member safely",
+        )
+    if (
+        updates.get("role") == "business_staff"
+        and member.role == "business_admin"
+        and member.active
+    ):
+        active_admin_count = (
+            db.query(BusinessUser)
+            .filter(
+                BusinessUser.business_id == business.id,
+                BusinessUser.role == "business_admin",
+                BusinessUser.active.is_(True),
+            )
+            .count()
+        )
+        if active_admin_count <= 1:
+            raise HTTPException(status_code=409, detail="last_active_admin")
     for field, value in updates.items():
         setattr(member, field, value.strip() or None if isinstance(value, str) else value)
+    if updates.get("active") is True:
+        member.removed_at = None
     member.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(member)
@@ -313,6 +415,82 @@ def update_staff(
         db, action="user_role_changed", request=request, actor=actor,
         business_id=business.id, resource_type="business_user", resource_id=member.id,
         metadata={"role": member.role, "active": member.active, "bookable": member.bookable},
+    )
+    return {"ok": True, "staff_member": serialize_member(member)}
+
+
+@admin_router.delete("/{business_user_id}")
+def remove_staff(
+    business_slug: str,
+    business_user_id: int,
+    request: Request,
+    actor: User = Depends(require_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    actor_membership = get_business_membership(
+        db, business_slug=business_slug, user_id=actor.id
+    )
+    if actor_membership is None or actor_membership.role != "business_admin":
+        raise HTTPException(
+            status_code=403, detail="Business administrator access required"
+        )
+
+    member = get_member_or_404(
+        db, business_id=business.id, business_user_id=business_user_id
+    )
+
+    if member.user_id == actor.id:
+        active_admin_count = (
+            db.query(BusinessUser)
+            .filter(
+                BusinessUser.business_id == business.id,
+                BusinessUser.role == "business_admin",
+                BusinessUser.active.is_(True),
+            )
+            .count()
+        )
+        if active_admin_count <= 1:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "last_active_admin",
+                    "message": "No puedes eliminar al único administrador activo del negocio.",
+                },
+            )
+
+    blockers = get_staff_removal_blockers(
+        db, business_id=business.id, business_user_id=member.id
+    )
+    if blockers:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "member_has_future_bookings",
+                "message": (
+                    "Reasigna, cancela o completa las citas indicadas antes de "
+                    "eliminar a este miembro del equipo."
+                ),
+                "bookings": [serialize_removal_blocker(item) for item in blockers],
+            },
+        )
+
+    member.active = False
+    member.bookable = False
+    member.show_schedule = False
+    member.removed_at = datetime.utcnow()
+    member.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(member)
+    record_audit(
+        db,
+        action="user_removed_from_business",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_user",
+        resource_id=member.id,
+        metadata={"role": member.role, "soft_delete": True},
     )
     return {"ok": True, "staff_member": serialize_member(member)}
 

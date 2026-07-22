@@ -148,6 +148,7 @@ def serialize_business_user(item: BusinessUser) -> dict:
         "show_schedule": item.show_schedule,
         "bio": item.bio,
         "avatar_url": item.avatar_url,
+        "removed_at": item.removed_at.isoformat() if item.removed_at else None,
         "pending": item.user.google_sub is None,
         "created_at": item.created_at.isoformat(),
     }
@@ -356,6 +357,7 @@ def add_business_user(
     else:
         membership.role = payload.role
         membership.active = True
+        membership.removed_at = None
         membership.public_name = payload.public_name
         membership.bookable = payload.bookable
         membership.show_schedule = payload.show_schedule
@@ -382,6 +384,8 @@ def update_business_user(
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(item, field, value)
+    if updates.get("active") is True:
+        item.removed_at = None
     db.commit()
     db.refresh(item)
     action = "user_deactivated" if updates.get("active") is False else "user_role_changed"
