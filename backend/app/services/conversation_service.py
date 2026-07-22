@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import (
     Business,
     Conversation,
@@ -304,7 +305,13 @@ def ensure_default_templates(
 
 
 def render_template(body: str, business: Business) -> str:
-    public_booking_url = f"/autonogrow-landing/?b={business.slug}"
+    booking_path = f"/autonogrow-landing/?b={business.slug}"
+    frontend_origins = get_settings().frontend_origin_list
+    public_booking_url = (
+        f"{frontend_origins[0].rstrip('/')}{booking_path}"
+        if frontend_origins
+        else booking_path
+    )
     if not business.address and body == "Estamos en {business_address}":
         return f"Puedes ver la información del negocio aquí: {public_booking_url}"
     business_address = business.address or public_booking_url

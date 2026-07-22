@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
 
+from app.core.config import Settings
 from app.core.database import Base
 from app.core.security import get_current_user, require_business_access, require_business_admin
 from app.models import Business, BusinessUser, Conversation, ConversationMessage, User
@@ -36,6 +37,13 @@ from app.services.conversation_service import render_template
 
 class ConversationsTest(unittest.TestCase):
     def setUp(self):
+        self.public_origin_patcher = patch(
+            "app.services.conversation_service.get_settings",
+            return_value=SimpleNamespace(
+                frontend_origin_list=["http://127.0.0.1:5500"]
+            ),
+        )
+        self.public_origin_patcher.start()
         self.engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(self.engine)
         self.db = sessionmaker(bind=self.engine)()
@@ -89,6 +97,7 @@ class ConversationsTest(unittest.TestCase):
         self.db.commit()
 
     def tearDown(self):
+        self.public_origin_patcher.stop()
         self.db.close()
         self.engine.dispose()
 
@@ -297,7 +306,10 @@ class ConversationsTest(unittest.TestCase):
         self.assertEqual(len(listed), 4)
         welcome = next(item for item in listed if item["name"] == "Mensaje de bienvenida")
         self.assertIn("Business A", welcome["rendered_body"])
-        self.assertIn("/autonogrow-landing/?b=conversation-a", welcome["rendered_body"])
+        self.assertIn(
+            "http://127.0.0.1:5500/autonogrow-landing/?b=conversation-a",
+            welcome["rendered_body"],
+        )
 
         created = admin_create_conversation_template(
             self.business_a.slug,
@@ -322,7 +334,7 @@ class ConversationsTest(unittest.TestCase):
         )["template"]
         self.assertEqual(
             updated["rendered_body"],
-            "Reserva en /autonogrow-landing/?b=conversation-a",
+            "Reserva en http://127.0.0.1:5500/autonogrow-landing/?b=conversation-a",
         )
         deleted = admin_delete_conversation_template(
             self.business_a.slug,
@@ -334,12 +346,68 @@ class ConversationsTest(unittest.TestCase):
         self.assertTrue(deleted["ok"])
         self.assertEqual(
             render_template("Reserva: {public_booking_url}", self.business_a),
-            "Reserva: /autonogrow-landing/?b=conversation-a",
+            "Reserva: http://127.0.0.1:5500/autonogrow-landing/?b=conversation-a",
         )
         self.business_a.address = None
         self.assertEqual(
             render_template("Estamos en {business_address}", self.business_a),
-            "Puedes ver la información del negocio aquí: /autonogrow-landing/?b=conversation-a",
+            "Puedes ver la información del negocio aquí: http://127.0.0.1:5500/autonogrow-landing/?b=conversation-a",
+        )
+
+    def test_public_booking_url_uses_first_configured_frontend_origin(self):
+        with patch.dict(
+            "os.environ",
+            {"FRONTEND_ORIGINS": "https://staging.autonogrow.es"},
+        ):
+            settings = Settings(_env_file=None, app_env="local")
+        business = Business(slug="estudio-prueba", name="Estudio Prueba")
+
+        with patch(
+            "app.services.conversation_service.get_settings",
+            return_value=settings,
+        ):
+            rendered = render_template(
+                "Reserva: {public_booking_url}",
+                business,
+            )
+
+        self.assertEqual(
+            rendered,
+            "Reserva: https://staging.autonogrow.es/autonogrow-landing/?b=estudio-prueba",
+        )
+
+        with patch(
+            "app.services.conversation_service.get_settings",
+            return_value=SimpleNamespace(
+                frontend_origin_list=[
+                    "https://staging.autonogrow.es/",
+                    "https://admin.autonogrow.es",
+                ]
+            ),
+        ):
+            rendered_from_first_origin = render_template(
+                "{public_booking_url}",
+                business,
+            )
+
+        self.assertEqual(
+            rendered_from_first_origin,
+            "https://staging.autonogrow.es/autonogrow-landing/?b=estudio-prueba",
+        )
+
+    def test_public_booking_url_keeps_relative_fallback_without_origins(self):
+        with patch(
+            "app.services.conversation_service.get_settings",
+            return_value=SimpleNamespace(frontend_origin_list=[]),
+        ):
+            rendered = render_template(
+                "Reserva: {public_booking_url}",
+                self.business_a,
+            )
+
+        self.assertEqual(
+            rendered,
+            "Reserva: /autonogrow-landing/?b=conversation-a",
         )
 
     def test_webhook_secret_is_required_outside_local(self):
