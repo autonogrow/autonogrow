@@ -50,6 +50,7 @@ video {
 
 .brand-heading { display: flex; flex-direction: column; align-items: center; gap: 18px; }
 .business-logo { width: min(220px, 60vw); max-height: 150px; object-fit: contain; border-radius: 18px; }
+.hero #business-headline:empty, .hero #business-description:empty { display: none; }
 .gallery-indicators { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
 .gallery-indicator { width: 10px; height: 10px; padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--color-primary) 25%, transparent); cursor: pointer; }
 .gallery-indicator.active { background: var(--color-accent); transform: scale(1.25); }
@@ -790,6 +791,10 @@ textarea {
   border-radius: 20px;
   background: color-mix(in srgb, #fff 92%, var(--color-background));
 }
+
+/* La identidad del negocio siempre precede visualmente al resto de la landing. */
+.landing-layout > .hero-section { order: -100; }
+#booking-confirmation { scroll-margin-top: 24px; }
 
 @media (max-width: 760px) {
   .template-elegant .page, .template-beauty .page, .template-clinic .page,

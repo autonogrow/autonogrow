@@ -468,7 +468,9 @@ def update_staff_services(
     actor_membership = get_business_membership(
         db, business_slug=business_slug, user_id=actor.id
     )
-    if actor_membership is None or actor_membership.role != "business_admin":
+    if not actor.is_owner and (
+        actor_membership is None or actor_membership.role != "business_admin"
+    ):
         raise HTTPException(
             status_code=403, detail="Business administrator access required"
         )
@@ -530,7 +532,9 @@ def remove_staff(
     actor_membership = get_business_membership(
         db, business_slug=business_slug, user_id=actor.id
     )
-    if actor_membership is None or actor_membership.role != "business_admin":
+    if not actor.is_owner and (
+        actor_membership is None or actor_membership.role != "business_admin"
+    ):
         raise HTTPException(
             status_code=403, detail="Business administrator access required"
         )
@@ -539,7 +543,7 @@ def remove_staff(
         db, business_id=business.id, business_user_id=business_user_id
     )
 
-    if member.user_id == actor.id:
+    if member.role == "business_admin" and member.active:
         active_admin_count = (
             db.query(BusinessUser)
             .filter(

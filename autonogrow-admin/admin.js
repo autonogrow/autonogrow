@@ -1124,7 +1124,8 @@ function renderStaffMembers() {
   const inactiveContainer = document.getElementById("admin-inactive-staff-list");
   const activeMembers = staffMembers.filter((member) => member.active);
   const inactiveMembers = staffMembers.filter((member) => !member.active);
-  const canRemoveMembers = adminMembership?.role === "business_admin";
+  const canRemoveMembers = adminAuthUser?.is_owner ||
+    adminMembership?.role === "business_admin";
   const activeAdminCount = activeMembers.filter(
     (member) => member.role === "business_admin"
   ).length;

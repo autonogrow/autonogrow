@@ -806,6 +806,7 @@ function setupBookingForm() {
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    document.getElementById("booking-confirmation").hidden = true;
 
     const submitButton = form.querySelector('button[type="submit"]');
     const name = document.getElementById("client-name").value.trim();
@@ -866,7 +867,7 @@ function setupBookingForm() {
 
       const attachments = await uploadBookingPhotos(slug, result.booking.id, result.booking_manage_token);
 
-      showBookingConfirmation({
+      const confirmationData = {
         booking: result.booking,
         service: selectedService,
         date: selectedDate,
@@ -877,7 +878,7 @@ function setupBookingForm() {
         businessPhone: currentBusiness.phone,
         attachments,
         linkedToAccount: Boolean(result.linked_to_account)
-      });
+      };
 
       form.reset();
       selectedService = null;
@@ -886,6 +887,7 @@ function setupBookingForm() {
       resetSelectedSlot();
       renderStaffOptions();
       renderAvailableDays();
+      showBookingConfirmation(confirmationData);
     } catch (error) {
       console.error("Error enviando reserva:", error);
       alert(getErrorMessage(error, "No se pudo conectar con el sistema de reservas."));
@@ -899,7 +901,7 @@ function setupBookingForm() {
 }
 
 function showBookingConfirmation({ booking, service, date, dayLabel, time, businessName, businessAddress, businessPhone, attachments, linkedToAccount }) {
-  const feedback = document.getElementById("booking-feedback");
+  const feedback = document.getElementById("booking-confirmation");
   const calendarDetails = [
     `Tienes una cita para ${service.name} en ${businessName}. Te esperamos.`,
     booking.staff_display_name ? `Profesional: ${booking.staff_display_name}` : null,
@@ -923,7 +925,7 @@ function showBookingConfirmation({ booking, service, date, dayLabel, time, busin
     ? `<p>Reserva guardada en tu cuenta. <a href="../autonogrow-customer/index.html"><strong>Ver mis citas</strong></a>.</p>`
     : `<p>Puedes iniciar sesión para guardar y consultar tus citas.</p>`;
 
-  feedback.style.display = "block";
+  feedback.hidden = false;
   feedback.innerHTML = `
     <h3>Cita creada correctamente</h3>
     <p>Hemos registrado tu cita para <strong>${dayLabel}</strong> a las <strong>${time}</strong>.</p>
@@ -936,7 +938,7 @@ function showBookingConfirmation({ booking, service, date, dayLabel, time, busin
     </a>
   `;
 
-  feedback.scrollIntoView({ behavior: "smooth", block: "center" });
+  feedback.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function buildGoogleCalendarUrl({ title, details, location, date, time, durationMinutes }) {
