@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, field_validator
 
 CHANNELS = {"manual", "whatsapp", "instagram"}
 CONVERSATION_STATUSES = {"pending", "replied", "closed"}
+AUTOMATION_RULE_MODES = {"disabled", "semi_automatic", "automatic"}
 
 
 class ConversationCreate(BaseModel):
@@ -97,11 +98,7 @@ class ConversationAutomationRuleUpdate(BaseModel):
     @field_validator("mode")
     @classmethod
     def validate_mode(cls, value: str | None) -> str | None:
-        if value is not None and value not in {
-            "disabled",
-            "semi_automatic",
-            "automatic",
-        }:
+        if value is not None and value not in AUTOMATION_RULE_MODES:
             raise ValueError("Invalid automation mode")
         return value
 

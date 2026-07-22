@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from app.routers.conversations import (
     admin_get_conversation_automation,
     admin_list_conversation_suggestions,
     admin_send_conversation_message,
+    admin_send_conversation_suggestion,
     admin_update_conversation_automation_rule,
     admin_update_conversation_automation_settings,
     admin_update_conversation_suggestion,
@@ -39,6 +41,7 @@ from app.services.conversation_automation_service import (
     ensure_automation_configuration,
 )
 from app.services.conversation_intent_service import detect_intent, normalize_text
+from app.services.conversation_service import send_manual_message as service_send_manual_message
 
 
 class ConversationAutomationTest(unittest.TestCase):
@@ -332,6 +335,16 @@ class ConversationAutomationTest(unittest.TestCase):
             actor=self.admin_user,
             db=self.db,
         )
+        reloaded_config = admin_get_conversation_automation(
+            self.business_a.slug,
+            actor=self.admin_user,
+            db=self.db,
+        )
+        reloaded_booking_rule = next(
+            rule
+            for rule in reloaded_config["rules"]
+            if rule["intent"] == "booking_intent"
+        )
         owner_result = admin_update_conversation_automation_settings(
             self.business_a.slug,
             ConversationAutomationSettingsUpdate(auto_threshold=90),
@@ -340,13 +353,29 @@ class ConversationAutomationTest(unittest.TestCase):
             db=self.db,
         )
         self.assertEqual(updated_rule["rule"]["mode"], "automatic")
+        self.assertEqual(reloaded_booking_rule["mode"], "automatic")
         self.assertTrue(owner_result["settings"]["automation_enabled"])
         self.assertEqual(owner_result["settings"]["auto_threshold"], 90)
 
-    def test_staff_can_use_and_dismiss_suggestions(self):
+    def test_frontend_uses_consistent_automatic_mode_value(self):
+        admin_js = (
+            Path(__file__).resolve().parents[2]
+            / "autonogrow-admin"
+            / "admin.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('<option value="automatic"', admin_js)
+        self.assertIn(
+            'mode: row.querySelector(".conversation-automation-rule-mode").value',
+            admin_js,
+        )
+        self.assertIn('body.rule?.mode !== payload.mode', admin_js)
+
+    def test_staff_can_modify_use_and_dismiss_suggestions(self):
         self.configure(self.business_a, mode="semi_automatic")
         first = self.inbound("reservar", external_user_id="suggestion-use")
         second = self.inbound("quiero una cita", external_user_id="suggestion-dismiss")
+        third = self.inbound("tenéis hueco", external_user_id="suggestion-patch-use")
         suggestions = self.db.query(ConversationSuggestion).order_by(ConversationSuggestion.id).all()
         self.assertIs(
             require_business_access(self.business_a.slug, self.staff_user, self.db),
@@ -372,11 +401,91 @@ class ConversationAutomationTest(unittest.TestCase):
             actor=self.staff_user,
             db=self.db,
         )
+        marked_used = admin_update_conversation_suggestion(
+            self.business_a.slug,
+            suggestions[2].id,
+            ConversationSuggestionUpdate(status="used"),
+            self.request(),
+            actor=self.staff_user,
+            db=self.db,
+        )
 
         self.assertEqual(suggestions[0].status, "used")
         self.assertEqual(sent["message"]["sender_type"], "business")
         self.assertEqual(dismissed["suggestion"]["status"], "dismissed")
+        self.assertEqual(marked_used["suggestion"]["status"], "used")
         self.assertNotEqual(first["conversation_id"], second["conversation_id"])
+        self.assertNotEqual(second["conversation_id"], third["conversation_id"])
+        with self.assertRaises(HTTPException):
+            require_business_access(
+                self.business_a.slug,
+                self.customer_user,
+                self.db,
+            )
+
+    def test_staff_sends_suggestion_as_business_without_consuming_credit(self):
+        settings, _ = self.configure(self.business_a, mode="semi_automatic")
+        inbound = self.inbound("reservar", external_user_id="suggestion-direct-send")
+        suggestion = self.db.query(ConversationSuggestion).one()
+
+        result = admin_send_conversation_suggestion(
+            self.business_a.slug,
+            suggestion.id,
+            self.request("POST"),
+            actor=self.staff_user,
+            db=self.db,
+        )
+
+        conversation = self.db.get(Conversation, inbound["conversation_id"])
+        self.assertEqual(result["message"]["body"], suggestion.body)
+        self.assertEqual(result["message"]["sender_type"], "business")
+        self.assertEqual(result["message"]["delivery_status"], "sent")
+        self.assertEqual(result["suggestion"]["status"], "used")
+        self.assertEqual(result["conversation"]["status"], "replied")
+        self.assertEqual(conversation.last_message_text, suggestion.body)
+        self.assertIsNotNone(conversation.last_message_at)
+        self.assertIsNotNone(conversation.last_outbound_at)
+        self.assertEqual(settings.auto_used_current_period, 0)
+
+    def test_failed_suggestion_send_keeps_suggestion_pending(self):
+        settings, _ = self.configure(self.business_a, mode="semi_automatic")
+        inbound = self.inbound("reservar", external_user_id="suggestion-send-fails")
+        suggestion = self.db.query(ConversationSuggestion).one()
+
+        def fail_after_outbound_was_prepared(db, *, conversation, body):
+            service_send_manual_message(db, conversation=conversation, body=body)
+            raise RuntimeError("simulated send failure")
+
+        with patch(
+            "app.routers.conversations.send_manual_message",
+            side_effect=fail_after_outbound_was_prepared,
+        ):
+            with self.assertRaises(HTTPException) as failed:
+                admin_send_conversation_suggestion(
+                    self.business_a.slug,
+                    suggestion.id,
+                    self.request("POST"),
+                    actor=self.staff_user,
+                    db=self.db,
+                )
+
+        self.assertEqual(failed.exception.status_code, 500)
+        self.assertEqual(failed.exception.detail, "No se pudo enviar la sugerencia")
+        self.db.expire_all()
+        persisted_suggestion = self.db.get(ConversationSuggestion, suggestion.id)
+        conversation = self.db.get(Conversation, inbound["conversation_id"])
+        self.assertEqual(persisted_suggestion.status, "pending")
+        self.assertEqual(conversation.status, "pending")
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .filter(
+                ConversationMessage.conversation_id == conversation.id,
+                ConversationMessage.direction == "outbound",
+            )
+            .count(),
+            0,
+        )
+        self.assertEqual(settings.auto_used_current_period, 0)
 
     def test_configuration_and_suggestions_are_tenant_isolated(self):
         self.configure(self.business_a, mode="semi_automatic")

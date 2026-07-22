@@ -35,10 +35,12 @@ let conversationAutomation = null;
 let conversationSuggestions = [];
 let selectedConversationSuggestionId = null;
 let conversationSuggestionNotice = null;
+const sendingConversationSuggestionIds = new Set();
 let selectedConversationId = null;
 let conversationSearchTimer = null;
 let conversationLoadVersion = 0;
 let conversationDetailVersion = 0;
+let conversationAutomationLoadVersion = 0;
 const TEMPLATE_DESCRIPTIONS = {
   classic: "Estructura equilibrada para cualquier negocio.", elegant: "Diseño más premium y visual.",
   beauty: "Pensada para estética, manicura y peluquería.", clinic: "Limpia y profesional para centros de salud o consulta.",
@@ -1634,7 +1636,8 @@ function renderConversationDetail(conversation) {
           <span class="conversation-intent-badge">${escapeHtml(suggestion.intent_label)} · ${suggestion.confidence}%</span>
           <p>${escapeHtml(suggestion.body)}</p>
           <div class="conversation-suggestion-actions">
-            <button class="btn btn-primary btn-small" type="button" onclick="useConversationSuggestion(${suggestion.id})">Usar</button>
+            <button class="btn btn-primary btn-small" type="button" onclick="sendConversationSuggestion(${suggestion.id})">Enviar sugerencia</button>
+            <button class="btn btn-secondary btn-small" type="button" onclick="modifyConversationSuggestion(${suggestion.id})">Modificar</button>
             <button class="btn btn-secondary btn-small" type="button" onclick="dismissConversationSuggestion(${suggestion.id})">Descartar</button>
           </div>
         </article>
@@ -1711,14 +1714,35 @@ async function sendConversationReply() {
   }
 }
 
-function useConversationSuggestion(suggestionId) {
+async function sendConversationSuggestion(suggestionId) {
+  const suggestion = conversationSuggestions.find((item) => item.id === Number(suggestionId) && item.status === "pending");
+  if (!suggestion || sendingConversationSuggestionIds.has(suggestion.id)) return;
+  sendingConversationSuggestionIds.add(suggestion.id);
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-suggestions/${suggestion.id}/send`,
+      { method: "POST" }
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar la sugerencia."));
+    selectedConversationSuggestionId = null;
+    showConversationFeedback("Sugerencia enviada correctamente.");
+    await loadConversations();
+  } catch (error) {
+    showConversationFeedback(error.message || "No se pudo enviar la sugerencia.", true);
+  } finally {
+    sendingConversationSuggestionIds.delete(suggestion.id);
+  }
+}
+
+function modifyConversationSuggestion(suggestionId) {
   const suggestion = conversationSuggestions.find((item) => item.id === Number(suggestionId) && item.status === "pending");
   const textarea = document.getElementById("conversation-reply-body");
   if (!suggestion || !textarea) return;
   selectedConversationSuggestionId = suggestion.id;
   textarea.value = suggestion.body;
   textarea.focus();
-  showConversationFeedback("Sugerencia preparada. Se marcará como usada al enviar.");
+  showConversationFeedback("Puedes modificar la sugerencia. Se marcará como usada al enviar.");
 }
 
 async function dismissConversationSuggestion(suggestionId) {
@@ -1869,17 +1893,21 @@ async function mutateConversationTemplate(url, options) {
 }
 
 async function loadConversationAutomation() {
+  const requestVersion = ++conversationAutomationLoadVersion;
   const container = document.getElementById("conversation-automation-content");
   if (!container || !canManageConversationTemplates()) return;
   try {
     const response = await fetch(
-      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation`
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation`,
+      { cache: "no-store" }
     );
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cargar la automatización."));
+    if (requestVersion !== conversationAutomationLoadVersion) return;
     conversationAutomation = body;
     renderConversationAutomation();
   } catch (error) {
+    if (requestVersion !== conversationAutomationLoadVersion) return;
     console.error(error);
     conversationAutomation = null;
     container.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
@@ -1944,15 +1972,30 @@ async function saveConversationAutomationRule(intent) {
   const row = document.querySelector(`[data-automation-intent="${intent}"]`);
   if (!row) return;
   const templateValue = row.querySelector(".conversation-automation-rule-template").value;
-  await mutateConversationAutomation(
-    `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation/rules/${intent}`,
-    {
-      mode: row.querySelector(".conversation-automation-rule-mode").value,
-      template_id: templateValue ? Number(templateValue) : null,
-      active: row.querySelector(".conversation-automation-rule-active").checked
-    },
-    `Regla de ${conversationIntentLabel(intent)} actualizada.`
-  );
+  const payload = {
+    mode: row.querySelector(".conversation-automation-rule-mode").value,
+    template_id: templateValue ? Number(templateValue) : null,
+    active: row.querySelector(".conversation-automation-rule-active").checked
+  };
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation/rules/${intent}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar la regla."));
+    if (body.rule?.mode !== payload.mode) throw new Error("El backend no confirmó el modo seleccionado.");
+    await loadConversationAutomation();
+    const persistedRule = conversationAutomation?.rules?.find((rule) => rule.intent === intent);
+    if (persistedRule?.mode !== payload.mode) throw new Error("La regla no se recargó con el modo guardado.");
+    showConversationFeedback(`Regla de ${conversationIntentLabel(intent)} actualizada.`);
+  } catch (error) {
+    showConversationFeedback(error.message, true);
+  }
 }
 
 async function mutateConversationAutomation(url, payload, successMessage) {

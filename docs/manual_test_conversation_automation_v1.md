@@ -69,11 +69,11 @@ El detector convierte el texto a minúsculas, elimina acentos y signos, compacta
 2. Configura la intención como **Sugerir**.
 3. Envía un inbound que coincida con esa intención.
 4. Abre la conversación: debe aparecer **Respuesta sugerida**, pero no un outbound.
-5. Pulsa **Usar**: el texto pasa al editor.
-6. Envía el mensaje: la sugerencia cambia a `used` y el outbound se registra como manual.
-7. Como alternativa, pulsa **Descartar** y comprueba que desaparece de las pendientes.
+5. Pulsa **Enviar sugerencia**: el texto sugerido se registra directamente como outbound del negocio y la sugerencia cambia a `used`.
+6. En otra sugerencia, pulsa **Modificar**: el texto pasa al editor sin cambiar todavía de estado. Edita y envía; solo entonces cambia a `used`.
+7. Como alternativa, pulsa **Descartar** y comprueba que desaparece de las pendientes sin crear outbound.
 
-Usar o descartar una sugerencia no consume crédito automático.
+Enviar, modificar o descartar una sugerencia no consume crédito automático.
 
 ## 6. Verificar un envío automático
 

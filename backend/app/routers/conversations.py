@@ -569,6 +569,67 @@ def admin_update_conversation_suggestion(
     return {"ok": True, "suggestion": serialize_suggestion(suggestion)}
 
 
+@admin_router.post("/conversation-suggestions/{suggestion_id}/send", status_code=201)
+def admin_send_conversation_suggestion(
+    business_slug: str,
+    suggestion_id: int,
+    request: Request,
+    actor: User = Depends(require_business_access),
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    suggestion = get_suggestion_for_business(
+        db,
+        business_id=business.id,
+        suggestion_id=suggestion_id,
+    )
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="Conversation suggestion not found")
+    if suggestion.status != "pending":
+        raise HTTPException(status_code=409, detail="Conversation suggestion is not pending")
+    conversation = get_conversation_or_404(
+        db,
+        business_id=business.id,
+        conversation_id=suggestion.conversation_id,
+    )
+    try:
+        message = send_manual_message(
+            db,
+            conversation=conversation,
+            body=suggestion.body,
+        )
+        update_suggestion_status(suggestion, "used")
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo enviar la sugerencia",
+        ) from error
+    db.refresh(message)
+    db.refresh(suggestion)
+    db.refresh(conversation)
+    record_audit(
+        db,
+        action="conversation_suggestion_sent",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="conversation_suggestion",
+        resource_id=suggestion.id,
+        metadata={"conversation_id": conversation.id},
+    )
+    return {
+        "ok": True,
+        "message": serialize_message(message),
+        "suggestion": serialize_suggestion(suggestion),
+        "conversation": serialize_conversation(db, conversation),
+    }
+
+
 def verify_test_webhook_secret(provided_secret: str | None) -> None:
     settings = get_settings()
     configured_secret = settings.webhook_test_secret.strip()
