@@ -31,6 +31,10 @@ let staffMembers = [];
 let selectedStaffFilter = "";
 let conversations = [];
 let conversationTemplates = [];
+let conversationAutomation = null;
+let conversationSuggestions = [];
+let selectedConversationSuggestionId = null;
+let conversationSuggestionNotice = null;
 let selectedConversationId = null;
 let conversationSearchTimer = null;
 let conversationLoadVersion = 0;
@@ -379,6 +383,7 @@ async function loadAdminPanel() {
       loadMessageOutbox(),
       loadAdminGallery(),
       loadConversationTemplates(),
+      loadConversationAutomation(),
       loadConversations()
     ]);
     restoreAdminMediaStatus();
@@ -1497,6 +1502,27 @@ function conversationChannelLabel(channel) {
   return { manual: "Manual", whatsapp: "WhatsApp", instagram: "Instagram" }[channel] || channel;
 }
 
+function conversationIntentLabel(intent) {
+  return {
+    welcome_intent: "Bienvenida",
+    booking_intent: "Reserva",
+    price_intent: "Precio",
+    service_intent: "Servicios",
+    location_intent: "Ubicación",
+    hours_intent: "Horario",
+    human_intent: "Atención humana",
+    complaint_intent: "Queja",
+    cancel_reschedule_intent: "Cancelar o cambiar cita",
+    unknown: "Desconocida"
+  }[intent] || intent;
+}
+
+function conversationIntentBadge(item) {
+  if (!item.detected_intent) return "";
+  const confidence = Number.isFinite(Number(item.intent_confidence)) ? ` · ${Number(item.intent_confidence)}%` : "";
+  return `<span class="conversation-intent-badge">${escapeHtml(conversationIntentLabel(item.detected_intent))}${confidence}</span>`;
+}
+
 function formatConversationDate(value) {
   if (!value) return "Sin actividad";
   const date = new Date(value);
@@ -1552,6 +1578,7 @@ function renderConversationList() {
         <span class="conversation-status conversation-status-${item.status}">${escapeHtml(conversationStatusLabel(item.status))}</span>
       </span>
       <span class="conversation-channel">${escapeHtml(conversationChannelLabel(item.channel))}</span>
+      ${conversationIntentBadge(item)}
       <p>${escapeHtml(item.last_message_text || "Sin mensajes")}</p>
       <small>${escapeHtml(formatConversationDate(item.last_message_at))}${item.unread_count ? ` · ${item.unread_count} sin responder` : ""}</small>
     </button>
@@ -1560,17 +1587,28 @@ function renderConversationList() {
 
 async function selectConversation(conversationId, showLoading = true) {
   const requestVersion = ++conversationDetailVersion;
+  if (selectedConversationId !== Number(conversationId)) selectedConversationSuggestionId = null;
   selectedConversationId = Number(conversationId);
   renderConversationList();
   const detail = document.getElementById("conversation-detail");
   if (showLoading) detail.innerHTML = `<p class="empty-state">Cargando conversación...</p>`;
   try {
-    const response = await fetch(
-      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}`
-    );
-    const body = await readAdminResponseBody(response);
+    const [response, suggestionsResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}`),
+      fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}/suggestions`)
+    ]);
+    const [body, suggestionsBody] = await Promise.all([
+      readAdminResponseBody(response),
+      readAdminResponseBody(suggestionsResponse)
+    ]);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cargar la conversación."));
+    if (!suggestionsResponse.ok) throw new Error(conversationErrorMessage(suggestionsBody, "No se pudieron cargar las sugerencias."));
     if (requestVersion !== conversationDetailVersion || selectedConversationId !== Number(conversationId)) return;
+    conversationSuggestions = suggestionsBody.suggestions || [];
+    conversationSuggestionNotice = suggestionsBody.notice || null;
+    if (!conversationSuggestions.some((item) => item.id === selectedConversationSuggestionId && item.status === "pending")) {
+      selectedConversationSuggestionId = null;
+    }
     renderConversationDetail(body.conversation);
   } catch (error) {
     if (requestVersion !== conversationDetailVersion) return;
@@ -1586,12 +1624,30 @@ function renderConversationDetail(conversation) {
   const quickReplies = conversationTemplates.filter((item) => item.active).map((template) => `
     <button class="btn btn-secondary" type="button" onclick="fillConversationReply(${template.id})">${escapeHtml(template.name)}</button>
   `).join("");
+  const pendingSuggestions = conversationSuggestions.filter((item) => item.status === "pending");
+  const suggestionsMarkup = pendingSuggestions.length || conversationSuggestionNotice ? `
+    <div class="conversation-suggestions">
+      ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
+      ${pendingSuggestions.map((suggestion) => `
+        <article class="conversation-suggestion">
+          <strong>Respuesta sugerida</strong>
+          <span class="conversation-intent-badge">${escapeHtml(suggestion.intent_label)} · ${suggestion.confidence}%</span>
+          <p>${escapeHtml(suggestion.body)}</p>
+          <div class="conversation-suggestion-actions">
+            <button class="btn btn-primary btn-small" type="button" onclick="useConversationSuggestion(${suggestion.id})">Usar</button>
+            <button class="btn btn-secondary btn-small" type="button" onclick="dismissConversationSuggestion(${suggestion.id})">Descartar</button>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  ` : "";
   detail.innerHTML = `
     <header class="conversation-detail-header">
       <div class="conversation-detail-header-copy">
         <strong>${escapeHtml(conversationDisplayName(conversation))}</strong>
         <span>${escapeHtml(contactParts.join(" · ") || "Sin datos adicionales")}</span>
         <span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>
+        ${conversationIntentBadge(conversation)}
       </div>
       <div class="conversation-detail-actions">
         <span class="conversation-status conversation-status-${conversation.status}">${escapeHtml(conversationStatusLabel(conversation.status))}</span>
@@ -1604,10 +1660,11 @@ function renderConversationDetail(conversation) {
       ${messages.length ? messages.map((message) => `
         <div class="conversation-message conversation-message-${message.direction}">
           <span>${escapeHtml(message.body)}</span>
-          <small>${message.direction === "outbound" ? "Negocio" : "Cliente"} · ${escapeHtml(formatConversationDate(message.created_at))}</small>
+          <small>${message.sender_type === "automation" ? "Automatización" : (message.direction === "outbound" ? "Negocio" : "Cliente")} · ${escapeHtml(formatConversationDate(message.created_at))}</small>
         </div>
       `).join("") : `<p class="empty-state">Todavía no hay mensajes.</p>`}
     </div>
+    ${suggestionsMarkup}
     <div class="conversation-reply">
       <div class="conversation-quick-replies">${quickReplies || `<small>No hay respuestas rápidas activas.</small>`}</div>
       <textarea id="conversation-reply-body" placeholder="Escribe una respuesta..."></textarea>
@@ -1625,6 +1682,7 @@ function fillConversationReply(templateId) {
   const template = conversationTemplates.find((item) => item.id === Number(templateId));
   const textarea = document.getElementById("conversation-reply-body");
   if (!template || !textarea) return;
+  selectedConversationSuggestionId = null;
   textarea.value = template.rendered_body || template.body;
   textarea.focus();
 }
@@ -1637,12 +1695,47 @@ async function sendConversationReply() {
   try {
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}/messages`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: bodyText }) }
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: bodyText, suggestion_id: selectedConversationSuggestionId })
+      }
     );
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar el mensaje."));
+    selectedConversationSuggestionId = null;
     showConversationFeedback("Respuesta registrada correctamente.");
     await loadConversations();
+  } catch (error) {
+    showConversationFeedback(error.message, true);
+  }
+}
+
+function useConversationSuggestion(suggestionId) {
+  const suggestion = conversationSuggestions.find((item) => item.id === Number(suggestionId) && item.status === "pending");
+  const textarea = document.getElementById("conversation-reply-body");
+  if (!suggestion || !textarea) return;
+  selectedConversationSuggestionId = suggestion.id;
+  textarea.value = suggestion.body;
+  textarea.focus();
+  showConversationFeedback("Sugerencia preparada. Se marcará como usada al enviar.");
+}
+
+async function dismissConversationSuggestion(suggestionId) {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-suggestions/${suggestionId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "dismissed" })
+      }
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo descartar la sugerencia."));
+    if (selectedConversationSuggestionId === Number(suggestionId)) selectedConversationSuggestionId = null;
+    showConversationFeedback("Sugerencia descartada.");
+    await selectConversation(selectedConversationId, false);
   } catch (error) {
     showConversationFeedback(error.message, true);
   }
@@ -1766,8 +1859,113 @@ async function mutateConversationTemplate(url, options) {
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar la plantilla."));
     showConversationFeedback("Plantillas actualizadas.");
-    await loadConversationTemplates();
+    await Promise.all([loadConversationTemplates(), loadConversationAutomation()]);
     if (selectedConversationId) await selectConversation(selectedConversationId, false);
+    return true;
+  } catch (error) {
+    showConversationFeedback(error.message, true);
+    return false;
+  }
+}
+
+async function loadConversationAutomation() {
+  const container = document.getElementById("conversation-automation-content");
+  if (!container || !canManageConversationTemplates()) return;
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation`
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cargar la automatización."));
+    conversationAutomation = body;
+    renderConversationAutomation();
+  } catch (error) {
+    console.error(error);
+    conversationAutomation = null;
+    container.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderConversationAutomation() {
+  const container = document.getElementById("conversation-automation-content");
+  if (!container || !conversationAutomation || !canManageConversationTemplates()) return;
+  const settings = conversationAutomation.settings;
+  const templates = conversationAutomation.templates || [];
+  const templateOptions = (selectedId) => `
+    <option value="">Plantilla recomendada</option>
+    ${templates.map((template) => `
+      <option value="${template.id}" ${template.id === selectedId ? "selected" : ""}>${escapeHtml(template.name)}${template.active ? "" : " (inactiva)"}</option>
+    `).join("")}
+  `;
+  container.innerHTML = `
+    <div class="conversation-automation-settings">
+      <label class="active-setting"><input id="conversation-automation-enabled" type="checkbox" ${settings.automation_enabled ? "checked" : ""} />Activar automatización</label>
+      <label>Límite mensual<input id="conversation-automation-limit" type="number" min="0" max="1000000" value="${settings.monthly_auto_limit}" /></label>
+      <label>Umbral automático (%)<input id="conversation-automation-threshold" type="number" min="0" max="100" value="${settings.auto_threshold}" /></label>
+      <label>Al alcanzar el límite<select id="conversation-automation-limit-mode"><option value="semi_automatic" ${settings.on_limit_reached === "semi_automatic" ? "selected" : ""}>Pasar a sugerencias</option><option value="disabled" ${settings.on_limit_reached === "disabled" ? "selected" : ""}>No responder</option></select></label>
+      <button class="btn btn-primary" type="button" onclick="saveConversationAutomationSettings()">Guardar configuración</button>
+    </div>
+    <p class="conversation-automation-usage"><strong>${conversationAutomation.usage.used}</strong> de <strong>${conversationAutomation.usage.limit}</strong> respuestas automáticas usadas en ${escapeHtml(conversationAutomation.usage.period_yyyymm)}.</p>
+    ${conversationAutomation.usage.limit_reached ? `<p class="conversation-automation-warning">${settings.on_limit_reached === "semi_automatic" ? "Límite mensual alcanzado. Las respuestas automáticas pasan a modo sugerencia." : "Límite mensual alcanzado. No se enviarán más respuestas automáticas este mes."}</p>` : ""}
+    <div class="conversation-automation-rules">
+      <h3>Modo por intención</h3>
+      ${(conversationAutomation.rules || []).map((rule) => `
+        <article class="conversation-automation-rule" data-automation-intent="${escapeHtml(rule.intent)}">
+          <strong>${escapeHtml(rule.intent_label)}</strong>
+          <select class="conversation-automation-rule-mode">
+            <option value="disabled" ${rule.mode === "disabled" ? "selected" : ""}>Desactivado</option>
+            <option value="semi_automatic" ${rule.mode === "semi_automatic" ? "selected" : ""}>Sugerir</option>
+            <option value="automatic" ${rule.mode === "automatic" ? "selected" : ""}>Automático seguro</option>
+          </select>
+          <select class="conversation-automation-rule-template">${templateOptions(rule.template_id)}</select>
+          <label class="active-setting"><input class="conversation-automation-rule-active" type="checkbox" ${rule.active ? "checked" : ""} />Activa</label>
+          <button class="btn btn-small btn-secondary" type="button" onclick="saveConversationAutomationRule('${rule.intent}')">Guardar</button>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+async function saveConversationAutomationSettings() {
+  const payload = {
+    automation_enabled: document.getElementById("conversation-automation-enabled").checked,
+    monthly_auto_limit: Number(document.getElementById("conversation-automation-limit").value),
+    auto_threshold: Number(document.getElementById("conversation-automation-threshold").value),
+    on_limit_reached: document.getElementById("conversation-automation-limit-mode").value
+  };
+  await mutateConversationAutomation(
+    `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation/settings`,
+    payload,
+    "Configuración de automatización actualizada."
+  );
+}
+
+async function saveConversationAutomationRule(intent) {
+  const row = document.querySelector(`[data-automation-intent="${intent}"]`);
+  if (!row) return;
+  const templateValue = row.querySelector(".conversation-automation-rule-template").value;
+  await mutateConversationAutomation(
+    `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation/rules/${intent}`,
+    {
+      mode: row.querySelector(".conversation-automation-rule-mode").value,
+      template_id: templateValue ? Number(templateValue) : null,
+      active: row.querySelector(".conversation-automation-rule-active").checked
+    },
+    `Regla de ${conversationIntentLabel(intent)} actualizada.`
+  );
+}
+
+async function mutateConversationAutomation(url, payload, successMessage) {
+  try {
+    const response = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar la automatización."));
+    showConversationFeedback(successMessage);
+    await loadConversationAutomation();
     return true;
   } catch (error) {
     showConversationFeedback(error.message, true);
@@ -1995,7 +2193,12 @@ async function refreshOperationalData() {
     await Promise.all([loadBookings(), loadConversations()]);
     return;
   }
-  await Promise.all([loadBookings(), loadMessageOutbox(), loadConversations()]);
+  await Promise.all([
+    loadBookings(),
+    loadMessageOutbox(),
+    loadConversationAutomation(),
+    loadConversations()
+  ]);
 }
 
 async function enrichBookingsWithAttachments() {

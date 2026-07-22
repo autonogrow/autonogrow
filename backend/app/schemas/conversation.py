@@ -23,6 +23,7 @@ class ConversationCreate(BaseModel):
 
 class ConversationMessageCreate(BaseModel):
     body: str = Field(min_length=1, max_length=10000)
+    suggestion_id: int | None = Field(default=None, ge=1)
 
     @field_validator("body")
     @classmethod
@@ -71,6 +72,48 @@ class ConversationTemplateUpdate(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("Value cannot be empty")
+        return value
+
+
+class ConversationAutomationSettingsUpdate(BaseModel):
+    automation_enabled: bool | None = None
+    monthly_auto_limit: int | None = Field(default=None, ge=0, le=1000000)
+    auto_threshold: int | None = Field(default=None, ge=0, le=100)
+    on_limit_reached: str | None = None
+
+    @field_validator("on_limit_reached")
+    @classmethod
+    def validate_limit_mode(cls, value: str | None) -> str | None:
+        if value is not None and value not in {"semi_automatic", "disabled"}:
+            raise ValueError("Invalid limit mode")
+        return value
+
+
+class ConversationAutomationRuleUpdate(BaseModel):
+    mode: str | None = None
+    template_id: int | None = Field(default=None, ge=1)
+    active: bool | None = None
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, value: str | None) -> str | None:
+        if value is not None and value not in {
+            "disabled",
+            "semi_automatic",
+            "automatic",
+        }:
+            raise ValueError("Invalid automation mode")
+        return value
+
+
+class ConversationSuggestionUpdate(BaseModel):
+    status: str
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value not in {"used", "dismissed"}:
+            raise ValueError("Invalid suggestion status")
         return value
 
 

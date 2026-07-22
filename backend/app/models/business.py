@@ -49,3 +49,14 @@ class Business(Base):
     user_memberships = relationship("BusinessUser", back_populates="business", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="business", cascade="all, delete-orphan")
     conversation_templates = relationship("ConversationTemplate", back_populates="business", cascade="all, delete-orphan")
+    conversation_automation_settings = relationship(
+        "ConversationAutomationSettings",
+        back_populates="business",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    conversation_automation_rules = relationship(
+        "ConversationAutomationRule",
+        back_populates="business",
+        cascade="all, delete-orphan",
+    )

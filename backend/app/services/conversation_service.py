@@ -62,6 +62,10 @@ def unread_count(db: Session, conversation: Conversation) -> int:
 def serialize_conversation(
     db: Session, conversation: Conversation, *, include_messages: bool = False
 ) -> dict[str, Any]:
+    try:
+        matched_patterns = json.loads(conversation.matched_patterns_json or "[]")
+    except (TypeError, ValueError):
+        matched_patterns = []
     result = {
         "id": conversation.id,
         "business_id": conversation.business_id,
@@ -89,6 +93,9 @@ def serialize_conversation(
             else None
         ),
         "assigned_business_user_id": conversation.assigned_business_user_id,
+        "detected_intent": conversation.detected_intent,
+        "intent_confidence": conversation.intent_confidence,
+        "matched_patterns": matched_patterns,
         "unread_count": unread_count(db, conversation),
         "created_at": conversation.created_at.isoformat(),
         "updated_at": conversation.updated_at.isoformat(),

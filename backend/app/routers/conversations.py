@@ -7,16 +7,37 @@ from app.core.audit import record_audit
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import require_business_access, require_business_admin
-from app.models import Business, ConversationTemplate, User
+from app.models import (
+    Business,
+    ConversationSuggestion,
+    ConversationTemplate,
+    User,
+)
 from app.schemas.conversation import (
     CHANNELS,
     CONVERSATION_STATUSES,
     ConversationCreate,
+    ConversationAutomationRuleUpdate,
+    ConversationAutomationSettingsUpdate,
     ConversationMessageCreate,
     ConversationStatusUpdate,
     ConversationTemplateCreate,
     ConversationTemplateUpdate,
+    ConversationSuggestionUpdate,
     TestInboundMessageCreate,
+)
+from app.services.conversation_automation_service import (
+    ensure_automation_configuration,
+    get_suggestion_for_business,
+    process_inbound_automation,
+    serialize_rule,
+    serialize_settings,
+    serialize_suggestion,
+    update_suggestion_status,
+)
+from app.services.conversation_intent_service import (
+    AVAILABLE_INTENTS,
+    INTENT_LABELS,
 )
 from app.services.conversation_service import (
     add_message,
@@ -169,7 +190,20 @@ def admin_send_conversation_message(
     conversation = get_conversation_or_404(
         db, business_id=business.id, conversation_id=conversation_id
     )
+    suggestion = None
+    if payload.suggestion_id is not None:
+        suggestion = get_suggestion_for_business(
+            db,
+            business_id=business.id,
+            suggestion_id=payload.suggestion_id,
+        )
+        if suggestion is None or suggestion.conversation_id != conversation.id:
+            raise HTTPException(status_code=404, detail="Conversation suggestion not found")
+        if suggestion.status != "pending":
+            raise HTTPException(status_code=409, detail="Conversation suggestion is not pending")
     message = send_manual_message(db, conversation=conversation, body=payload.body)
+    if suggestion is not None:
+        update_suggestion_status(suggestion, "used")
     db.commit()
     db.refresh(message)
     record_audit(
@@ -349,6 +383,192 @@ def admin_delete_conversation_template(
     return {"ok": True}
 
 
+@admin_router.get("/conversation-automation")
+def admin_get_conversation_automation(
+    business_slug: str,
+    actor: User = Depends(require_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    settings, rules = ensure_automation_configuration(db, business)
+    db.commit()
+    templates = (
+        db.query(ConversationTemplate)
+        .filter(ConversationTemplate.business_id == business.id)
+        .order_by(ConversationTemplate.name, ConversationTemplate.id)
+        .all()
+    )
+    serialized_settings = serialize_settings(settings)
+    return {
+        "business_slug": business.slug,
+        "settings": serialized_settings,
+        "rules": [serialize_rule(rule) for rule in rules],
+        "usage": {
+            "used": settings.auto_used_current_period,
+            "limit": settings.monthly_auto_limit,
+            "remaining": max(
+                0,
+                settings.monthly_auto_limit - settings.auto_used_current_period,
+            ),
+            "period_yyyymm": settings.period_yyyymm,
+            "limit_reached": serialized_settings["limit_reached"],
+        },
+        "available_intents": [
+            {"key": intent, "label": INTENT_LABELS[intent]}
+            for intent in AVAILABLE_INTENTS
+        ],
+        "templates": [serialize_template(template, business) for template in templates],
+    }
+
+
+@admin_router.patch("/conversation-automation/settings")
+def admin_update_conversation_automation_settings(
+    business_slug: str,
+    payload: ConversationAutomationSettingsUpdate,
+    request: Request,
+    actor: User = Depends(require_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    settings, _ = ensure_automation_configuration(db, business)
+    updates = {
+        field: value
+        for field, value in payload.model_dump(exclude_unset=True).items()
+        if value is not None
+    }
+    for field, value in updates.items():
+        setattr(settings, field, value)
+    db.commit()
+    db.refresh(settings)
+    record_audit(
+        db,
+        action="conversation_automation_settings_updated",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="conversation_automation_settings",
+        resource_id=settings.id,
+    )
+    return {"ok": True, "settings": serialize_settings(settings)}
+
+
+@admin_router.patch("/conversation-automation/rules/{intent}")
+def admin_update_conversation_automation_rule(
+    business_slug: str,
+    intent: str,
+    payload: ConversationAutomationRuleUpdate,
+    request: Request,
+    actor: User = Depends(require_business_admin),
+    db: Session = Depends(get_db),
+):
+    if intent not in AVAILABLE_INTENTS:
+        raise HTTPException(status_code=404, detail="Automation intent not found")
+    business = get_business_or_404(db, business_slug)
+    _, rules = ensure_automation_configuration(db, business)
+    rule = next(item for item in rules if item.intent == intent)
+    updates = payload.model_dump(exclude_unset=True)
+    for field in ("mode", "active"):
+        if updates.get(field) is None:
+            updates.pop(field, None)
+    if updates.get("template_id") is not None:
+        template_exists = (
+            db.query(ConversationTemplate)
+            .filter(
+                ConversationTemplate.id == updates["template_id"],
+                ConversationTemplate.business_id == business.id,
+            )
+            .first()
+        )
+        if template_exists is None:
+            raise HTTPException(status_code=404, detail="Conversation template not found")
+    for field, value in updates.items():
+        setattr(rule, field, value)
+    db.commit()
+    db.refresh(rule)
+    record_audit(
+        db,
+        action="conversation_automation_rule_updated",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="conversation_automation_rule",
+        resource_id=rule.id,
+        metadata={"intent": intent},
+    )
+    return {"ok": True, "rule": serialize_rule(rule)}
+
+
+@admin_router.get("/conversations/{conversation_id}/suggestions")
+def admin_list_conversation_suggestions(
+    business_slug: str,
+    conversation_id: int,
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    conversation = get_conversation_or_404(
+        db,
+        business_id=business.id,
+        conversation_id=conversation_id,
+    )
+    settings, _ = ensure_automation_configuration(db, business)
+    db.commit()
+    suggestions = (
+        db.query(ConversationSuggestion)
+        .filter(ConversationSuggestion.conversation_id == conversation.id)
+        .order_by(ConversationSuggestion.created_at.desc(), ConversationSuggestion.id.desc())
+        .all()
+    )
+    limit_reached = (
+        settings.automation_enabled
+        and settings.auto_used_current_period >= settings.monthly_auto_limit
+    )
+    return {
+        "business_slug": business.slug,
+        "conversation_id": conversation.id,
+        "suggestions": [serialize_suggestion(item) for item in suggestions],
+        "limit_reached": limit_reached,
+        "notice": (
+            "Límite mensual alcanzado. Las respuestas automáticas pasan a modo sugerencia."
+            if limit_reached and settings.on_limit_reached == "semi_automatic"
+            else None
+        ),
+    }
+
+
+@admin_router.patch("/conversation-suggestions/{suggestion_id}")
+def admin_update_conversation_suggestion(
+    business_slug: str,
+    suggestion_id: int,
+    payload: ConversationSuggestionUpdate,
+    request: Request,
+    actor: User = Depends(require_business_access),
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    suggestion = get_suggestion_for_business(
+        db,
+        business_id=business.id,
+        suggestion_id=suggestion_id,
+    )
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="Conversation suggestion not found")
+    if suggestion.status != "pending":
+        raise HTTPException(status_code=409, detail="Conversation suggestion is not pending")
+    update_suggestion_status(suggestion, payload.status)
+    db.commit()
+    db.refresh(suggestion)
+    record_audit(
+        db,
+        action=f"conversation_suggestion_{payload.status}",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="conversation_suggestion",
+        resource_id=suggestion.id,
+    )
+    return {"ok": True, "suggestion": serialize_suggestion(suggestion)}
+
+
 def verify_test_webhook_secret(provided_secret: str | None) -> None:
     settings = get_settings()
     configured_secret = settings.webhook_test_secret.strip()
@@ -394,6 +614,12 @@ def test_inbound_message(
         body=payload.body,
         raw_payload=payload.model_dump(),
     )
+    automation = process_inbound_automation(
+        db,
+        business=business,
+        conversation=conversation,
+        message=message,
+    )
     db.commit()
     db.refresh(conversation)
     return {
@@ -402,4 +628,5 @@ def test_inbound_message(
         "conversation_id": conversation.id,
         "message_id": message.id,
         "status": conversation.status,
+        "automation": automation,
     }

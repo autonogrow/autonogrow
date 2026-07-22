@@ -126,6 +126,29 @@ def run_lightweight_migrations(target_engine=None) -> None:
                 if column_name not in business_columns:
                     connection.execute(text(f"ALTER TABLE businesses ADD COLUMN {column_name} {column_type}"))
 
+        if "conversations" in table_names:
+            conversation_columns = {
+                column["name"] for column in inspector.get_columns("conversations")
+            }
+            automation_columns = {
+                "detected_intent": "VARCHAR(60)",
+                "intent_confidence": "INTEGER",
+                "matched_patterns_json": "TEXT",
+            }
+            for column_name, column_type in automation_columns.items():
+                if column_name not in conversation_columns:
+                    connection.execute(
+                        text(
+                            f"ALTER TABLE conversations ADD COLUMN {column_name} {column_type}"
+                        )
+                    )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_conversations_detected_intent "
+                    "ON conversations (detected_intent)"
+                )
+            )
+
         migration_name = "2026_07_backfill_business_user_services"
         migration_applied = connection.execute(
             text("SELECT 1 FROM app_migrations WHERE name = :name"),
