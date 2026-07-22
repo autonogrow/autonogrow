@@ -11,7 +11,7 @@ from starlette.requests import Request
 from app.core.database import Base
 from app.core.security import require_business_access
 from app.models import Booking, Business, BusinessUser, Customer, User
-from app.routers.staff import StaffUpdate, remove_staff, update_staff
+from app.routers.staff import StaffCreate, StaffUpdate, create_staff, remove_staff, update_staff
 from app.services.availability_service import get_public_bookable_staff
 from app.services.booking_service import serialize_booking
 
@@ -187,6 +187,56 @@ class StaffRemovalTest(unittest.TestCase):
             )
         self.assertEqual(conflict.exception.status_code, 409)
         self.assertEqual(self.admin.role, "business_admin")
+
+    def test_reactivation_does_not_restore_online_booking_flags(self):
+        response = remove_staff(
+            self.business.slug,
+            self.staff.id,
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )
+        self.assertTrue(response["ok"])
+
+        response = update_staff(
+            self.business.slug,
+            self.staff.id,
+            StaffUpdate(active=True, bookable=True, show_schedule=True),
+            self.request("PATCH"),
+            actor=self.admin_user,
+            db=self.db,
+        )
+
+        self.assertTrue(response["staff_member"]["active"])
+        self.assertFalse(response["staff_member"]["bookable"])
+        self.assertFalse(response["staff_member"]["show_schedule"])
+        self.assertIsNone(response["staff_member"]["removed_at"])
+
+    def test_readding_inactive_email_also_keeps_booking_flags_disabled(self):
+        remove_staff(
+            self.business.slug,
+            self.staff.id,
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )
+
+        response = create_staff(
+            self.business.slug,
+            StaffCreate(
+                email=self.staff_user.email,
+                active=True,
+                bookable=True,
+                show_schedule=True,
+            ),
+            self.request("POST"),
+            actor=self.admin_user,
+            db=self.db,
+        )
+
+        self.assertTrue(response["staff_member"]["active"])
+        self.assertFalse(response["staff_member"]["bookable"])
+        self.assertFalse(response["staff_member"]["show_schedule"])
 
 
 if __name__ == "__main__":

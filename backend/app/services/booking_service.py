@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Booking, Business, BusinessService, Customer, SyncJob, User
 from app.schemas.booking import BookingRequestCreate
-from app.services.availability_service import get_available_slots
+from app.services.availability_service import get_available_slots, get_public_bookable_staff
 from app.services.message_outbox_service import (
     create_booking_rescheduled_message,
 )
@@ -230,6 +230,9 @@ def create_booking_request(
 
     if service is None:
         raise ValueError("service_not_found")
+
+    if not get_public_bookable_staff(db, business.id):
+        raise ValueError("no_bookable_staff")
 
     start_datetime = parse_booking_start(payload)
     duration_minutes = service.duration_minutes or 30

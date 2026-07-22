@@ -1,6 +1,6 @@
 import json
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -17,7 +17,12 @@ from app.models import (
     User,
 )
 from app.schemas.booking import BookingRequestCreate
-from app.services.availability_service import business_weekday, get_available_slots
+from app.services.availability_service import (
+    build_availability,
+    business_weekday,
+    get_available_slots,
+    get_public_bookable_staff,
+)
 from app.services.booking_service import create_booking_request
 
 
@@ -143,6 +148,49 @@ class StaffSchedulingTest(unittest.TestCase):
             self.db, business_slug=self.business.slug,
             booking=booking, user=self.staff_user_1,
         )
+
+    def test_public_booking_requires_a_bookable_professional(self):
+        self.staff_1.bookable = False
+        self.staff_2.show_schedule = False
+        self.db.commit()
+
+        self.assertEqual(get_public_bookable_staff(self.db, self.business.id), [])
+        self.assertEqual(
+            get_available_slots(
+                self.db,
+                business_slug=self.business.slug,
+                service_id=self.service.id,
+                date=self.target_date.isoformat(),
+            ),
+            [],
+        )
+        availability = build_availability(
+            self.db, business_slug=self.business.slug, days_ahead=3
+        )
+        self.assertTrue(
+            all(not day["slots"] and not day["is_available"] for day in availability["availability"])
+        )
+        with self.assertRaisesRegex(ValueError, "no_bookable_staff"):
+            create_booking_request(
+                self.db,
+                business_slug=self.business.slug,
+                payload=self.payload("10:00"),
+            )
+
+    def test_removed_professional_is_never_public_or_selectable(self):
+        self.staff_1.removed_at = datetime.utcnow()
+        self.db.commit()
+
+        public_ids = {item.id for item in get_public_bookable_staff(self.db, self.business.id)}
+        self.assertNotIn(self.staff_1.id, public_ids)
+        with self.assertRaisesRegex(ValueError, "staff_not_found"):
+            get_available_slots(
+                self.db,
+                business_slug=self.business.slug,
+                service_id=self.service.id,
+                date=self.target_date.isoformat(),
+                staff_business_user_id=self.staff_1.id,
+            )
 
 
 if __name__ == "__main__":

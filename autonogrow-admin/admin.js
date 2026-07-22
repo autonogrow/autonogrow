@@ -1120,30 +1120,53 @@ async function loadMyStaffAvailability() {
 
 function renderStaffMembers() {
   const container = document.getElementById("admin-staff-list");
-  if (!staffMembers.length) {
-    container.innerHTML = `<p class="empty-state">Todavia no hay miembros asignados.</p>`;
-    return;
-  }
+  const inactiveContainer = document.getElementById("admin-inactive-staff-list");
+  const activeMembers = staffMembers.filter((member) => member.active);
+  const inactiveMembers = staffMembers.filter((member) => !member.active);
   const canRemoveMembers = adminMembership?.role === "business_admin";
-  container.innerHTML = staffMembers.map((member) => `
+
+  document.getElementById("inactive-staff-count").textContent = inactiveMembers.length;
+  container.innerHTML = activeMembers.map((member) => `
     <article class="admin-service-item staff-member-card" data-staff-id="${member.id}">
       <div class="service-edit-grid">
         <label>Email<input value="${escapeHtml(member.email)}" disabled /></label>
-        <label>Nombre publico<input class="staff-public-name" value="${escapeHtml(member.public_name || "")}" ${member.active ? "" : "disabled"} /></label>
-        <label>Rol<select class="staff-role" ${member.active ? "" : "disabled"}><option value="business_staff" ${member.role === "business_staff" ? "selected" : ""}>Personal</option><option value="business_admin" ${member.role === "business_admin" ? "selected" : ""}>Administrador</option></select></label>
-        <label class="active-setting"><input class="staff-active" type="checkbox" ${member.active ? "checked" : ""} disabled />${member.active ? "Activo" : "Fuera del equipo"}</label>
-        <label class="active-setting"><input class="staff-bookable" type="checkbox" ${member.bookable ? "checked" : ""} ${member.active ? "" : "disabled"} />Reservable</label>
-        <label class="active-setting"><input class="staff-show-schedule" type="checkbox" ${member.show_schedule ? "checked" : ""} ${member.active ? "" : "disabled"} />Mostrar/usar horario</label>
-        <label class="field-wide">Bio<textarea class="staff-bio" rows="2" ${member.active ? "" : "disabled"}>${escapeHtml(member.bio || "")}</textarea></label>
+        <label>Nombre publico<input class="staff-public-name" value="${escapeHtml(member.public_name || "")}" /></label>
+        <label>Rol<select class="staff-role"><option value="business_staff" ${member.role === "business_staff" ? "selected" : ""}>Personal</option><option value="business_admin" ${member.role === "business_admin" ? "selected" : ""}>Administrador</option></select></label>
+        <label class="active-setting"><input class="staff-active" type="checkbox" checked disabled />Activo</label>
+        <label class="active-setting"><input class="staff-bookable" type="checkbox" ${member.bookable ? "checked" : ""} />Reservable</label>
+        <label class="active-setting"><input class="staff-show-schedule" type="checkbox" ${member.show_schedule ? "checked" : ""} />Visible en agenda</label>
+        <label class="field-wide">Bio<textarea class="staff-bio" rows="2">${escapeHtml(member.bio || "")}</textarea></label>
+      </div>
+      <div class="staff-statuses">
+        <span class="staff-state-active">Activo</span>
+        <span>${member.bookable && member.show_schedule ? "Visible en reservas online" : "No visible en reservas online"}</span>
       </div>
       <div class="settings-actions">
-        ${member.active ? `<button class="btn btn-small btn-primary" type="button" onclick="saveStaffMember(${member.id})">Guardar ficha</button>` : ""}
-        ${member.active ? `<button class="btn btn-small btn-secondary" type="button" onclick="editStaffSchedule(${member.id})">Editar horario</button>` : ""}
-        ${canRemoveMembers && member.active ? `<button class="btn btn-small btn-danger" type="button" onclick="removeStaffMember(${member.id})">Eliminar del equipo</button>` : ""}
-        ${canRemoveMembers && !member.active ? `<button class="btn btn-small btn-secondary" type="button" onclick="reactivateStaffMember(${member.id})">Reactivar</button>` : ""}
+        <button class="btn btn-small btn-primary" type="button" onclick="saveStaffMember(${member.id})">Guardar ficha</button>
+        <button class="btn btn-small btn-secondary" type="button" onclick="editStaffSchedule(${member.id})">Editar horario</button>
+        ${canRemoveMembers ? `<button class="btn btn-small btn-danger" type="button" onclick="removeStaffMember(${member.id})">Eliminar del equipo</button>` : ""}
       </div>
     </article>
-  `).join("");
+  `).join("") || `<p class="empty-state">No hay miembros activos en el equipo.</p>`;
+
+  inactiveContainer.innerHTML = inactiveMembers.map((member) => `
+    <article class="inactive-staff-card" data-inactive-staff-id="${member.id}">
+      <div class="inactive-staff-copy">
+        <div class="staff-statuses"><span class="staff-state-inactive">Inactivo</span><span>${member.role === "business_admin" ? "Administrador" : "Personal"}</span></div>
+        <strong>${escapeHtml(member.name || member.email)}</strong>
+        <span>${escapeHtml(member.email)}</span>
+        ${member.public_name ? `<span>Nombre público: ${escapeHtml(member.public_name)}</span>` : ""}
+        <small>${member.removed_at ? `Eliminado el ${escapeHtml(formatStaffRemovedAt(member.removed_at))}` : "Desactivado sin fecha registrada"}</small>
+      </div>
+      ${canRemoveMembers ? `<button class="btn btn-small btn-secondary" type="button" onclick="reactivateStaffMember(${member.id})">Reactivar</button>` : ""}
+    </article>
+  `).join("") || `<p class="empty-state">No hay miembros inactivos.</p>`;
+}
+
+function formatStaffRemovedAt(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" });
 }
 
 async function createStaffMember() {
@@ -1189,14 +1212,21 @@ async function saveStaffMember(memberId) {
 }
 
 async function reactivateStaffMember(memberId) {
+  const feedback = document.getElementById("staff-feedback");
   const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ active: true })
   });
   const result = await response.json().catch(() => null);
-  if (!response.ok) return alert(result?.detail || "No se pudo reactivar al miembro.");
+  if (!response.ok) {
+    feedback.className = "inline-feedback error";
+    feedback.textContent = result?.detail || "No se pudo reactivar al miembro.";
+    return;
+  }
   await loadStaffMembers();
+  feedback.className = "inline-feedback success";
+  feedback.textContent = "Miembro reactivado. Configura si debe aparecer como profesional reservable.";
 }
 
 async function removeStaffMember(memberId) {

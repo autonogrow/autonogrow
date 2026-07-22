@@ -336,6 +336,19 @@ a {
   gap: 16px;
 }
 
+.online-booking-unavailable {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid #fed7aa;
+  border-radius: 18px;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.online-booking-unavailable[hidden] { display: none; }
+.online-booking-unavailable .btn { justify-self: start; }
+
 .booking-form label {
   display: grid;
   gap: 6px;

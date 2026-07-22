@@ -267,6 +267,7 @@ def get_public_bookable_staff(db: Session, business_id: int) -> list[BusinessUse
             BusinessUser.active.is_(True),
             BusinessUser.bookable.is_(True),
             BusinessUser.show_schedule.is_(True),
+            BusinessUser.removed_at.is_(None),
         )
         .order_by(BusinessUser.id.asc())
         .all()
@@ -293,6 +294,7 @@ def get_public_staff_or_none(
             BusinessUser.active.is_(True),
             BusinessUser.bookable.is_(True),
             BusinessUser.show_schedule.is_(True),
+            BusinessUser.removed_at.is_(None),
         )
         .first()
     )
@@ -485,7 +487,9 @@ def get_available_slots(
         raise ValueError("service_not_found")
 
     public_staff = get_public_bookable_staff(db, business.id)
-    if public_staff and staff_business_user_id is None:
+    if staff_business_user_id is None and not public_staff:
+        return []
+    if staff_business_user_id is None:
         slots_by_start: dict[str, dict[str, Any]] = {}
         for member in public_staff:
             member_slots = get_available_slots(
@@ -514,6 +518,7 @@ def get_available_slots(
                     BusinessUser.id == staff_business_user_id,
                     BusinessUser.business_id == business.id,
                     BusinessUser.active.is_(True),
+                    BusinessUser.removed_at.is_(None),
                 )
                 .first()
             )
@@ -639,6 +644,10 @@ def build_calendar_days(
         service = get_service_or_none(db, business_id=business.id, service_id=service_id)
         if service is None:
             raise ValueError("service_not_found")
+    if staff_business_user_id is not None and get_public_staff_or_none(
+        db, business_id=business.id, business_user_id=staff_business_user_id
+    ) is None:
+        raise ValueError("staff_not_found")
 
     settings = (
         db.query(AvailabilitySettings)
@@ -667,7 +676,7 @@ def build_calendar_days(
         reason = exception.reason if exception else None
         slots = []
 
-        if service_id is not None and current_day >= today and windows:
+        if service_id is not None and current_day >= today:
             slots = get_available_slots(
                 db,
                 business_slug=business_slug,
@@ -680,14 +689,17 @@ def build_calendar_days(
 
         if current_day < today:
             status = "past"
-        elif exception_type == "closed":
+        elif service_id is not None:
+            if has_slots:
+                status = "special" if exception_type == "custom_hours" else "available"
+            elif exception_type == "closed":
+                status = "closed"
+            else:
+                status = "full"
+        elif exception_type == "closed" or not windows:
             status = "closed"
         elif exception_type == "custom_hours":
             status = "special"
-        elif not windows:
-            status = "closed"
-        elif service_id is not None and not has_slots:
-            status = "full"
         else:
             status = "available"
 
@@ -749,6 +761,8 @@ def build_availability(
     if business is None:
         raise ValueError("business_not_found")
 
+    has_bookable_staff = bool(get_public_bookable_staff(db, business.id))
+
     settings = (
         db.query(AvailabilitySettings)
         .filter(AvailabilitySettings.business_id == business.id)
@@ -768,11 +782,15 @@ def build_availability(
     for offset in range(days_ahead):
         current_day = today + timedelta(days=offset)
         iso_date = current_day.isoformat()
-        day_windows = get_windows_for_date(
-            db,
-            business=business,
-            settings=settings,
-            target_date=current_day,
+        day_windows = (
+            get_windows_for_date(
+                db,
+                business=business,
+                settings=settings,
+                target_date=current_day,
+            )
+            if has_bookable_staff
+            else []
         )
         labels = [window["start"] for window in day_windows]
         booked_slots = booked_by_date.get(iso_date, [])

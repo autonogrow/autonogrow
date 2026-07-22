@@ -1291,6 +1291,17 @@ input {
 .brand-gallery-list img { width: 72px; height: 56px; object-fit: cover; border-radius: 8px; }
 @media (max-width: 720px) { .brand-media-grid { grid-template-columns: 1fr; } .brand-gallery-list article { grid-template-columns: 64px 1fr; } }
 .staff-member-card { display: grid; gap: 14px; }
+.inactive-staff-section { margin-top: 24px; border: 1px solid var(--border); border-radius: 18px; background: #f8fafc; }
+.inactive-staff-section summary { cursor: pointer; padding: 16px 18px; font-weight: 800; }
+.inactive-staff-section summary span { display: inline-flex; min-width: 24px; justify-content: center; margin-left: 6px; padding: 2px 7px; border-radius: 999px; background: #e2e8f0; color: var(--muted); }
+.inactive-staff-list { display: grid; gap: 10px; padding: 0 16px 16px; }
+.inactive-staff-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: #fff; }
+.inactive-staff-copy { display: grid; gap: 4px; }
+.inactive-staff-copy > span, .inactive-staff-copy small { color: var(--muted); }
+.staff-statuses { display: flex; flex-wrap: wrap; gap: 8px; }
+.staff-statuses span { display: inline-flex; padding: 4px 9px; border-radius: 999px; background: #e2e8f0; color: #475569; font-size: .82rem; font-weight: 800; }
+.staff-statuses .staff-state-active { background: #dcfce7; color: #166534; }
+.staff-statuses .staff-state-inactive { background: #fee2e2; color: #991b1b; }
 .staff-removal-bookings { display: grid; gap: 12px; }
 .staff-removal-booking { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 18px; background: #f8fafc; }
 .staff-removal-booking > div { display: grid; gap: 4px; }
@@ -1298,6 +1309,7 @@ input {
 .booking-card-highlight { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.2); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 22%, transparent); animation: booking-highlight-pulse 1s ease-in-out 2; }
 @keyframes booking-highlight-pulse { 50% { transform: translateY(-3px); } }
 @media (max-width: 720px) { .staff-removal-booking { align-items: stretch; flex-direction: column; } }
+@media (max-width: 720px) { .inactive-staff-card { align-items: stretch; flex-direction: column; } }
 .internal-notes-editor { display: grid; gap: 10px; margin-top: 14px; }
 .internal-notes-editor textarea { width: 100%; margin-top: 6px; }
 #booking-staff-filter-field { display: grid; gap: 6px; min-width: 220px; }

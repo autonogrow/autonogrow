@@ -345,6 +345,7 @@ def create_staff(
         .first()
     )
     values = payload.model_dump(exclude={"email"})
+    is_reactivation = member is not None and not member.active
     if member is None:
         member = BusinessUser(business_id=business.id, user_id=user.id, **values)
         db.add(member)
@@ -353,11 +354,13 @@ def create_staff(
     else:
         for field, value in values.items():
             setattr(member, field, value)
+        member.bookable = False
+        member.show_schedule = False
         member.removed_at = None
     db.commit()
     db.refresh(member)
     record_audit(
-        db, action="user_assigned_to_business", request=request, actor=actor,
+        db, action="user_reactivated" if is_reactivation else "user_assigned_to_business", request=request, actor=actor,
         business_id=business.id, resource_type="business_user", resource_id=member.id,
         metadata={"role": member.role, "bookable": member.bookable},
     )
@@ -378,6 +381,7 @@ def update_staff(
         db, business_id=business.id, business_user_id=business_user_id
     )
     updates = payload.model_dump(exclude_unset=True)
+    is_reactivation = not member.active and updates.get("active") is True
     if member.removed_at is not None and updates.get("active") is not True:
         raise HTTPException(
             status_code=409,
@@ -408,11 +412,14 @@ def update_staff(
         setattr(member, field, value.strip() or None if isinstance(value, str) else value)
     if updates.get("active") is True:
         member.removed_at = None
+    if is_reactivation:
+        member.bookable = False
+        member.show_schedule = False
     member.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(member)
     record_audit(
-        db, action="user_role_changed", request=request, actor=actor,
+        db, action="user_reactivated" if is_reactivation else "user_role_changed", request=request, actor=actor,
         business_id=business.id, resource_type="business_user", resource_id=member.id,
         metadata={"role": member.role, "active": member.active, "bookable": member.bookable},
     )

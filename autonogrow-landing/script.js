@@ -15,6 +15,8 @@ let landingAuthUser = null;
 let currentLabels = null;
 let bookableStaff = [];
 let selectedStaffId = "";
+let calendarLoadVersion = 0;
+let slotLoadVersion = 0;
 
 const LANDING_LABELS = {
   default: {
@@ -293,7 +295,11 @@ function renderServiceOptions(services) {
 function renderStaffOptions() {
   const field = document.getElementById("staff-select-field");
   const select = document.getElementById("staff-select");
-  field.hidden = bookableStaff.length === 0;
+  const unavailable = document.getElementById("online-booking-unavailable");
+  const contactLink = document.getElementById("booking-contact-link");
+  const hasBookableStaff = bookableStaff.length > 0;
+  field.hidden = !hasBookableStaff;
+  unavailable.hidden = hasBookableStaff;
   select.innerHTML = `<option value="">Cualquiera disponible</option>`;
   bookableStaff.forEach((member) => {
     const option = document.createElement("option");
@@ -302,6 +308,23 @@ function renderStaffOptions() {
     select.appendChild(option);
   });
   selectedStaffId = "";
+  select.value = "";
+
+  const picker = document.getElementById("calendar-picker");
+  if (picker) picker.hidden = !hasBookableStaff;
+  const submitButton = document.getElementById("booking-submit");
+  if (submitButton) submitButton.disabled = !hasBookableStaff;
+  if (currentBusiness?.phone) {
+    contactLink.href = buildWhatsAppUrl(
+      currentBusiness.phone,
+      "Hola, quisiera consultar la disponibilidad para una cita."
+    );
+    contactLink.hidden = false;
+  } else {
+    contactLink.hidden = true;
+    contactLink.removeAttribute("href");
+  }
+  if (!hasBookableStaff) resetSelectedSlot();
 }
 
 function renderGallery(gallery) {
@@ -394,6 +417,7 @@ function renderCalendarPicker() {
   const picker = document.createElement("div");
   picker.id = "calendar-picker";
   picker.className = "calendar-picker";
+  picker.hidden = bookableStaff.length === 0;
   picker.innerHTML = `
     <div>
       <p class="calendar-title">1. Elige un día disponible</p>
@@ -414,9 +438,12 @@ function renderCalendarPicker() {
     <div id="selected-slot-summary" class="selected-slot-summary" style="display: none;"></div>
   `;
 
+  const staffLabel = document.getElementById("staff-select-field");
   const serviceLabel = document.getElementById("service-select")?.closest("label");
 
-  if (serviceLabel) {
+  if (staffLabel) {
+    staffLabel.after(picker);
+  } else if (serviceLabel) {
     serviceLabel.after(picker);
   } else {
     form.prepend(picker);
@@ -447,6 +474,7 @@ function getNextDays(count) {
 }
 
 function resetSelectedSlot() {
+  slotLoadVersion += 1;
   selectedDate = "";
   selectedDateLabel = "";
   selectedTime = "";
@@ -458,8 +486,15 @@ function resetSelectedSlot() {
 }
 
 async function renderAvailableDays() {
+  const requestVersion = ++calendarLoadVersion;
   const container = document.getElementById("calendar-days");
   container.innerHTML = "";
+
+  if (!bookableStaff.length) {
+    container.innerHTML = `<p class="empty-slots">Ahora mismo no hay profesionales disponibles para reserva online.</p>`;
+    document.getElementById("time-slots").innerHTML = "";
+    return;
+  }
 
   if (!selectedService) {
     container.innerHTML = `<p class="empty-slots">Selecciona primero un servicio</p>`;
@@ -471,8 +506,10 @@ async function renderAvailableDays() {
 
   try {
     const data = await fetchCalendarDays(selectedService.id);
+    if (requestVersion !== calendarLoadVersion) return;
     calendarDays = data.days || [];
   } catch (error) {
+    if (requestVersion !== calendarLoadVersion) return;
     console.error(error);
     calendarDays = getNextDays(currentBusiness?.maxDaysAhead || 14).map((day) => ({
       date: day.date,
@@ -547,6 +584,7 @@ function handleSelectedDayStatus(day) {
 }
 
 async function loadAndRenderTimeSlots(day = null) {
+  const requestVersion = ++slotLoadVersion;
   const container = document.getElementById("time-slots");
   const prefix = day?.status === "special"
     ? `<p class="empty-slots calendar-notice">Este día tiene horario especial.</p>`
@@ -565,8 +603,10 @@ async function loadAndRenderTimeSlots(day = null) {
 
   try {
     const data = await fetchAvailableSlots(selectedService.id, selectedDate);
+    if (requestVersion !== slotLoadVersion) return;
     renderTimeSlotsFromBackend(data.slots || [], prefix);
   } catch (error) {
+    if (requestVersion !== slotLoadVersion) return;
     console.error(error);
     container.innerHTML = `<p class="empty-slots">No se pudo cargar la disponibilidad.</p>`;
   }
@@ -614,20 +654,27 @@ function updateSelectedSlotSummary() {
     return;
   }
 
+  const professionalLabel = getSelectedProfessionalLabel();
+
   if (!selectedDateLabel) {
     summary.style.display = "block";
-    summary.textContent = `Servicio seleccionado: ${selectedService.name}. Ahora elige un día.`;
+    summary.textContent = `Servicio: ${selectedService.name}. Profesional: ${professionalLabel}. Ahora elige un día.`;
     return;
   }
 
   if (!selectedTime) {
     summary.style.display = "block";
-    summary.textContent = `Día seleccionado: ${selectedDateLabel}. Ahora elige un hueco.`;
+    summary.textContent = `Servicio: ${selectedService.name}. Profesional: ${professionalLabel}. Día: ${selectedDateLabel}. Ahora elige un hueco.`;
     return;
   }
 
   summary.style.display = "block";
-  summary.textContent = `Cita seleccionada: ${selectedService.name}, ${selectedDateLabel} a las ${selectedTime}.`;
+  summary.textContent = `Servicio: ${selectedService.name}. Profesional: ${professionalLabel}. Fecha y hora: ${selectedDateLabel} a las ${selectedTime}.`;
+}
+
+function getSelectedProfessionalLabel() {
+  if (!selectedStaffId) return "Cualquiera disponible";
+  return bookableStaff.find((member) => String(member.id) === String(selectedStaffId))?.public_name || "Profesional seleccionado";
 }
 
 async function uploadBookingPhotos(slug, bookingId, bookingManageToken) {
@@ -713,6 +760,11 @@ function setupBookingForm() {
       return;
     }
 
+    if (!bookableStaff.length) {
+      alert("Ahora mismo no hay profesionales disponibles para reserva online.");
+      return;
+    }
+
     if (!selectedSlot) {
       alert("Selecciona un día y un hueco disponible antes de confirmar la reserva.");
       return;
@@ -765,6 +817,7 @@ function setupBookingForm() {
         time: selectedTime,
         businessName: currentBusiness.name,
         businessAddress: currentBusiness.address,
+        businessPhone: currentBusiness.phone,
         attachments,
         linkedToAccount: Boolean(result.linked_to_account)
       });
@@ -779,18 +832,24 @@ function setupBookingForm() {
       alert("No se pudo conectar con el sistema de reservas.");
     } finally {
       if (submitButton) {
-        submitButton.disabled = false;
+        submitButton.disabled = bookableStaff.length === 0;
         submitButton.textContent = currentLabels?.bookingButton || LANDING_LABELS.default.bookingButton;
       }
     }
   });
 }
 
-function showBookingConfirmation({ booking, service, date, dayLabel, time, businessName, businessAddress, attachments, linkedToAccount }) {
+function showBookingConfirmation({ booking, service, date, dayLabel, time, businessName, businessAddress, businessPhone, attachments, linkedToAccount }) {
   const feedback = document.getElementById("booking-feedback");
+  const calendarDetails = [
+    `Tienes una cita para ${service.name} en ${businessName}. Te esperamos.`,
+    booking.staff_display_name ? `Profesional: ${booking.staff_display_name}` : null,
+    businessAddress ? `Dirección: ${businessAddress}` : null,
+    businessPhone ? `Teléfono del negocio: ${businessPhone}` : null
+  ].filter(Boolean).join("\n");
   const calendarUrl = buildGoogleCalendarUrl({
-    title: `Cita - ${businessName}`,
-    details: `Servicio: ${service.name}\nCliente: ${booking.customer_name}\nTeléfono: ${booking.customer_phone || ""}`,
+    title: `Cita: ${service.name} en ${businessName}`,
+    details: calendarDetails,
     location: businessAddress || "",
     date,
     time,

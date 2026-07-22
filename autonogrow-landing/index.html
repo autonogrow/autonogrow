@@ -105,11 +105,16 @@
         </label>
 
         <label id="staff-select-field" hidden>
-          Profesional
+          Profesional que te va a atender
           <select id="staff-select">
             <option value="">Cualquiera disponible</option>
           </select>
         </label>
+
+        <div id="online-booking-unavailable" class="online-booking-unavailable" hidden>
+          <strong>Ahora mismo no hay profesionales disponibles para reserva online.</strong>
+          <a id="booking-contact-link" class="btn btn-secondary" target="_blank" rel="noopener">Contactar con el negocio</a>
+        </div>
 
         <input type="hidden" id="preferred-day" />
         <input type="hidden" id="preferred-time" />
