@@ -3,6 +3,7 @@ import unittest
 from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -17,6 +18,12 @@ from app.models import (
     User,
 )
 from app.schemas.booking import BookingRequestCreate
+from app.routers.availability import (
+    get_availability,
+    list_available_slots,
+    list_calendar_days,
+)
+from app.routers.bookings import create_booking_response
 from app.services.availability_service import (
     build_availability,
     business_weekday,
@@ -38,6 +45,13 @@ class StaffSchedulingTest(unittest.TestCase):
         self.service = BusinessService(
             business_id=self.business.id,
             name="Service",
+            duration_minutes=30,
+            duration_text="30 min",
+            active=True,
+        )
+        self.other_service = BusinessService(
+            business_id=self.business.id,
+            name="Other service",
             duration_minutes=30,
             duration_text="30 min",
             active=True,
@@ -67,10 +81,12 @@ class StaffSchedulingTest(unittest.TestCase):
             active=True, bookable=True, show_schedule=True, public_name="Two",
         )
         self.db.add_all([
-            self.business, self.service, self.settings, self.admin,
+            self.business, self.service, self.other_service, self.settings, self.admin,
             self.staff_1, self.staff_2,
         ])
         self.db.flush()
+        self.staff_1.services.append(self.service)
+        self.staff_2.services.extend([self.service, self.other_service])
         weekday = business_weekday(self.target_date)
         self.db.add_all([
             BusinessUserAvailability(
@@ -155,27 +171,74 @@ class StaffSchedulingTest(unittest.TestCase):
         self.db.commit()
 
         self.assertEqual(get_public_bookable_staff(self.db, self.business.id), [])
-        self.assertEqual(
+        with self.assertRaisesRegex(ValueError, "no_staff_available_for_service"):
             get_available_slots(
                 self.db,
                 business_slug=self.business.slug,
                 service_id=self.service.id,
                 date=self.target_date.isoformat(),
-            ),
-            [],
-        )
+            )
         availability = build_availability(
             self.db, business_slug=self.business.slug, days_ahead=3
         )
         self.assertTrue(
             all(not day["slots"] and not day["is_available"] for day in availability["availability"])
         )
-        with self.assertRaisesRegex(ValueError, "no_bookable_staff"):
+        with self.assertRaisesRegex(ValueError, "no_staff_available_for_service"):
             create_booking_request(
                 self.db,
                 business_slug=self.business.slug,
                 payload=self.payload("10:00"),
             )
+
+        slots_response = list_available_slots(
+            self.business.slug,
+            service_id=self.service.id,
+            date=self.target_date.isoformat(),
+            exclude_booking_id=None,
+            staff_business_user_id=None,
+            db=self.db,
+        )
+        self.assertIsInstance(slots_response, JSONResponse)
+        self.assertEqual(slots_response.status_code, 409)
+        self.assertEqual(
+            json.loads(slots_response.body)["detail"],
+            "no_staff_available_for_service",
+        )
+
+        calendar_response = list_calendar_days(
+            self.business.slug,
+            date_from=self.target_date.isoformat(),
+            date_to=self.target_date.isoformat(),
+            service_id=self.service.id,
+            staff_business_user_id=None,
+            db=self.db,
+        )
+        self.assertIsInstance(calendar_response, JSONResponse)
+        self.assertEqual(calendar_response.status_code, 409)
+
+        availability_response = get_availability(
+            self.business.slug,
+            days_ahead=3,
+            service_id=self.service.id,
+            staff_business_user_id=None,
+            db=self.db,
+        )
+        self.assertIsInstance(availability_response, JSONResponse)
+        self.assertEqual(availability_response.status_code, 409)
+
+        booking_response = create_booking_response(
+            self.db,
+            self.business.slug,
+            self.payload("10:00"),
+            None,
+        )
+        self.assertIsInstance(booking_response, JSONResponse)
+        self.assertEqual(booking_response.status_code, 409)
+        self.assertEqual(
+            json.loads(booking_response.body)["detail"],
+            "no_staff_available_for_service",
+        )
 
     def test_removed_professional_is_never_public_or_selectable(self):
         self.staff_1.removed_at = datetime.utcnow()
@@ -183,7 +246,7 @@ class StaffSchedulingTest(unittest.TestCase):
 
         public_ids = {item.id for item in get_public_bookable_staff(self.db, self.business.id)}
         self.assertNotIn(self.staff_1.id, public_ids)
-        with self.assertRaisesRegex(ValueError, "staff_not_found"):
+        with self.assertRaisesRegex(ValueError, "staff_not_available_for_service"):
             get_available_slots(
                 self.db,
                 business_slug=self.business.slug,
@@ -191,6 +254,61 @@ class StaffSchedulingTest(unittest.TestCase):
                 date=self.target_date.isoformat(),
                 staff_business_user_id=self.staff_1.id,
             )
+
+    def test_staff_is_filtered_and_validated_by_service(self):
+        main_ids = {
+            member.id
+            for member in get_public_bookable_staff(
+                self.db, self.business.id, self.service.id
+            )
+        }
+        other_ids = {
+            member.id
+            for member in get_public_bookable_staff(
+                self.db, self.business.id, self.other_service.id
+            )
+        }
+        self.assertEqual(main_ids, {self.staff_1.id, self.staff_2.id})
+        self.assertEqual(other_ids, {self.staff_2.id})
+
+        with self.assertRaisesRegex(
+            ValueError, "staff_not_available_for_service"
+        ):
+            get_available_slots(
+                self.db,
+                business_slug=self.business.slug,
+                service_id=self.other_service.id,
+                date=self.target_date.isoformat(),
+                staff_business_user_id=self.staff_1.id,
+            )
+
+        invalid_booking = BookingRequestCreate(
+            customer_name="Customer",
+            customer_phone="600000000",
+            service_id=self.other_service.id,
+            staff_business_user_id=self.staff_1.id,
+            start_datetime=f"{self.target_date.isoformat()}T11:00:00",
+        )
+        with self.assertRaisesRegex(
+            ValueError, "staff_not_available_for_service"
+        ):
+            create_booking_request(
+                self.db,
+                business_slug=self.business.slug,
+                payload=invalid_booking,
+            )
+
+    def test_any_professional_uses_only_staff_assigned_to_service(self):
+        payload = BookingRequestCreate(
+            customer_name="Customer",
+            customer_phone="600000000",
+            service_id=self.other_service.id,
+            start_datetime=f"{self.target_date.isoformat()}T11:00:00",
+        )
+        booking = create_booking_request(
+            self.db, business_slug=self.business.slug, payload=payload
+        )
+        self.assertEqual(booking.staff_business_user_id, self.staff_2.id)
 
 
 if __name__ == "__main__":

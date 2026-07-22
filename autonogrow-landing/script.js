@@ -17,6 +17,7 @@ let bookableStaff = [];
 let selectedStaffId = "";
 let calendarLoadVersion = 0;
 let slotLoadVersion = 0;
+let staffLoadVersion = 0;
 
 const LANDING_LABELS = {
   default: {
@@ -32,6 +33,32 @@ const LANDING_LABELS = {
   urban: { servicesTitle: "Servicios", bookingTitle: "Reserva tu hora", galleryTitle: "Galería", bookingButton: "Reservar", serviceButton: "Reservar" },
   minimal: { servicesTitle: "Servicios", bookingTitle: "Reserva", galleryTitle: "Galería", bookingButton: "Reservar" }
 };
+
+function getErrorMessage(error, fallback = "Se ha producido un error.") {
+  if (!error) return fallback;
+  if (typeof error === "string") return error;
+  if (
+    typeof error.message === "string" &&
+    error.message.trim() &&
+    error.message !== "[object Object]"
+  ) return error.message;
+  if (typeof error.detail === "string" && error.detail.trim()) return error.detail;
+  if (error.detail && typeof error.detail === "object") {
+    if (typeof error.detail.message === "string") return error.detail.message;
+    try {
+      return JSON.stringify(error.detail);
+    } catch (_) {
+      return fallback;
+    }
+  }
+  if (typeof error.error === "string" && error.error.trim()) return error.error;
+  try {
+    const serialized = JSON.stringify(error);
+    return serialized && serialized !== "{}" ? serialized : fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
 
 function normalizeCategory(value) {
   return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -96,9 +123,7 @@ async function loadBusiness() {
     const settings = settingsResponse.ok ? await settingsResponse.json() : null;
     const galleryResponse = await fetch(`${API_BASE_URL}/api/businesses/${slug}/media/gallery`);
     const galleryData = galleryResponse.ok ? await galleryResponse.json() : { images: [] };
-    const staffResponse = await fetch(`${API_BASE_URL}/api/businesses/${slug}/staff`);
-    const staffData = staffResponse.ok ? await staffResponse.json() : { staff: [] };
-    bookableStaff = staffData.staff || [];
+    bookableStaff = [];
 
     currentBusiness = {
       ...business,
@@ -292,14 +317,39 @@ function renderServiceOptions(services) {
   });
 }
 
-function renderStaffOptions() {
+async function loadStaffForService(serviceId) {
+  const requestVersion = ++staffLoadVersion;
+  bookableStaff = [];
+  selectedStaffId = "";
+  renderStaffOptions();
+  if (!serviceId) return true;
+
+  const slug = getBusinessSlug();
+  const response = await fetch(
+    `${API_BASE_URL}/api/businesses/${slug}/staff?service_id=${encodeURIComponent(serviceId)}`
+  );
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(getErrorMessage(body, "No se pudieron cargar los profesionales."));
+  }
+  if (requestVersion !== staffLoadVersion) return false;
+  bookableStaff = body?.staff || [];
+  renderStaffOptions();
+  return true;
+}
+
+function renderStaffOptions(errorMessage = "") {
   const field = document.getElementById("staff-select-field");
   const select = document.getElementById("staff-select");
   const unavailable = document.getElementById("online-booking-unavailable");
+  const unavailableMessage = document.getElementById("online-booking-unavailable-message");
   const contactLink = document.getElementById("booking-contact-link");
   const hasBookableStaff = bookableStaff.length > 0;
-  field.hidden = !hasBookableStaff;
-  unavailable.hidden = hasBookableStaff;
+  const hasSelectedService = Boolean(selectedService);
+  field.hidden = !hasSelectedService || !hasBookableStaff;
+  unavailable.hidden = !hasSelectedService || hasBookableStaff;
+  unavailableMessage.textContent = errorMessage ||
+    "Ahora mismo no hay profesionales disponibles para este servicio.";
   select.innerHTML = `<option value="">Cualquiera disponible</option>`;
   bookableStaff.forEach((member) => {
     const option = document.createElement("option");
@@ -311,9 +361,9 @@ function renderStaffOptions() {
   select.value = "";
 
   const picker = document.getElementById("calendar-picker");
-  if (picker) picker.hidden = !hasBookableStaff;
+  if (picker) picker.hidden = !hasSelectedService || !hasBookableStaff;
   const submitButton = document.getElementById("booking-submit");
-  if (submitButton) submitButton.disabled = !hasBookableStaff;
+  if (submitButton) submitButton.disabled = !hasSelectedService || !hasBookableStaff;
   if (currentBusiness?.phone) {
     contactLink.href = buildWhatsAppUrl(
       currentBusiness.phone,
@@ -378,7 +428,8 @@ async function fetchAvailableSlots(serviceId, date) {
   const response = await fetch(`${API_BASE_URL}/api/businesses/${slug}/available-slots?${params.toString()}`);
 
   if (!response.ok) {
-    throw new Error("No se pudo cargar la disponibilidad.");
+    const body = await response.json().catch(() => null);
+    throw new Error(getErrorMessage(body, "No se pudo cargar la disponibilidad."));
   }
 
   return await response.json();
@@ -400,7 +451,8 @@ async function fetchCalendarDays(serviceId) {
   const response = await fetch(`${API_BASE_URL}/api/businesses/${slug}/calendar-days?${params.toString()}`);
 
   if (!response.ok) {
-    throw new Error("No se pudo cargar el calendario.");
+    const body = await response.json().catch(() => null);
+    throw new Error(getErrorMessage(body, "No se pudo cargar el calendario."));
   }
 
   return await response.json();
@@ -491,7 +543,7 @@ async function renderAvailableDays() {
   container.innerHTML = "";
 
   if (!bookableStaff.length) {
-    container.innerHTML = `<p class="empty-slots">Ahora mismo no hay profesionales disponibles para reserva online.</p>`;
+    container.innerHTML = `<p class="empty-slots">Ahora mismo no hay profesionales disponibles para este servicio.</p>`;
     document.getElementById("time-slots").innerHTML = "";
     return;
   }
@@ -511,12 +563,9 @@ async function renderAvailableDays() {
   } catch (error) {
     if (requestVersion !== calendarLoadVersion) return;
     console.error(error);
-    calendarDays = getNextDays(currentBusiness?.maxDaysAhead || 14).map((day) => ({
-      date: day.date,
-      label: day.day_label,
-      status: "available",
-      has_slots: false
-    }));
+    calendarDays = [];
+    container.innerHTML = `<p class="empty-slots">${escapeHtml(getErrorMessage(error, "No se pudo cargar el calendario."))}</p>`;
+    return;
   }
 
   container.innerHTML = "";
@@ -608,7 +657,7 @@ async function loadAndRenderTimeSlots(day = null) {
   } catch (error) {
     if (requestVersion !== slotLoadVersion) return;
     console.error(error);
-    container.innerHTML = `<p class="empty-slots">No se pudo cargar la disponibilidad.</p>`;
+    container.innerHTML = `<p class="empty-slots">${escapeHtml(getErrorMessage(error, "No se pudo cargar la disponibilidad."))}</p>`;
   }
 }
 
@@ -735,10 +784,18 @@ function setupBookingForm() {
   const serviceSelect = document.getElementById("service-select");
   const staffSelect = document.getElementById("staff-select");
 
-  serviceSelect.addEventListener("change", () => {
+  serviceSelect.addEventListener("change", async () => {
     selectedService = getServiceById(serviceSelect.value);
+    const requestedServiceId = selectedService?.id || null;
     resetSelectedSlot();
-    renderAvailableDays();
+    try {
+      if (await loadStaffForService(requestedServiceId)) renderAvailableDays();
+    } catch (error) {
+      if (String(selectedService?.id || "") !== String(requestedServiceId || "")) return;
+      console.error("Error cargando profesionales:", error);
+      bookableStaff = [];
+      renderStaffOptions(getErrorMessage(error, "No se pudieron cargar los profesionales."));
+    }
   });
 
   staffSelect.addEventListener("change", () => {
@@ -761,7 +818,7 @@ function setupBookingForm() {
     }
 
     if (!bookableStaff.length) {
-      alert("Ahora mismo no hay profesionales disponibles para reserva online.");
+      alert("Ahora mismo no hay profesionales disponibles para este servicio.");
       return;
     }
 
@@ -796,7 +853,7 @@ function setupBookingForm() {
       if (!response.ok) {
         const error = await response.json().catch(() => null);
         console.error("Error backend:", error);
-        alert(error?.detail || "Ese hueco ya no está disponible");
+        alert(getErrorMessage(error, "Ese hueco ya no está disponible"));
         await loadAndRenderTimeSlots();
         return;
       }
@@ -825,11 +882,13 @@ function setupBookingForm() {
       form.reset();
       selectedService = null;
       selectedStaffId = "";
+      bookableStaff = [];
       resetSelectedSlot();
+      renderStaffOptions();
       renderAvailableDays();
     } catch (error) {
       console.error("Error enviando reserva:", error);
-      alert("No se pudo conectar con el sistema de reservas.");
+      alert(getErrorMessage(error, "No se pudo conectar con el sistema de reservas."));
     } finally {
       if (submitButton) {
         submitButton.disabled = bookableStaff.length === 0;

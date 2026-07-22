@@ -18,6 +18,7 @@ from app.models.message_outbox import MessageOutbox
 from app.models.business_media import BusinessGalleryImage
 from app.models.user import User
 from app.models.business_user import BusinessUser
+from app.models.business_user_service import BusinessUserService
 from app.models.audit_log import AuditLog
 
 __all__ = [
@@ -39,5 +40,6 @@ __all__ = [
     "BusinessGalleryImage",
     "User",
     "BusinessUser",
+    "BusinessUserService",
     "AuditLog",
 ]

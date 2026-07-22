@@ -966,6 +966,7 @@ async function loadAdminServices() {
     const data = await response.json();
     adminServices = data.services || [];
     renderAdminServices();
+    if (staffMembers.length) renderStaffMembers();
   } catch (error) {
     console.error(error);
     container.innerHTML = `<p class="empty-state">No se pudieron cargar los servicios.</p>`;
@@ -1124,30 +1125,65 @@ function renderStaffMembers() {
   const activeMembers = staffMembers.filter((member) => member.active);
   const inactiveMembers = staffMembers.filter((member) => !member.active);
   const canRemoveMembers = adminMembership?.role === "business_admin";
+  const activeAdminCount = activeMembers.filter(
+    (member) => member.role === "business_admin"
+  ).length;
+  const activeServices = adminServices.filter((service) => service.active);
 
   document.getElementById("inactive-staff-count").textContent = inactiveMembers.length;
-  container.innerHTML = activeMembers.map((member) => `
+  container.innerHTML = activeMembers.map((member) => {
+    const assignedServiceIds = new Set(member.service_ids || []);
+    const isOnlyActiveAdmin =
+      member.role === "business_admin" && activeAdminCount === 1;
+    const serviceSelector = activeServices.length
+      ? activeServices.map((service) => `
+          <label class="staff-service-option">
+            <input class="staff-service-checkbox" type="checkbox" value="${service.id}"
+              ${assignedServiceIds.has(service.id) ? "checked" : ""} />
+            ${escapeHtml(service.name)}
+          </label>
+        `).join("")
+      : `<span class="staff-services-empty">No hay servicios activos.</span>`;
+    const removeAction = canRemoveMembers
+      ? `<button class="btn btn-small btn-danger" type="button"
+          onclick="removeStaffMember(${member.id})"
+          ${isOnlyActiveAdmin ? 'disabled title="No puedes eliminar al único administrador activo"' : ""}>
+          Eliminar del equipo
+        </button>
+        ${isOnlyActiveAdmin ? '<small class="staff-admin-protection">Añade otro administrador activo antes de eliminar este perfil.</small>' : ""}`
+      : "";
+    return `
     <article class="admin-service-item staff-member-card" data-staff-id="${member.id}">
       <div class="service-edit-grid">
         <label>Email<input value="${escapeHtml(member.email)}" disabled /></label>
         <label>Nombre publico<input class="staff-public-name" value="${escapeHtml(member.public_name || "")}" /></label>
         <label>Rol<select class="staff-role"><option value="business_staff" ${member.role === "business_staff" ? "selected" : ""}>Personal</option><option value="business_admin" ${member.role === "business_admin" ? "selected" : ""}>Administrador</option></select></label>
         <label class="active-setting"><input class="staff-active" type="checkbox" checked disabled />Activo</label>
-        <label class="active-setting"><input class="staff-bookable" type="checkbox" ${member.bookable ? "checked" : ""} />Reservable</label>
+        <label class="active-setting"><input class="staff-bookable" type="checkbox" ${member.bookable ? "checked" : ""} onchange="toggleStaffServiceControls(${member.id}, this.checked)" />Reservable</label>
         <label class="active-setting"><input class="staff-show-schedule" type="checkbox" ${member.show_schedule ? "checked" : ""} />Visible en agenda</label>
         <label class="field-wide">Bio<textarea class="staff-bio" rows="2">${escapeHtml(member.bio || "")}</textarea></label>
       </div>
+      <fieldset class="staff-services-field" ${member.bookable ? "" : "disabled"}>
+        <legend>Servicios que puede realizar</legend>
+        <div class="staff-services-options">${serviceSelector}</div>
+        <small>${member.bookable && assignedServiceIds.size === 0
+          ? "Este profesional no aparecerá en reservas hasta que tenga al menos un servicio asignado."
+          : member.bookable
+            ? "Solo aparecerá al reservar los servicios seleccionados."
+            : "Activa ‘Reservable’ para asignar servicios."}</small>
+      </fieldset>
       <div class="staff-statuses">
         <span class="staff-state-active">Activo</span>
         <span>${member.bookable && member.show_schedule ? "Visible en reservas online" : "No visible en reservas online"}</span>
+        ${member.bookable && assignedServiceIds.size === 0 ? '<span class="staff-services-warning">Sin servicios asignados</span>' : ""}
       </div>
       <div class="settings-actions">
         <button class="btn btn-small btn-primary" type="button" onclick="saveStaffMember(${member.id})">Guardar ficha</button>
         <button class="btn btn-small btn-secondary" type="button" onclick="editStaffSchedule(${member.id})">Editar horario</button>
-        ${canRemoveMembers ? `<button class="btn btn-small btn-danger" type="button" onclick="removeStaffMember(${member.id})">Eliminar del equipo</button>` : ""}
+        ${removeAction}
       </div>
     </article>
-  `).join("") || `<p class="empty-state">No hay miembros activos en el equipo.</p>`;
+  `; }).join("") || `<p class="empty-state">No hay miembros activos en el equipo.</p>`;
 
   inactiveContainer.innerHTML = inactiveMembers.map((member) => `
     <article class="inactive-staff-card" data-inactive-staff-id="${member.id}">
@@ -1161,6 +1197,13 @@ function renderStaffMembers() {
       ${canRemoveMembers ? `<button class="btn btn-small btn-secondary" type="button" onclick="reactivateStaffMember(${member.id})">Reactivar</button>` : ""}
     </article>
   `).join("") || `<p class="empty-state">No hay miembros inactivos.</p>`;
+}
+
+function toggleStaffServiceControls(memberId, enabled) {
+  const fieldset = document.querySelector(
+    `[data-staff-id="${memberId}"] .staff-services-field`
+  );
+  if (fieldset) fieldset.disabled = !enabled;
 }
 
 function formatStaffRemovedAt(value) {
@@ -1203,12 +1246,43 @@ async function saveStaffMember(memberId) {
     show_schedule: card.querySelector(".staff-show-schedule").checked,
     bio: card.querySelector(".staff-bio").value.trim() || null
   };
-  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}`, {
-    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
-  });
-  const result = await response.json().catch(() => null);
-  if (!response.ok) return alert(result?.detail || "No se pudo guardar la ficha.");
-  await loadStaffMembers();
+  const serviceIds = [...card.querySelectorAll(".staff-service-checkbox:checked")]
+    .map((input) => Number(input.value));
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(result?.message || result?.detail || "No se pudo guardar la ficha.");
+
+    if (payload.bookable) {
+      const servicesResponse = await fetch(
+        `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}/services`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ service_ids: serviceIds })
+        }
+      );
+      const servicesResult = await servicesResponse.json().catch(() => null);
+      if (!servicesResponse.ok) {
+        throw new Error(
+          servicesResult?.message || servicesResult?.detail ||
+          "La ficha se guardó, pero no se pudieron asignar los servicios."
+        );
+      }
+    }
+    await loadStaffMembers();
+    const feedback = document.getElementById("staff-feedback");
+    feedback.className = "inline-feedback success";
+    feedback.textContent = "Ficha y servicios guardados correctamente.";
+  } catch (error) {
+    const feedback = document.getElementById("staff-feedback");
+    feedback.className = "inline-feedback error";
+    feedback.textContent = typeof error?.message === "string"
+      ? error.message
+      : "No se pudo guardar la ficha.";
+  }
 }
 
 async function reactivateStaffMember(memberId) {

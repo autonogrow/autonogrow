@@ -33,4 +33,8 @@ class BusinessUser(Base):
         "BusinessUserAvailabilityException", back_populates="business_user", cascade="all, delete-orphan"
     )
     assigned_bookings = relationship("Booking", back_populates="staff_business_user")
-    # TODO: add a business_user_services association when per-professional specialization is needed.
+    services = relationship(
+        "BusinessService",
+        secondary="business_user_services",
+        back_populates="staff_members",
+    )

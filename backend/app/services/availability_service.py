@@ -259,19 +259,27 @@ def get_service_or_none(
     )
 
 
-def get_public_bookable_staff(db: Session, business_id: int) -> list[BusinessUser]:
-    return (
+def get_public_bookable_staff(
+    db: Session,
+    business_id: int,
+    service_id: int | None = None,
+) -> list[BusinessUser]:
+    query = (
         db.query(BusinessUser)
+        .join(BusinessUser.services)
         .filter(
             BusinessUser.business_id == business_id,
             BusinessUser.active.is_(True),
             BusinessUser.bookable.is_(True),
             BusinessUser.show_schedule.is_(True),
             BusinessUser.removed_at.is_(None),
+            BusinessService.business_id == business_id,
+            BusinessService.active.is_(True),
         )
-        .order_by(BusinessUser.id.asc())
-        .all()
     )
+    if service_id is not None:
+        query = query.filter(BusinessService.id == service_id)
+    return query.distinct().order_by(BusinessUser.id.asc()).all()
 
 
 def serialize_public_staff(member: BusinessUser) -> dict[str, Any]:
@@ -284,10 +292,15 @@ def serialize_public_staff(member: BusinessUser) -> dict[str, Any]:
 
 
 def get_public_staff_or_none(
-    db: Session, *, business_id: int, business_user_id: int
+    db: Session,
+    *,
+    business_id: int,
+    business_user_id: int,
+    service_id: int | None = None,
 ) -> BusinessUser | None:
-    return (
+    query = (
         db.query(BusinessUser)
+        .join(BusinessUser.services)
         .filter(
             BusinessUser.id == business_user_id,
             BusinessUser.business_id == business_id,
@@ -295,9 +308,13 @@ def get_public_staff_or_none(
             BusinessUser.bookable.is_(True),
             BusinessUser.show_schedule.is_(True),
             BusinessUser.removed_at.is_(None),
+            BusinessService.business_id == business_id,
+            BusinessService.active.is_(True),
         )
-        .first()
     )
+    if service_id is not None:
+        query = query.filter(BusinessService.id == service_id)
+    return query.first()
 
 
 def get_exception_for_date(
@@ -486,9 +503,9 @@ def get_available_slots(
     if service is None:
         raise ValueError("service_not_found")
 
-    public_staff = get_public_bookable_staff(db, business.id)
-    if staff_business_user_id is None and not public_staff:
-        return []
+    public_staff = get_public_bookable_staff(db, business.id, service.id)
+    if not public_staff and not allow_nonpublic_staff:
+        raise ValueError("no_staff_available_for_service")
     if staff_business_user_id is None:
         slots_by_start: dict[str, dict[str, Any]] = {}
         for member in public_staff:
@@ -524,10 +541,13 @@ def get_available_slots(
             )
         else:
             selected_staff = get_public_staff_or_none(
-                db, business_id=business.id, business_user_id=staff_business_user_id
+                db,
+                business_id=business.id,
+                business_user_id=staff_business_user_id,
+                service_id=service.id,
             )
         if selected_staff is None:
-            raise ValueError("staff_not_found")
+            raise ValueError("staff_not_available_for_service")
 
     try:
         target_date = datetime.strptime(date, "%Y-%m-%d").date()
@@ -644,10 +664,15 @@ def build_calendar_days(
         service = get_service_or_none(db, business_id=business.id, service_id=service_id)
         if service is None:
             raise ValueError("service_not_found")
+        if not get_public_bookable_staff(db, business.id, service_id):
+            raise ValueError("no_staff_available_for_service")
     if staff_business_user_id is not None and get_public_staff_or_none(
-        db, business_id=business.id, business_user_id=staff_business_user_id
+        db,
+        business_id=business.id,
+        business_user_id=staff_business_user_id,
+        service_id=service_id,
     ) is None:
-        raise ValueError("staff_not_found")
+        raise ValueError("staff_not_available_for_service")
 
     settings = (
         db.query(AvailabilitySettings)
@@ -755,13 +780,33 @@ def build_availability(
     *,
     business_slug: str,
     days_ahead: int = 14,
+    service_id: int | None = None,
+    staff_business_user_id: int | None = None,
 ) -> dict[str, Any]:
     business = get_business_or_none(db, business_slug)
 
     if business is None:
         raise ValueError("business_not_found")
 
-    has_bookable_staff = bool(get_public_bookable_staff(db, business.id))
+    if service_id is not None:
+        service = get_service_or_none(
+            db, business_id=business.id, service_id=service_id
+        )
+        if service is None:
+            raise ValueError("service_not_found")
+        if not get_public_bookable_staff(db, business.id, service_id):
+            raise ValueError("no_staff_available_for_service")
+    if staff_business_user_id is not None and get_public_staff_or_none(
+        db,
+        business_id=business.id,
+        business_user_id=staff_business_user_id,
+        service_id=service_id,
+    ) is None:
+        raise ValueError("staff_not_available_for_service")
+
+    has_bookable_staff = bool(
+        get_public_bookable_staff(db, business.id, service_id)
+    )
 
     settings = (
         db.query(AvailabilitySettings)
@@ -782,19 +827,34 @@ def build_availability(
     for offset in range(days_ahead):
         current_day = today + timedelta(days=offset)
         iso_date = current_day.isoformat()
-        day_windows = (
-            get_windows_for_date(
+        if service_id is not None and has_bookable_staff:
+            service_slots = get_available_slots(
                 db,
-                business=business,
-                settings=settings,
-                target_date=current_day,
+                business_slug=business_slug,
+                service_id=service_id,
+                date=iso_date,
+                staff_business_user_id=staff_business_user_id,
             )
-            if has_bookable_staff
-            else []
-        )
-        labels = [window["start"] for window in day_windows]
+            day_windows = service_slots
+            labels = [slot["label"] for slot in service_slots]
+        else:
+            day_windows = (
+                get_windows_for_date(
+                    db,
+                    business=business,
+                    settings=settings,
+                    target_date=current_day,
+                )
+                if has_bookable_staff
+                else []
+            )
+            labels = [window["start"] for window in day_windows]
         booked_slots = booked_by_date.get(iso_date, [])
-        available_slots = [slot for slot in labels if slot not in booked_slots]
+        available_slots = (
+            labels
+            if service_id is not None
+            else [slot for slot in labels if slot not in booked_slots]
+        )
 
         availability.append(
             {

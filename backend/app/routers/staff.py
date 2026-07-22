@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ from app.models import (
     AvailabilitySettings,
     Booking,
     Business,
+    BusinessService,
     BusinessUser,
     BusinessUserAvailability,
     BusinessUserAvailabilityException,
@@ -89,6 +90,17 @@ class StaffScheduleUpdate(BaseModel):
     weekly_schedule: dict[str, list[dict[str, str]]]
 
 
+class StaffServicesUpdate(BaseModel):
+    service_ids: list[int] = Field(default_factory=list)
+
+    @field_validator("service_ids")
+    @classmethod
+    def validate_service_ids(cls, value: list[int]) -> list[int]:
+        if any(service_id < 1 for service_id in value):
+            raise ValueError("Invalid service id")
+        return list(dict.fromkeys(value))
+
+
 class StaffExceptionCreate(BaseModel):
     date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     type: str = Field(pattern=r"^(closed|custom_hours)$")
@@ -143,6 +155,7 @@ def serialize_member(member: BusinessUser) -> dict:
         "avatar_url": member.avatar_url,
         "removed_at": member.removed_at.isoformat() if member.removed_at else None,
         "pending": member.user.google_sub is None,
+        "service_ids": sorted(service.id for service in member.services if service.active),
     }
 
 
@@ -285,13 +298,29 @@ def member_schedule(db: Session, business: Business, member: BusinessUser) -> di
 
 
 @public_router.get("")
-def list_public_staff(business_slug: str, db: Session = Depends(get_db)):
+def list_public_staff(
+    business_slug: str,
+    service_id: int | None = Query(default=None, ge=1),
+    db: Session = Depends(get_db),
+):
     business = get_business_or_404(db, business_slug, public=True)
+    if service_id is not None:
+        service = (
+            db.query(BusinessService)
+            .filter(
+                BusinessService.id == service_id,
+                BusinessService.business_id == business.id,
+                BusinessService.active.is_(True),
+            )
+            .first()
+        )
+        if service is None:
+            raise HTTPException(status_code=404, detail="Service not found")
     return {
         "business_slug": business.slug,
         "staff": [
             serialize_public_staff(item)
-            for item in get_public_bookable_staff(db, business.id)
+            for item in get_public_bookable_staff(db, business.id, service_id)
         ],
     }
 
@@ -422,6 +451,69 @@ def update_staff(
         db, action="user_reactivated" if is_reactivation else "user_role_changed", request=request, actor=actor,
         business_id=business.id, resource_type="business_user", resource_id=member.id,
         metadata={"role": member.role, "active": member.active, "bookable": member.bookable},
+    )
+    return {"ok": True, "staff_member": serialize_member(member)}
+
+
+@admin_router.put("/{business_user_id}/services")
+def update_staff_services(
+    business_slug: str,
+    business_user_id: int,
+    payload: StaffServicesUpdate,
+    request: Request,
+    actor: User = Depends(require_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    actor_membership = get_business_membership(
+        db, business_slug=business_slug, user_id=actor.id
+    )
+    if actor_membership is None or actor_membership.role != "business_admin":
+        raise HTTPException(
+            status_code=403, detail="Business administrator access required"
+        )
+    member = get_member_or_404(
+        db, business_id=business.id, business_user_id=business_user_id
+    )
+    if not member.active or member.removed_at is not None:
+        raise HTTPException(status_code=409, detail="Staff member is inactive")
+    if not member.bookable:
+        raise HTTPException(
+            status_code=409,
+            detail="Activate Reservable before assigning services",
+        )
+
+    services = (
+        db.query(BusinessService)
+        .filter(
+            BusinessService.business_id == business.id,
+            BusinessService.active.is_(True),
+            BusinessService.id.in_(payload.service_ids),
+        )
+        .order_by(BusinessService.id)
+        .all()
+        if payload.service_ids
+        else []
+    )
+    if len(services) != len(payload.service_ids):
+        raise HTTPException(
+            status_code=422,
+            detail="All services must be active and belong to this business",
+        )
+
+    member.services = services
+    member.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(member)
+    record_audit(
+        db,
+        action="staff_services_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_user",
+        resource_id=member.id,
+        metadata={"service_ids": payload.service_ids},
     )
     return {"ok": True, "staff_member": serialize_member(member)}
 

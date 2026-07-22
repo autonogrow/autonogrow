@@ -45,8 +45,9 @@ def create_db_and_tables() -> None:
     run_lightweight_migrations()
 
 
-def run_lightweight_migrations() -> None:
-    inspector = inspect(engine)
+def run_lightweight_migrations(target_engine=None) -> None:
+    migration_engine = target_engine or engine
+    inspector = inspect(migration_engine)
 
     table_names = inspector.get_table_names()
     if "bookings" not in table_names:
@@ -65,7 +66,14 @@ def run_lightweight_migrations() -> None:
         "internal_notes": "TEXT",
     }
 
-    with engine.begin() as connection:
+    with migration_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS app_migrations ("
+                "name VARCHAR(200) PRIMARY KEY, "
+                "applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+        )
         for column_name, column_type in booking_columns.items():
             if column_name not in existing_columns:
                 connection.execute(
@@ -117,3 +125,29 @@ def run_lightweight_migrations() -> None:
             for column_name, column_type in branding_columns.items():
                 if column_name not in business_columns:
                     connection.execute(text(f"ALTER TABLE businesses ADD COLUMN {column_name} {column_type}"))
+
+        migration_name = "2026_07_backfill_business_user_services"
+        migration_applied = connection.execute(
+            text("SELECT 1 FROM app_migrations WHERE name = :name"),
+            {"name": migration_name},
+        ).first()
+        if migration_applied is None:
+            connection.execute(
+                text(
+                    "INSERT INTO business_user_services "
+                    "(business_user_id, service_id, created_at) "
+                    "SELECT bu.id, s.id, CURRENT_TIMESTAMP "
+                    "FROM business_users bu "
+                    "JOIN services s ON s.business_id = bu.business_id "
+                    "WHERE bu.active IS TRUE AND bu.bookable IS TRUE "
+                    "AND bu.show_schedule IS TRUE AND bu.removed_at IS NULL "
+                    "AND s.active IS TRUE "
+                    "AND NOT EXISTS ("
+                    "SELECT 1 FROM business_user_services existing "
+                    "WHERE existing.business_user_id = bu.id)"
+                )
+            )
+            connection.execute(
+                text("INSERT INTO app_migrations (name) VALUES (:name)"),
+                {"name": migration_name},
+            )

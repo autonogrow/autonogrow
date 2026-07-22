@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -92,6 +93,22 @@ def create_booking_response(
             current_user=current_user,
         )
     except ValueError as exc:
+        if str(exc) in {
+            "no_staff_available_for_service",
+            "staff_not_available_for_service",
+        }:
+            messages = {
+                "no_staff_available_for_service": (
+                    "No hay profesionales disponibles para este servicio."
+                ),
+                "staff_not_available_for_service": (
+                    "El profesional seleccionado no está disponible para este servicio."
+                ),
+            }
+            return JSONResponse(
+                status_code=409,
+                content={"detail": str(exc), "message": messages[str(exc)]},
+            )
         raise map_booking_error(exc) from exc
 
     return {

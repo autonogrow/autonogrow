@@ -27,3 +27,8 @@ class BusinessService(Base):
 
     business = relationship("Business", back_populates="services")
     bookings = relationship("Booking", back_populates="service")
+    staff_members = relationship(
+        "BusinessUser",
+        secondary="business_user_services",
+        back_populates="services",
+    )

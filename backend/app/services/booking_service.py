@@ -231,8 +231,8 @@ def create_booking_request(
     if service is None:
         raise ValueError("service_not_found")
 
-    if not get_public_bookable_staff(db, business.id):
-        raise ValueError("no_bookable_staff")
+    if not get_public_bookable_staff(db, business.id, service.id):
+        raise ValueError("no_staff_available_for_service")
 
     start_datetime = parse_booking_start(payload)
     duration_minutes = service.duration_minutes or 30

@@ -88,16 +88,6 @@
 
       <form id="booking-form" class="booking-form">
         <label>
-          Nombre
-          <input type="text" id="client-name" placeholder="Ej: Marta" required />
-        </label>
-
-        <label>
-          Teléfono / WhatsApp
-          <input type="tel" id="client-phone" placeholder="Ej: 612 345 678" required />
-        </label>
-
-        <label>
           Servicio
           <select id="service-select" required>
             <option value="">Selecciona un servicio</option>
@@ -112,12 +102,22 @@
         </label>
 
         <div id="online-booking-unavailable" class="online-booking-unavailable" hidden>
-          <strong>Ahora mismo no hay profesionales disponibles para reserva online.</strong>
+          <strong id="online-booking-unavailable-message">Ahora mismo no hay profesionales disponibles para este servicio.</strong>
           <a id="booking-contact-link" class="btn btn-secondary" target="_blank" rel="noopener">Contactar con el negocio</a>
         </div>
 
         <input type="hidden" id="preferred-day" />
         <input type="hidden" id="preferred-time" />
+
+        <label>
+          Nombre
+          <input type="text" id="client-name" placeholder="Ej: Marta" required />
+        </label>
+
+        <label>
+          Teléfono / WhatsApp
+          <input type="tel" id="client-phone" placeholder="Ej: 612 345 678" required />
+        </label>
 
         <label>
           Comentarios

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -12,6 +13,21 @@ from app.services.availability_service import (
 )
 
 router = APIRouter(prefix="/api/businesses/{business_slug}", tags=["availability"])
+
+
+def staff_service_error_response(code: str) -> JSONResponse:
+    messages = {
+        "no_staff_available_for_service": (
+            "No hay profesionales disponibles para este servicio."
+        ),
+        "staff_not_available_for_service": (
+            "El profesional seleccionado no está disponible para este servicio."
+        ),
+    }
+    return JSONResponse(
+        status_code=409,
+        content={"detail": code, "message": messages[code]},
+    )
 
 
 @router.get("/availability-settings")
@@ -35,6 +51,8 @@ def public_availability_settings(
 def get_availability(
     business_slug: str,
     days_ahead: int = Query(default=14, ge=1, le=60),
+    service_id: int | None = Query(default=None, ge=1),
+    staff_business_user_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
     try:
@@ -42,10 +60,19 @@ def get_availability(
             db,
             business_slug=business_slug,
             days_ahead=days_ahead,
+            service_id=service_id,
+            staff_business_user_id=staff_business_user_id,
         )
     except ValueError as exc:
+        if str(exc) in {
+            "no_staff_available_for_service",
+            "staff_not_available_for_service",
+        }:
+            return staff_service_error_response(str(exc))
         if str(exc) == "business_not_found":
             raise HTTPException(status_code=404, detail="Business not found") from exc
+        if str(exc) == "service_not_found":
+            raise HTTPException(status_code=404, detail="Service not found") from exc
         raise
 
 
@@ -73,6 +100,11 @@ def list_available_slots(
             ),
         }
     except ValueError as exc:
+        if str(exc) in {
+            "no_staff_available_for_service",
+            "staff_not_available_for_service",
+        }:
+            return staff_service_error_response(str(exc))
         if str(exc) == "business_not_found":
             raise HTTPException(status_code=404, detail="Business not found") from exc
         if str(exc) == "service_not_found":
@@ -110,6 +142,11 @@ def list_calendar_days(
             ),
         }
     except ValueError as exc:
+        if str(exc) in {
+            "no_staff_available_for_service",
+            "staff_not_available_for_service",
+        }:
+            return staff_service_error_response(str(exc))
         if str(exc) == "business_not_found":
             raise HTTPException(status_code=404, detail="Business not found") from exc
         if str(exc) == "service_not_found":
