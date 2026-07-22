@@ -39,7 +39,8 @@
       <button class="admin-tab admin-tab-active" type="button" data-section="summary" aria-selected="true">Resumen</button>
       <button class="admin-tab" type="button" data-section="growth" aria-selected="false">Crecimiento</button>
       <button class="admin-tab" type="button" data-section="bookings" aria-selected="false">Reservas</button>
-      <button class="admin-tab" type="button" data-section="messages" aria-selected="false">Mensajes WhatsApp</button>
+      <button class="admin-tab" type="button" data-section="conversations" aria-selected="false">Conversaciones</button>
+      <button class="admin-tab" type="button" data-section="messages" aria-selected="false">Mensajes automáticos</button>
       <button class="admin-tab" type="button" data-section="services" aria-selected="false">Servicios</button>
       <button class="admin-tab" type="button" data-section="staff" aria-selected="false">Equipo</button>
       <button class="admin-tab" type="button" data-section="schedule" aria-selected="false">Horarios</button>
@@ -260,10 +261,55 @@
       </details>
     </section>
 
+    <section class="section admin-section conversations-section" data-admin-section="conversations">
+      <div class="section-header">
+        <div>
+          <h2>Centro de conversaciones</h2>
+          <p>Centraliza consultas manuales, de WhatsApp e Instagram antes de conectarlas a proveedores reales.</p>
+        </div>
+        <button id="toggle-conversation-create" class="btn btn-primary" type="button" data-conversation-admin-only>Crear conversación de prueba</button>
+      </div>
+
+      <div id="conversation-create-panel" class="conversation-create-panel" hidden data-conversation-admin-only>
+        <label>Canal<select id="conversation-create-channel"><option value="manual">Manual</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option></select></label>
+        <label>Nombre<input id="conversation-create-name" type="text" /></label>
+        <label>Teléfono<input id="conversation-create-phone" type="text" /></label>
+        <label>Usuario<input id="conversation-create-username" type="text" /></label>
+        <label class="field-wide">Mensaje inicial<textarea id="conversation-create-message" rows="3"></textarea></label>
+        <button id="create-conversation" class="btn btn-primary" type="button">Crear</button>
+      </div>
+
+      <div class="conversation-filters">
+        <label>Estado<select id="conversation-status-filter"><option value="">Todas</option><option value="pending">Pendientes</option><option value="replied">Respondidas</option><option value="closed">Cerradas</option></select></label>
+        <label>Canal<select id="conversation-channel-filter"><option value="">Todos</option><option value="manual">Manual</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option></select></label>
+        <label class="conversation-search">Buscar<input id="conversation-search" type="search" placeholder="Nombre, teléfono, usuario o mensaje" /></label>
+      </div>
+      <p id="conversation-feedback" class="inline-feedback"></p>
+
+      <div class="conversation-center">
+        <aside id="conversation-list" class="conversation-list" aria-label="Conversaciones">
+          <p class="empty-state">Cargando conversaciones...</p>
+        </aside>
+        <article id="conversation-detail" class="conversation-detail">
+          <p class="empty-state">Selecciona una conversación.</p>
+        </article>
+      </div>
+
+      <details id="conversation-templates-panel" class="conversation-templates-panel" data-conversation-admin-only>
+        <summary>Gestionar plantillas</summary>
+        <div class="conversation-template-create">
+          <input id="conversation-template-name" type="text" placeholder="Nombre de plantilla" />
+          <textarea id="conversation-template-body" rows="3" placeholder="Texto con variables como {business_name} o {public_booking_url}"></textarea>
+          <button id="create-conversation-template" class="btn btn-secondary" type="button">Crear plantilla</button>
+        </div>
+        <div id="conversation-template-list" class="conversation-template-list"></div>
+      </details>
+    </section>
+
     <section class="section admin-section message-outbox-section" data-admin-section="messages">
       <div class="section-header">
         <div>
-          <h2>Mensajes WhatsApp</h2>
+          <h2>Mensajes automáticos de WhatsApp</h2>
           <p>Prepara conversaciones de WhatsApp y confirma manualmente su envío.</p>
         </div>
 

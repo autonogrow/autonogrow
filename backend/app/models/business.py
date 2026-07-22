@@ -47,3 +47,5 @@ class Business(Base):
     google_integrations = relationship("GoogleIntegration", back_populates="business", cascade="all, delete-orphan")
     gallery_images = relationship("BusinessGalleryImage", back_populates="business", cascade="all, delete-orphan")
     user_memberships = relationship("BusinessUser", back_populates="business", cascade="all, delete-orphan")
+    conversations = relationship("Conversation", back_populates="business", cascade="all, delete-orphan")
+    conversation_templates = relationship("ConversationTemplate", back_populates="business", cascade="all, delete-orphan")

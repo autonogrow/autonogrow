@@ -20,6 +20,7 @@ from app.models.user import User
 from app.models.business_user import BusinessUser
 from app.models.business_user_service import BusinessUserService
 from app.models.audit_log import AuditLog
+from app.models.conversation import Conversation, ConversationMessage, ConversationTemplate
 
 __all__ = [
     "Business",
@@ -42,4 +43,7 @@ __all__ = [
     "BusinessUser",
     "BusinessUserService",
     "AuditLog",
+    "Conversation",
+    "ConversationMessage",
+    "ConversationTemplate",
 ]

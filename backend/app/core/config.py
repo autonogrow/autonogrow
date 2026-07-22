@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     security_headers_enabled: bool = True
     upload_max_size_mb: int = 5
     uploads_dir: str = ""
+    webhook_test_secret: str = ""
 
     model_config = SettingsConfigDict(
         env_file=(str(BACKEND_DIR / ".env"), ".env"),

@@ -29,6 +29,12 @@ let adminGallery = [];
 let adminMembership = null;
 let staffMembers = [];
 let selectedStaffFilter = "";
+let conversations = [];
+let conversationTemplates = [];
+let selectedConversationId = null;
+let conversationSearchTimer = null;
+let conversationLoadVersion = 0;
+let conversationDetailVersion = 0;
 const TEMPLATE_DESCRIPTIONS = {
   classic: "Estructura equilibrada para cualquier negocio.", elegant: "Diseño más premium y visual.",
   beauty: "Pensada para estética, manicura y peluquería.", clinic: "Limpia y profesional para centros de salud o consulta.",
@@ -61,9 +67,13 @@ function isBusinessStaff() {
   return adminMembership?.role === "business_staff" && !adminAuthUser?.is_owner;
 }
 
+function canManageConversationTemplates() {
+  return Boolean(adminAuthUser?.is_owner || adminMembership?.role === "business_admin");
+}
+
 function applyRoleVisibility() {
   const staffOnly = isBusinessStaff();
-  const allowed = new Set(["summary", "bookings"]);
+  const allowed = new Set(["summary", "bookings", "conversations"]);
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
     tab.hidden = staffOnly && !allowed.has(tab.dataset.section);
   });
@@ -71,6 +81,10 @@ function applyRoleVisibility() {
     if (staffOnly && !allowed.has(section.dataset.adminSection)) section.hidden = true;
   });
   document.getElementById("booking-staff-filter-field").hidden = staffOnly;
+  document.querySelectorAll("[data-conversation-admin-only]").forEach((element) => {
+    element.hidden = !canManageConversationTemplates() ||
+      element.id === "conversation-create-panel";
+  });
   document.querySelector(".growth-summary-card").hidden = staffOnly;
   ["stat-reviews-pending", "stat-reviews-copied", "stat-reviews-sent", "stat-messages-pending", "stat-messages-opened", "stat-messages-sent", "stat-services-active"]
     .forEach((id) => { document.getElementById(id)?.closest(".stat-card")?.toggleAttribute("hidden", staffOnly); });
@@ -336,7 +350,12 @@ async function loadAdminPanel() {
       currentBusiness = { ...panel.business, active: panel.business.status === "active" };
       applyBusinessData(currentBusiness);
       document.getElementById("business-subtitle").textContent = "Mi agenda y reservas asignadas";
-      await Promise.all([loadBookings(), loadMyStaffAvailability()]);
+      await Promise.all([
+        loadBookings(),
+        loadMyStaffAvailability(),
+        loadConversationTemplates(),
+        loadConversations()
+      ]);
       return;
     }
     const businessResponse = await fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/settings`);
@@ -358,7 +377,9 @@ async function loadAdminPanel() {
       loadAvailabilityExceptions(),
       loadBookings(),
       loadMessageOutbox(),
-      loadAdminGallery()
+      loadAdminGallery(),
+      loadConversationTemplates(),
+      loadConversations()
     ]);
     restoreAdminMediaStatus();
   } catch (error) {
@@ -1450,6 +1471,310 @@ async function loadReviewRequests() {
   growthDataReady.reviews = true;
 }
 
+function conversationErrorMessage(body, fallback) {
+  if (typeof body === "string") return body;
+  if (typeof body?.message === "string") return body.message;
+  if (typeof body?.detail === "string") return body.detail;
+  if (body?.detail) return JSON.stringify(body.detail);
+  return fallback;
+}
+
+function showConversationFeedback(message, isError = false) {
+  const feedback = document.getElementById("conversation-feedback");
+  feedback.textContent = message || "";
+  feedback.className = `inline-feedback ${message ? (isError ? "error" : "success") : ""}`;
+}
+
+function conversationDisplayName(item) {
+  return item.customer_name || item.customer_username || item.customer_phone || "Cliente sin nombre";
+}
+
+function conversationStatusLabel(status) {
+  return { pending: "Pendiente", replied: "Respondida", closed: "Cerrada" }[status] || status;
+}
+
+function conversationChannelLabel(channel) {
+  return { manual: "Manual", whatsapp: "WhatsApp", instagram: "Instagram" }[channel] || channel;
+}
+
+function formatConversationDate(value) {
+  if (!value) return "Sin actividad";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
+}
+
+async function loadConversations() {
+  const requestVersion = ++conversationLoadVersion;
+  const container = document.getElementById("conversation-list");
+  const params = new URLSearchParams({ limit: "100", offset: "0" });
+  const status = document.getElementById("conversation-status-filter")?.value;
+  const channel = document.getElementById("conversation-channel-filter")?.value;
+  const query = document.getElementById("conversation-search")?.value.trim();
+  if (status) params.set("status", status);
+  if (channel) params.set("channel", channel);
+  if (query) params.set("q", query);
+  container.innerHTML = `<p class="empty-state">Cargando conversaciones...</p>`;
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations?${params}`
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudieron cargar las conversaciones."));
+    if (requestVersion !== conversationLoadVersion) return;
+    conversations = body.conversations || [];
+    renderConversationList();
+    if (selectedConversationId && conversations.some((item) => item.id === selectedConversationId)) {
+      await selectConversation(selectedConversationId, false);
+    } else if (conversations.length) {
+      await selectConversation(conversations[0].id, false);
+    } else {
+      selectedConversationId = null;
+      document.getElementById("conversation-detail").innerHTML = `<p class="empty-state">Todavía no hay conversaciones.</p>`;
+    }
+  } catch (error) {
+    if (requestVersion !== conversationLoadVersion) return;
+    console.error(error);
+    container.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderConversationList() {
+  const container = document.getElementById("conversation-list");
+  if (!conversations.length) {
+    container.innerHTML = `<p class="empty-state">Todavía no hay conversaciones.</p>`;
+    return;
+  }
+  container.innerHTML = conversations.map((item) => `
+    <button class="conversation-list-item ${item.id === selectedConversationId ? "active" : ""}" type="button" onclick="selectConversation(${item.id})">
+      <span class="conversation-list-head">
+        <strong>${escapeHtml(conversationDisplayName(item))}</strong>
+        <span class="conversation-status conversation-status-${item.status}">${escapeHtml(conversationStatusLabel(item.status))}</span>
+      </span>
+      <span class="conversation-channel">${escapeHtml(conversationChannelLabel(item.channel))}</span>
+      <p>${escapeHtml(item.last_message_text || "Sin mensajes")}</p>
+      <small>${escapeHtml(formatConversationDate(item.last_message_at))}${item.unread_count ? ` · ${item.unread_count} sin responder` : ""}</small>
+    </button>
+  `).join("");
+}
+
+async function selectConversation(conversationId, showLoading = true) {
+  const requestVersion = ++conversationDetailVersion;
+  selectedConversationId = Number(conversationId);
+  renderConversationList();
+  const detail = document.getElementById("conversation-detail");
+  if (showLoading) detail.innerHTML = `<p class="empty-state">Cargando conversación...</p>`;
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}`
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cargar la conversación."));
+    if (requestVersion !== conversationDetailVersion || selectedConversationId !== Number(conversationId)) return;
+    renderConversationDetail(body.conversation);
+  } catch (error) {
+    if (requestVersion !== conversationDetailVersion) return;
+    console.error(error);
+    detail.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderConversationDetail(conversation) {
+  const detail = document.getElementById("conversation-detail");
+  const contactParts = [conversation.customer_username ? `@${conversation.customer_username}` : null, conversation.customer_phone].filter(Boolean);
+  const messages = conversation.messages || [];
+  const quickReplies = conversationTemplates.filter((item) => item.active).map((template) => `
+    <button class="btn btn-secondary" type="button" onclick="fillConversationReply(${template.id})">${escapeHtml(template.name)}</button>
+  `).join("");
+  detail.innerHTML = `
+    <header class="conversation-detail-header">
+      <div class="conversation-detail-header-copy">
+        <strong>${escapeHtml(conversationDisplayName(conversation))}</strong>
+        <span>${escapeHtml(contactParts.join(" · ") || "Sin datos adicionales")}</span>
+        <span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>
+      </div>
+      <div class="conversation-detail-actions">
+        <span class="conversation-status conversation-status-${conversation.status}">${escapeHtml(conversationStatusLabel(conversation.status))}</span>
+        ${conversation.status === "closed"
+          ? `<button class="btn btn-small btn-secondary" type="button" onclick="changeConversationStatus('pending')">Reabrir</button>`
+          : `<button class="btn btn-small btn-secondary" type="button" onclick="changeConversationStatus('pending')">Marcar pendiente</button><button class="btn btn-small btn-danger" type="button" onclick="changeConversationStatus('closed')">Marcar cerrada</button>`}
+      </div>
+    </header>
+    <div id="conversation-thread" class="conversation-thread">
+      ${messages.length ? messages.map((message) => `
+        <div class="conversation-message conversation-message-${message.direction}">
+          <span>${escapeHtml(message.body)}</span>
+          <small>${message.direction === "outbound" ? "Negocio" : "Cliente"} · ${escapeHtml(formatConversationDate(message.created_at))}</small>
+        </div>
+      `).join("") : `<p class="empty-state">Todavía no hay mensajes.</p>`}
+    </div>
+    <div class="conversation-reply">
+      <div class="conversation-quick-replies">${quickReplies || `<small>No hay respuestas rápidas activas.</small>`}</div>
+      <textarea id="conversation-reply-body" placeholder="Escribe una respuesta..."></textarea>
+      <div class="conversation-composer-actions">
+        <small>En v1 el mensaje se registra como enviado, sin contactar todavía al proveedor externo.</small>
+        <button class="btn btn-primary" type="button" onclick="sendConversationReply()">Enviar</button>
+      </div>
+    </div>
+  `;
+  const thread = document.getElementById("conversation-thread");
+  if (thread) thread.scrollTop = thread.scrollHeight;
+}
+
+function fillConversationReply(templateId) {
+  const template = conversationTemplates.find((item) => item.id === Number(templateId));
+  const textarea = document.getElementById("conversation-reply-body");
+  if (!template || !textarea) return;
+  textarea.value = template.rendered_body || template.body;
+  textarea.focus();
+}
+
+async function sendConversationReply() {
+  if (!selectedConversationId) return;
+  const textarea = document.getElementById("conversation-reply-body");
+  const bodyText = textarea?.value.trim();
+  if (!bodyText) return showConversationFeedback("Escribe un mensaje antes de enviarlo.", true);
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}/messages`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: bodyText }) }
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar el mensaje."));
+    showConversationFeedback("Respuesta registrada correctamente.");
+    await loadConversations();
+  } catch (error) {
+    showConversationFeedback(error.message, true);
+  }
+}
+
+async function changeConversationStatus(status) {
+  if (!selectedConversationId) return;
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}/status`,
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cambiar el estado."));
+    showConversationFeedback("Estado actualizado.");
+    await loadConversations();
+  } catch (error) {
+    showConversationFeedback(error.message, true);
+  }
+}
+
+async function createConversation() {
+  const payload = {
+    channel: document.getElementById("conversation-create-channel").value,
+    customer_name: document.getElementById("conversation-create-name").value.trim() || null,
+    customer_phone: document.getElementById("conversation-create-phone").value.trim() || null,
+    customer_username: document.getElementById("conversation-create-username").value.trim() || null,
+    initial_message: document.getElementById("conversation-create-message").value.trim() || null
+  };
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo crear la conversación."));
+    selectedConversationId = body.conversation.id;
+    ["conversation-create-name", "conversation-create-phone", "conversation-create-username", "conversation-create-message"]
+      .forEach((id) => { document.getElementById(id).value = ""; });
+    document.getElementById("conversation-create-panel").hidden = true;
+    showConversationFeedback("Conversación creada.");
+    await loadConversations();
+  } catch (error) {
+    showConversationFeedback(error.message, true);
+  }
+}
+
+async function loadConversationTemplates() {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-templates`
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudieron cargar las plantillas."));
+    conversationTemplates = body.templates || [];
+    renderConversationTemplates();
+    if (selectedConversationId) await selectConversation(selectedConversationId, false);
+  } catch (error) {
+    console.error(error);
+    conversationTemplates = [];
+    renderConversationTemplates();
+  }
+}
+
+function renderConversationTemplates() {
+  const container = document.getElementById("conversation-template-list");
+  if (!container || !canManageConversationTemplates()) return;
+  container.innerHTML = conversationTemplates.map((template) => `
+    <article class="conversation-template-item" data-conversation-template-id="${template.id}">
+      <input class="conversation-template-item-name" value="${escapeHtml(template.name)}" />
+      <textarea class="conversation-template-item-body" rows="3">${escapeHtml(template.body)}</textarea>
+      <label class="active-setting"><input class="conversation-template-item-active" type="checkbox" ${template.active ? "checked" : ""} />Activa</label>
+      <span><button class="btn btn-small btn-secondary" type="button" onclick="saveConversationTemplate(${template.id})">Guardar</button> <button class="btn btn-small btn-danger" type="button" onclick="deleteConversationTemplate(${template.id})">Eliminar</button></span>
+    </article>
+  `).join("") || `<p class="empty-state">No hay plantillas.</p>`;
+}
+
+async function createConversationTemplate() {
+  const payload = {
+    name: document.getElementById("conversation-template-name").value.trim(),
+    body: document.getElementById("conversation-template-body").value.trim(),
+    active: true
+  };
+  if (!payload.name || !payload.body) return showConversationFeedback("Completa nombre y texto de la plantilla.", true);
+  const saved = await mutateConversationTemplate(
+    `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-templates`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+  );
+  if (!saved) return;
+  document.getElementById("conversation-template-name").value = "";
+  document.getElementById("conversation-template-body").value = "";
+}
+
+async function saveConversationTemplate(templateId) {
+  const row = document.querySelector(`[data-conversation-template-id="${templateId}"]`);
+  await mutateConversationTemplate(
+    `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-templates/${templateId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: row.querySelector(".conversation-template-item-name").value.trim(),
+        body: row.querySelector(".conversation-template-item-body").value.trim(),
+        active: row.querySelector(".conversation-template-item-active").checked
+      })
+    }
+  );
+}
+
+async function deleteConversationTemplate(templateId) {
+  if (!window.confirm("¿Eliminar esta plantilla?")) return;
+  await mutateConversationTemplate(
+    `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-templates/${templateId}`,
+    { method: "DELETE" }
+  );
+}
+
+async function mutateConversationTemplate(url, options) {
+  try {
+    const response = await fetch(url, options);
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar la plantilla."));
+    showConversationFeedback("Plantillas actualizadas.");
+    await loadConversationTemplates();
+    if (selectedConversationId) await selectConversation(selectedConversationId, false);
+    return true;
+  } catch (error) {
+    showConversationFeedback(error.message, true);
+    return false;
+  }
+}
+
 async function loadMessageOutbox() {
   const container = document.getElementById("message-outbox-list");
 
@@ -1667,10 +1992,10 @@ function replaceOutboxMessage(updatedMessage) {
 
 async function refreshOperationalData() {
   if (isBusinessStaff()) {
-    await loadBookings();
+    await Promise.all([loadBookings(), loadConversations()]);
     return;
   }
-  await Promise.all([loadBookings(), loadMessageOutbox()]);
+  await Promise.all([loadBookings(), loadMessageOutbox(), loadConversations()]);
 }
 
 async function enrichBookingsWithAttachments() {
@@ -2512,6 +2837,18 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("save-business-settings").addEventListener("click", saveBusinessSettings);
   document.getElementById("create-service").addEventListener("click", createAdminService);
   document.getElementById("create-staff-member").addEventListener("click", createStaffMember);
+  document.getElementById("toggle-conversation-create").addEventListener("click", () => {
+    const panel = document.getElementById("conversation-create-panel");
+    panel.hidden = !panel.hidden;
+  });
+  document.getElementById("create-conversation").addEventListener("click", createConversation);
+  document.getElementById("create-conversation-template").addEventListener("click", createConversationTemplate);
+  document.getElementById("conversation-status-filter").addEventListener("change", loadConversations);
+  document.getElementById("conversation-channel-filter").addEventListener("change", loadConversations);
+  document.getElementById("conversation-search").addEventListener("input", () => {
+    clearTimeout(conversationSearchTimer);
+    conversationSearchTimer = setTimeout(loadConversations, 250);
+  });
   document.getElementById("booking-staff-filter").addEventListener("change", (event) => {
     selectedStaffFilter = event.target.value;
     renderBookings();

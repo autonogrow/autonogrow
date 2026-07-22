@@ -29,6 +29,10 @@ from app.routers.staff import (
     member_router as member_staff_router,
     public_router as public_staff_router,
 )
+from app.routers.conversations import (
+    admin_router as conversations_router,
+    webhook_router as test_webhook_router,
+)
 
 
 @asynccontextmanager
@@ -81,3 +85,5 @@ app.include_router(customer_router)
 app.include_router(public_staff_router)
 app.include_router(admin_staff_router)
 app.include_router(member_staff_router)
+app.include_router(conversations_router)
+app.include_router(test_webhook_router)
