@@ -72,18 +72,21 @@ Variables disponibles en plantillas:
 4. Customer y usuario no autenticado: deben recibir `403` y `401`, respectivamente.
 5. Intentar consultar desde un negocio A el id de una conversación de B: debe devolver `404`.
 
-## Pendiente para Instagram real
+## Integración Instagram
 
-La estructura ya admite `channel=instagram`, `external_user_id`, `customer_username`,
-`provider_message_id` y `raw_payload_json`. La integración real requerirá:
+Instagram API v1 dispone de webhook firmado, inbound real y outbound de texto opcional. Consulta `docs/manual_test_instagram_v1.md` para configuración y limitaciones.
+
+## Pendiente para una integración multi-negocio
+
+La estructura admite `channel=instagram`, `external_user_id`, `customer_username`,
+`provider_message_id` y `raw_payload_json`. Para una integración completa por negocio siguen pendientes:
 
 - cuenta profesional de Instagram;
 - página de Facebook vinculada;
 - app en Meta Developers;
 - permisos de Instagram Messaging y revisión de la app;
-- webhook real de mensajes;
-- token de página/cuenta y renovación segura;
-- verificación de firma de cada webhook;
+- OAuth y asociación independiente entre negocios y cuentas;
+- renovación segura de tokens;
 - actualización real de estados de entrega y lectura.
 
-Nada de lo anterior forma parte de v1 y no se han añadido credenciales ni llamadas externas.
+No se han añadido credenciales reales al repositorio. El provider permanece desactivado por defecto.

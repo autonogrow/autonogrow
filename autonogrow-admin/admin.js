@@ -1525,6 +1525,22 @@ function conversationIntentBadge(item) {
   return `<span class="conversation-intent-badge">${escapeHtml(conversationIntentLabel(item.detected_intent))}${confidence}</span>`;
 }
 
+function conversationDeliveryLabel(status) {
+  return {
+    sent: "Enviado",
+    failed: "Fallido",
+    simulated: "Modo interno",
+    pending: "Pendiente"
+  }[status] || status;
+}
+
+function instagramProviderBadge(conversation) {
+  if (conversation.channel !== "instagram") return "";
+  return conversation.instagram_provider_configured
+    ? `<span class="conversation-provider conversation-provider-connected">Instagram conectado</span>`
+    : `<span class="conversation-provider conversation-provider-internal">Instagram no conectado · modo interno</span>`;
+}
+
 function formatConversationDate(value) {
   if (!value) return "Sin actividad";
   const date = new Date(value);
@@ -1580,6 +1596,7 @@ function renderConversationList() {
         <span class="conversation-status conversation-status-${item.status}">${escapeHtml(conversationStatusLabel(item.status))}</span>
       </span>
       <span class="conversation-channel">${escapeHtml(conversationChannelLabel(item.channel))}</span>
+      ${instagramProviderBadge(item)}
       ${conversationIntentBadge(item)}
       <p>${escapeHtml(item.last_message_text || "Sin mensajes")}</p>
       <small>${escapeHtml(formatConversationDate(item.last_message_at))}${item.unread_count ? ` · ${item.unread_count} sin responder` : ""}</small>
@@ -1627,6 +1644,11 @@ function renderConversationDetail(conversation) {
     <button class="btn btn-secondary" type="button" onclick="fillConversationReply(${template.id})">${escapeHtml(template.name)}</button>
   `).join("");
   const pendingSuggestions = conversationSuggestions.filter((item) => item.status === "pending");
+  const deliveryNotice = conversation.channel === "instagram"
+    ? (conversation.instagram_provider_configured
+      ? "El mensaje se enviará mediante Instagram."
+      : "Instagram real no está conectado; este mensaje solo se registra internamente.")
+    : "En v1 el mensaje se registra como enviado, sin contactar todavía al proveedor externo.";
   const suggestionsMarkup = pendingSuggestions.length || conversationSuggestionNotice ? `
     <div class="conversation-suggestions">
       ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
@@ -1650,6 +1672,7 @@ function renderConversationDetail(conversation) {
         <strong>${escapeHtml(conversationDisplayName(conversation))}</strong>
         <span>${escapeHtml(contactParts.join(" · ") || "Sin datos adicionales")}</span>
         <span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>
+        ${instagramProviderBadge(conversation)}
         ${conversationIntentBadge(conversation)}
       </div>
       <div class="conversation-detail-actions">
@@ -1663,7 +1686,7 @@ function renderConversationDetail(conversation) {
       ${messages.length ? messages.map((message) => `
         <div class="conversation-message conversation-message-${message.direction}">
           <span>${escapeHtml(message.body)}</span>
-          <small>${message.sender_type === "automation" ? "Automatización" : (message.direction === "outbound" ? "Negocio" : "Cliente")} · ${escapeHtml(formatConversationDate(message.created_at))}</small>
+          <small>${message.sender_type === "automation" ? "Automatización" : (message.direction === "outbound" ? "Negocio" : "Cliente")} · ${escapeHtml(formatConversationDate(message.created_at))}${message.delivery_status ? ` · <span class="conversation-delivery conversation-delivery-${escapeHtml(message.delivery_status)}">${escapeHtml(conversationDeliveryLabel(message.delivery_status))}</span>` : ""}</small>
         </div>
       `).join("") : `<p class="empty-state">Todavía no hay mensajes.</p>`}
     </div>
@@ -1672,7 +1695,7 @@ function renderConversationDetail(conversation) {
       <div class="conversation-quick-replies">${quickReplies || `<small>No hay respuestas rápidas activas.</small>`}</div>
       <textarea id="conversation-reply-body" placeholder="Escribe una respuesta..."></textarea>
       <div class="conversation-composer-actions">
-        <small>En v1 el mensaje se registra como enviado, sin contactar todavía al proveedor externo.</small>
+        <small>${escapeHtml(deliveryNotice)}</small>
         <button class="btn btn-primary" type="button" onclick="sendConversationReply()">Enviar</button>
       </div>
     </div>
@@ -1711,6 +1734,7 @@ async function sendConversationReply() {
     await loadConversations();
   } catch (error) {
     showConversationFeedback(error.message, true);
+    if (selectedConversationId) await loadConversations();
   }
 }
 
@@ -1730,6 +1754,7 @@ async function sendConversationSuggestion(suggestionId) {
     await loadConversations();
   } catch (error) {
     showConversationFeedback(error.message || "No se pudo enviar la sugerencia.", true);
+    if (selectedConversationId) await loadConversations();
   } finally {
     sendingConversationSuggestionIds.delete(suggestion.id);
   }

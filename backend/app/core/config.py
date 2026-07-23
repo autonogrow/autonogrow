@@ -1,6 +1,7 @@
 ﻿from functools import lru_cache
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
+import re
 from urllib.parse import urlsplit
 
 from pydantic import model_validator
@@ -58,6 +59,15 @@ class Settings(BaseSettings):
     upload_max_size_mb: int = 5
     uploads_dir: str = ""
     webhook_test_secret: str = ""
+    meta_app_id: str = ""
+    meta_app_secret: str = ""
+    meta_verify_token: str = ""
+    meta_graph_api_version: str = "v23.0"
+    instagram_access_token: str = ""
+    instagram_business_account_id: str = ""
+    instagram_default_business_slug: str = ""
+    instagram_provider_enabled: bool = False
+    instagram_require_signature: bool = True
 
     model_config = SettingsConfigDict(
         env_file=(str(BACKEND_DIR / ".env"), ".env"),
@@ -130,6 +140,33 @@ class Settings(BaseSettings):
             errors.append("RATE_LIMIT_ENABLED debe estar activo")
         if not self.security_headers_enabled:
             errors.append("SECURITY_HEADERS_ENABLED debe estar activo")
+        if not self.instagram_require_signature:
+            errors.append("INSTAGRAM_REQUIRE_SIGNATURE debe estar activo")
+        if self.instagram_provider_enabled:
+            instagram_required = {
+                "META_APP_ID": self.meta_app_id,
+                "META_APP_SECRET": self.meta_app_secret,
+                "META_VERIFY_TOKEN": self.meta_verify_token,
+                "INSTAGRAM_ACCESS_TOKEN": self.instagram_access_token,
+                "INSTAGRAM_BUSINESS_ACCOUNT_ID": self.instagram_business_account_id,
+                "INSTAGRAM_DEFAULT_BUSINESS_SLUG": self.instagram_default_business_slug,
+            }
+            missing_instagram = [
+                name
+                for name, value in instagram_required.items()
+                if not value.strip()
+                or any(
+                    marker in value.strip().lower()
+                    for marker in ("change_me", "change-me", "placeholder")
+                )
+            ]
+            if missing_instagram:
+                errors.append(
+                    "Configuración Instagram incompleta: "
+                    + ", ".join(missing_instagram)
+                )
+            if not re.fullmatch(r"v\d+\.\d+", self.meta_graph_api_version.strip()):
+                errors.append("META_GRAPH_API_VERSION no es válida")
         if errors:
             raise ValueError("Configuración de producción insegura: " + "; ".join(errors))
         return self

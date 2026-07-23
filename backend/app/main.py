@@ -33,6 +33,7 @@ from app.routers.conversations import (
     admin_router as conversations_router,
     webhook_router as test_webhook_router,
 )
+from app.routers.instagram_webhook import router as instagram_webhook_router
 
 
 @asynccontextmanager
@@ -87,3 +88,4 @@ app.include_router(admin_staff_router)
 app.include_router(member_staff_router)
 app.include_router(conversations_router)
 app.include_router(test_webhook_router)
+app.include_router(instagram_webhook_router)

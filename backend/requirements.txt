@@ -6,4 +6,5 @@ python-dotenv
 python-multipart
 tzdata
 google-auth[requests]
+requests
 itsdangerous

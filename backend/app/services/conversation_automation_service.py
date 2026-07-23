@@ -21,9 +21,9 @@ from app.services.conversation_intent_service import (
     detect_intent,
 )
 from app.services.conversation_service import (
-    add_message,
     ensure_default_templates,
     render_template,
+    send_outbound_message,
 )
 
 
@@ -222,6 +222,7 @@ def process_inbound_automation(
         "detection": detection.to_dict(),
         "suggestion_id": None,
         "outbound_message_id": None,
+        "delivery_status": None,
         "limit_reached": False,
     }
     if not settings.automation_enabled:
@@ -259,17 +260,23 @@ def process_inbound_automation(
         and not limit_reached
     )
     if can_send_automatically:
-        outbound = add_message(
+        delivery = send_outbound_message(
             db,
             conversation=conversation,
-            direction="outbound",
             sender_type="automation",
             body=render_template(template.body, business),
-            delivery_status="sent",
         )
+        outbound = delivery.message
+        result.update(
+            outbound_message_id=outbound.id,
+            delivery_status=outbound.delivery_status,
+        )
+        if not delivery.ok:
+            result.update(action="automatic_failed")
+            return result
         settings.auto_used_current_period += 1
         settings.updated_at = datetime.utcnow()
-        result.update(action="automatic", outbound_message_id=outbound.id)
+        result.update(action="automatic")
         return result
 
     result["limit_reached"] = limit_reached

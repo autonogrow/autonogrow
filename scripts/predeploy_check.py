@@ -86,12 +86,16 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "COOKIE_SECURE=true",
             "DATABASE_URL=sqlite:////var/lib/autonogrow/data/autonogrow.db",
             "UPLOADS_DIR=/var/lib/autonogrow/uploads",
+            "INSTAGRAM_PROVIDER_ENABLED=false",
+            "INSTAGRAM_REQUIRE_SIGNATURE=true",
         ),
         "deploy/staging.backend.env.example": (
             "APP_ENV=production",
             "FRONTEND_ORIGINS=https://staging.example.com",
             "DATABASE_URL=sqlite:////var/lib/autonogrow-staging/data/autonogrow.db",
             "UPLOADS_DIR=/var/lib/autonogrow-staging/uploads",
+            "INSTAGRAM_PROVIDER_ENABLED=false",
+            "INSTAGRAM_REQUIRE_SIGNATURE=true",
         ),
         "deploy/autonogrow.service.example": (
             "User=autonogrow",
@@ -181,6 +185,8 @@ def production_baseline() -> dict[str, object]:
         "database_url": "sqlite:////var/lib/autonogrow/data/autonogrow.db",
         "uploads_dir": "/var/lib/autonogrow/uploads",
         "upload_max_size_mb": 5,
+        "instagram_provider_enabled": False,
+        "instagram_require_signature": True,
     }
 
 
@@ -212,6 +218,8 @@ def check_production_validation(reporter: Reporter, Settings) -> None:
         "UPLOADS_DIR vacía": {"uploads_dir": ""},
         "UPLOADS_DIR pública": {"uploads_dir": "/var/www/autonogrow/uploads"},
         "UPLOADS_DIR dentro del frontend": {"uploads_dir": str(ROOT / "autonogrow-landing" )},
+        "firma Instagram desactivada": {"instagram_require_signature": False},
+        "provider Instagram incompleto": {"instagram_provider_enabled": True},
     }
     accepted: list[str] = []
     for label, override in unsafe_cases.items():

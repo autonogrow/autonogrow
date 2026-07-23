@@ -41,7 +41,7 @@ from app.services.conversation_automation_service import (
     ensure_automation_configuration,
 )
 from app.services.conversation_intent_service import detect_intent, normalize_text
-from app.services.conversation_service import send_manual_message as service_send_manual_message
+from app.services.conversation_service import send_outbound_message as service_send_outbound_message
 
 
 class ConversationAutomationTest(unittest.TestCase):
@@ -256,7 +256,7 @@ class ConversationAutomationTest(unittest.TestCase):
 
         self.assertEqual(result["automation"]["action"], "automatic")
         self.assertEqual(outbound.sender_type, "automation")
-        self.assertEqual(outbound.delivery_status, "sent")
+        self.assertEqual(outbound.delivery_status, "simulated")
         self.assertIn(
             "http://127.0.0.1:5500/autonogrow-landing/?b=automation-a",
             outbound.body,
@@ -439,7 +439,7 @@ class ConversationAutomationTest(unittest.TestCase):
         conversation = self.db.get(Conversation, inbound["conversation_id"])
         self.assertEqual(result["message"]["body"], suggestion.body)
         self.assertEqual(result["message"]["sender_type"], "business")
-        self.assertEqual(result["message"]["delivery_status"], "sent")
+        self.assertEqual(result["message"]["delivery_status"], "simulated")
         self.assertEqual(result["suggestion"]["status"], "used")
         self.assertEqual(result["conversation"]["status"], "replied")
         self.assertEqual(conversation.last_message_text, suggestion.body)
@@ -452,12 +452,23 @@ class ConversationAutomationTest(unittest.TestCase):
         inbound = self.inbound("reservar", external_user_id="suggestion-send-fails")
         suggestion = self.db.query(ConversationSuggestion).one()
 
-        def fail_after_outbound_was_prepared(db, *, conversation, body):
-            service_send_manual_message(db, conversation=conversation, body=body)
+        def fail_after_outbound_was_prepared(
+            db,
+            *,
+            conversation,
+            body,
+            sender_type,
+        ):
+            service_send_outbound_message(
+                db,
+                conversation=conversation,
+                body=body,
+                sender_type=sender_type,
+            )
             raise RuntimeError("simulated send failure")
 
         with patch(
-            "app.routers.conversations.send_manual_message",
+            "app.routers.conversations.send_outbound_message",
             side_effect=fail_after_outbound_was_prepared,
         ):
             with self.assertRaises(HTTPException) as failed:

@@ -45,7 +45,7 @@ from app.services.conversation_service import (
     ensure_default_templates,
     get_conversation,
     list_conversations,
-    send_manual_message,
+    send_outbound_message,
     serialize_conversation,
     serialize_message,
     serialize_template,
@@ -201,25 +201,48 @@ def admin_send_conversation_message(
             raise HTTPException(status_code=404, detail="Conversation suggestion not found")
         if suggestion.status != "pending":
             raise HTTPException(status_code=409, detail="Conversation suggestion is not pending")
-    message = send_manual_message(db, conversation=conversation, body=payload.body)
-    if suggestion is not None:
-        update_suggestion_status(suggestion, "used")
-    db.commit()
+    try:
+        delivery = send_outbound_message(
+            db,
+            conversation=conversation,
+            body=payload.body,
+            sender_type="business",
+        )
+        message = delivery.message
+        if suggestion is not None and delivery.ok:
+            update_suggestion_status(suggestion, "used")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(message)
     record_audit(
         db,
-        action="conversation_message_sent",
+        action=(
+            "conversation_message_sent"
+            if delivery.ok
+            else "conversation_message_failed"
+        ),
         request=request,
         actor=actor,
         business_id=business.id,
         resource_type="conversation",
         resource_id=conversation.id,
-        metadata={"channel": conversation.channel},
+        metadata={
+            "channel": conversation.channel,
+            "delivery_status": message.delivery_status,
+        },
     )
+    if not delivery.ok:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo enviar por Instagram. Revisa la configuración del proveedor.",
+        )
     return {
         "ok": True,
         "message": serialize_message(message),
         "conversation": serialize_conversation(db, conversation),
+        "provider_configured": delivery.provider_configured,
     }
 
 
@@ -593,12 +616,15 @@ def admin_send_conversation_suggestion(
         conversation_id=suggestion.conversation_id,
     )
     try:
-        message = send_manual_message(
+        delivery = send_outbound_message(
             db,
             conversation=conversation,
             body=suggestion.body,
+            sender_type="business",
         )
-        update_suggestion_status(suggestion, "used")
+        message = delivery.message
+        if delivery.ok:
+            update_suggestion_status(suggestion, "used")
         db.commit()
     except HTTPException:
         db.rollback()
@@ -614,19 +640,32 @@ def admin_send_conversation_suggestion(
     db.refresh(conversation)
     record_audit(
         db,
-        action="conversation_suggestion_sent",
+        action=(
+            "conversation_suggestion_sent"
+            if delivery.ok
+            else "conversation_suggestion_failed"
+        ),
         request=request,
         actor=actor,
         business_id=business.id,
         resource_type="conversation_suggestion",
         resource_id=suggestion.id,
-        metadata={"conversation_id": conversation.id},
+        metadata={
+            "conversation_id": conversation.id,
+            "delivery_status": message.delivery_status,
+        },
     )
+    if not delivery.ok:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo enviar por Instagram. Revisa la configuración del proveedor.",
+        )
     return {
         "ok": True,
         "message": serialize_message(message),
         "suggestion": serialize_suggestion(suggestion),
         "conversation": serialize_conversation(db, conversation),
+        "provider_configured": delivery.provider_configured,
     }
 
 

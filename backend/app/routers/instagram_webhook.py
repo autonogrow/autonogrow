@@ -1,0 +1,128 @@
+import json
+from secrets import compare_digest
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
+from sqlalchemy.orm import Session
+
+from app.core.config import get_settings
+from app.core.database import get_db
+from app.models import Business, ConversationMessage
+from app.services.conversation_automation_service import process_inbound_automation
+from app.services.conversation_service import add_message, create_or_get_conversation
+from app.services.instagram_provider import (
+    parse_instagram_webhook,
+    verify_meta_signature,
+)
+
+
+router = APIRouter(prefix="/api/webhooks/instagram", tags=["instagram-webhook"])
+
+
+@router.get("")
+def verify_instagram_webhook(
+    hub_mode: str | None = Query(default=None, alias="hub.mode"),
+    hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
+    hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
+):
+    configured_token = get_settings().meta_verify_token.strip()
+    if (
+        hub_mode == "subscribe"
+        and configured_token
+        and hub_verify_token
+        and compare_digest(hub_verify_token, configured_token)
+    ):
+        return PlainTextResponse(hub_challenge or "")
+    raise HTTPException(status_code=403, detail="Webhook verification failed")
+
+
+@router.post("")
+async def receive_instagram_webhook(
+    request: Request,
+    x_hub_signature_256: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    settings = get_settings()
+    raw_body = await request.body()
+    if settings.instagram_require_signature and not verify_meta_signature(
+        raw_body,
+        x_hub_signature_256,
+        settings.meta_app_secret,
+    ):
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=400, detail="Invalid webhook payload") from error
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+
+    inbound_messages = parse_instagram_webhook(
+        payload,
+        business_account_id=settings.instagram_business_account_id.strip() or None,
+    )
+    processed = 0
+    duplicates = 0
+    ignored = 0
+    automation_results = []
+    account_id = settings.instagram_business_account_id.strip()
+    business_slug = settings.instagram_default_business_slug.strip()
+    for inbound in inbound_messages:
+        if (
+            not account_id
+            or inbound.recipient_id != account_id
+            or not business_slug
+        ):
+            ignored += 1
+            continue
+        business = (
+            db.query(Business)
+            .filter(Business.slug == business_slug, Business.status == "active")
+            .first()
+        )
+        if business is None:
+            ignored += 1
+            continue
+        if inbound.message_id:
+            duplicate = (
+                db.query(ConversationMessage)
+                .filter(ConversationMessage.provider_message_id == inbound.message_id)
+                .first()
+            )
+            if duplicate is not None:
+                duplicates += 1
+                continue
+        conversation, _ = create_or_get_conversation(
+            db,
+            business_id=business.id,
+            channel="instagram",
+            external_user_id=inbound.sender_id,
+            external_conversation_id=inbound.sender_id,
+        )
+        message = add_message(
+            db,
+            conversation=conversation,
+            direction="inbound",
+            sender_type="customer",
+            body=inbound.text,
+            provider_message_id=inbound.message_id,
+            raw_payload=inbound.raw_payload,
+        )
+        automation_results.append(
+            process_inbound_automation(
+                db,
+                business=business,
+                conversation=conversation,
+                message=message,
+            )
+        )
+        processed += 1
+    db.commit()
+    ignored += max(0, len(inbound_messages) - processed - duplicates - ignored)
+    return {
+        "ok": True,
+        "processed": processed,
+        "duplicates": duplicates,
+        "ignored": ignored,
+        "automation": automation_results,
+    }

@@ -2,7 +2,7 @@
 
 ## Alcance y seguridad
 
-Esta versión trabaja únicamente con el webhook simulado y con plantillas aprobadas del Centro de conversaciones. No conecta Instagram, WhatsApp, Meta, IA ni ningún proveedor externo. Los mensajes outbound se registran localmente con estado `sent`.
+Esta versión trabaja con plantillas aprobadas del Centro de conversaciones y no usa IA. Puede recibir y enviar Instagram mediante la integración v1 cuando está configurada; sin provider conserva el modo interno `simulated`. Consulta `docs/manual_test_instagram_v1.md`.
 
 La automatización está desactivada por defecto en todos los negocios. Abrir el panel o recibir mensajes no la activa.
 
@@ -95,12 +95,10 @@ Enviar, modificar o descartar una sugerencia no consume crédito automático.
 
 El contador se reinicia al primer acceso o inbound de un mes cuyo `YYYY-MM` no coincida con el periodo guardado.
 
-## 8. Pendiente para Instagram real
+## 8. Integración Instagram y pendientes
 
-- Validación y recepción de webhooks reales de Meta.
-- Resolución de cuentas, páginas y conversaciones del proveedor.
-- Envío outbound mediante Instagram/WhatsApp y actualización real de estados de entrega.
-- Reintentos, idempotencia y observabilidad del proveedor.
-- Gestión de credenciales y permisos de Meta.
+- Instagram v1 ya valida webhooks, guarda inbound, aplica automatizaciones y envía texto outbound si el provider está configurado.
+- Siguen pendientes OAuth y credenciales por negocio, reintentos, adjuntos avanzados y estados de entrega/lectura avanzados.
+- WhatsApp real continúa fuera de alcance.
 
 Estas integraciones no forman parte de Automatizaciones v1.

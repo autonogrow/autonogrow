@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -12,6 +13,22 @@ from app.models import (
     ConversationMessage,
     ConversationTemplate,
 )
+from app.services.instagram_provider import (
+    is_instagram_provider_configured,
+    send_instagram_text_message,
+)
+
+
+@dataclass(frozen=True)
+class OutboundMessageResult:
+    message: ConversationMessage
+    provider_configured: bool
+    provider_attempted: bool
+    error_message: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.message.delivery_status != "failed"
 
 
 DEFAULT_TEMPLATES = (
@@ -96,6 +113,11 @@ def serialize_conversation(
         "detected_intent": conversation.detected_intent,
         "intent_confidence": conversation.intent_confidence,
         "matched_patterns": matched_patterns,
+        "instagram_provider_configured": (
+            is_instagram_provider_configured(get_settings())
+            if conversation.channel == "instagram"
+            else None
+        ),
         "unread_count": unread_count(db, conversation),
         "created_at": conversation.created_at.isoformat(),
         "updated_at": conversation.updated_at.isoformat(),
@@ -256,17 +278,65 @@ def add_message(
     return message
 
 
-def send_manual_message(
-    db: Session, *, conversation: Conversation, body: str
-) -> ConversationMessage:
-    return add_message(
+def send_outbound_message(
+    db: Session,
+    *,
+    conversation: Conversation,
+    body: str,
+    sender_type: str,
+) -> OutboundMessageResult:
+    settings = get_settings()
+    provider_configured = (
+        conversation.channel == "instagram"
+        and is_instagram_provider_configured(settings)
+    )
+    provider_attempted = False
+    provider_message_id = None
+    error_message = None
+    delivery_status = "sent"
+    if conversation.channel == "instagram":
+        if provider_configured:
+            provider_attempted = True
+            provider_result = send_instagram_text_message(
+                conversation.external_user_id or "",
+                body,
+                settings=settings,
+            )
+            delivery_status = provider_result.delivery_status
+            provider_message_id = provider_result.provider_message_id
+            error_message = provider_result.error_message
+        else:
+            delivery_status = "simulated"
+    previous_last_outbound_at = conversation.last_outbound_at
+    message = add_message(
         db,
         conversation=conversation,
         direction="outbound",
-        sender_type="business",
+        sender_type=sender_type,
         body=body,
-        delivery_status="sent",
+        provider_message_id=provider_message_id,
+        delivery_status=delivery_status,
     )
+    if delivery_status == "failed":
+        conversation.status = "pending"
+        conversation.last_outbound_at = previous_last_outbound_at
+    return OutboundMessageResult(
+        message=message,
+        provider_configured=provider_configured,
+        provider_attempted=provider_attempted,
+        error_message=error_message,
+    )
+
+
+def send_manual_message(
+    db: Session, *, conversation: Conversation, body: str
+) -> ConversationMessage:
+    return send_outbound_message(
+        db,
+        conversation=conversation,
+        body=body,
+        sender_type="business",
+    ).message
 
 
 def update_status(conversation: Conversation, status: str) -> None:
