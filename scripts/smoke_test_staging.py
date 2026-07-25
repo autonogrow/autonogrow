@@ -137,6 +137,25 @@ def check_status(reporter: Reporter, label: str, result: HttpResult, allowed: se
         reporter.fail(f"{label}: status inesperado {result.status}")
 
 
+def check_legal_page(
+    reporter: Reporter,
+    label: str,
+    result: HttpResult,
+    required_text: tuple[bytes, ...],
+) -> None:
+    if result.status != 200:
+        reporter.fail(f"{label}: no devuelve 200")
+        return
+    content_type = result.headers.get("Content-Type", "") if result.headers else ""
+    if "text/html" not in content_type.lower():
+        reporter.fail(f"{label}: no devuelve HTML")
+        return
+    if all(text in result.body for text in required_text):
+        reporter.passed(f"{label}: HTML público y enlaces legales presentes")
+    else:
+        reporter.fail(f"{label}: contenido o enlaces legales incompletos")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke test HTTP sin credenciales para staging AutonoGrow")
     parser.add_argument("--base-url", required=True, help="Ejemplo: https://staging.example.com")
@@ -162,6 +181,22 @@ def main() -> int:
         reporter.passed("GET /api/businesses continúa siendo público")
     else:
         reporter.fail("GET /api/businesses no devuelve una lista pública válida")
+
+    privacy = fetch(base_url, "/privacy/", args.timeout)
+    check_legal_page(
+        reporter,
+        "GET /privacy/",
+        privacy,
+        (b"Pol\xc3\xadtica de privacidad", b"../data-deletion/"),
+    )
+
+    data_deletion = fetch(base_url, "/data-deletion/", args.timeout)
+    check_legal_page(
+        reporter,
+        "GET /data-deletion/",
+        data_deletion,
+        (b"eliminaci\xc3\xb3n de datos", b"../privacy/"),
+    )
 
     public_upload_root = fetch(base_url, "/uploads/businesses/", args.timeout)
     if public_upload_root.status in {403, 404}:

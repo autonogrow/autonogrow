@@ -41,9 +41,28 @@ Copiar a `/var/www/autonogrow` únicamente el contenido estático necesario para
 - `autonogrow-owner`;
 - `autonogrow-customer`;
 - `autonogrow-landing`;
-- `autonogrow-shared`.
+- `autonogrow-shared`;
+- `privacy`;
+- `data-deletion`.
 
 El frontend detecta production y usa `window.location.origin`. No es necesario editar los JS si proxy y frontend comparten dominio.
+
+Para publicar o actualizar únicamente las páginas legales desde una copia ya situada en
+`/opt/autonogrow`, usar:
+
+```bash
+sudo install -d -o root -g root -m 0755 /var/www/autonogrow/privacy
+sudo install -d -o root -g root -m 0755 /var/www/autonogrow/data-deletion
+sudo install -d -o root -g root -m 0755 /var/www/autonogrow/autonogrow-shared
+sudo install -o root -g root -m 0644 /opt/autonogrow/privacy/index.html /var/www/autonogrow/privacy/index.html
+sudo install -o root -g root -m 0644 /opt/autonogrow/data-deletion/index.html /var/www/autonogrow/data-deletion/index.html
+sudo install -o root -g root -m 0644 /opt/autonogrow/autonogrow-shared/legal.css /var/www/autonogrow/autonogrow-shared/legal.css
+curl -fsS https://staging.autonogrow.es/privacy/ > /dev/null
+curl -fsS https://staging.autonogrow.es/data-deletion/ > /dev/null
+```
+
+Estas páginas reutilizan además `autonogrow-landing/styles.css`, que debe conservarse en la raíz
+estática como el resto del frontend existente. No requieren reiniciar FastAPI ni recargar Caddy.
 
 ## 4. Virtualenv y dependencias
 
