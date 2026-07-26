@@ -1,7 +1,9 @@
 import json
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 from typing import Any
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -19,12 +21,22 @@ from app.services.conversation_intent_service import (
     INTENT_TEMPLATE_NAMES,
     IntentDetection,
     detect_intent,
+    normalize_text,
 )
 from app.services.conversation_service import (
     ensure_default_templates,
     render_template,
     send_outbound_message,
 )
+
+
+logger = logging.getLogger(__name__)
+
+# Conservative first-version safeguards. They intentionally live beside the
+# automation flow until per-business controls are added to the settings model.
+WELCOME_COOLDOWN_HOURS = 24
+DEFAULT_INTENT_COOLDOWN_MINUTES = 5
+IDENTICAL_MESSAGE_DEBOUNCE_SECONDS = 10
 
 
 DEFAULT_RULE_MODES = {
@@ -202,6 +214,188 @@ def create_suggestion(
     return suggestion
 
 
+def _automation_intent_from_metadata(message: ConversationMessage) -> str | None:
+    if not message.raw_payload_json:
+        return None
+    try:
+        payload = json.loads(message.raw_payload_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    automation = payload.get("automation")
+    if not isinstance(automation, dict):
+        return None
+    intent = automation.get("intent")
+    return intent if intent in AVAILABLE_INTENTS else None
+
+
+def _legacy_automation_inbound(
+    db: Session,
+    outbound: ConversationMessage,
+) -> ConversationMessage | None:
+    return (
+        db.query(ConversationMessage)
+        .filter(
+            ConversationMessage.conversation_id == outbound.conversation_id,
+            ConversationMessage.direction == "inbound",
+            or_(
+                ConversationMessage.created_at < outbound.created_at,
+                (
+                    (ConversationMessage.created_at == outbound.created_at)
+                    & (ConversationMessage.id < outbound.id)
+                ),
+            ),
+        )
+        .order_by(
+            ConversationMessage.created_at.desc(),
+            ConversationMessage.id.desc(),
+        )
+        .first()
+    )
+
+
+def _infer_legacy_automation_intent(
+    db: Session,
+    outbound: ConversationMessage,
+) -> str | None:
+    """Infer intent for automation messages created before metadata was stored."""
+    inbound = _legacy_automation_inbound(db, outbound)
+    return detect_intent(inbound.body).intent if inbound is not None else None
+
+
+def _has_recent_successful_automation_for_intent(
+    db: Session,
+    *,
+    conversation_id: int,
+    intent: str,
+    reference_time: datetime,
+    cooldown: timedelta,
+) -> bool:
+    cutoff = reference_time - cooldown
+    outbound_messages = (
+        db.query(ConversationMessage)
+        .filter(
+            ConversationMessage.conversation_id == conversation_id,
+            ConversationMessage.direction == "outbound",
+            ConversationMessage.sender_type == "automation",
+            ConversationMessage.created_at > cutoff,
+            ConversationMessage.created_at <= reference_time,
+            or_(
+                ConversationMessage.delivery_status.is_(None),
+                ConversationMessage.delivery_status != "failed",
+            ),
+        )
+        .order_by(
+            ConversationMessage.created_at.desc(),
+            ConversationMessage.id.desc(),
+        )
+        .all()
+    )
+    for outbound in outbound_messages:
+        outbound_intent = _automation_intent_from_metadata(outbound)
+        if outbound_intent is None:
+            outbound_intent = _infer_legacy_automation_intent(db, outbound)
+        if outbound_intent == intent:
+            return True
+    return False
+
+
+def _has_recent_identical_inbound(
+    db: Session,
+    *,
+    message: ConversationMessage,
+) -> bool:
+    normalized_body = normalize_text(message.body)
+    if not normalized_body:
+        return False
+    cutoff = message.created_at - timedelta(
+        seconds=IDENTICAL_MESSAGE_DEBOUNCE_SECONDS
+    )
+    recent_inbounds = (
+        db.query(ConversationMessage)
+        .filter(
+            ConversationMessage.conversation_id == message.conversation_id,
+            ConversationMessage.direction == "inbound",
+            ConversationMessage.id != message.id,
+            ConversationMessage.created_at > cutoff,
+            ConversationMessage.created_at <= message.created_at,
+        )
+        .order_by(
+            ConversationMessage.created_at.desc(),
+            ConversationMessage.id.desc(),
+        )
+        .all()
+    )
+    identical_inbound_ids = {
+        item.id
+        for item in recent_inbounds
+        if normalize_text(item.body) == normalized_body
+    }
+    if not identical_inbound_ids:
+        return False
+
+    successful_outbounds = (
+        db.query(ConversationMessage)
+        .filter(
+            ConversationMessage.conversation_id == message.conversation_id,
+            ConversationMessage.direction == "outbound",
+            ConversationMessage.sender_type == "automation",
+            ConversationMessage.created_at > cutoff,
+            ConversationMessage.created_at <= message.created_at,
+            or_(
+                ConversationMessage.delivery_status.is_(None),
+                ConversationMessage.delivery_status != "failed",
+            ),
+        )
+        .order_by(
+            ConversationMessage.created_at.desc(),
+            ConversationMessage.id.desc(),
+        )
+        .all()
+    )
+    for outbound in successful_outbounds:
+        try:
+            payload = json.loads(outbound.raw_payload_json or "null")
+        except (TypeError, ValueError):
+            payload = None
+        automation = payload.get("automation") if isinstance(payload, dict) else None
+        source_message_id = (
+            automation.get("inbound_message_id")
+            if isinstance(automation, dict)
+            else None
+        )
+        if source_message_id in identical_inbound_ids:
+            return True
+        if source_message_id is None:
+            legacy_inbound = _legacy_automation_inbound(db, outbound)
+            if legacy_inbound is not None and legacy_inbound.id in identical_inbound_ids:
+                return True
+    return False
+
+
+def _skip_automatic_response(
+    result: dict[str, Any],
+    *,
+    business: Business,
+    conversation: Conversation,
+    message: ConversationMessage,
+    intent: str,
+    reason: str,
+) -> dict[str, Any]:
+    logger.info(
+        "Automation skipped: reason=%s business_id=%s conversation_id=%s "
+        "message_id=%s intent=%s",
+        reason,
+        business.id,
+        conversation.id,
+        message.id,
+        intent,
+    )
+    result.update(status="skipped", reason=reason)
+    return result
+
+
 def process_inbound_automation(
     db: Session,
     *,
@@ -219,6 +413,8 @@ def process_inbound_automation(
     settings, rules = ensure_automation_configuration(db, business)
     result: dict[str, Any] = {
         "action": "manual",
+        "status": "processed",
+        "reason": None,
         "detection": detection.to_dict(),
         "suggestion_id": None,
         "outbound_message_id": None,
@@ -260,6 +456,49 @@ def process_inbound_automation(
         and not limit_reached
     )
     if can_send_automatically:
+        if detection.intent == "welcome_intent" and (
+            _has_recent_successful_automation_for_intent(
+                db,
+                conversation_id=conversation.id,
+                intent=detection.intent,
+                reference_time=message.created_at,
+                cooldown=timedelta(hours=WELCOME_COOLDOWN_HOURS),
+            )
+        ):
+            return _skip_automatic_response(
+                result,
+                business=business,
+                conversation=conversation,
+                message=message,
+                intent=detection.intent,
+                reason="welcome_already_sent",
+            )
+        if _has_recent_identical_inbound(db, message=message):
+            return _skip_automatic_response(
+                result,
+                business=business,
+                conversation=conversation,
+                message=message,
+                intent=detection.intent,
+                reason="identical_message_debounce",
+            )
+        if detection.intent != "welcome_intent" and (
+            _has_recent_successful_automation_for_intent(
+                db,
+                conversation_id=conversation.id,
+                intent=detection.intent,
+                reference_time=message.created_at,
+                cooldown=timedelta(minutes=DEFAULT_INTENT_COOLDOWN_MINUTES),
+            )
+        ):
+            return _skip_automatic_response(
+                result,
+                business=business,
+                conversation=conversation,
+                message=message,
+                intent=detection.intent,
+                reason="intent_cooldown",
+            )
         delivery = send_outbound_message(
             db,
             conversation=conversation,
@@ -267,6 +506,15 @@ def process_inbound_automation(
             body=render_template(template.body, business),
         )
         outbound = delivery.message
+        outbound.raw_payload_json = json.dumps(
+            {
+                "automation": {
+                    "intent": detection.intent,
+                    "inbound_message_id": message.id,
+                }
+            },
+            ensure_ascii=False,
+        )
         result.update(
             outbound_message_id=outbound.id,
             delivery_status=outbound.delivery_status,

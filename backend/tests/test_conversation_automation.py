@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -257,12 +258,124 @@ class ConversationAutomationTest(unittest.TestCase):
         self.assertEqual(result["automation"]["action"], "automatic")
         self.assertEqual(outbound.sender_type, "automation")
         self.assertEqual(outbound.delivery_status, "simulated")
+        self.assertIn('"intent": "booking_intent"', outbound.raw_payload_json)
         self.assertIn(
             "http://127.0.0.1:5500/autonogrow-landing/?b=automation-a",
             outbound.body,
         )
         self.assertEqual(settings.auto_used_current_period, 1)
         self.assertEqual(conversation.status, "replied")
+
+    def test_welcome_responds_once_per_24_hours_then_responds_again(self):
+        settings, _ = self.configure(
+            self.business_a,
+            intent="welcome_intent",
+            mode="automatic",
+        )
+
+        first = self.inbound("Hola", external_user_id="welcome-cooldown")
+        second = self.inbound("Hola", external_user_id="welcome-cooldown")
+        conversation = self.db.get(Conversation, first["conversation_id"])
+
+        self.assertEqual(first["automation"]["action"], "automatic")
+        self.assertEqual(second["automation"]["status"], "skipped")
+        self.assertEqual(second["automation"]["reason"], "welcome_already_sent")
+        self.assertEqual(conversation.detected_intent, "welcome_intent")
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .filter(
+                ConversationMessage.conversation_id == conversation.id,
+                ConversationMessage.direction == "inbound",
+            )
+            .count(),
+            2,
+        )
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .filter(
+                ConversationMessage.conversation_id == conversation.id,
+                ConversationMessage.direction == "outbound",
+            )
+            .count(),
+            1,
+        )
+        self.assertEqual(settings.auto_used_current_period, 1)
+
+        old_time = datetime.utcnow() - timedelta(hours=24, seconds=1)
+        for saved_message in conversation.messages:
+            saved_message.created_at = old_time
+        self.db.commit()
+
+        third = self.inbound("Hola", external_user_id="welcome-cooldown")
+
+        self.assertEqual(third["automation"]["action"], "automatic")
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .filter(
+                ConversationMessage.conversation_id == conversation.id,
+                ConversationMessage.direction == "outbound",
+            )
+            .count(),
+            2,
+        )
+        self.assertEqual(settings.auto_used_current_period, 2)
+
+    def test_welcome_cooldown_supports_legacy_automation_messages(self):
+        settings, _ = self.configure(
+            self.business_a,
+            intent="welcome_intent",
+            mode="automatic",
+        )
+        first = self.inbound("Hola", external_user_id="legacy-welcome")
+        outbound = (
+            self.db.query(ConversationMessage)
+            .filter(
+                ConversationMessage.conversation_id == first["conversation_id"],
+                ConversationMessage.direction == "outbound",
+            )
+            .one()
+        )
+        outbound.raw_payload_json = None
+        self.db.commit()
+
+        second = self.inbound("Buenas", external_user_id="legacy-welcome")
+
+        self.assertEqual(second["automation"]["status"], "skipped")
+        self.assertEqual(second["automation"]["reason"], "welcome_already_sent")
+        self.assertEqual(settings.auto_used_current_period, 1)
+
+    def test_same_intent_cooldown_does_not_consume_credit(self):
+        settings, _ = self.configure(self.business_a, mode="automatic")
+
+        first = self.inbound("reservar", external_user_id="intent-cooldown")
+        second = self.inbound("quiero una cita", external_user_id="intent-cooldown")
+
+        self.assertEqual(first["automation"]["action"], "automatic")
+        self.assertEqual(second["automation"]["status"], "skipped")
+        self.assertEqual(second["automation"]["reason"], "intent_cooldown")
+        self.assertEqual(settings.auto_used_current_period, 1)
+
+    def test_welcome_does_not_block_a_different_automatic_intent(self):
+        settings, rules = ensure_automation_configuration(self.db, self.business_a)
+        settings.automation_enabled = True
+        for intent in ("welcome_intent", "booking_intent"):
+            rule = next(item for item in rules if item.intent == intent)
+            rule.mode = "automatic"
+            rule.active = True
+        self.db.commit()
+
+        welcome = self.inbound("Hola", external_user_id="different-intents")
+        booking = self.inbound("quiero una cita", external_user_id="different-intents")
+
+        self.assertEqual(welcome["automation"]["action"], "automatic")
+        self.assertEqual(booking["automation"]["action"], "automatic")
+        self.assertEqual(settings.auto_used_current_period, 2)
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .filter(ConversationMessage.direction == "outbound")
+            .count(),
+            2,
+        )
 
     def test_limit_reached_falls_back_to_suggestion_without_more_credit(self):
         settings, _ = self.configure(self.business_a, mode="automatic")

@@ -298,6 +298,77 @@ class InstagramV1Test(unittest.TestCase):
         self.assertEqual(self.db.query(Conversation).count(), 1)
         self.assertEqual(self.db.query(ConversationMessage).count(), 2)
 
+    def test_distinct_provider_ids_with_identical_text_are_debounced(self):
+        settings_row, rules = ensure_automation_configuration(self.db, self.business_a)
+        settings_row.automation_enabled = True
+        booking_rule = next(rule for rule in rules if rule.intent == "booking_intent")
+        booking_rule.mode = "automatic"
+        self.db.commit()
+
+        provider_settings = self.settings()
+        first = self.post_webhook(
+            self.payload(mid="mid-identical-1", text="Quiero una cita"),
+            provider_settings,
+        )
+        second = self.post_webhook(
+            self.payload(mid="mid-identical-2", text="  QUIERO una cita! "),
+            provider_settings,
+        )
+
+        self.assertEqual(first["automation"][0]["action"], "automatic")
+        self.assertEqual(second["automation"][0]["status"], "skipped")
+        self.assertEqual(
+            second["automation"][0]["reason"],
+            "identical_message_debounce",
+        )
+        self.assertEqual(settings_row.auto_used_current_period, 1)
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .filter(ConversationMessage.direction == "inbound")
+            .count(),
+            2,
+        )
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .filter(ConversationMessage.direction == "outbound")
+            .count(),
+            1,
+        )
+
+    def test_same_provider_id_remains_idempotent_with_automation_enabled(self):
+        settings_row, rules = ensure_automation_configuration(self.db, self.business_a)
+        settings_row.automation_enabled = True
+        welcome_rule = next(rule for rule in rules if rule.intent == "welcome_intent")
+        welcome_rule.mode = "automatic"
+        self.db.commit()
+
+        provider_settings = self.settings()
+        first = self.post_webhook(
+            self.payload(mid="mid-auto-idempotent", text="Hola"),
+            provider_settings,
+        )
+        duplicate = self.post_webhook(
+            self.payload(mid="mid-auto-idempotent", text="Hola"),
+            provider_settings,
+        )
+
+        self.assertEqual(first["automation"][0]["action"], "automatic")
+        self.assertEqual(duplicate["processed"], 0)
+        self.assertEqual(duplicate["duplicates"], 1)
+        self.assertEqual(settings_row.auto_used_current_period, 1)
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .filter(ConversationMessage.direction == "inbound")
+            .count(),
+            1,
+        )
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .filter(ConversationMessage.direction == "outbound")
+            .count(),
+            1,
+        )
+
     def test_webhook_ignores_unmapped_recipient(self):
         result = self.post_webhook(
             self.payload(recipient="another-account"),
@@ -498,6 +569,26 @@ class InstagramV1Test(unittest.TestCase):
         self.assertEqual(failed["delivery_status"], "failed")
         self.assertEqual(settings_row.auto_used_current_period, 0)
         self.assertEqual(failed_conversation.status, "pending")
+
+        retry_inbound = add_message(
+            self.db,
+            conversation=failed_conversation,
+            direction="inbound",
+            sender_type="customer",
+            body="quiero una cita",
+        )
+        with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
+            "app.services.conversation_service.send_instagram_text_message",
+            return_value=ProviderSendResult("sent", "auto-provider-retry-mid"),
+        ):
+            retry = process_inbound_automation(
+                self.db,
+                business=self.business_a,
+                conversation=failed_conversation,
+                message=retry_inbound,
+            )
+        self.assertEqual(retry["action"], "automatic")
+        self.assertEqual(settings_row.auto_used_current_period, 1)
 
     def test_outbound_permissions_and_tenant_isolation(self):
         other_conversation = self.create_instagram_conversation(
