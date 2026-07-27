@@ -41,6 +41,19 @@ let conversationSearchTimer = null;
 let conversationLoadVersion = 0;
 let conversationDetailVersion = 0;
 let conversationAutomationLoadVersion = 0;
+let conversationListFingerprint = "";
+let conversationDetailFingerprint = "";
+let bookingsFingerprint = "";
+let messageOutboxFingerprint = "";
+const ADMIN_POLL_INTERVALS = {
+  conversationThread: { visible: 5000, hidden: 15000 },
+  conversationList: { visible: 10000, hidden: 15000 },
+  operations: { visible: 15000, hidden: 30000 }
+};
+const ADMIN_POLL_MAX_BACKOFF_MULTIPLIER = 4;
+let adminPollingActive = false;
+let adminPollingLastSuccessAt = null;
+const adminPollingTasks = new Map();
 const TEMPLATE_DESCRIPTIONS = {
   classic: "Estructura equilibrada para cualquier negocio.", elegant: "Diseño más premium y visual.",
   beauty: "Pensada para estética, manicura y peluquería.", clinic: "Limpia y profesional para centros de salud o consulta.",
@@ -1423,41 +1436,89 @@ async function editStaffSchedule(memberId) {
   alert("Horario del profesional guardado.");
 }
 
-async function loadBookings() {
+function captureBookingEditorState() {
+  const drafts = new Map();
+  document.querySelectorAll("[data-internal-notes]").forEach((field) => {
+    drafts.set(String(field.dataset.internalNotes), field.value);
+  });
+  const active = document.activeElement?.matches?.("[data-internal-notes]")
+    ? document.activeElement
+    : null;
+  return {
+    drafts,
+    focusedBookingId: active ? String(active.dataset.internalNotes) : null,
+    selectionStart: active?.selectionStart,
+    selectionEnd: active?.selectionEnd,
+    scrollX: window.scrollX,
+    scrollY: window.scrollY
+  };
+}
+
+function restoreBookingEditorState(state) {
+  if (!state) return;
+  state.drafts.forEach((value, bookingId) => {
+    const field = document.querySelector(`[data-internal-notes="${bookingId}"]`);
+    if (field) field.value = value;
+  });
+  if (state.focusedBookingId) {
+    const field = document.querySelector(`[data-internal-notes="${state.focusedBookingId}"]`);
+    if (field) {
+      field.focus({ preventScroll: true });
+      field.setSelectionRange(state.selectionStart, state.selectionEnd);
+    }
+  }
+  window.scrollTo(state.scrollX, state.scrollY);
+}
+
+async function loadBookings({ background = false } = {}) {
   const slug = getBusinessSlug();
   const list = document.getElementById("bookings-list");
-  list.innerHTML = `<p class="empty-state">Cargando reservas...</p>`;
+  if (!background && !allBookings.length) {
+    list.innerHTML = `<p class="empty-state">Cargando reservas...</p>`;
+  }
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/bookings`);
 
-    if (!response.ok) {
-      list.innerHTML = `<p class="empty-state">No se pudieron cargar las reservas.</p>`;
-      return;
-    }
+    if (!response.ok) throw new Error("No se pudieron cargar las reservas.");
 
     const data = await response.json();
-    allBookings = data.bookings || [];
+    const previousBookings = new Map(allBookings.map((booking) => [booking.id, booking]));
+    allBookings = (data.bookings || []).map((booking) => ({
+      ...booking,
+      attachments: background
+        ? (previousBookings.get(booking.id)?.attachments || [])
+        : (booking.attachments || [])
+    }));
 
-    if (isBusinessStaff()) {
+    if (!background && isBusinessStaff()) {
       reviewRequestsByBooking = new Map();
       await enrichBookingsWithAttachments();
-    } else {
+    } else if (!background) {
       await Promise.all([enrichBookingsWithAttachments(), loadReviewRequests()]);
     }
+    const nextFingerprint = JSON.stringify(allBookings);
+    const changed = nextFingerprint !== bookingsFingerprint;
+    bookingsFingerprint = nextFingerprint;
     growthDataReady.bookings = true;
+    if (!changed && background) return;
+    const editorState = background ? captureBookingEditorState() : null;
     renderStats(allBookings);
     renderReviewStats();
     renderReviewRequests();
     renderBookings();
     const requestedBookingId = Number(new URLSearchParams(window.location.search).get("booking"));
-    if (Number.isInteger(requestedBookingId) && requestedBookingId > 0) {
+    if (!background && Number.isInteger(requestedBookingId) && requestedBookingId > 0) {
       goToBooking(requestedBookingId, false);
     }
+    restoreBookingEditorState(editorState);
     if (!isBusinessStaff()) renderGrowth();
   } catch (error) {
     console.error(error);
-    list.innerHTML = `<p class="empty-state">Error conectando con el backend.</p>`;
+    if (background) throw error;
+    if (!allBookings.length) {
+      list.innerHTML = `<p class="empty-state">Error conectando con el backend.</p>`;
+    }
   }
 }
 
@@ -1548,7 +1609,7 @@ function formatConversationDate(value) {
   return date.toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
 }
 
-async function loadConversations() {
+async function loadConversations({ background = false, refreshDetail = true } = {}) {
   const requestVersion = ++conversationLoadVersion;
   const container = document.getElementById("conversation-list");
   const params = new URLSearchParams({ limit: "100", offset: "0" });
@@ -1558,7 +1619,9 @@ async function loadConversations() {
   if (status) params.set("status", status);
   if (channel) params.set("channel", channel);
   if (query) params.set("q", query);
-  container.innerHTML = `<p class="empty-state">Cargando conversaciones...</p>`;
+  if (!background && !conversations.length) {
+    container.innerHTML = `<p class="empty-state">Cargando conversaciones...</p>`;
+  }
   try {
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations?${params}`
@@ -1566,12 +1629,18 @@ async function loadConversations() {
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudieron cargar las conversaciones."));
     if (requestVersion !== conversationLoadVersion) return;
-    conversations = body.conversations || [];
-    renderConversationList();
+    const nextConversations = body.conversations || [];
+    const nextFingerprint = JSON.stringify(nextConversations);
+    const changed = nextFingerprint !== conversationListFingerprint;
+    conversations = nextConversations;
+    conversationListFingerprint = nextFingerprint;
+    if (changed || !background) renderConversationList();
     if (selectedConversationId && conversations.some((item) => item.id === selectedConversationId)) {
-      await selectConversation(selectedConversationId, false);
+      if (refreshDetail) await selectConversation(selectedConversationId, false, { background });
+    } else if (selectedConversationId && background) {
+      return;
     } else if (conversations.length) {
-      await selectConversation(conversations[0].id, false);
+      await selectConversation(conversations[0].id, false, { background });
     } else {
       selectedConversationId = null;
       document.getElementById("conversation-detail").innerHTML = `<p class="empty-state">Todavía no hay conversaciones.</p>`;
@@ -1579,12 +1648,16 @@ async function loadConversations() {
   } catch (error) {
     if (requestVersion !== conversationLoadVersion) return;
     console.error(error);
-    container.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+    if (background) throw error;
+    if (!conversations.length) {
+      container.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+    }
   }
 }
 
 function renderConversationList() {
   const container = document.getElementById("conversation-list");
+  const previousScrollTop = container.scrollTop;
   if (!conversations.length) {
     container.innerHTML = `<p class="empty-state">Todavía no hay conversaciones.</p>`;
     return;
@@ -1602,15 +1675,50 @@ function renderConversationList() {
       <small>${escapeHtml(formatConversationDate(item.last_message_at))}${item.unread_count ? ` · ${item.unread_count} sin responder` : ""}</small>
     </button>
   `).join("");
+  container.scrollTop = previousScrollTop;
 }
 
-async function selectConversation(conversationId, showLoading = true) {
+function captureConversationUiState(conversationId) {
+  if (selectedConversationId !== Number(conversationId)) return null;
+  const textarea = document.getElementById("conversation-reply-body");
+  const thread = document.getElementById("conversation-thread");
+  const newMessagesIndicator = document.getElementById("conversation-new-messages");
+  const distanceFromBottom = thread
+    ? thread.scrollHeight - thread.scrollTop - thread.clientHeight
+    : 0;
+  return {
+    conversationId: Number(conversationId),
+    draft: textarea?.value || "",
+    replyFocused: document.activeElement === textarea,
+    selectionStart: textarea?.selectionStart,
+    selectionEnd: textarea?.selectionEnd,
+    threadScrollTop: thread?.scrollTop || 0,
+    threadNearBottom: !thread || distanceFromBottom <= 80,
+    lastMessageId: thread?.dataset.lastMessageId || "",
+    messageCount: Number(thread?.dataset.messageCount || 0),
+    newMessagesVisible: Boolean(newMessagesIndicator && !newMessagesIndicator.hidden)
+  };
+}
+
+function scrollConversationThreadToBottom() {
+  const thread = document.getElementById("conversation-thread");
+  if (!thread) return;
+  thread.scrollTop = thread.scrollHeight;
+  document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");
+}
+
+async function selectConversation(conversationId, showLoading = true, { background = false } = {}) {
   const requestVersion = ++conversationDetailVersion;
-  if (selectedConversationId !== Number(conversationId)) selectedConversationSuggestionId = null;
+  const uiState = captureConversationUiState(conversationId);
+  const selectionChanged = selectedConversationId !== Number(conversationId);
+  if (selectionChanged) {
+    selectedConversationSuggestionId = null;
+    conversationDetailFingerprint = "";
+  }
   selectedConversationId = Number(conversationId);
-  renderConversationList();
+  if (selectionChanged) renderConversationList();
   const detail = document.getElementById("conversation-detail");
-  if (showLoading) detail.innerHTML = `<p class="empty-state">Cargando conversación...</p>`;
+  if (showLoading && !background) detail.innerHTML = `<p class="empty-state">Cargando conversación...</p>`;
   try {
     const [response, suggestionsResponse] = await Promise.all([
       fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}`),
@@ -1628,15 +1736,23 @@ async function selectConversation(conversationId, showLoading = true) {
     if (!conversationSuggestions.some((item) => item.id === selectedConversationSuggestionId && item.status === "pending")) {
       selectedConversationSuggestionId = null;
     }
-    renderConversationDetail(body.conversation);
+    const nextFingerprint = JSON.stringify({
+      conversation: body.conversation,
+      suggestions: conversationSuggestions,
+      notice: conversationSuggestionNotice
+    });
+    if (background && nextFingerprint === conversationDetailFingerprint) return;
+    conversationDetailFingerprint = nextFingerprint;
+    renderConversationDetail(body.conversation, uiState);
   } catch (error) {
     if (requestVersion !== conversationDetailVersion) return;
     console.error(error);
+    if (background) throw error;
     detail.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
   }
 }
 
-function renderConversationDetail(conversation) {
+function renderConversationDetail(conversation, uiState = null) {
   const detail = document.getElementById("conversation-detail");
   const contactParts = [conversation.customer_username ? `@${conversation.customer_username}` : null, conversation.customer_phone].filter(Boolean);
   const messages = conversation.messages || [];
@@ -1682,13 +1798,14 @@ function renderConversationDetail(conversation) {
           : `<button class="btn btn-small btn-secondary" type="button" onclick="changeConversationStatus('pending')">Marcar pendiente</button><button class="btn btn-small btn-danger" type="button" onclick="changeConversationStatus('closed')">Marcar cerrada</button>`}
       </div>
     </header>
-    <div id="conversation-thread" class="conversation-thread">
+    <div id="conversation-thread" class="conversation-thread" data-last-message-id="${messages.at(-1)?.id || ""}" data-message-count="${messages.length}">
       ${messages.length ? messages.map((message) => `
         <div class="conversation-message conversation-message-${message.direction}">
           <span>${escapeHtml(message.body)}</span>
           <small>${message.sender_type === "automation" ? "Automatización" : (message.direction === "outbound" ? "Negocio" : "Cliente")} · ${escapeHtml(formatConversationDate(message.created_at))}${message.delivery_status ? ` · <span class="conversation-delivery conversation-delivery-${escapeHtml(message.delivery_status)}">${escapeHtml(conversationDeliveryLabel(message.delivery_status))}</span>` : ""}</small>
         </div>
       `).join("") : `<p class="empty-state">Todavía no hay mensajes.</p>`}
+      <button id="conversation-new-messages" class="btn btn-primary btn-small conversation-new-messages" type="button" onclick="scrollConversationThreadToBottom()" hidden>Hay mensajes nuevos</button>
     </div>
     ${suggestionsMarkup}
     <div class="conversation-reply">
@@ -1701,7 +1818,35 @@ function renderConversationDetail(conversation) {
     </div>
   `;
   const thread = document.getElementById("conversation-thread");
-  if (thread) thread.scrollTop = thread.scrollHeight;
+  const textarea = document.getElementById("conversation-reply-body");
+  if (uiState?.conversationId === selectedConversationId && textarea) {
+    textarea.value = uiState.draft;
+    if (uiState.replyFocused) {
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(uiState.selectionStart, uiState.selectionEnd);
+    }
+  }
+  if (thread) {
+    const lastMessageId = String(messages.at(-1)?.id || "");
+    const hasNewMessages = Boolean(
+      uiState &&
+      (messages.length > uiState.messageCount || (uiState.lastMessageId && lastMessageId !== uiState.lastMessageId))
+    );
+    if (!uiState || uiState.threadNearBottom) {
+      thread.scrollTop = thread.scrollHeight;
+    } else {
+      thread.scrollTop = uiState.threadScrollTop;
+      if (hasNewMessages || uiState.newMessagesVisible) {
+        document.getElementById("conversation-new-messages")?.removeAttribute("hidden");
+      }
+    }
+    thread.addEventListener("scroll", () => {
+      const distanceFromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
+      if (distanceFromBottom <= 80) {
+        document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");
+      }
+    });
+  }
 }
 
 function fillConversationReply(templateId) {
@@ -1730,11 +1875,12 @@ async function sendConversationReply() {
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar el mensaje."));
     selectedConversationSuggestionId = null;
+    if (textarea) textarea.value = "";
     showConversationFeedback("Respuesta registrada correctamente.");
-    await loadConversations();
+    await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
   } catch (error) {
     showConversationFeedback(error.message, true);
-    if (selectedConversationId) await loadConversations();
+    if (selectedConversationId) await requestAdminRefresh(["conversationList", "conversationThread"]);
   }
 }
 
@@ -1751,10 +1897,10 @@ async function sendConversationSuggestion(suggestionId) {
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar la sugerencia."));
     selectedConversationSuggestionId = null;
     showConversationFeedback("Sugerencia enviada correctamente.");
-    await loadConversations();
+    await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
   } catch (error) {
     showConversationFeedback(error.message || "No se pudo enviar la sugerencia.", true);
-    if (selectedConversationId) await loadConversations();
+    if (selectedConversationId) await requestAdminRefresh(["conversationList", "conversationThread"]);
   } finally {
     sendingConversationSuggestionIds.delete(suggestion.id);
   }
@@ -1784,7 +1930,7 @@ async function dismissConversationSuggestion(suggestionId) {
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo descartar la sugerencia."));
     if (selectedConversationSuggestionId === Number(suggestionId)) selectedConversationSuggestionId = null;
     showConversationFeedback("Sugerencia descartada.");
-    await selectConversation(selectedConversationId, false);
+    await requestAdminRefresh(["conversationList", "conversationThread"]);
   } catch (error) {
     showConversationFeedback(error.message, true);
   }
@@ -1800,7 +1946,7 @@ async function changeConversationStatus(status) {
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cambiar el estado."));
     showConversationFeedback("Estado actualizado.");
-    await loadConversations();
+    await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
   } catch (error) {
     showConversationFeedback(error.message, true);
   }
@@ -1826,7 +1972,7 @@ async function createConversation() {
       .forEach((id) => { document.getElementById(id).value = ""; });
     document.getElementById("conversation-create-panel").hidden = true;
     showConversationFeedback("Conversación creada.");
-    await loadConversations();
+    await requestAdminRefresh(["conversationList", "conversationThread"]);
   } catch (error) {
     showConversationFeedback(error.message, true);
   }
@@ -1917,7 +2063,7 @@ async function mutateConversationTemplate(url, options) {
   }
 }
 
-async function loadConversationAutomation() {
+async function loadConversationAutomation({ background = false } = {}) {
   const requestVersion = ++conversationAutomationLoadVersion;
   const container = document.getElementById("conversation-automation-content");
   if (!container || !canManageConversationTemplates()) return;
@@ -1934,8 +2080,10 @@ async function loadConversationAutomation() {
   } catch (error) {
     if (requestVersion !== conversationAutomationLoadVersion) return;
     console.error(error);
-    conversationAutomation = null;
-    container.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+    if (background) throw error;
+    if (!conversationAutomation) {
+      container.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+    }
   }
 }
 
@@ -2015,6 +2163,7 @@ async function saveConversationAutomationRule(intent) {
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar la regla."));
     if (body.rule?.mode !== payload.mode) throw new Error("El backend no confirmó el modo seleccionado.");
     await loadConversationAutomation();
+    await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
     const persistedRule = conversationAutomation?.rules?.find((rule) => rule.intent === intent);
     if (persistedRule?.mode !== payload.mode) throw new Error("La regla no se recargó con el modo guardado.");
     showConversationFeedback(`Regla de ${conversationIntentLabel(intent)} actualizada.`);
@@ -2034,6 +2183,7 @@ async function mutateConversationAutomation(url, payload, successMessage) {
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar la automatización."));
     showConversationFeedback(successMessage);
     await loadConversationAutomation();
+    await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
     return true;
   } catch (error) {
     showConversationFeedback(error.message, true);
@@ -2041,7 +2191,7 @@ async function mutateConversationAutomation(url, payload, successMessage) {
   }
 }
 
-async function loadMessageOutbox() {
+async function loadMessageOutbox({ background = false } = {}) {
   const container = document.getElementById("message-outbox-list");
 
   try {
@@ -2054,16 +2204,24 @@ async function loadMessageOutbox() {
     }
 
     const data = await response.json();
-    messageOutbox = data.messages || [];
+    const nextMessages = data.messages || [];
+    const nextFingerprint = JSON.stringify(nextMessages);
+    const changed = nextFingerprint !== messageOutboxFingerprint;
+    messageOutbox = nextMessages;
+    messageOutboxFingerprint = nextFingerprint;
     growthDataReady.messages = true;
+    if (!changed && background) return;
     renderMessageOutboxMetrics();
     renderMessageOutbox();
     renderGrowth();
   } catch (error) {
     console.error(error);
-    container.innerHTML = `<p class="empty-state">No se pudieron cargar los mensajes.</p>`;
-    document.getElementById("message-outbox-history-list").innerHTML =
-      `<p class="empty-state">No se pudo cargar el historial.</p>`;
+    if (background) throw error;
+    if (!messageOutbox.length) {
+      container.innerHTML = `<p class="empty-state">No se pudieron cargar los mensajes.</p>`;
+      document.getElementById("message-outbox-history-list").innerHTML =
+        `<p class="empty-state">No se pudo cargar el historial.</p>`;
+    }
   }
 }
 
@@ -2213,6 +2371,7 @@ async function openPreparedWhatsAppMessage(message, whatsappWindow) {
     }
 
     replaceOutboxMessage(result.message);
+    requestAdminRefresh(["operations"]);
     whatsappWindow.location.href = result.message.whatsapp_url;
     return true;
   } catch (error) {
@@ -2240,6 +2399,7 @@ async function updateOutboxStatus(messageId, status) {
     }
 
     replaceOutboxMessage(result.message);
+    await requestAdminRefresh(["operations"]);
   } catch (error) {
     console.error(error);
     alert(error.message || "No se pudo actualizar el mensaje.");
@@ -2256,17 +2416,166 @@ function replaceOutboxMessage(updatedMessage) {
   renderGrowth();
 }
 
-async function refreshOperationalData() {
-  if (isBusinessStaff()) {
-    await Promise.all([loadBookings(), loadConversations()]);
+function ensureAdminPollingTasks() {
+  if (adminPollingTasks.size) return;
+  adminPollingTasks.set("conversationThread", {
+    run: async () => {
+      if (selectedConversationId) {
+        await selectConversation(selectedConversationId, false, { background: true });
+      }
+    },
+    inFlight: false,
+    rerunRequested: false,
+    failures: 0,
+    error: false,
+    timer: null,
+    promise: null
+  });
+  adminPollingTasks.set("conversationList", {
+    run: () => loadConversations({ background: true, refreshDetail: false }),
+    inFlight: false,
+    rerunRequested: false,
+    failures: 0,
+    error: false,
+    timer: null,
+    promise: null
+  });
+  adminPollingTasks.set("operations", {
+    run: async () => {
+      const requests = [loadBookings({ background: true })];
+      if (!isBusinessStaff()) requests.push(loadMessageOutbox({ background: true }));
+      await Promise.all(requests);
+    },
+    inFlight: false,
+    rerunRequested: false,
+    failures: 0,
+    error: false,
+    timer: null,
+    promise: null
+  });
+}
+
+function updateAdminSyncIndicator() {
+  const container = document.getElementById("admin-sync-status");
+  const label = document.getElementById("admin-sync-status-label");
+  const updated = document.getElementById("admin-sync-last-updated");
+  if (!container || !label || !updated) return;
+  const tasks = Array.from(adminPollingTasks.values());
+  const isUpdating = tasks.some((task) => task.inFlight);
+  const hasTemporaryError = tasks.some((task) => task.error);
+  container.classList.toggle("admin-sync-updating", isUpdating);
+  container.classList.toggle("admin-sync-error", !isUpdating && hasTemporaryError);
+  container.classList.toggle("admin-sync-connected", !isUpdating && !hasTemporaryError);
+  label.textContent = isUpdating
+    ? "Actualizando"
+    : hasTemporaryError ? "Error temporal" : "Conectado";
+  updated.textContent = adminPollingLastSuccessAt
+    ? `Última actualización: ${adminPollingLastSuccessAt.toLocaleTimeString("es-ES")}`
+    : "Esperando actualización";
+}
+
+function adminPollDelay(taskName, task) {
+  const visibility = document.hidden ? "hidden" : "visible";
+  const baseDelay = ADMIN_POLL_INTERVALS[taskName][visibility];
+  const multiplier = Math.min(
+    2 ** task.failures,
+    ADMIN_POLL_MAX_BACKOFF_MULTIPLIER
+  );
+  return baseDelay * multiplier;
+}
+
+function scheduleAdminPollTask(taskName, delay = null) {
+  const task = adminPollingTasks.get(taskName);
+  if (!adminPollingActive || !task || task.inFlight) return;
+  window.clearTimeout(task.timer);
+  task.timer = window.setTimeout(
+    () => runAdminPollTask(taskName),
+    delay ?? adminPollDelay(taskName, task)
+  );
+}
+
+function runAdminPollTask(taskName) {
+  ensureAdminPollingTasks();
+  const task = adminPollingTasks.get(taskName);
+  if (!task) return Promise.resolve();
+  if (task.inFlight) {
+    task.rerunRequested = true;
+    return task.promise || Promise.resolve();
+  }
+  window.clearTimeout(task.timer);
+  task.inFlight = true;
+  updateAdminSyncIndicator();
+  task.promise = (async () => {
+    try {
+      await task.run();
+      task.failures = 0;
+      task.error = false;
+      adminPollingLastSuccessAt = new Date();
+    } catch (error) {
+      task.failures += 1;
+      task.error = true;
+      console.warn("Actualización automática temporalmente no disponible", { task: taskName });
+    } finally {
+      task.inFlight = false;
+      task.promise = null;
+      const rerunRequested = task.rerunRequested;
+      task.rerunRequested = false;
+      updateAdminSyncIndicator();
+      if (adminPollingActive) scheduleAdminPollTask(taskName, rerunRequested ? 0 : null);
+    }
+  })();
+  return task.promise;
+}
+
+function requestAdminRefresh(taskNames = null) {
+  ensureAdminPollingTasks();
+  const names = Array.isArray(taskNames)
+    ? taskNames
+    : ["conversationList", "conversationThread", "operations"];
+  return Promise.all(names.map((taskName) => runAdminPollTask(taskName)));
+}
+
+function startAdminPolling() {
+  ensureAdminPollingTasks();
+  if (adminPollingActive) return;
+  adminPollingActive = true;
+  adminPollingLastSuccessAt = new Date();
+  adminPollingTasks.forEach((task, taskName) => {
+    task.failures = 0;
+    task.error = false;
+    scheduleAdminPollTask(taskName);
+  });
+  updateAdminSyncIndicator();
+}
+
+function stopAdminPolling() {
+  adminPollingActive = false;
+  adminPollingTasks.forEach((task) => {
+    window.clearTimeout(task.timer);
+    task.timer = null;
+    task.rerunRequested = false;
+  });
+}
+
+function handleAdminVisibilityChange() {
+  if (!adminPollingActive) return;
+  if (!document.hidden) {
+    requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
     return;
   }
-  await Promise.all([
-    loadBookings(),
-    loadMessageOutbox(),
-    loadConversationAutomation(),
-    loadConversations()
-  ]);
+  adminPollingTasks.forEach((task, taskName) => {
+    if (!task.inFlight) scheduleAdminPollTask(taskName);
+  });
+}
+
+async function refreshOperationalData({ includeAutomation = false } = {}) {
+  const requests = [
+    requestAdminRefresh(["conversationList", "conversationThread", "operations"])
+  ];
+  if (includeAutomation && canManageConversationTemplates()) {
+    requests.push(loadConversationAutomation({ background: true }));
+  }
+  await Promise.allSettled(requests);
 }
 
 async function enrichBookingsWithAttachments() {
@@ -2591,7 +2900,7 @@ async function createReviewRequest(bookingId) {
     renderReviewRequests();
     renderBookings();
     renderGrowth();
-    await loadMessageOutbox();
+    await requestAdminRefresh(["operations"]);
   } catch (error) {
     console.error(error);
     alert(error.message || "No se pudo crear la solicitud de reseña.");
@@ -3103,7 +3412,10 @@ function renderError(message) {
 document.addEventListener("DOMContentLoaded", () => {
   setupAdminNavigation();
   setupBookingViews();
-  document.getElementById("refresh-button").addEventListener("click", refreshOperationalData);
+  document.getElementById("refresh-button").addEventListener("click", () => {
+    refreshOperationalData({ includeAutomation: true });
+  });
+  document.addEventListener("visibilitychange", handleAdminVisibilityChange);
   document.getElementById("message-status-filter").addEventListener("change", renderMessageOutbox);
   document.getElementById("save-business-settings").addEventListener("click", saveBusinessSettings);
   document.getElementById("create-service").addEventListener("click", createAdminService);
@@ -3114,11 +3426,18 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   document.getElementById("create-conversation").addEventListener("click", createConversation);
   document.getElementById("create-conversation-template").addEventListener("click", createConversationTemplate);
-  document.getElementById("conversation-status-filter").addEventListener("change", loadConversations);
-  document.getElementById("conversation-channel-filter").addEventListener("change", loadConversations);
+  document.getElementById("conversation-status-filter").addEventListener("change", () => {
+    requestAdminRefresh(["conversationList", "conversationThread"]);
+  });
+  document.getElementById("conversation-channel-filter").addEventListener("change", () => {
+    requestAdminRefresh(["conversationList", "conversationThread"]);
+  });
   document.getElementById("conversation-search").addEventListener("input", () => {
     clearTimeout(conversationSearchTimer);
-    conversationSearchTimer = setTimeout(loadConversations, 250);
+    conversationSearchTimer = setTimeout(
+      () => requestAdminRefresh(["conversationList", "conversationThread"]),
+      250
+    );
   });
   document.getElementById("booking-staff-filter").addEventListener("change", (event) => {
     selectedStaffFilter = event.target.value;
@@ -3134,6 +3453,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function showAdminLogin(message = "Inicia sesión con la cuenta asignada al negocio.", denied = false) {
+  stopAdminPolling();
   document.getElementById("admin-app").hidden = true;
   document.getElementById("admin-auth-gate").hidden = false;
   document.getElementById("admin-auth-message").textContent = message;
@@ -3158,6 +3478,7 @@ async function bootstrapAdminAuth() {
     document.getElementById("admin-auth-user").textContent = adminAuthUser.name || adminAuthUser.email;
     applyRoleVisibility();
     await loadAdminPanel();
+    if (currentBusiness) startAdminPolling();
   } catch (error) {
     console.error("Admin authentication failed", error);
     await showAdminLogin(error.message);
@@ -3165,6 +3486,7 @@ async function bootstrapAdminAuth() {
 }
 
 async function adminLogout() {
+  stopAdminPolling();
   await AutonoGrowAuth.logout();
   adminAuthUser = null;
   await showAdminLogin();

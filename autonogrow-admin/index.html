@@ -24,6 +24,11 @@
       </div>
 
       <div class="header-actions">
+        <div id="admin-sync-status" class="admin-sync-status admin-sync-connected" role="status" aria-live="polite">
+          <span class="admin-sync-dot" aria-hidden="true"></span>
+          <span id="admin-sync-status-label" class="admin-sync-status-label">Conectado</span>
+          <time id="admin-sync-last-updated">Sincronizando...</time>
+        </div>
         <div class="auth-user"><span id="admin-auth-user"></span><button id="admin-logout" class="btn btn-secondary" type="button">Salir</button></div>
         <a id="public-page-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
           Ver página pública
