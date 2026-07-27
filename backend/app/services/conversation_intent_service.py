@@ -105,6 +105,10 @@ INTENT_TEMPLATE_NAMES = {
     "service_intent": "Enviar servicios",
     "location_intent": "Enviar ubicación",
     "hours_intent": "Mensaje de bienvenida",
+    "complaint_intent": "Respuesta segura a queja",
+    "human_intent": "Derivación a atención humana",
+    "cancel_reschedule_intent": "Acuse de cambio o cancelación",
+    "unknown": "Respuesta segura sin intención",
 }
 
 SAFE_AUTO_INTENTS = {
@@ -114,6 +118,10 @@ SAFE_AUTO_INTENTS = {
     "service_intent",
     "location_intent",
     "hours_intent",
+    "complaint_intent",
+    "human_intent",
+    "cancel_reschedule_intent",
+    "unknown",
 }
 
 SENSITIVE_INTENTS = (
@@ -196,8 +204,8 @@ def detect_intent(value: str) -> IntentDetection:
             intent="unknown",
             confidence=0,
             matched_patterns=[],
-            recommended_template_key=None,
-            safe_for_auto=False,
+            recommended_template_key=INTENT_TEMPLATE_NAMES["unknown"],
+            safe_for_auto=True,
         )
 
     sensitive_match = next(

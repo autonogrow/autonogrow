@@ -18,6 +18,8 @@ class InstagramInboundMessage:
     timestamp: int | None
     raw_payload: dict[str, Any]
     has_attachments: bool
+    is_echo: bool
+    attachments: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -77,7 +79,7 @@ def parse_instagram_webhook(
             if not isinstance(event, dict):
                 continue
             message = event.get("message")
-            if not isinstance(message, dict) or message.get("is_echo") is True:
+            if not isinstance(message, dict):
                 continue
             sender = event.get("sender")
             recipient = event.get("recipient")
@@ -89,15 +91,16 @@ def parse_instagram_webhook(
             )
             if not sender_id or not recipient_id:
                 continue
-            if business_account_id and sender_id == business_account_id:
-                continue
+            is_echo = message.get("is_echo") is True or bool(
+                business_account_id and sender_id == business_account_id
+            )
             text = message.get("text")
             attachments = message.get("attachments")
             has_attachments = isinstance(attachments, list) and bool(attachments)
             if isinstance(text, str) and text.strip():
                 body = text.strip()
             elif has_attachments:
-                body = "[Adjunto recibido]"
+                body = "[Adjunto enviado]" if is_echo else "[Adjunto recibido]"
             else:
                 continue
             timestamp = event.get("timestamp")
@@ -114,6 +117,12 @@ def parse_instagram_webhook(
                     timestamp=timestamp if isinstance(timestamp, int) else None,
                     raw_payload=event,
                     has_attachments=has_attachments,
+                    is_echo=is_echo,
+                    attachments=(
+                        [item for item in attachments if isinstance(item, dict)]
+                        if isinstance(attachments, list)
+                        else []
+                    ),
                 )
             )
     return parsed

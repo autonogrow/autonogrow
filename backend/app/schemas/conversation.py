@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field, field_validator
 CHANNELS = {"manual", "whatsapp", "instagram"}
 CONVERSATION_STATUSES = {"pending", "replied", "closed"}
 AUTOMATION_RULE_MODES = {"disabled", "semi_automatic", "automatic"}
+HUMAN_REPLY_PAUSE_MINUTES = {0, 15, 60, 240, -1}
+CONVERSATION_AUTOMATION_ACTIONS = {"pause", "manual", "resume"}
 
 
 class ConversationCreate(BaseModel):
@@ -81,12 +83,39 @@ class ConversationAutomationSettingsUpdate(BaseModel):
     monthly_auto_limit: int | None = Field(default=None, ge=0, le=1000000)
     auto_threshold: int | None = Field(default=None, ge=0, le=100)
     on_limit_reached: str | None = None
+    human_reply_pause_minutes: int | None = None
 
     @field_validator("on_limit_reached")
     @classmethod
     def validate_limit_mode(cls, value: str | None) -> str | None:
         if value is not None and value not in {"semi_automatic", "disabled"}:
             raise ValueError("Invalid limit mode")
+        return value
+
+    @field_validator("human_reply_pause_minutes")
+    @classmethod
+    def validate_human_pause(cls, value: int | None) -> int | None:
+        if value is not None and value not in HUMAN_REPLY_PAUSE_MINUTES:
+            raise ValueError("Invalid human reply pause duration")
+        return value
+
+
+class ConversationAutomationControlUpdate(BaseModel):
+    action: str
+    duration_minutes: int | None = None
+
+    @field_validator("action")
+    @classmethod
+    def validate_action(cls, value: str) -> str:
+        if value not in CONVERSATION_AUTOMATION_ACTIONS:
+            raise ValueError("Invalid conversation automation action")
+        return value
+
+    @field_validator("duration_minutes")
+    @classmethod
+    def validate_duration(cls, value: int | None) -> int | None:
+        if value is not None and value not in {15, 60, 240, -1}:
+            raise ValueError("Invalid conversation automation duration")
         return value
 
 

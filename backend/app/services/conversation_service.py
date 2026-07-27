@@ -17,6 +17,9 @@ from app.services.instagram_provider import (
     is_instagram_provider_configured,
     send_instagram_text_message,
 )
+from app.services.conversation_automation_state_service import (
+    serialize_conversation_automation_state,
+)
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,22 @@ DEFAULT_TEMPLATES = (
     (
         "Mensaje de bienvenida",
         "Hola 👋 Gracias por escribir a {business_name}. Puedes ver servicios y reservar aquí: {public_booking_url}.",
+    ),
+    (
+        "Respuesta segura a queja",
+        "Sentimos lo ocurrido. Hemos avisado al equipo para que revise tu caso y te responda personalmente lo antes posible.",
+    ),
+    (
+        "Derivación a atención humana",
+        "Claro. Hemos avisado al equipo para que una persona continúe contigo. Te responderán en cuanto sea posible.",
+    ),
+    (
+        "Acuse de cambio o cancelación",
+        "Hemos recibido tu solicitud de cambio o cancelación. Para evitar modificar una cita incorrecta, una persona revisará tu caso y te responderá.",
+    ),
+    (
+        "Respuesta segura sin intención",
+        "Gracias por escribirnos. No hemos identificado con seguridad lo que necesitas, así que hemos avisado al equipo para que pueda ayudarte.",
     ),
 )
 
@@ -113,6 +132,7 @@ def serialize_conversation(
         "detected_intent": conversation.detected_intent,
         "intent_confidence": conversation.intent_confidence,
         "matched_patterns": matched_patterns,
+        "automation": serialize_conversation_automation_state(conversation),
         "instagram_provider_configured": (
             is_instagram_provider_configured(get_settings())
             if conversation.channel == "instagram"
@@ -364,11 +384,10 @@ def ensure_default_templates(
         .filter(ConversationTemplate.business_id == business.id)
         .all()
     )
-    if existing:
-        return sorted(existing, key=lambda item: item.id or 0)
-
-    created = []
+    existing_by_name = {item.name: item for item in existing}
     for name, body in DEFAULT_TEMPLATES:
+        if name in existing_by_name:
+            continue
         item = ConversationTemplate(
             business_id=business.id,
             name=name,
@@ -376,9 +395,10 @@ def ensure_default_templates(
             active=True,
         )
         db.add(item)
-        created.append(item)
+        existing.append(item)
+        existing_by_name[name] = item
     db.flush()
-    return created
+    return sorted(existing, key=lambda item: item.id or 0)
 
 
 def render_template(body: str, business: Business) -> str:
