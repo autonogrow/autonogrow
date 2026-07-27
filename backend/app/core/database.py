@@ -134,6 +134,11 @@ def run_lightweight_migrations(target_engine=None) -> None:
                 "detected_intent": "VARCHAR(60)",
                 "intent_confidence": "INTEGER",
                 "matched_patterns_json": "TEXT",
+                "automation_mode": "VARCHAR(20) NOT NULL DEFAULT 'automatic'",
+                "automation_paused_until": "DATETIME",
+                "automation_pause_reason": "VARCHAR(60)",
+                "automation_pause_updated_by": "INTEGER",
+                "automation_pause_updated_at": "DATETIME",
             }
             for column_name, column_type in automation_columns.items():
                 if column_name not in conversation_columns:
@@ -148,6 +153,25 @@ def run_lightweight_migrations(target_engine=None) -> None:
                     "ON conversations (detected_intent)"
                 )
             )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_conversations_automation_paused_until "
+                    "ON conversations (automation_paused_until)"
+                )
+            )
+
+        if "conversation_automation_settings" in table_names:
+            automation_settings_columns = {
+                column["name"]
+                for column in inspector.get_columns("conversation_automation_settings")
+            }
+            if "human_reply_pause_minutes" not in automation_settings_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE conversation_automation_settings "
+                        "ADD COLUMN human_reply_pause_minutes INTEGER NOT NULL DEFAULT 60"
+                    )
+                )
 
         migration_name = "2026_07_backfill_business_user_services"
         migration_applied = connection.execute(

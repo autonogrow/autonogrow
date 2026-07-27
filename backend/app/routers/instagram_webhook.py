@@ -7,13 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models import Business, ConversationMessage
+from app.models import Business, Conversation, ConversationMessage
 from app.services.conversation_automation_service import process_inbound_automation
 from app.services.conversation_service import add_message, create_or_get_conversation
 from app.services.instagram_provider import (
     parse_instagram_webhook,
     verify_meta_signature,
 )
+from app.services.instagram_echo_service import process_instagram_echo
 
 
 router = APIRouter(prefix="/api/webhooks/instagram", tags=["instagram-webhook"])
@@ -57,22 +58,25 @@ async def receive_instagram_webhook(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
 
-    inbound_messages = parse_instagram_webhook(
+    message_events = parse_instagram_webhook(
         payload,
         business_account_id=settings.instagram_business_account_id.strip() or None,
     )
     processed = 0
     duplicates = 0
+    echoes = 0
+    reconciled = 0
     ignored = 0
     automation_results = []
     account_id = settings.instagram_business_account_id.strip()
     business_slug = settings.instagram_default_business_slug.strip()
-    for inbound in inbound_messages:
-        if (
-            not account_id
-            or inbound.recipient_id != account_id
-            or not business_slug
-        ):
+    for inbound in message_events:
+        account_matches = (
+            inbound.sender_id == account_id
+            if inbound.is_echo
+            else inbound.recipient_id == account_id
+        )
+        if not account_id or not account_matches or not business_slug:
             ignored += 1
             continue
         business = (
@@ -83,10 +87,28 @@ async def receive_instagram_webhook(
         if business is None:
             ignored += 1
             continue
+        if inbound.is_echo:
+            action, _ = process_instagram_echo(
+                db,
+                business=business,
+                event=inbound,
+            )
+            if action == "duplicate":
+                duplicates += 1
+            else:
+                processed += 1
+                echoes += 1
+                if action == "reconciled":
+                    reconciled += 1
+            continue
         if inbound.message_id:
             duplicate = (
                 db.query(ConversationMessage)
-                .filter(ConversationMessage.provider_message_id == inbound.message_id)
+                .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+                .filter(
+                    Conversation.business_id == business.id,
+                    ConversationMessage.provider_message_id == inbound.message_id,
+                )
                 .first()
             )
             if duplicate is not None:
@@ -118,11 +140,12 @@ async def receive_instagram_webhook(
         )
         processed += 1
     db.commit()
-    ignored += max(0, len(inbound_messages) - processed - duplicates - ignored)
     return {
         "ok": True,
         "processed": processed,
         "duplicates": duplicates,
+        "echoes": echoes,
+        "reconciled": reconciled,
         "ignored": ignored,
         "automation": automation_results,
     }

@@ -15,24 +15,29 @@ from app.models import (
     Business,
     BusinessUser,
     Conversation,
+    ConversationAutomationRule,
     ConversationAutomationSettings,
     ConversationMessage,
     ConversationSuggestion,
+    ConversationTemplate,
     User,
 )
 from app.routers.conversations import (
     admin_get_conversation_automation,
+    admin_get_conversation_automation_state,
     admin_list_conversation_suggestions,
     admin_send_conversation_message,
     admin_send_conversation_suggestion,
     admin_update_conversation_automation_rule,
     admin_update_conversation_automation_settings,
+    admin_update_conversation_automation_state,
     admin_update_conversation_suggestion,
     test_inbound_message as inbound_message_endpoint,
 )
 from app.schemas.conversation import (
     ConversationAutomationRuleUpdate,
     ConversationAutomationSettingsUpdate,
+    ConversationAutomationControlUpdate,
     ConversationMessageCreate,
     ConversationSuggestionUpdate,
     TestInboundMessageCreate,
@@ -163,7 +168,7 @@ class ConversationAutomationTest(unittest.TestCase):
             ("¿tenéis hueco?", "booking_intent", True),
             ("¿cuánto cuesta?", "price_intent", True),
             ("¿dónde estáis?", "location_intent", True),
-            ("me habéis cobrado mal", "complaint_intent", False),
+            ("me habéis cobrado mal", "complaint_intent", True),
         )
         for text, expected_intent, safe_for_auto in cases:
             with self.subTest(text=text):
@@ -174,17 +179,29 @@ class ConversationAutomationTest(unittest.TestCase):
 
         cancellation = detect_intent("quiero cancelar mi cita")
         self.assertEqual(cancellation.intent, "cancel_reschedule_intent")
-        self.assertFalse(cancellation.safe_for_auto)
+        self.assertTrue(cancellation.safe_for_auto)
         unknown = detect_intent("Necesito información adicional")
         self.assertEqual(unknown.intent, "unknown")
-        self.assertFalse(unknown.safe_for_auto)
+        self.assertTrue(unknown.safe_for_auto)
 
     def test_lightweight_migration_adds_intent_columns_to_existing_conversations(self):
         with self.engine.begin() as connection:
             connection.execute(text("DROP INDEX ix_conversations_detected_intent"))
+            connection.execute(text("DROP INDEX ix_conversations_automation_paused_until"))
             connection.execute(text("ALTER TABLE conversations DROP COLUMN detected_intent"))
             connection.execute(text("ALTER TABLE conversations DROP COLUMN intent_confidence"))
             connection.execute(text("ALTER TABLE conversations DROP COLUMN matched_patterns_json"))
+            connection.execute(text("ALTER TABLE conversations DROP COLUMN automation_mode"))
+            connection.execute(text("ALTER TABLE conversations DROP COLUMN automation_paused_until"))
+            connection.execute(text("ALTER TABLE conversations DROP COLUMN automation_pause_reason"))
+            connection.execute(text("ALTER TABLE conversations DROP COLUMN automation_pause_updated_by"))
+            connection.execute(text("ALTER TABLE conversations DROP COLUMN automation_pause_updated_at"))
+            connection.execute(
+                text(
+                    "ALTER TABLE conversation_automation_settings "
+                    "DROP COLUMN human_reply_pause_minutes"
+                )
+            )
 
         run_lightweight_migrations(self.engine)
 
@@ -192,9 +209,74 @@ class ConversationAutomationTest(unittest.TestCase):
             column["name"] for column in inspect(self.engine).get_columns("conversations")
         }
         self.assertTrue(
-            {"detected_intent", "intent_confidence", "matched_patterns_json"}
+            {
+                "detected_intent",
+                "intent_confidence",
+                "matched_patterns_json",
+                "automation_mode",
+                "automation_paused_until",
+                "automation_pause_reason",
+                "automation_pause_updated_by",
+                "automation_pause_updated_at",
+            }
             <= columns
         )
+        settings_columns = {
+            column["name"]
+            for column in inspect(self.engine).get_columns(
+                "conversation_automation_settings"
+            )
+        }
+        self.assertIn("human_reply_pause_minutes", settings_columns)
+
+    def test_catalog_upsert_adds_missing_items_without_overwriting_or_duplicates(self):
+        customized = ConversationTemplate(
+            business_id=self.business_a.id,
+            name="Respuesta segura a queja",
+            body="Texto personalizado del negocio",
+            active=True,
+        )
+        self.db.add(customized)
+        self.db.commit()
+
+        _, first_rules = ensure_automation_configuration(self.db, self.business_a)
+        self.db.commit()
+        first_template_count = (
+            self.db.query(ConversationTemplate)
+            .filter(ConversationTemplate.business_id == self.business_a.id)
+            .count()
+        )
+        first_rule_count = (
+            self.db.query(ConversationAutomationRule)
+            .filter(ConversationAutomationRule.business_id == self.business_a.id)
+            .count()
+        )
+        _, second_rules = ensure_automation_configuration(self.db, self.business_a)
+        self.db.commit()
+
+        self.assertEqual(customized.body, "Texto personalizado del negocio")
+        self.assertEqual(first_template_count, 8)
+        self.assertEqual(first_rule_count, 10)
+        self.assertEqual(len(first_rules), 10)
+        self.assertEqual(len(second_rules), 10)
+        self.assertEqual(
+            self.db.query(ConversationTemplate)
+            .filter(
+                ConversationTemplate.business_id == self.business_a.id,
+                ConversationTemplate.name == "Respuesta segura a queja",
+            )
+            .count(),
+            1,
+        )
+        for intent in (
+            "complaint_intent",
+            "human_intent",
+            "cancel_reschedule_intent",
+            "unknown",
+        ):
+            rule = next(item for item in second_rules if item.intent == intent)
+            self.assertEqual(rule.mode, "disabled")
+            self.assertIsNotNone(rule.template_id)
 
     def test_disabled_by_default_only_records_inbound(self):
         result = self.inbound("hay que pedir cita?", external_user_id="disabled")
@@ -207,7 +289,7 @@ class ConversationAutomationTest(unittest.TestCase):
         self.assertEqual(len(conversation.messages), 1)
         self.assertEqual(self.db.query(ConversationSuggestion).count(), 0)
 
-    def test_unknown_intent_never_sends_automatically(self):
+    def test_unknown_intent_can_send_safe_acknowledgement_and_stays_pending(self):
         self.configure(
             self.business_a,
             enabled=True,
@@ -221,13 +303,15 @@ class ConversationAutomationTest(unittest.TestCase):
         )
 
         self.assertEqual(result["automation"]["detection"]["intent"], "unknown")
-        self.assertEqual(result["automation"]["action"], "manual")
+        self.assertEqual(result["automation"]["action"], "automatic")
         self.assertEqual(
             self.db.query(ConversationMessage)
             .filter(ConversationMessage.direction == "outbound")
             .count(),
-            0,
+            1,
         )
+        conversation = self.db.get(Conversation, result["conversation_id"])
+        self.assertEqual(conversation.status, "pending")
 
     def test_semi_automatic_creates_suggestion_without_credit(self):
         settings, _ = self.configure(self.business_a, mode="semi_automatic")
@@ -241,6 +325,168 @@ class ConversationAutomationTest(unittest.TestCase):
         self.assertEqual(settings.auto_used_current_period, 0)
         self.assertEqual(conversation.status, "pending")
         self.assertEqual(len(conversation.messages), 1)
+
+    def test_fifteen_minute_pause_skips_automatic_send_without_credit(self):
+        settings, _ = self.configure(self.business_a, mode="automatic")
+        conversation = Conversation(
+            business_id=self.business_a.id,
+            channel="instagram",
+            external_user_id="paused-15",
+            status="pending",
+        )
+        self.db.add(conversation)
+        self.db.commit()
+
+        updated = admin_update_conversation_automation_state(
+            self.business_a.slug,
+            conversation.id,
+            ConversationAutomationControlUpdate(action="pause", duration_minutes=15),
+            self.request(),
+            actor=self.staff_user,
+            db=self.db,
+        )
+        result = self.inbound("reservar", external_user_id="paused-15")
+
+        self.assertEqual(updated["automation"]["block_reason"], "conversation_automation_paused")
+        self.assertEqual(result["automation"]["status"], "skipped")
+        self.assertEqual(result["automation"]["reason"], "conversation_automation_paused")
+        self.assertEqual(result["automation"]["action"], "suggestion")
+        self.assertEqual(settings.auto_used_current_period, 0)
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .filter(ConversationMessage.direction == "outbound")
+            .count(),
+            0,
+        )
+
+    def test_expired_pause_allows_next_inbound_only(self):
+        settings, _ = self.configure(self.business_a, mode="automatic")
+        conversation = Conversation(
+            business_id=self.business_a.id,
+            channel="instagram",
+            external_user_id="expired-pause",
+            status="pending",
+            automation_mode="automatic",
+            automation_paused_until=datetime.utcnow() - timedelta(seconds=1),
+            automation_pause_reason="manual_control",
+        )
+        self.db.add(conversation)
+        self.db.commit()
+
+        result = self.inbound("quiero una cita", external_user_id="expired-pause")
+        self.db.refresh(conversation)
+
+        self.assertEqual(result["automation"]["action"], "automatic")
+        self.assertEqual(settings.auto_used_current_period, 1)
+        self.assertIsNone(conversation.automation_paused_until)
+        self.assertIsNone(conversation.automation_pause_reason)
+
+    def test_manual_mode_skips_then_resume_allows_automatic_send(self):
+        settings, _ = self.configure(self.business_a, mode="automatic")
+        conversation = Conversation(
+            business_id=self.business_a.id,
+            channel="instagram",
+            external_user_id="manual-mode",
+            status="pending",
+        )
+        self.db.add(conversation)
+        self.db.commit()
+
+        admin_update_conversation_automation_state(
+            self.business_a.slug,
+            conversation.id,
+            ConversationAutomationControlUpdate(action="manual", duration_minutes=-1),
+            self.request(),
+            actor=self.staff_user,
+            db=self.db,
+        )
+        skipped = self.inbound("reservar", external_user_id="manual-mode")
+        state = admin_get_conversation_automation_state(
+            self.business_a.slug,
+            conversation.id,
+            db=self.db,
+        )
+        self.assertEqual(skipped["automation"]["reason"], "conversation_manual_mode")
+        self.assertEqual(state["automation"]["mode"], "manual")
+        self.assertEqual(settings.auto_used_current_period, 0)
+
+        admin_update_conversation_automation_state(
+            self.business_a.slug,
+            conversation.id,
+            ConversationAutomationControlUpdate(action="resume"),
+            self.request(),
+            actor=self.staff_user,
+            db=self.db,
+        )
+        sent = self.inbound("quiero una cita", external_user_id="manual-mode")
+        self.assertEqual(sent["automation"]["action"], "automatic")
+        self.assertEqual(settings.auto_used_current_period, 1)
+
+    def test_successful_panel_reply_starts_default_human_pause(self):
+        settings, _ = self.configure(self.business_a, mode="automatic")
+        conversation = Conversation(
+            business_id=self.business_a.id,
+            channel="manual",
+            external_user_id="panel-human",
+            status="pending",
+        )
+        self.db.add(conversation)
+        self.db.commit()
+
+        result = admin_send_conversation_message(
+            self.business_a.slug,
+            conversation.id,
+            ConversationMessageCreate(body="Respuesta humana"),
+            self.request("POST"),
+            actor=self.staff_user,
+            db=self.db,
+        )
+        self.db.refresh(conversation)
+
+        self.assertEqual(result["message"]["sender_type"], "business")
+        self.assertEqual(conversation.automation_pause_reason, "human_reply")
+        self.assertEqual(conversation.automation_pause_updated_by, self.staff_user.id)
+        self.assertGreater(
+            conversation.automation_paused_until,
+            datetime.utcnow() + timedelta(minutes=59),
+        )
+        self.assertEqual(settings.auto_used_current_period, 0)
+
+    def test_global_human_pause_setting_accepts_supported_values(self):
+        result = admin_update_conversation_automation_settings(
+            self.business_a.slug,
+            ConversationAutomationSettingsUpdate(human_reply_pause_minutes=240),
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )
+        self.assertEqual(result["settings"]["human_reply_pause_minutes"], 240)
+
+    def test_human_reply_does_not_reactivate_manual_mode(self):
+        self.configure(self.business_a, mode="automatic")
+        conversation = Conversation(
+            business_id=self.business_a.id,
+            channel="manual",
+            external_user_id="manual-human-reply",
+            status="pending",
+            automation_mode="manual",
+            automation_pause_reason="manual_control",
+        )
+        self.db.add(conversation)
+        self.db.commit()
+
+        admin_send_conversation_message(
+            self.business_a.slug,
+            conversation.id,
+            ConversationMessageCreate(body="Seguimos atendiendo manualmente"),
+            self.request("POST"),
+            actor=self.staff_user,
+            db=self.db,
+        )
+        self.db.refresh(conversation)
+
+        self.assertEqual(conversation.automation_mode, "manual")
+        self.assertIsNone(conversation.automation_paused_until)
 
     def test_automatic_sends_approved_template_and_consumes_credit(self):
         settings, _ = self.configure(self.business_a, mode="automatic")
@@ -483,6 +729,10 @@ class ConversationAutomationTest(unittest.TestCase):
             admin_js,
         )
         self.assertIn('body.rule?.mode !== payload.mode', admin_js)
+        self.assertIn("conversationAutomationLabel", admin_js)
+        self.assertIn("conversation-automation-duration", admin_js)
+        self.assertIn("conversation-human-reply-pause", admin_js)
+        self.assertIn("toggleConversationAutomation", admin_js)
 
     def test_staff_can_modify_use_and_dismiss_suggestions(self):
         self.configure(self.business_a, mode="semi_automatic")

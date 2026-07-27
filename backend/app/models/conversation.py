@@ -40,6 +40,13 @@ class Conversation(Base):
     detected_intent: Mapped[str | None] = mapped_column(String(60), index=True)
     intent_confidence: Mapped[int | None] = mapped_column(Integer)
     matched_patterns_json: Mapped[str | None] = mapped_column(Text)
+    automation_mode: Mapped[str] = mapped_column(
+        String(20), default="automatic", nullable=False
+    )
+    automation_paused_until: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    automation_pause_reason: Mapped[str | None] = mapped_column(String(60))
+    automation_pause_updated_by: Mapped[int | None] = mapped_column(Integer)
+    automation_pause_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
@@ -121,6 +128,9 @@ class ConversationAutomationSettings(Base):
         String(30), default="semi_automatic", nullable=False
     )
     auto_threshold: Mapped[int] = mapped_column(Integer, default=80, nullable=False)
+    human_reply_pause_minutes: Mapped[int] = mapped_column(
+        Integer, default=60, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )

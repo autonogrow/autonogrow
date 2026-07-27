@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -155,6 +156,8 @@ class InstagramV1Test(unittest.TestCase):
         attachments=None,
         is_echo=False,
     ):
+        if is_echo and sender == "ig-customer-1" and recipient == "ig-business-1":
+            sender, recipient = recipient, sender
         message = {"mid": mid}
         if text is not None:
             message["text"] = text
@@ -171,7 +174,7 @@ class InstagramV1Test(unittest.TestCase):
                         {
                             "sender": {"id": sender},
                             "recipient": {"id": recipient},
-                            "timestamp": 1750000000000,
+                            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
                             "message": message,
                         }
                     ],
@@ -254,7 +257,7 @@ class InstagramV1Test(unittest.TestCase):
         self.assertEqual(conversation.external_user_id, "ig-customer-1")
         self.assertEqual(conversation.business_id, self.business_a.id)
 
-    def test_attachment_is_saved_and_non_message_events_or_echoes_are_ignored(self):
+    def test_attachment_is_saved_and_non_message_events_are_ignored(self):
         attachment_payload = self.payload(
             mid="mid-attachment",
             text=None,
@@ -275,12 +278,192 @@ class InstagramV1Test(unittest.TestCase):
                 }
             ],
         }
+        parsed = parse_instagram_webhook(
+            ignored_payload,
+            business_account_id="ig-business-1",
+        )
+        self.assertEqual(len(parsed), 1)
+        self.assertTrue(parsed[0].is_echo)
+
+    def test_manual_instagram_echo_creates_outbound_and_starts_pause(self):
+        result = self.post_webhook(
+            self.payload(mid="echo-manual", text="Respuesta desde Instagram", is_echo=True),
+            self.settings(),
+        )
+        message = self.db.query(ConversationMessage).one()
+        conversation = self.db.query(Conversation).one()
+
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(result["echoes"], 1)
+        self.assertEqual(result["automation"], [])
+        self.assertEqual(message.direction, "outbound")
+        self.assertEqual(message.sender_type, "business")
+        self.assertEqual(message.delivery_status, "sent")
+        self.assertEqual(message.provider_message_id, "echo-manual")
+        self.assertEqual(conversation.external_user_id, "ig-customer-1")
+        self.assertEqual(conversation.automation_pause_reason, "human_reply")
+        self.assertGreater(conversation.automation_paused_until, datetime.utcnow())
+
+    def test_repeated_echo_is_idempotent(self):
+        payload = self.payload(mid="echo-repeat", text="Una sola vez", is_echo=True)
+        first = self.post_webhook(payload, self.settings())
+        second = self.post_webhook(payload, self.settings())
+
+        self.assertEqual(first["echoes"], 1)
+        self.assertEqual(second["duplicates"], 1)
+        self.assertEqual(self.db.query(ConversationMessage).count(), 1)
+
+    def test_panel_outbound_without_mid_is_reconciled_by_unique_match(self):
+        conversation = self.create_instagram_conversation(user_id="ig-customer-1")
+        local = add_message(
+            self.db,
+            conversation=conversation,
+            direction="outbound",
+            sender_type="business",
+            body="Respuesta pendiente",
+            delivery_status="pending",
+        )
+        self.db.commit()
+
+        result = self.post_webhook(
+            self.payload(mid="echo-reconciled", text="  RESPUESTA pendiente! ", is_echo=True),
+            self.settings(),
+        )
+        self.db.refresh(local)
+
+        self.assertEqual(result["reconciled"], 1)
+        self.assertEqual(self.db.query(ConversationMessage).count(), 1)
+        self.assertEqual(local.provider_message_id, "echo-reconciled")
+        self.assertEqual(local.delivery_status, "sent")
+
+    def test_ambiguous_local_matches_are_not_merged(self):
+        conversation = self.create_instagram_conversation(user_id="ig-customer-1")
+        for _ in range(2):
+            add_message(
+                self.db,
+                conversation=conversation,
+                direction="outbound",
+                sender_type="business",
+                body="Texto repetido",
+                delivery_status="pending",
+            )
+        self.db.commit()
+
+        result = self.post_webhook(
+            self.payload(mid="echo-ambiguous", text="Texto repetido", is_echo=True),
+            self.settings(),
+        )
+
+        self.assertEqual(result["reconciled"], 0)
+        self.assertEqual(result["echoes"], 1)
+        self.assertEqual(self.db.query(ConversationMessage).count(), 3)
         self.assertEqual(
-            parse_instagram_webhook(
-                ignored_payload,
-                business_account_id="ig-business-1",
+            self.db.query(ConversationMessage)
+            .filter(ConversationMessage.provider_message_id == "echo-ambiguous")
+            .count(),
+            1,
+        )
+
+    def test_automatic_message_echo_reconciles_without_human_pause(self):
+        conversation = self.create_instagram_conversation(user_id="ig-customer-1")
+        automatic = add_message(
+            self.db,
+            conversation=conversation,
+            direction="outbound",
+            sender_type="automation",
+            body="Respuesta automática",
+            delivery_status="pending",
+        )
+        self.db.commit()
+
+        result = self.post_webhook(
+            self.payload(mid="echo-automatic", text="Respuesta automática", is_echo=True),
+            self.settings(),
+        )
+        self.db.refresh(conversation)
+        self.db.refresh(automatic)
+
+        self.assertEqual(result["reconciled"], 1)
+        self.assertEqual(automatic.provider_message_id, "echo-automatic")
+        self.assertIsNone(conversation.automation_paused_until)
+
+    def test_automatic_echo_with_existing_mid_does_not_duplicate_or_consume_again(self):
+        conversation = self.create_instagram_conversation(user_id="ig-customer-1")
+        settings_row, _ = ensure_automation_configuration(self.db, self.business_a)
+        settings_row.auto_used_current_period = 1
+        add_message(
+            self.db,
+            conversation=conversation,
+            direction="outbound",
+            sender_type="automation",
+            body="Respuesta ya enviada",
+            provider_message_id="automatic-existing-mid",
+            delivery_status="sent",
+        )
+        self.db.commit()
+
+        result = self.post_webhook(
+            self.payload(
+                mid="automatic-existing-mid",
+                text="Respuesta ya enviada",
+                is_echo=True,
             ),
-            [],
+            self.settings(),
+        )
+        self.db.refresh(settings_row)
+        self.db.refresh(conversation)
+
+        self.assertEqual(result["duplicates"], 1)
+        self.assertEqual(self.db.query(ConversationMessage).count(), 1)
+        self.assertEqual(settings_row.auto_used_current_period, 1)
+        self.assertIsNone(conversation.automation_paused_until)
+
+    def test_attachment_echo_is_persisted_without_automation(self):
+        result = self.post_webhook(
+            self.payload(
+                mid="echo-attachment",
+                text=None,
+                attachments=[{"type": "image", "payload": {"url": "https://example.test/safe-image"}}],
+                is_echo=True,
+            ),
+            self.settings(),
+        )
+        message = self.db.query(ConversationMessage).one()
+
+        self.assertEqual(result["echoes"], 1)
+        self.assertEqual(result["automation"], [])
+        self.assertEqual(message.body, "[Adjunto enviado]")
+        self.assertIn('"attachments"', message.raw_payload_json)
+
+    def test_echo_provider_id_is_isolated_between_businesses(self):
+        other_conversation = self.create_instagram_conversation(
+            business=self.business_b,
+            user_id="other-customer",
+        )
+        add_message(
+            self.db,
+            conversation=other_conversation,
+            direction="outbound",
+            sender_type="business",
+            body="Otro negocio",
+            provider_message_id="shared-mid",
+            delivery_status="sent",
+        )
+        self.db.commit()
+
+        result = self.post_webhook(
+            self.payload(mid="shared-mid", text="Negocio correcto", is_echo=True),
+            self.settings(),
+        )
+
+        self.assertEqual(result["echoes"], 1)
+        self.assertEqual(result["duplicates"], 0)
+        self.assertEqual(
+            self.db.query(ConversationMessage)
+            .join(Conversation)
+            .filter(Conversation.business_id == self.business_a.id)
+            .count(),
+            1,
         )
 
     def test_webhook_reuses_conversation_and_is_idempotent(self):
@@ -484,6 +667,7 @@ class InstagramV1Test(unittest.TestCase):
         )
         self.assertEqual(failed_message.delivery_status, "failed")
         self.assertEqual(failed_conversation.status, "pending")
+        self.assertIsNone(failed_conversation.automation_paused_until)
 
     def test_suggestion_send_uses_provider_without_automatic_credit(self):
         conversation = self.create_instagram_conversation(user_id="suggestion-user")

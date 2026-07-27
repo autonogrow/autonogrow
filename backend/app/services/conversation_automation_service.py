@@ -28,6 +28,7 @@ from app.services.conversation_service import (
     render_template,
     send_outbound_message,
 )
+from app.services.conversation_automation_state_service import automation_block_reason
 
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,7 @@ def ensure_automation_configuration(
             period_yyyymm=current_period(),
             on_limit_reached="semi_automatic",
             auto_threshold=80,
+            human_reply_pause_minutes=60,
         )
         db.add(settings)
         db.flush()
@@ -135,6 +137,7 @@ def serialize_settings(settings: ConversationAutomationSettings) -> dict[str, An
         "period_yyyymm": settings.period_yyyymm,
         "on_limit_reached": settings.on_limit_reached,
         "auto_threshold": settings.auto_threshold,
+        "human_reply_pause_minutes": settings.human_reply_pause_minutes,
         "limit_reached": limit_reached,
         "created_at": settings.created_at.isoformat(),
         "updated_at": settings.updated_at.isoformat(),
@@ -422,18 +425,50 @@ def process_inbound_automation(
         "limit_reached": False,
     }
     if not settings.automation_enabled:
+        block_reason = automation_block_reason(conversation, now=message.created_at)
+        if block_reason:
+            return _skip_automatic_response(
+                result,
+                business=business,
+                conversation=conversation,
+                message=message,
+                intent=detection.intent,
+                reason=block_reason,
+            )
         return result
 
     rule = next((item for item in rules if item.intent == detection.intent), None)
-    if rule is None or not rule.active or rule.mode == "disabled":
-        return result
-    template = resolve_template(
-        db,
-        business_id=business.id,
-        rule=rule,
-        detection=detection,
-    )
-    if template is None:
+    template = None
+    if rule is not None and rule.active and rule.mode != "disabled":
+        template = resolve_template(
+            db,
+            business_id=business.id,
+            rule=rule,
+            detection=detection,
+        )
+
+    block_reason = automation_block_reason(conversation, now=message.created_at)
+    if block_reason:
+        if template is not None:
+            suggestion = create_suggestion(
+                db,
+                conversation=conversation,
+                message=message,
+                detection=detection,
+                template=template,
+                business=business,
+            )
+            result.update(action="suggestion", suggestion_id=suggestion.id)
+        return _skip_automatic_response(
+            result,
+            business=business,
+            conversation=conversation,
+            message=message,
+            intent=detection.intent,
+            reason=block_reason,
+        )
+
+    if rule is None or not rule.active or rule.mode == "disabled" or template is None:
         return result
 
     if rule.mode == "semi_automatic":
@@ -452,7 +487,10 @@ def process_inbound_automation(
     can_send_automatically = (
         rule.mode == "automatic"
         and detection.safe_for_auto
-        and detection.confidence >= settings.auto_threshold
+        and (
+            detection.confidence >= settings.auto_threshold
+            or detection.intent == "unknown"
+        )
         and not limit_reached
     )
     if can_send_automatically:
@@ -524,6 +562,13 @@ def process_inbound_automation(
             return result
         settings.auto_used_current_period += 1
         settings.updated_at = datetime.utcnow()
+        if detection.intent in {
+            "complaint_intent",
+            "human_intent",
+            "cancel_reschedule_intent",
+            "unknown",
+        }:
+            conversation.status = "pending"
         result.update(action="automatic")
         return result
 

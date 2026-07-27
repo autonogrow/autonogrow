@@ -1609,6 +1609,24 @@ function formatConversationDate(value) {
   return date.toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
 }
 
+function conversationAutomationLabel(automation) {
+  if (automation?.mode === "manual") return "Modo manual";
+  if (automation?.block_reason === "conversation_automation_paused") {
+    const minutes = Math.max(1, Math.ceil(Number(automation.remaining_seconds || 0) / 60));
+    return `Pausada ${minutes} min`;
+  }
+  return "Automatización activa";
+}
+
+function conversationAutomationReason(automation) {
+  if (automation?.pause_reason !== "human_reply") return "";
+  if (automation.mode === "manual") return "Pausada por respuesta humana hasta reactivarla.";
+  if (!automation.paused_until) return "";
+  const until = new Date(automation.paused_until);
+  if (Number.isNaN(until.getTime())) return "Pausada por respuesta humana.";
+  return `Pausada por respuesta humana hasta las ${until.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}.`;
+}
+
 async function loadConversations({ background = false, refreshDetail = true } = {}) {
   const requestVersion = ++conversationLoadVersion;
   const container = document.getElementById("conversation-list");
@@ -1696,7 +1714,11 @@ function captureConversationUiState(conversationId) {
     threadNearBottom: !thread || distanceFromBottom <= 80,
     lastMessageId: thread?.dataset.lastMessageId || "",
     messageCount: Number(thread?.dataset.messageCount || 0),
-    newMessagesVisible: Boolean(newMessagesIndicator && !newMessagesIndicator.hidden)
+    newMessagesVisible: Boolean(newMessagesIndicator && !newMessagesIndicator.hidden),
+    automationDuration: document.getElementById("conversation-automation-duration")?.value || "60",
+    automationControlFocusId: document.activeElement?.closest?.(".conversation-automation-controls")
+      ? document.activeElement.id
+      : null
   };
 }
 
@@ -1760,6 +1782,9 @@ function renderConversationDetail(conversation, uiState = null) {
     <button class="btn btn-secondary" type="button" onclick="fillConversationReply(${template.id})">${escapeHtml(template.name)}</button>
   `).join("");
   const pendingSuggestions = conversationSuggestions.filter((item) => item.status === "pending");
+  const automation = conversation.automation || { mode: "automatic", is_active: true };
+  const automationDuration = uiState?.automationDuration || "60";
+  const automationReason = conversationAutomationReason(automation);
   const deliveryNotice = conversation.channel === "instagram"
     ? (conversation.instagram_provider_configured
       ? "El mensaje se enviará mediante Instagram."
@@ -1797,6 +1822,20 @@ function renderConversationDetail(conversation, uiState = null) {
           ? `<button class="btn btn-small btn-secondary" type="button" onclick="changeConversationStatus('pending')">Reabrir</button>`
           : `<button class="btn btn-small btn-secondary" type="button" onclick="changeConversationStatus('pending')">Marcar pendiente</button><button class="btn btn-small btn-danger" type="button" onclick="changeConversationStatus('closed')">Marcar cerrada</button>`}
       </div>
+      <div class="conversation-automation-controls">
+        <div class="conversation-automation-state-copy">
+          <span class="conversation-automation-state ${automation.is_active ? "is-active" : "is-paused"}">${escapeHtml(conversationAutomationLabel(automation))}</span>
+          ${automationReason ? `<small>${escapeHtml(automationReason)}</small>` : ""}
+        </div>
+        <select id="conversation-automation-duration" aria-label="Duración de la pausa">
+          <option value="15" ${automationDuration === "15" ? "selected" : ""}>15 min</option>
+          <option value="60" ${automationDuration === "60" ? "selected" : ""}>1 h</option>
+          <option value="240" ${automationDuration === "240" ? "selected" : ""}>4 h</option>
+          <option value="-1" ${automationDuration === "-1" ? "selected" : ""}>Hasta reactivarla</option>
+        </select>
+        <button id="conversation-automation-toggle" class="btn btn-small ${automation.is_active ? "btn-secondary" : "btn-primary"}" type="button" onclick="toggleConversationAutomation(${automation.is_active ? "true" : "false"})">${automation.is_active ? "Pausar automatización" : "Activar automatización"}</button>
+        <small class="conversation-automation-suggestion-note">Las sugerencias pueden seguir apareciendo durante la pausa.</small>
+      </div>
     </header>
     <div id="conversation-thread" class="conversation-thread" data-last-message-id="${messages.at(-1)?.id || ""}" data-message-count="${messages.length}">
       ${messages.length ? messages.map((message) => `
@@ -1826,6 +1865,9 @@ function renderConversationDetail(conversation, uiState = null) {
       textarea.setSelectionRange(uiState.selectionStart, uiState.selectionEnd);
     }
   }
+  if (uiState?.automationControlFocusId) {
+    document.getElementById(uiState.automationControlFocusId)?.focus({ preventScroll: true });
+  }
   if (thread) {
     const lastMessageId = String(messages.at(-1)?.id || "");
     const hasNewMessages = Boolean(
@@ -1846,6 +1888,30 @@ function renderConversationDetail(conversation, uiState = null) {
         document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");
       }
     });
+  }
+}
+
+async function toggleConversationAutomation(isCurrentlyActive) {
+  if (!selectedConversationId) return;
+  const duration = Number(document.getElementById("conversation-automation-duration")?.value || 60);
+  const payload = isCurrentlyActive
+    ? (duration === -1 ? { action: "manual", duration_minutes: -1 } : { action: "pause", duration_minutes: duration })
+    : { action: "resume" };
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}/automation`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cambiar la automatización."));
+    showConversationFeedback(payload.action === "resume" ? "Automatización reactivada." : "Automatización pausada.");
+    await requestAdminRefresh(["conversationList", "conversationThread"]);
+  } catch (error) {
+    showConversationFeedback(error.message, true);
   }
 }
 
@@ -2104,6 +2170,7 @@ function renderConversationAutomation() {
       <label>Límite mensual<input id="conversation-automation-limit" type="number" min="0" max="1000000" value="${settings.monthly_auto_limit}" /></label>
       <label>Umbral automático (%)<input id="conversation-automation-threshold" type="number" min="0" max="100" value="${settings.auto_threshold}" /></label>
       <label>Al alcanzar el límite<select id="conversation-automation-limit-mode"><option value="semi_automatic" ${settings.on_limit_reached === "semi_automatic" ? "selected" : ""}>Pasar a sugerencias</option><option value="disabled" ${settings.on_limit_reached === "disabled" ? "selected" : ""}>No responder</option></select></label>
+      <label>Pausa tras respuesta humana<select id="conversation-human-reply-pause"><option value="0" ${settings.human_reply_pause_minutes === 0 ? "selected" : ""}>No pausar</option><option value="15" ${settings.human_reply_pause_minutes === 15 ? "selected" : ""}>15 minutos</option><option value="60" ${settings.human_reply_pause_minutes === 60 ? "selected" : ""}>1 hora</option><option value="240" ${settings.human_reply_pause_minutes === 240 ? "selected" : ""}>4 horas</option><option value="-1" ${settings.human_reply_pause_minutes === -1 ? "selected" : ""}>Hasta reactivarla</option></select></label>
       <button class="btn btn-primary" type="button" onclick="saveConversationAutomationSettings()">Guardar configuración</button>
     </div>
     <p class="conversation-automation-usage"><strong>${conversationAutomation.usage.used}</strong> de <strong>${conversationAutomation.usage.limit}</strong> respuestas automáticas usadas en ${escapeHtml(conversationAutomation.usage.period_yyyymm)}.</p>
@@ -2132,7 +2199,8 @@ async function saveConversationAutomationSettings() {
     automation_enabled: document.getElementById("conversation-automation-enabled").checked,
     monthly_auto_limit: Number(document.getElementById("conversation-automation-limit").value),
     auto_threshold: Number(document.getElementById("conversation-automation-threshold").value),
-    on_limit_reached: document.getElementById("conversation-automation-limit-mode").value
+    on_limit_reached: document.getElementById("conversation-automation-limit-mode").value,
+    human_reply_pause_minutes: Number(document.getElementById("conversation-human-reply-pause").value)
   };
   await mutateConversationAutomation(
     `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation/settings`,

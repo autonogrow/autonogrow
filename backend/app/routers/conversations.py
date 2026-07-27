@@ -17,6 +17,7 @@ from app.schemas.conversation import (
     CHANNELS,
     CONVERSATION_STATUSES,
     ConversationCreate,
+    ConversationAutomationControlUpdate,
     ConversationAutomationRuleUpdate,
     ConversationAutomationSettingsUpdate,
     ConversationMessageCreate,
@@ -34,6 +35,12 @@ from app.services.conversation_automation_service import (
     serialize_settings,
     serialize_suggestion,
     update_suggestion_status,
+)
+from app.services.conversation_automation_state_service import (
+    apply_human_reply_pause,
+    pause_conversation_automation,
+    resume_conversation_automation,
+    serialize_conversation_automation_state,
 )
 from app.services.conversation_intent_service import (
     AVAILABLE_INTENTS,
@@ -211,6 +218,13 @@ def admin_send_conversation_message(
         message = delivery.message
         if suggestion is not None and delivery.ok:
             update_suggestion_status(suggestion, "used")
+        if delivery.ok:
+            automation_settings, _ = ensure_automation_configuration(db, business)
+            apply_human_reply_pause(
+                conversation,
+                automation_settings,
+                updated_by=actor.id,
+            )
         db.commit()
     except Exception:
         db.rollback()
@@ -273,6 +287,86 @@ def admin_update_conversation_status(
         metadata={"status": conversation.status},
     )
     return {"ok": True, "conversation": serialize_conversation(db, conversation)}
+
+
+@admin_router.get("/conversations/{conversation_id}/automation")
+def admin_get_conversation_automation_state(
+    business_slug: str,
+    conversation_id: int,
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    conversation = get_conversation_or_404(
+        db, business_id=business.id, conversation_id=conversation_id
+    )
+    return {
+        "business_slug": business.slug,
+        "conversation_id": conversation.id,
+        "automation": serialize_conversation_automation_state(conversation),
+    }
+
+
+@admin_router.patch("/conversations/{conversation_id}/automation")
+def admin_update_conversation_automation_state(
+    business_slug: str,
+    conversation_id: int,
+    payload: ConversationAutomationControlUpdate,
+    request: Request,
+    actor: User = Depends(require_business_access),
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    conversation = get_conversation_or_404(
+        db, business_id=business.id, conversation_id=conversation_id
+    )
+    if payload.action == "resume":
+        if payload.duration_minutes is not None:
+            raise HTTPException(status_code=422, detail="Resume does not accept a duration")
+        resume_conversation_automation(conversation, updated_by=actor.id)
+    elif payload.action == "manual":
+        if payload.duration_minutes not in {None, -1}:
+            raise HTTPException(
+                status_code=422,
+                detail="Manual mode does not accept a finite duration",
+            )
+        pause_conversation_automation(
+            conversation,
+            duration_minutes=-1,
+            reason="manual_control",
+            updated_by=actor.id,
+        )
+    else:
+        if payload.duration_minutes not in {15, 60, 240}:
+            raise HTTPException(
+                status_code=422,
+                detail="Pause requires 15, 60 or 240 minutes",
+            )
+        pause_conversation_automation(
+            conversation,
+            duration_minutes=payload.duration_minutes,
+            reason="manual_control",
+            updated_by=actor.id,
+        )
+    db.commit()
+    db.refresh(conversation)
+    record_audit(
+        db,
+        action="conversation_automation_state_updated",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="conversation",
+        resource_id=conversation.id,
+        metadata={
+            "action": payload.action,
+            "duration_minutes": payload.duration_minutes,
+        },
+    )
+    return {
+        "ok": True,
+        "conversation_id": conversation.id,
+        "automation": serialize_conversation_automation_state(conversation),
+    }
 
 
 @admin_router.get("/conversation-templates")
@@ -625,6 +719,12 @@ def admin_send_conversation_suggestion(
         message = delivery.message
         if delivery.ok:
             update_suggestion_status(suggestion, "used")
+            automation_settings, _ = ensure_automation_configuration(db, business)
+            apply_human_reply_pause(
+                conversation,
+                automation_settings,
+                updated_by=actor.id,
+            )
         db.commit()
     except HTTPException:
         db.rollback()

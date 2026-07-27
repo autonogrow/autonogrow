@@ -303,7 +303,7 @@ class ConversationsTest(unittest.TestCase):
         listed = admin_list_conversation_templates(
             self.business_a.slug, db=self.db
         )["templates"]
-        self.assertEqual(len(listed), 4)
+        self.assertEqual(len(listed), 8)
         welcome = next(item for item in listed if item["name"] == "Mensaje de bienvenida")
         self.assertIn("Business A", welcome["rendered_body"])
         self.assertIn(
