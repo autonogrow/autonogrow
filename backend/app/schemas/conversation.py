@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 CHANNELS = {"manual", "whatsapp", "instagram"}
@@ -78,9 +78,10 @@ class ConversationTemplateUpdate(BaseModel):
         return value
 
 
-class ConversationAutomationSettingsUpdate(BaseModel):
+class BusinessAutomationSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     automation_enabled: bool | None = None
-    monthly_auto_limit: int | None = Field(default=None, ge=0, le=1000000)
     auto_threshold: int | None = Field(default=None, ge=0, le=100)
     on_limit_reached: str | None = None
     human_reply_pause_minutes: int | None = None
@@ -91,13 +92,16 @@ class ConversationAutomationSettingsUpdate(BaseModel):
         if value is not None and value not in {"semi_automatic", "disabled"}:
             raise ValueError("Invalid limit mode")
         return value
-
     @field_validator("human_reply_pause_minutes")
     @classmethod
     def validate_human_pause(cls, value: int | None) -> int | None:
         if value is not None and value not in HUMAN_REPLY_PAUSE_MINUTES:
             raise ValueError("Invalid human reply pause duration")
         return value
+
+
+# Backwards-compatible import name with the restricted business-admin fields.
+ConversationAutomationSettingsUpdate = BusinessAutomationSettingsUpdate
 
 
 class ConversationAutomationControlUpdate(BaseModel):

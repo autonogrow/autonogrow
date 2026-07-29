@@ -179,6 +179,7 @@ function businessCard(business) {
         <div class="owner-user-form"><input data-owner-user-email type="email" placeholder="persona@negocio.com"><select data-owner-user-role><option value="business_admin">Administrador</option><option value="business_staff">Personal</option></select><button type="button" class="button button-primary button-small" data-owner-user-action="add">Añadir usuario</button></div>
         <div data-owner-users-list class="owner-users-list"><p>Cargando usuarios...</p></div><p data-owner-users-feedback class="status-text"></p>
       </details>
+      <details class="owner-automation-editor" data-owner-automation-id="${business.id}" data-owner-automation-name="${escapeHtml(business.name)}"><summary>Plan, automatización y cuota</summary><div data-owner-automation-content><p>Cargando configuración...</p></div></details>
     </article>`;
 }
 
@@ -194,7 +195,92 @@ function renderBusinesses() {
   byId("list-status").textContent = `${businesses.length} negocio${businesses.length === 1 ? "" : "s"}`;
   document.querySelectorAll("[data-owner-editor]").forEach(loadOwnerGallery);
   document.querySelectorAll("[data-owner-users]").forEach(loadOwnerUsers);
+  document.querySelectorAll("[data-owner-automation-id]").forEach(loadOwnerAutomation);
   restoreOwnerMediaStatus();
+}
+
+function ownerAutomationStatusLabel(status) {
+  return ({ available: "Disponible", near_limit: "Cerca del límite", limit_reached: "Límite alcanzado", automation_paused: "Automatización pausada" })[status] || status;
+}
+
+function renderOwnerAutomation(panel, data) {
+  const settings = data.settings;
+  const usage = data.usage;
+  const allowed = settings.allowed_limit_behaviors || ["disabled"];
+  const lastIncident = data.last_incident;
+  panel.querySelector("[data-owner-automation-content]").innerHTML = `
+    <div class="owner-automation-summary">
+      <span><strong>${usage.used} / ${usage.limit}</strong>Mensajes automáticos</span><span><strong>${usage.percentage}%</strong>Consumido</span><span><strong>${escapeHtml(ownerAutomationStatusLabel(usage.status))}</strong>Estado</span><span><strong>${usage.period_end ? escapeHtml(new Date(`${usage.period_end}Z`).toLocaleDateString("es-ES")) : "—"}</strong>Fin del periodo</span>
+    </div>
+    <div class="owner-automation-progress"><span style="width:${usage.percentage}%"></span></div>
+    <div class="owner-automation-grid">
+      <label>Plan<input data-owner-automation-plan maxlength="60" value="${escapeHtml(settings.plan || "")}" placeholder="standard"></label>
+      <label>Límite por periodo<input data-owner-automation-limit type="number" min="0" max="${data.limit_max}" value="${settings.auto_limit_per_period}"></label>
+      <label>Al alcanzar el límite<select data-owner-automation-limit-mode><option value="semi_automatic" ${settings.on_limit_reached === "semi_automatic" ? "selected" : ""}>Pasar a sugerencias</option><option value="disabled" ${settings.on_limit_reached === "disabled" ? "selected" : ""}>No responder</option></select></label>
+      <label class="checkbox-row"><input data-owner-automation-instagram type="checkbox" ${settings.instagram_channel_enabled ? "checked" : ""}> Instagram habilitado</label>
+      <label class="checkbox-row"><input data-owner-automation-whatsapp type="checkbox" ${settings.whatsapp_channel_enabled ? "checked" : ""}> WhatsApp habilitado</label>
+      <fieldset class="owner-limit-behaviors"><legend>Opciones disponibles para el admin</legend><label class="checkbox-row"><input data-owner-limit-behavior="semi_automatic" type="checkbox" ${allowed.includes("semi_automatic") ? "checked" : ""}> Pasar a sugerencias</label><label class="checkbox-row"><input data-owner-limit-behavior="disabled" type="checkbox" ${allowed.includes("disabled") ? "checked" : ""}> No responder</label></fieldset>
+    </div>
+    <p class="owner-automation-feature-state">Función de automatización: <strong>${settings.automation_feature_enabled ? "habilitada" : "suspendida"}</strong> · Estado operativo: <strong>${settings.automation_enabled ? "activo" : "pausado"}</strong></p>
+    <p>Última incidencia: ${lastIncident ? `<strong>${escapeHtml(lastIncident.incident_id)}</strong> · ${escapeHtml(lastIncident.status)} · ${escapeHtml(lastIncident.category)}` : "ninguna"}</p>
+    <div class="owner-automation-actions"><button class="button button-primary button-small" type="button" data-owner-automation-action="save">Guardar plan y cuota</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="usage">Ajustar consumo</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="reset">Reiniciar periodo</button><button class="button ${settings.automation_feature_enabled ? "button-danger" : "button-primary"} button-small" type="button" data-owner-automation-action="feature" data-next-enabled="${!settings.automation_feature_enabled}">${settings.automation_feature_enabled ? "Suspender automatización" : "Reactivar automatización"}</button></div>
+    <p data-owner-automation-feedback class="status-text"></p>`;
+}
+
+async function loadOwnerAutomation(panel) {
+  const content = panel.querySelector("[data-owner-automation-content]");
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerAutomationId}/automation-settings`);
+    const body = await readResponseBody(response);
+    if (!response.ok) throw new Error(body.detail || "No se pudo cargar la automatización");
+    renderOwnerAutomation(panel, body);
+  } catch (error) {
+    content.innerHTML = `<p class="error-box">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function ownerAutomationRequest(panel, path, options) {
+  const feedback = panel.querySelector("[data-owner-automation-feedback]");
+  if (feedback) feedback.textContent = "Guardando...";
+  const response = await fetch(`${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerAutomationId}/${path}`, options);
+  const body = await readResponseBody(response);
+  if (!response.ok) throw new Error(body.detail || "No se pudo actualizar la automatización");
+  await loadOwnerAutomation(panel);
+}
+
+async function handleOwnerAutomationAction(button) {
+  const panel = button.closest("[data-owner-automation-id]");
+  const businessName = panel.dataset.ownerAutomationName;
+  const action = button.dataset.ownerAutomationAction;
+  if (action === "save") {
+    const allowed = Array.from(panel.querySelectorAll("[data-owner-limit-behavior]:checked"), (item) => item.dataset.ownerLimitBehavior);
+    if (!allowed.length) throw new Error("Selecciona al menos una opción permitida para el admin.");
+    const behavior = panel.querySelector("[data-owner-automation-limit-mode]").value;
+    if (!allowed.includes(behavior)) throw new Error("El comportamiento seleccionado debe estar entre las opciones permitidas.");
+    if (!window.confirm(`Vas a modificar el plan y la cuota de ${businessName}. ¿Continuar?`)) return;
+    const reason = window.prompt(`Motivo opcional del cambio para ${businessName}:`, "") ?? "";
+    const payload = { plan: panel.querySelector("[data-owner-automation-plan]").value.trim() || null, auto_limit_per_period: Number(panel.querySelector("[data-owner-automation-limit]").value), on_limit_reached: behavior, allowed_limit_behaviors: allowed, instagram_channel_enabled: panel.querySelector("[data-owner-automation-instagram]").checked, whatsapp_channel_enabled: panel.querySelector("[data-owner-automation-whatsapp]").checked, reason };
+    await ownerAutomationRequest(panel, "automation-settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  } else if (action === "usage") {
+    const rawUsage = window.prompt(`Nuevo consumo acumulado para ${businessName}:`);
+    if (rawUsage === null) return;
+    const newUsage = Number(rawUsage);
+    if (!Number.isInteger(newUsage) || newUsage < 0) throw new Error("El consumo debe ser un entero no negativo.");
+    const reason = window.prompt(`Motivo obligatorio del ajuste de consumo para ${businessName}:`);
+    if (!reason?.trim()) throw new Error("El motivo es obligatorio.");
+    if (!window.confirm(`Ajustar el consumo de ${businessName} a ${newUsage}. ¿Confirmar?`)) return;
+    await ownerAutomationRequest(panel, "automation-usage-adjustment", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ new_usage: newUsage, reason: reason.trim() }) });
+  } else if (action === "reset") {
+    const reason = window.prompt(`Motivo obligatorio para reiniciar el periodo de ${businessName}:`);
+    if (!reason?.trim()) throw new Error("El motivo es obligatorio.");
+    if (!window.confirm(`El consumo de ${businessName} volverá a cero. ¿Confirmar?`)) return;
+    await ownerAutomationRequest(panel, "automation-period-reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: reason.trim() }) });
+  } else if (action === "feature") {
+    const enabled = button.dataset.nextEnabled === "true";
+    if (!window.confirm(`${enabled ? "Reactivar" : "Suspender"} la automatización de ${businessName}. ¿Confirmar?`)) return;
+    const reason = window.prompt(`Motivo opcional para ${businessName}:`, "") ?? "";
+    await ownerAutomationRequest(panel, "automation-settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ automation_feature_enabled: enabled, reason }) });
+  }
 }
 
 function restoreOwnerMediaStatus() {
@@ -475,6 +561,7 @@ byId("business-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-toggle-slug]");
   if (button) toggleBusiness(button.dataset.toggleSlug, button.dataset.nextActive === "true", button);
   else if (event.target.closest("[data-owner-user-action]")) handleOwnerUserAction(event.target.closest("[data-owner-user-action]")).catch((error) => console.error("Business user action failed", error));
+  else if (event.target.closest("[data-owner-automation-action]")) handleOwnerAutomationAction(event.target.closest("[data-owner-automation-action]")).catch((error) => { const feedback = event.target.closest("[data-owner-automation-id]")?.querySelector("[data-owner-automation-feedback]"); if (feedback) feedback.textContent = error.message; });
   else handleOwnerBrandClick(event).catch((error) => {
     console.error("Fallo gestionando marca en Owner", error);
     const feedback = event.target.closest("[data-owner-editor]")?.querySelector("[data-owner-feedback]");

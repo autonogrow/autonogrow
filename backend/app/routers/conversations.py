@@ -20,7 +20,7 @@ from app.schemas.conversation import (
     ConversationCreate,
     ConversationAutomationControlUpdate,
     ConversationAutomationRuleUpdate,
-    ConversationAutomationSettingsUpdate,
+    BusinessAutomationSettingsUpdate,
     ConversationMessageCreate,
     ConversationStatusUpdate,
     ConversationTemplateCreate,
@@ -29,6 +29,7 @@ from app.schemas.conversation import (
     TestInboundMessageCreate,
 )
 from app.services.conversation_automation_service import (
+    allowed_limit_behaviors,
     ensure_automation_configuration,
     get_suggestion_for_business,
     process_inbound_automation,
@@ -539,6 +540,7 @@ def admin_get_conversation_automation(
     actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
+    require_business_admin(business_slug, actor, db)
     business = get_business_or_404(db, business_slug)
     settings, rules = ensure_automation_configuration(db, business)
     db.commit()
@@ -561,6 +563,10 @@ def admin_get_conversation_automation(
                 settings.monthly_auto_limit - settings.auto_used_current_period,
             ),
             "period_yyyymm": settings.period_yyyymm,
+            "period_start": serialized_settings["period_start"],
+            "period_end": serialized_settings["period_end"],
+            "percentage": serialized_settings["usage_percentage"],
+            "status": serialized_settings["usage_status"],
             "limit_reached": serialized_settings["limit_reached"],
         },
         "available_intents": [
@@ -574,11 +580,12 @@ def admin_get_conversation_automation(
 @admin_router.patch("/conversation-automation/settings")
 def admin_update_conversation_automation_settings(
     business_slug: str,
-    payload: ConversationAutomationSettingsUpdate,
+    payload: BusinessAutomationSettingsUpdate,
     request: Request,
     actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
+    require_business_admin(business_slug, actor, db)
     business = get_business_or_404(db, business_slug)
     settings, _ = ensure_automation_configuration(db, business)
     updates = {
@@ -586,7 +593,28 @@ def admin_update_conversation_automation_settings(
         for field, value in payload.model_dump(exclude_unset=True).items()
         if value is not None
     }
+    if updates.get("automation_enabled") is True and not settings.automation_feature_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="La automatización no está habilitada en el plan de este negocio",
+        )
+    if (
+        updates.get("on_limit_reached") is not None
+        and updates["on_limit_reached"] not in allowed_limit_behaviors(settings)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Esta opción no está habilitada en el plan del negocio",
+        )
+    operational_fields = {
+        "automation_enabled",
+        "auto_threshold",
+        "on_limit_reached",
+        "human_reply_pause_minutes",
+    }
     for field, value in updates.items():
+        if field not in operational_fields:
+            raise HTTPException(status_code=403, detail="Owner-only automation field")
         setattr(settings, field, value)
     db.commit()
     db.refresh(settings)
@@ -611,6 +639,7 @@ def admin_update_conversation_automation_rule(
     actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
+    require_business_admin(business_slug, actor, db)
     if intent not in AVAILABLE_INTENTS:
         raise HTTPException(status_code=404, detail="Automation intent not found")
     business = get_business_or_404(db, business_slug)

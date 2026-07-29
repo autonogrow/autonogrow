@@ -11,6 +11,7 @@ from app.models import (
     Business,
     Conversation,
     ConversationMessage,
+    ConversationAutomationSettings,
     ConversationTemplate,
 )
 from app.services.instagram_provider import (
@@ -326,8 +327,26 @@ def send_outbound_message(
     client_error_message = None
     incident_id = None
     provider_result = None
+    policy_blocked = False
     delivery_status = "sent"
-    if conversation.channel == "instagram":
+    commercial_settings = (
+        db.query(ConversationAutomationSettings)
+        .filter(ConversationAutomationSettings.business_id == conversation.business_id)
+        .first()
+    )
+    if commercial_settings is not None:
+        channel_enabled = {
+            "instagram": commercial_settings.instagram_channel_enabled,
+            "whatsapp": commercial_settings.whatsapp_channel_enabled,
+        }.get(conversation.channel, True)
+        if not channel_enabled:
+            policy_blocked = True
+            delivery_status = "failed"
+            client_error_message = (
+                f"El canal {conversation.channel.title()} no está habilitado para este negocio. "
+                "Contacta con soporte de AutonoGrow."
+            )
+    if conversation.channel == "instagram" and not policy_blocked:
         if provider_configured:
             provider_attempted = True
             provider_result = send_instagram_text_message(
@@ -353,6 +372,13 @@ def send_outbound_message(
     if delivery_status == "failed":
         conversation.status = "pending"
         conversation.last_outbound_at = previous_last_outbound_at
+        if policy_blocked:
+            return OutboundMessageResult(
+                message=message,
+                provider_configured=provider_configured,
+                provider_attempted=False,
+                client_error_message=client_error_message,
+            )
         category, severity = classify_provider_error(
             provider="instagram",
             error_code=provider_result.error_code if provider_result else None,

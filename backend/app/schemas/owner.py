@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from app.schemas.branding import COLOR_PALETTES, TEMPLATE_KEYS, resolve_branding, validate_color
 
@@ -174,3 +174,72 @@ class OwnerIncidentUpdate(BaseModel):
         if normalized not in {"acknowledge", "resolve", "ignore", "reopen"}:
             raise ValueError("Action must be acknowledge, resolve, ignore or reopen")
         return normalized
+
+
+OWNER_AUTOMATION_LIMIT_MAX = 1_000_000
+OWNER_LIMIT_BEHAVIORS = {"semi_automatic", "disabled"}
+
+
+class OwnerBusinessAutomationSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan: str | None = Field(default=None, max_length=60, pattern=r"^[a-z0-9_-]+$")
+    auto_limit_per_period: int | None = Field(
+        default=None, ge=0, le=OWNER_AUTOMATION_LIMIT_MAX
+    )
+    on_limit_reached: str | None = None
+    allowed_limit_behaviors: list[str] | None = Field(default=None, min_length=1, max_length=2)
+    automation_feature_enabled: bool | None = None
+    instagram_channel_enabled: bool | None = None
+    whatsapp_channel_enabled: bool | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("on_limit_reached")
+    @classmethod
+    def valid_limit_behavior(cls, value: str | None) -> str | None:
+        if value is not None and value not in OWNER_LIMIT_BEHAVIORS:
+            raise ValueError("Invalid limit behavior")
+        return value
+
+    @field_validator("allowed_limit_behaviors")
+    @classmethod
+    def valid_allowed_behaviors(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if len(set(value)) != len(value) or any(item not in OWNER_LIMIT_BEHAVIORS for item in value):
+            raise ValueError("Invalid or duplicated limit behavior")
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def strip_optional_reason(cls, value: str | None) -> str | None:
+        return value.strip() if value and value.strip() else None
+
+
+class OwnerAutomationUsageAdjustment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    new_usage: int = Field(ge=0, le=OWNER_AUTOMATION_LIMIT_MAX)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_adjustment_reason(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("Reason is required")
+        return value
+
+
+class OwnerAutomationPeriodReset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_reset_reason(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("Reason is required")
+        return value

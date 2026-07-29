@@ -131,6 +131,13 @@ class ConversationAutomationSettings(Base):
     human_reply_pause_minutes: Mapped[int] = mapped_column(
         Integer, default=60, nullable=False
     )
+    plan_key: Mapped[str | None] = mapped_column(String(60))
+    automation_feature_enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    instagram_channel_enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    whatsapp_channel_enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    allowed_limit_behaviors_json: Mapped[str] = mapped_column(
+        Text, default='["semi_automatic", "disabled"]', nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )

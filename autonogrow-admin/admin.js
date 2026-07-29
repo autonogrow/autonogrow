@@ -2157,6 +2157,18 @@ function renderConversationAutomation() {
   const container = document.getElementById("conversation-automation-content");
   if (!container || !conversationAutomation || !canManageConversationTemplates()) return;
   const settings = conversationAutomation.settings;
+  const usage = conversationAutomation.usage;
+  const usageStatusLabels = {
+    available: "Disponible",
+    near_limit: "Cerca del límite",
+    limit_reached: "Límite alcanzado",
+    automation_paused: "Automatización pausada"
+  };
+  const allowedLimitBehaviors = settings.allowed_limit_behaviors || ["disabled"];
+  const limitBehaviorLabels = {
+    semi_automatic: "Pasar a sugerencias",
+    disabled: "No responder"
+  };
   const templates = conversationAutomation.templates || [];
   const templateOptions = (selectedId) => `
     <option value="">Plantilla recomendada</option>
@@ -2166,15 +2178,20 @@ function renderConversationAutomation() {
   `;
   container.innerHTML = `
     <div class="conversation-automation-settings">
-      <label class="active-setting"><input id="conversation-automation-enabled" type="checkbox" ${settings.automation_enabled ? "checked" : ""} />Activar automatización</label>
-      <label>Límite mensual<input id="conversation-automation-limit" type="number" min="0" max="1000000" value="${settings.monthly_auto_limit}" /></label>
+      <label class="active-setting"><input id="conversation-automation-enabled" type="checkbox" ${settings.automation_enabled ? "checked" : ""} ${settings.automation_feature_enabled ? "" : "disabled"} />Activar automatización</label>
       <label>Umbral automático (%)<input id="conversation-automation-threshold" type="number" min="0" max="100" value="${settings.auto_threshold}" /></label>
-      <label>Al alcanzar el límite<select id="conversation-automation-limit-mode"><option value="semi_automatic" ${settings.on_limit_reached === "semi_automatic" ? "selected" : ""}>Pasar a sugerencias</option><option value="disabled" ${settings.on_limit_reached === "disabled" ? "selected" : ""}>No responder</option></select></label>
+      <label>Al alcanzar el límite<select id="conversation-automation-limit-mode" ${allowedLimitBehaviors.length === 1 ? "disabled" : ""}>${allowedLimitBehaviors.map((value) => `<option value="${value}" ${settings.on_limit_reached === value ? "selected" : ""}>${limitBehaviorLabels[value]}</option>`).join("")}</select></label>
       <label>Pausa tras respuesta humana<select id="conversation-human-reply-pause"><option value="0" ${settings.human_reply_pause_minutes === 0 ? "selected" : ""}>No pausar</option><option value="15" ${settings.human_reply_pause_minutes === 15 ? "selected" : ""}>15 minutos</option><option value="60" ${settings.human_reply_pause_minutes === 60 ? "selected" : ""}>1 hora</option><option value="240" ${settings.human_reply_pause_minutes === 240 ? "selected" : ""}>4 horas</option><option value="-1" ${settings.human_reply_pause_minutes === -1 ? "selected" : ""}>Hasta reactivarla</option></select></label>
       <button class="btn btn-primary" type="button" onclick="saveConversationAutomationSettings()">Guardar configuración</button>
     </div>
-    <p class="conversation-automation-usage"><strong>${conversationAutomation.usage.used}</strong> de <strong>${conversationAutomation.usage.limit}</strong> respuestas automáticas usadas en ${escapeHtml(conversationAutomation.usage.period_yyyymm)}.</p>
-    ${conversationAutomation.usage.limit_reached ? `<p class="conversation-automation-warning">${settings.on_limit_reached === "semi_automatic" ? "Límite mensual alcanzado. Las respuestas automáticas pasan a modo sugerencia." : "Límite mensual alcanzado. No se enviarán más respuestas automáticas este mes."}</p>` : ""}
+    <article class="conversation-automation-usage-card">
+      <div><p>Mensajes automáticos utilizados</p><strong>${usage.used} de ${usage.limit}</strong><span class="conversation-automation-usage-state state-${escapeHtml(usage.status)}">${usageStatusLabels[usage.status] || usage.status}</span></div>
+      <div class="conversation-automation-quota-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${usage.percentage}"><span style="width:${usage.percentage}%"></span></div>
+      <p>${usage.percentage}% utilizado · Reinicio previsto: ${usage.period_end ? escapeHtml(new Date(`${usage.period_end}Z`).toLocaleDateString("es-ES")) : "sin fecha disponible"}.</p>
+      <p>El límite de mensajes forma parte de tu plan de AutonoGrow. Para modificarlo, contacta con soporte.</p>
+      ${settings.automation_feature_enabled ? "" : "<p class=\"conversation-automation-warning\">La automatización está pausada por AutonoGrow para este negocio.</p>"}
+    </article>
+    ${usage.limit_reached ? `<p class="conversation-automation-warning">${settings.on_limit_reached === "semi_automatic" ? "Límite mensual alcanzado. Las respuestas automáticas pasan a modo sugerencia." : "Límite mensual alcanzado. No se enviarán más respuestas automáticas este mes."}</p>` : ""}
     <div class="conversation-automation-rules">
       <h3>Modo por intención</h3>
       ${(conversationAutomation.rules || []).map((rule) => `
@@ -2197,7 +2214,6 @@ function renderConversationAutomation() {
 async function saveConversationAutomationSettings() {
   const payload = {
     automation_enabled: document.getElementById("conversation-automation-enabled").checked,
-    monthly_auto_limit: Number(document.getElementById("conversation-automation-limit").value),
     auto_threshold: Number(document.getElementById("conversation-automation-threshold").value),
     on_limit_reached: document.getElementById("conversation-automation-limit-mode").value,
     human_reply_pause_minutes: Number(document.getElementById("conversation-human-reply-pause").value)

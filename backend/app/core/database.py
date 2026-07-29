@@ -172,6 +172,23 @@ def run_lightweight_migrations(target_engine=None) -> None:
                         "ADD COLUMN human_reply_pause_minutes INTEGER NOT NULL DEFAULT 60"
                     )
                 )
+            automation_commercial_columns = {
+                "plan_key": "VARCHAR(60)",
+                "automation_feature_enabled": "BOOLEAN NOT NULL DEFAULT 1",
+                "instagram_channel_enabled": "BOOLEAN NOT NULL DEFAULT 1",
+                "whatsapp_channel_enabled": "BOOLEAN NOT NULL DEFAULT 1",
+                "allowed_limit_behaviors_json": (
+                    "TEXT NOT NULL DEFAULT '[\"semi_automatic\", \"disabled\"]'"
+                ),
+            }
+            for column_name, column_type in automation_commercial_columns.items():
+                if column_name not in automation_settings_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE conversation_automation_settings "
+                            f"ADD COLUMN {column_name} {column_type}"
+                        )
+                    )
 
         migration_name = "2026_07_backfill_business_user_services"
         migration_applied = connection.execute(

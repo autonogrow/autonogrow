@@ -185,6 +185,18 @@ class ConversationAutomationTest(unittest.TestCase):
         self.assertTrue(unknown.safe_for_auto)
 
     def test_lightweight_migration_adds_intent_columns_to_existing_conversations(self):
+        legacy_settings = ConversationAutomationSettings(
+            business_id=self.business_a.id,
+            automation_enabled=True,
+            monthly_auto_limit=321,
+            auto_used_current_period=123,
+            period_yyyymm="2026-07",
+            on_limit_reached="semi_automatic",
+            auto_threshold=80,
+            human_reply_pause_minutes=60,
+        )
+        self.db.add(legacy_settings)
+        self.db.commit()
         with self.engine.begin() as connection:
             connection.execute(text("DROP INDEX ix_conversations_detected_intent"))
             connection.execute(text("DROP INDEX ix_conversations_automation_paused_until"))
@@ -202,7 +214,21 @@ class ConversationAutomationTest(unittest.TestCase):
                     "DROP COLUMN human_reply_pause_minutes"
                 )
             )
+            for column_name in (
+                "plan_key",
+                "automation_feature_enabled",
+                "instagram_channel_enabled",
+                "whatsapp_channel_enabled",
+                "allowed_limit_behaviors_json",
+            ):
+                connection.execute(
+                    text(
+                        "ALTER TABLE conversation_automation_settings "
+                        f"DROP COLUMN {column_name}"
+                    )
+                )
 
+        run_lightweight_migrations(self.engine)
         run_lightweight_migrations(self.engine)
 
         columns = {
@@ -228,6 +254,24 @@ class ConversationAutomationTest(unittest.TestCase):
             )
         }
         self.assertIn("human_reply_pause_minutes", settings_columns)
+        self.assertTrue(
+            {
+                "plan_key",
+                "automation_feature_enabled",
+                "instagram_channel_enabled",
+                "whatsapp_channel_enabled",
+                "allowed_limit_behaviors_json",
+            } <= settings_columns
+        )
+        with self.engine.connect() as connection:
+            preserved = connection.execute(
+                text(
+                    "SELECT monthly_auto_limit, auto_used_current_period, period_yyyymm "
+                    "FROM conversation_automation_settings WHERE business_id = :business_id"
+                ),
+                {"business_id": self.business_a.id},
+            ).one()
+        self.assertEqual(tuple(preserved), (321, 123, "2026-07"))
 
     def test_catalog_upsert_adds_missing_items_without_overwriting_or_duplicates(self):
         customized = ConversationTemplate(

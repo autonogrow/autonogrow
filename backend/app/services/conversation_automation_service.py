@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 WELCOME_COOLDOWN_HOURS = 24
 DEFAULT_INTENT_COOLDOWN_MINUTES = 5
 IDENTICAL_MESSAGE_DEBOUNCE_SECONDS = 10
+MAX_AUTOMATION_MESSAGES_PER_PERIOD = 1_000_000
+DEFAULT_AUTOMATION_MESSAGES_PER_PERIOD = 1_000
+LIMIT_WARNING_PERCENT = 80
+LIMIT_BEHAVIORS = ("semi_automatic", "disabled")
 
 
 DEFAULT_RULE_MODES = {
@@ -68,6 +72,25 @@ def reset_monthly_usage(settings: ConversationAutomationSettings) -> bool:
     return True
 
 
+def period_bounds(period_yyyymm: str) -> tuple[datetime | None, datetime | None]:
+    try:
+        year, month = (int(value) for value in period_yyyymm.split("-", 1))
+        start = datetime(year, month, 1)
+    except (TypeError, ValueError):
+        return None, None
+    end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
+    return start, end
+
+
+def allowed_limit_behaviors(settings: ConversationAutomationSettings) -> list[str]:
+    try:
+        values = json.loads(settings.allowed_limit_behaviors_json or "[]")
+    except (TypeError, ValueError):
+        values = []
+    allowed = [value for value in values if value in LIMIT_BEHAVIORS]
+    return allowed or ["disabled"]
+
+
 def ensure_automation_configuration(
     db: Session,
     business: Business,
@@ -83,12 +106,16 @@ def ensure_automation_configuration(
         settings = ConversationAutomationSettings(
             business_id=business.id,
             automation_enabled=False,
-            monthly_auto_limit=1000,
+            monthly_auto_limit=DEFAULT_AUTOMATION_MESSAGES_PER_PERIOD,
             auto_used_current_period=0,
             period_yyyymm=current_period(),
             on_limit_reached="semi_automatic",
             auto_threshold=80,
             human_reply_pause_minutes=60,
+            automation_feature_enabled=True,
+            instagram_channel_enabled=True,
+            whatsapp_channel_enabled=True,
+            allowed_limit_behaviors_json=json.dumps(LIMIT_BEHAVIORS),
         )
         db.add(settings)
         db.flush()
@@ -124,20 +151,43 @@ def ensure_automation_configuration(
 
 
 def serialize_settings(settings: ConversationAutomationSettings) -> dict[str, Any]:
-    limit_reached = (
-        settings.automation_enabled
-        and settings.auto_used_current_period >= settings.monthly_auto_limit
+    limit_reached = settings.auto_used_current_period >= settings.monthly_auto_limit
+    percentage = (
+        100
+        if settings.monthly_auto_limit == 0
+        else min(100, round(settings.auto_used_current_period * 100 / settings.monthly_auto_limit))
     )
+    period_start, period_end = period_bounds(settings.period_yyyymm)
+    if not settings.automation_feature_enabled or not settings.automation_enabled:
+        usage_status = "automation_paused"
+    elif limit_reached:
+        usage_status = "limit_reached"
+    elif percentage >= LIMIT_WARNING_PERCENT:
+        usage_status = "near_limit"
+    else:
+        usage_status = "available"
     return {
         "id": settings.id,
         "business_id": settings.business_id,
         "automation_enabled": settings.automation_enabled,
         "monthly_auto_limit": settings.monthly_auto_limit,
+        "auto_limit_per_period": settings.monthly_auto_limit,
         "auto_used_current_period": settings.auto_used_current_period,
         "period_yyyymm": settings.period_yyyymm,
+        "period_start": period_start.isoformat() if period_start else None,
+        "period_end": period_end.isoformat() if period_end else None,
         "on_limit_reached": settings.on_limit_reached,
         "auto_threshold": settings.auto_threshold,
         "human_reply_pause_minutes": settings.human_reply_pause_minutes,
+        "plan": settings.plan_key,
+        "automation_feature_enabled": settings.automation_feature_enabled,
+        "instagram_channel_enabled": settings.instagram_channel_enabled,
+        "whatsapp_channel_enabled": settings.whatsapp_channel_enabled,
+        "allowed_limit_behaviors": allowed_limit_behaviors(settings),
+        "usage_percentage": percentage,
+        "usage_status": usage_status,
+        "limit_warning_percent": LIMIT_WARNING_PERCENT,
+        "can_request_limit_change": True,
         "limit_reached": limit_reached,
         "created_at": settings.created_at.isoformat(),
         "updated_at": settings.updated_at.isoformat(),
@@ -424,6 +474,28 @@ def process_inbound_automation(
         "delivery_status": None,
         "limit_reached": False,
     }
+    if not settings.automation_feature_enabled:
+        return _skip_automatic_response(
+            result,
+            business=business,
+            conversation=conversation,
+            message=message,
+            intent=detection.intent,
+            reason="automation_feature_disabled",
+        )
+    channel_enabled = {
+        "instagram": settings.instagram_channel_enabled,
+        "whatsapp": settings.whatsapp_channel_enabled,
+    }.get(conversation.channel, True)
+    if not channel_enabled:
+        return _skip_automatic_response(
+            result,
+            business=business,
+            conversation=conversation,
+            message=message,
+            intent=detection.intent,
+            reason="channel_not_in_plan",
+        )
     if not settings.automation_enabled:
         block_reason = automation_block_reason(conversation, now=message.created_at)
         if block_reason:

@@ -25,6 +25,7 @@ from app.models import (
     MessageOutbox,
     ReviewRequest,
     SystemIncident,
+    ConversationAutomationSettings,
 )
 from app.schemas.owner import (
     OwnerBusinessCreate,
@@ -32,10 +33,19 @@ from app.schemas.owner import (
     OwnerBusinessUserCreate,
     OwnerBusinessUserUpdate,
     OwnerIncidentUpdate,
+    OwnerBusinessAutomationSettingsUpdate,
+    OwnerAutomationUsageAdjustment,
+    OwnerAutomationPeriodReset,
 )
 from app.schemas.branding import resolve_branding
 from app.services.availability_service import serialize_settings
 from app.services.incident_service import SEVERITY_ORDER, serialize_incident
+from app.services.conversation_automation_service import (
+    allowed_limit_behaviors,
+    current_period,
+    ensure_automation_configuration,
+    serialize_settings as serialize_automation_settings,
+)
 
 
 router = APIRouter(prefix="/api/owner", tags=["owner"], dependencies=[Depends(require_owner)])
@@ -94,6 +104,62 @@ def get_business_or_404(db: Session, business_slug: str) -> Business:
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
     return business
+
+
+def get_business_by_id_or_404(db: Session, business_id: int) -> Business:
+    business = db.query(Business).filter(Business.id == business_id).first()
+    if business is None:
+        raise HTTPException(status_code=404, detail="Business not found")
+    return business
+
+
+def owner_automation_payload(
+    db: Session,
+    business: Business,
+    settings: ConversationAutomationSettings,
+) -> dict:
+    latest_incident = (
+        db.query(SystemIncident)
+        .filter(SystemIncident.business_id == business.id)
+        .order_by(SystemIncident.last_occurred_at.desc(), SystemIncident.id.desc())
+        .first()
+    )
+    serialized = serialize_automation_settings(settings)
+    return {
+        "business": {"id": business.id, "slug": business.slug, "name": business.name},
+        "settings": serialized,
+        "usage": {
+            "used": settings.auto_used_current_period,
+            "limit": settings.monthly_auto_limit,
+            "percentage": serialized["usage_percentage"],
+            "status": serialized["usage_status"],
+            "period_start": serialized["period_start"],
+            "period_end": serialized["period_end"],
+        },
+        "last_incident": serialize_incident(latest_incident) if latest_incident else None,
+        "limit_max": 1_000_000,
+    }
+
+
+def owner_audit_metadata(
+    request: Request,
+    *,
+    old_value,
+    new_value,
+    reason: str | None,
+    field: str | None = None,
+) -> dict:
+    metadata = {
+        "old_value": old_value,
+        "new_value": new_value,
+        "reason": reason,
+    }
+    if field:
+        metadata["field"] = field
+    request_id = request.headers.get("x-request-id")
+    if request_id:
+        metadata["request_id"] = request_id[:120]
+    return metadata
 
 
 def serialize_business(business: Business) -> dict:
@@ -270,6 +336,198 @@ def list_owner_incidents(
         "incidents": [serialize_incident(item) for item in rows],
         "open_count": open_count,
     }
+
+
+@router.get("/businesses/{business_id}/automation-settings")
+def get_owner_business_automation_settings(
+    business_id: int,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    business = get_business_by_id_or_404(db, business_id)
+    settings, _ = ensure_automation_configuration(db, business)
+    db.commit()
+    db.refresh(settings)
+    return owner_automation_payload(db, business, settings)
+
+
+@router.patch("/businesses/{business_id}/automation-settings")
+def update_owner_business_automation_settings(
+    business_id: int,
+    payload: OwnerBusinessAutomationSettingsUpdate,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    business = get_business_by_id_or_404(db, business_id)
+    settings, _ = ensure_automation_configuration(db, business)
+    updates = payload.model_dump(exclude_unset=True, exclude={"reason"})
+    reason = payload.reason
+    effective_allowed = updates.get(
+        "allowed_limit_behaviors", allowed_limit_behaviors(settings)
+    )
+    effective_behavior = updates.get("on_limit_reached", settings.on_limit_reached)
+    if effective_behavior not in effective_allowed:
+        raise HTTPException(
+            status_code=422,
+            detail="El comportamiento al alcanzar el límite debe estar entre las opciones permitidas",
+        )
+
+    field_mapping = {
+        "plan": "plan_key",
+        "auto_limit_per_period": "monthly_auto_limit",
+        "on_limit_reached": "on_limit_reached",
+        "automation_feature_enabled": "automation_feature_enabled",
+        "instagram_channel_enabled": "instagram_channel_enabled",
+        "whatsapp_channel_enabled": "whatsapp_channel_enabled",
+    }
+    audit_actions = {
+        "plan": "business_plan_changed",
+        "auto_limit_per_period": "automation_limit_changed",
+        "on_limit_reached": "automation_limit_behavior_changed",
+    }
+    for api_field, model_field in field_mapping.items():
+        if api_field not in updates:
+            continue
+        old_value = getattr(settings, model_field)
+        new_value = updates[api_field]
+        if old_value == new_value:
+            continue
+        setattr(settings, model_field, new_value)
+        if api_field == "automation_feature_enabled":
+            settings.automation_enabled = bool(new_value)
+        action = audit_actions.get(api_field)
+        if action is None:
+            action = (
+                "automation_feature_enabled"
+                if new_value
+                else "automation_feature_disabled"
+            )
+        record_audit(
+            db,
+            action=action,
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="conversation_automation_settings",
+            resource_id=settings.id,
+            metadata=owner_audit_metadata(
+                request,
+                old_value=old_value,
+                new_value=new_value,
+                reason=reason,
+                field=api_field,
+            ),
+            commit=False,
+        )
+
+    if "allowed_limit_behaviors" in updates:
+        old_allowed = allowed_limit_behaviors(settings)
+        new_allowed = updates["allowed_limit_behaviors"]
+        if old_allowed != new_allowed:
+            settings.allowed_limit_behaviors_json = json.dumps(new_allowed)
+            record_audit(
+                db,
+                action="automation_limit_behavior_changed",
+                request=request,
+                actor=actor,
+                business_id=business.id,
+                resource_type="conversation_automation_settings",
+                resource_id=settings.id,
+                metadata=owner_audit_metadata(
+                    request,
+                    old_value=old_allowed,
+                    new_value=new_allowed,
+                    reason=reason,
+                    field="allowed_limit_behaviors",
+                ),
+                commit=False,
+            )
+    settings.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(settings)
+    return {"ok": True, **owner_automation_payload(db, business, settings)}
+
+
+@router.post("/businesses/{business_id}/automation-usage-adjustment")
+def adjust_owner_business_automation_usage(
+    business_id: int,
+    payload: OwnerAutomationUsageAdjustment,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    business = get_business_by_id_or_404(db, business_id)
+    settings, _ = ensure_automation_configuration(db, business)
+    old_usage = settings.auto_used_current_period
+    settings.auto_used_current_period = payload.new_usage
+    settings.updated_at = datetime.utcnow()
+    record_audit(
+        db,
+        action="automation_usage_adjusted",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="conversation_automation_settings",
+        resource_id=settings.id,
+        metadata=owner_audit_metadata(
+            request,
+            old_value=old_usage,
+            new_value=payload.new_usage,
+            reason=payload.reason,
+            field="auto_used_current_period",
+        ),
+        commit=False,
+    )
+    db.commit()
+    db.refresh(settings)
+    return {"ok": True, **owner_automation_payload(db, business, settings)}
+
+
+@router.post("/businesses/{business_id}/automation-period-reset")
+def reset_owner_business_automation_period(
+    business_id: int,
+    payload: OwnerAutomationPeriodReset,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    business = get_business_by_id_or_404(db, business_id)
+    settings, _ = ensure_automation_configuration(db, business)
+    old_value = {
+        "period_yyyymm": settings.period_yyyymm,
+        "auto_used_current_period": settings.auto_used_current_period,
+    }
+    settings.period_yyyymm = current_period()
+    settings.auto_used_current_period = 0
+    settings.updated_at = datetime.utcnow()
+    new_value = {
+        "period_yyyymm": settings.period_yyyymm,
+        "auto_used_current_period": 0,
+    }
+    record_audit(
+        db,
+        action="automation_period_reset",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="conversation_automation_settings",
+        resource_id=settings.id,
+        metadata=owner_audit_metadata(
+            request,
+            old_value=old_value,
+            new_value=new_value,
+            reason=payload.reason,
+        ),
+        commit=False,
+    )
+    db.commit()
+    db.refresh(settings)
+    return {"ok": True, **owner_automation_payload(db, business, settings)}
 
 
 @router.patch("/incidents/{incident_id}")
