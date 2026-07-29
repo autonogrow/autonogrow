@@ -57,7 +57,131 @@ from app.services.instagram_integration_service import (
     send_business_instagram_message,
     validate_persisted_integration_secrets,
 )
-from app.services.instagram_provider import InstagramVerificationResult, ProviderSendResult
+from app.services.instagram_provider import (
+    InstagramVerificationResult,
+    ProviderSendResult,
+    verify_instagram_access_token,
+)
+
+
+class InstagramAccessTokenVerificationTest(unittest.TestCase):
+    def setUp(self):
+        self.settings = Settings(
+            _env_file=None,
+            meta_graph_api_version="v23.0",
+            instagram_provider_enabled=True,
+        )
+
+    @staticmethod
+    def response(payload, *, ok=True, status_code=200):
+        return SimpleNamespace(
+            ok=ok,
+            status_code=status_code,
+            json=lambda: payload,
+        )
+
+    def test_verification_uses_user_id_for_webhook_routing(self):
+        scoped_id = "27775479878758552"
+        routing_id = "17841411668616113"
+        with patch(
+            "app.services.instagram_provider.requests.get",
+            return_value=self.response(
+                {
+                    "id": scoped_id,
+                    "user_id": routing_id,
+                    "username": "autonogrow",
+                }
+            ),
+        ) as get:
+            result = verify_instagram_access_token(
+                routing_id,
+                "secret-token",
+                settings=self.settings,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.account_id, routing_id)
+        self.assertEqual(result.account_name, "autonogrow")
+        self.assertEqual(
+            get.call_args.kwargs["params"],
+            {"fields": "id,user_id,username,name"},
+        )
+
+    def test_verification_falls_back_to_scoped_id_without_a_user_id(self):
+        account_id = "17841411668616113"
+        for payload in (
+            {"id": account_id, "username": "autonogrow"},
+            {"id": account_id, "user_id": "", "name": "AutonoGrow"},
+        ):
+            with self.subTest(payload=payload), patch(
+                "app.services.instagram_provider.requests.get",
+                return_value=self.response(payload),
+            ):
+                result = verify_instagram_access_token(
+                    account_id,
+                    "secret-token",
+                    settings=self.settings,
+                )
+
+                self.assertTrue(result.ok)
+                self.assertEqual(result.account_id, account_id)
+                self.assertEqual(
+                    result.account_name,
+                    payload.get("username") or payload.get("name"),
+                )
+
+    def test_verification_rejects_a_different_routing_user_id(self):
+        with patch(
+            "app.services.instagram_provider.requests.get",
+            return_value=self.response(
+                {
+                    "id": "27775479878758552",
+                    "user_id": "17841400000000000",
+                    "username": "autonogrow",
+                }
+            ),
+        ):
+            result = verify_instagram_access_token(
+                "17841411668616113",
+                "secret-token",
+                settings=self.settings,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.account_id, "17841400000000000")
+        self.assertEqual(result.error_code, "account_id_mismatch")
+
+    def test_oauth_failure_is_preserved_and_does_not_expose_the_token(self):
+        token = "super-secret-instagram-token"
+        with patch(
+            "app.services.instagram_provider.requests.get",
+            return_value=self.response(
+                {
+                    "error": {
+                        "message": f"Invalid OAuth access token: {token}",
+                        "type": "OAuthException",
+                        "code": 190,
+                        "error_subcode": 463,
+                    }
+                },
+                ok=False,
+                status_code=400,
+            ),
+        ), patch("logging.Logger._log") as log:
+            result = verify_instagram_access_token(
+                "17841411668616113",
+                token,
+                settings=self.settings,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_message, "Instagram verification was rejected")
+        self.assertEqual(result.error_code, "190")
+        self.assertEqual(result.error_subcode, "463")
+        self.assertEqual(result.error_type, "OAuthException")
+        self.assertEqual(result.http_status, 400)
+        self.assertNotIn(token, repr(result))
+        log.assert_not_called()
 
 
 class InstagramMultiBusinessIntegrationTest(unittest.TestCase):

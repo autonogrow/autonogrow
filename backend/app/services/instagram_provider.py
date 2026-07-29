@@ -269,7 +269,7 @@ def verify_instagram_access_token(
         response = requests.get(
             url,
             headers={"Authorization": f"Bearer {access_token.strip()}"},
-            params={"fields": "id,username,name"},
+            params={"fields": "id,user_id,username,name"},
             timeout=timeout_seconds,
         )
     except requests.Timeout:
@@ -290,11 +290,12 @@ def verify_instagram_access_token(
     except ValueError:
         payload = {}
     if response.ok:
-        account_id = str(payload.get("id", "")).strip()
-        if account_id != external_account_id.strip():
+        provider_scoped_id = str(payload.get("id", "")).strip()
+        routing_account_id = str(payload.get("user_id", "")).strip() or provider_scoped_id
+        if routing_account_id != external_account_id.strip():
             return InstagramVerificationResult(
                 ok=False,
-                account_id=account_id or None,
+                account_id=routing_account_id or None,
                 error_message="Instagram account ID did not match",
                 http_status=getattr(response, "status_code", None),
                 error_code="account_id_mismatch",
@@ -303,7 +304,7 @@ def verify_instagram_access_token(
         scopes = payload.get("scopes")
         return InstagramVerificationResult(
             ok=True,
-            account_id=account_id,
+            account_id=routing_account_id,
             account_name=str(account_name)[:255] if account_name else None,
             provider_status="available",
             scopes=tuple(str(item)[:120] for item in scopes) if isinstance(scopes, list) else (),
