@@ -1,11 +1,13 @@
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from math import ceil
 from typing import Any
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.models import (
     Business,
     Conversation,
@@ -42,6 +44,7 @@ MAX_AUTOMATION_MESSAGES_PER_PERIOD = 1_000_000
 DEFAULT_AUTOMATION_MESSAGES_PER_PERIOD = 1_000
 LIMIT_WARNING_PERCENT = 80
 LIMIT_BEHAVIORS = ("semi_automatic", "disabled")
+AUTOMATION_PERIOD_DAYS = 30
 
 
 DEFAULT_RULE_MODES = {
@@ -59,27 +62,62 @@ DEFAULT_RULE_MODES = {
 
 
 def current_period() -> str:
-    return datetime.utcnow().strftime("%Y-%m")
+    """Deprecated compatibility value; never use it to reset usage."""
+    return utc_now().strftime("%Y-%m")
 
 
-def reset_monthly_usage(settings: ConversationAutomationSettings) -> bool:
-    period = current_period()
-    if settings.period_yyyymm == period:
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def iso_utc(value: datetime | None) -> str | None:
+    normalized = as_utc(value)
+    return normalized.isoformat().replace("+00:00", "Z") if normalized else None
+
+
+def sync_automation_period_status(
+    settings: ConversationAutomationSettings,
+    now: datetime | None = None,
+    *,
+    db: Session | None = None,
+) -> bool:
+    """Expire an active moving period once, without renewing or resetting usage."""
+    effective_now = as_utc(now) or utc_now()
+    period_ends_at = as_utc(settings.period_ends_at)
+    if settings.period_status != "active":
         return False
-    settings.period_yyyymm = period
-    settings.auto_used_current_period = 0
-    settings.updated_at = datetime.utcnow()
+    if period_ends_at is not None and effective_now < period_ends_at:
+        return False
+
+    old_status = settings.period_status
+    settings.period_status = "pending_renewal"
+    settings.updated_at = effective_now
+    if db is not None:
+        record_audit(
+            db,
+            action="automation_period_expired",
+            business_id=settings.business_id,
+            resource_type="conversation_automation_settings",
+            resource_id=settings.id,
+            metadata={
+                "old_status": old_status,
+                "new_status": "pending_renewal",
+                "period_started_at": iso_utc(settings.period_started_at),
+                "period_ends_at": iso_utc(settings.period_ends_at),
+                "usage": settings.auto_used_current_period,
+                "timestamp": iso_utc(effective_now),
+            },
+            commit=False,
+        )
     return True
-
-
-def period_bounds(period_yyyymm: str) -> tuple[datetime | None, datetime | None]:
-    try:
-        year, month = (int(value) for value in period_yyyymm.split("-", 1))
-        start = datetime(year, month, 1)
-    except (TypeError, ValueError):
-        return None, None
-    end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
-    return start, end
 
 
 def allowed_limit_behaviors(settings: ConversationAutomationSettings) -> list[str]:
@@ -109,6 +147,10 @@ def ensure_automation_configuration(
             monthly_auto_limit=DEFAULT_AUTOMATION_MESSAGES_PER_PERIOD,
             auto_used_current_period=0,
             period_yyyymm=current_period(),
+            period_started_at=None,
+            period_ends_at=None,
+            payment_confirmed_at=None,
+            period_status="pending_renewal",
             on_limit_reached="semi_automatic",
             auto_threshold=80,
             human_reply_pause_minutes=60,
@@ -119,8 +161,7 @@ def ensure_automation_configuration(
         )
         db.add(settings)
         db.flush()
-    else:
-        reset_monthly_usage(settings)
+    sync_automation_period_status(settings, db=db)
 
     existing_rules = {
         rule.intent: rule
@@ -151,17 +192,28 @@ def ensure_automation_configuration(
 
 
 def serialize_settings(settings: ConversationAutomationSettings) -> dict[str, Any]:
+    sync_automation_period_status(settings)
     limit_reached = settings.auto_used_current_period >= settings.monthly_auto_limit
     percentage = (
         100
         if settings.monthly_auto_limit == 0
         else min(100, round(settings.auto_used_current_period * 100 / settings.monthly_auto_limit))
     )
-    period_start, period_end = period_bounds(settings.period_yyyymm)
-    if not settings.automation_feature_enabled or not settings.automation_enabled:
-        usage_status = "automation_paused"
+    period_ends_at = as_utc(settings.period_ends_at)
+    remaining_seconds = (
+        max(0, (period_ends_at - utc_now()).total_seconds())
+        if period_ends_at is not None
+        else 0
+    )
+    days_remaining = ceil(remaining_seconds / 86400)
+    if settings.period_status == "suspended":
+        usage_status = "suspended"
+    elif settings.period_status != "active":
+        usage_status = "pending_renewal"
     elif limit_reached:
         usage_status = "limit_reached"
+    elif not settings.automation_feature_enabled or not settings.automation_enabled:
+        usage_status = "automation_paused"
     elif percentage >= LIMIT_WARNING_PERCENT:
         usage_status = "near_limit"
     else:
@@ -174,8 +226,13 @@ def serialize_settings(settings: ConversationAutomationSettings) -> dict[str, An
         "auto_limit_per_period": settings.monthly_auto_limit,
         "auto_used_current_period": settings.auto_used_current_period,
         "period_yyyymm": settings.period_yyyymm,
-        "period_start": period_start.isoformat() if period_start else None,
-        "period_end": period_end.isoformat() if period_end else None,
+        "period_started_at": iso_utc(settings.period_started_at),
+        "period_ends_at": iso_utc(settings.period_ends_at),
+        "payment_confirmed_at": iso_utc(settings.payment_confirmed_at),
+        "period_status": settings.period_status,
+        "period_start": iso_utc(settings.period_started_at),
+        "period_end": iso_utc(settings.period_ends_at),
+        "days_remaining": days_remaining,
         "on_limit_reached": settings.on_limit_reached,
         "auto_threshold": settings.auto_threshold,
         "human_reply_pause_minutes": settings.human_reply_pause_minutes,
@@ -483,6 +540,15 @@ def process_inbound_automation(
             intent=detection.intent,
             reason="automation_feature_disabled",
         )
+    if settings.period_status != "active":
+        return _skip_automatic_response(
+            result,
+            business=business,
+            conversation=conversation,
+            message=message,
+            intent=detection.intent,
+            reason="period_pending_renewal",
+        )
     channel_enabled = {
         "instagram": settings.instagram_channel_enabled,
         "whatsapp": settings.whatsapp_channel_enabled,
@@ -638,7 +704,7 @@ def process_inbound_automation(
             )
             return result
         settings.auto_used_current_period += 1
-        settings.updated_at = datetime.utcnow()
+        settings.updated_at = utc_now()
         if detection.intent in {
             "complaint_intent",
             "human_intent",

@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -43,7 +43,6 @@ from app.schemas.conversation import (
     TestInboundMessageCreate,
 )
 from app.services.conversation_automation_service import (
-    current_period,
     ensure_automation_configuration,
 )
 from app.services.conversation_intent_service import detect_intent, normalize_text
@@ -141,6 +140,9 @@ class ConversationAutomationTest(unittest.TestCase):
     ):
         settings, rules = ensure_automation_configuration(self.db, business)
         settings.automation_enabled = enabled
+        settings.period_started_at = datetime.now(timezone.utc) - timedelta(days=1)
+        settings.period_ends_at = datetime.now(timezone.utc) + timedelta(days=29)
+        settings.period_status = "active"
         rule = next(item for item in rules if item.intent == intent)
         rule.mode = mode
         rule.active = True
@@ -220,6 +222,10 @@ class ConversationAutomationTest(unittest.TestCase):
                 "instagram_channel_enabled",
                 "whatsapp_channel_enabled",
                 "allowed_limit_behaviors_json",
+                "period_started_at",
+                "period_ends_at",
+                "payment_confirmed_at",
+                "period_status",
             ):
                 connection.execute(
                     text(
@@ -261,17 +267,27 @@ class ConversationAutomationTest(unittest.TestCase):
                 "instagram_channel_enabled",
                 "whatsapp_channel_enabled",
                 "allowed_limit_behaviors_json",
+                "period_started_at",
+                "period_ends_at",
+                "payment_confirmed_at",
+                "period_status",
             } <= settings_columns
         )
         with self.engine.connect() as connection:
             preserved = connection.execute(
                 text(
-                    "SELECT monthly_auto_limit, auto_used_current_period, period_yyyymm "
+                    "SELECT monthly_auto_limit, auto_used_current_period, period_yyyymm, "
+                    "period_started_at, period_ends_at, payment_confirmed_at, period_status "
                     "FROM conversation_automation_settings WHERE business_id = :business_id"
                 ),
                 {"business_id": self.business_a.id},
             ).one()
-        self.assertEqual(tuple(preserved), (321, 123, "2026-07"))
+        self.assertEqual(tuple(preserved[:3]), (321, 123, "2026-07"))
+        migrated_start = datetime.fromisoformat(str(preserved[3]))
+        migrated_end = datetime.fromisoformat(str(preserved[4]))
+        self.assertEqual(migrated_end - migrated_start, timedelta(days=30))
+        self.assertIsNone(preserved[5])
+        self.assertEqual(preserved[6], "active")
 
     def test_catalog_upsert_adds_missing_items_without_overwriting_or_duplicates(self):
         customized = ConversationTemplate(
@@ -646,8 +662,8 @@ class ConversationAutomationTest(unittest.TestCase):
         self.assertEqual(settings.auto_used_current_period, 1)
 
     def test_welcome_does_not_block_a_different_automatic_intent(self):
-        settings, rules = ensure_automation_configuration(self.db, self.business_a)
-        settings.automation_enabled = True
+        settings, _ = self.configure(self.business_a, mode="automatic")
+        _, rules = ensure_automation_configuration(self.db, self.business_a)
         for intent in ("welcome_intent", "booking_intent"):
             rule = next(item for item in rules if item.intent == intent)
             rule.mode = "automatic"
@@ -688,7 +704,7 @@ class ConversationAutomationTest(unittest.TestCase):
         )
         self.assertEqual(self.db.query(ConversationSuggestion).count(), 1)
 
-    def test_monthly_usage_resets_before_automatic_send(self):
+    def test_legacy_month_marker_does_not_reset_usage(self):
         settings, _ = self.configure(self.business_a, mode="automatic")
         settings.period_yyyymm = "2000-01"
         settings.auto_used_current_period = 999
@@ -696,8 +712,8 @@ class ConversationAutomationTest(unittest.TestCase):
 
         self.inbound("reservar", external_user_id="new-period")
 
-        self.assertEqual(settings.period_yyyymm, current_period())
-        self.assertEqual(settings.auto_used_current_period, 1)
+        self.assertEqual(settings.period_yyyymm, "2000-01")
+        self.assertEqual(settings.auto_used_current_period, 1000)
 
     def test_admin_and_owner_can_edit_but_staff_cannot(self):
         with self.assertRaises(HTTPException) as denied:
@@ -711,6 +727,12 @@ class ConversationAutomationTest(unittest.TestCase):
             require_business_admin(self.business_a.slug, self.owner, self.db),
             self.owner,
         )
+
+        settings, _ = ensure_automation_configuration(self.db, self.business_a)
+        settings.period_started_at = datetime.now(timezone.utc) - timedelta(days=1)
+        settings.period_ends_at = datetime.now(timezone.utc) + timedelta(days=29)
+        settings.period_status = "active"
+        self.db.commit()
 
         admin_update_conversation_automation_settings(
             self.business_a.slug,

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from app.schemas.branding import COLOR_PALETTES, TEMPLATE_KEYS, resolve_branding, validate_color
@@ -231,15 +233,77 @@ class OwnerAutomationUsageAdjustment(BaseModel):
         return value
 
 
-class OwnerAutomationPeriodReset(BaseModel):
+class OwnerAutomationPeriodRenewal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str = Field(min_length=3, max_length=500)
+    amount: float | None = Field(default=None, ge=0, le=10_000_000)
+    payment_method: str | None = Field(
+        default=None, max_length=60, pattern=r"^[a-z0-9_-]+$"
+    )
+    external_reference: str | None = Field(default=None, max_length=120)
+    confirm_active_period: bool = False
 
     @field_validator("reason")
     @classmethod
-    def strip_reset_reason(cls, value: str) -> str:
+    def strip_renewal_reason(cls, value: str) -> str:
         value = value.strip()
         if len(value) < 3:
             raise ValueError("Reason is required")
         return value
+
+    @field_validator("payment_method")
+    @classmethod
+    def strip_optional_payment_text(cls, value: str | None) -> str | None:
+        return value.strip() if value and value.strip() else None
+
+    @field_validator("external_reference")
+    @classmethod
+    def reject_card_number_reference(cls, value: str | None) -> str | None:
+        value = value.strip() if value and value.strip() else None
+        if value is None:
+            return None
+        compact = value.replace(" ", "").replace("-", "")
+        if compact.isdigit() and 13 <= len(compact) <= 19:
+            raise ValueError("Card numbers must not be stored as payment references")
+        return value
+
+
+class OwnerAutomationPeriodAdjustment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
+    period_started_at: datetime
+    period_ends_at: datetime
+    period_status: str = "active"
+    confirm_no_payment: bool
+
+    @field_validator("reason")
+    @classmethod
+    def strip_period_adjustment_reason(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("Reason is required")
+        return value
+
+    @field_validator("period_started_at", "period_ends_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("A UTC offset is required")
+        return value
+
+    @field_validator("period_status")
+    @classmethod
+    def valid_adjusted_status(cls, value: str) -> str:
+        if value not in {"active", "pending_renewal"}:
+            raise ValueError("Period status must be active or pending_renewal")
+        return value
+
+    @model_validator(mode="after")
+    def validate_period_adjustment(self):
+        if not self.confirm_no_payment:
+            raise ValueError("The non-payment administrative correction must be confirmed")
+        if self.period_ends_at <= self.period_started_at:
+            raise ValueError("Period end must be after period start")
+        return self

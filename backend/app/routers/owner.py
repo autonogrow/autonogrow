@@ -6,7 +6,7 @@ import unicodedata
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -26,6 +26,7 @@ from app.models import (
     ReviewRequest,
     SystemIncident,
     ConversationAutomationSettings,
+    AuditLog,
 )
 from app.schemas.owner import (
     OwnerBusinessCreate,
@@ -35,16 +36,21 @@ from app.schemas.owner import (
     OwnerIncidentUpdate,
     OwnerBusinessAutomationSettingsUpdate,
     OwnerAutomationUsageAdjustment,
-    OwnerAutomationPeriodReset,
+    OwnerAutomationPeriodRenewal,
+    OwnerAutomationPeriodAdjustment,
 )
 from app.schemas.branding import resolve_branding
 from app.services.availability_service import serialize_settings
 from app.services.incident_service import SEVERITY_ORDER, serialize_incident
 from app.services.conversation_automation_service import (
+    AUTOMATION_PERIOD_DAYS,
     allowed_limit_behaviors,
-    current_period,
+    as_utc,
     ensure_automation_configuration,
+    iso_utc,
     serialize_settings as serialize_automation_settings,
+    sync_automation_period_status,
+    utc_now,
 )
 
 
@@ -135,6 +141,9 @@ def owner_automation_payload(
             "status": serialized["usage_status"],
             "period_start": serialized["period_start"],
             "period_end": serialized["period_end"],
+            "period_status": serialized["period_status"],
+            "payment_confirmed_at": serialized["payment_confirmed_at"],
+            "days_remaining": serialized["days_remaining"],
         },
         "last_incident": serialize_incident(latest_incident) if latest_incident else None,
         "limit_max": 1_000_000,
@@ -398,6 +407,15 @@ def update_owner_business_automation_settings(
         setattr(settings, model_field, new_value)
         if api_field == "automation_feature_enabled":
             settings.automation_enabled = bool(new_value)
+            if not new_value:
+                settings.period_status = "suspended"
+            else:
+                period_ends_at = as_utc(settings.period_ends_at)
+                settings.period_status = (
+                    "active"
+                    if period_ends_at is not None and utc_now() < period_ends_at
+                    else "pending_renewal"
+                )
         action = audit_actions.get(api_field)
         if action is None:
             action = (
@@ -445,7 +463,7 @@ def update_owner_business_automation_settings(
                 ),
                 commit=False,
             )
-    settings.updated_at = datetime.utcnow()
+    settings.updated_at = utc_now()
     db.commit()
     db.refresh(settings)
     return {"ok": True, **owner_automation_payload(db, business, settings)}
@@ -464,7 +482,7 @@ def adjust_owner_business_automation_usage(
     settings, _ = ensure_automation_configuration(db, business)
     old_usage = settings.auto_used_current_period
     settings.auto_used_current_period = payload.new_usage
-    settings.updated_at = datetime.utcnow()
+    settings.updated_at = utc_now()
     record_audit(
         db,
         action="automation_usage_adjusted",
@@ -487,10 +505,189 @@ def adjust_owner_business_automation_usage(
     return {"ok": True, **owner_automation_payload(db, business, settings)}
 
 
-@router.post("/businesses/{business_id}/automation-period-reset")
-def reset_owner_business_automation_period(
+def _renewal_audit_metadata(
+    *,
+    request: Request,
+    actor: User,
+    business: Business,
+    settings: ConversationAutomationSettings,
+    old_started_at,
+    old_ends_at,
+    old_usage: int,
+    reason: str,
+    amount: float | None,
+    payment_method: str | None,
+    external_reference: str | None,
+    idempotency_key: str | None,
+    confirmed_at,
+) -> dict:
+    metadata = {
+        "owner_user_id": actor.id,
+        "business_id": business.id,
+        "old_period_started_at": iso_utc(old_started_at),
+        "old_period_ends_at": iso_utc(old_ends_at),
+        "new_period_started_at": iso_utc(settings.period_started_at),
+        "new_period_ends_at": iso_utc(settings.period_ends_at),
+        "old_usage": old_usage,
+        "new_usage": 0,
+        "plan_key": settings.plan_key,
+        "monthly_auto_limit": settings.monthly_auto_limit,
+        "reason": reason,
+        "amount": amount,
+        "payment_method": payment_method,
+        "external_reference": external_reference,
+        "timestamp": iso_utc(confirmed_at),
+    }
+    request_id = request.headers.get("x-request-id")
+    if request_id:
+        metadata["request_id"] = request_id[:120]
+    if idempotency_key:
+        metadata["idempotency_key"] = idempotency_key
+    return metadata
+
+
+def _renewal_was_already_processed(
+    db: Session,
+    *,
     business_id: int,
-    payload: OwnerAutomationPeriodReset,
+    idempotency_key: str | None,
+) -> bool:
+    if not idempotency_key:
+        return False
+    recent_logs = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.business_id == business_id,
+            AuditLog.action == "automation_period_renewed",
+        )
+        .order_by(AuditLog.id.desc())
+        .limit(50)
+        .all()
+    )
+    for item in recent_logs:
+        try:
+            metadata = json.loads(item.metadata_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        if metadata.get("idempotency_key") == idempotency_key:
+            return True
+    return False
+
+
+@router.post("/businesses/{business_id}/automation-period-renewal")
+def renew_owner_business_automation_period(
+    business_id: int,
+    payload: OwnerAutomationPeriodRenewal,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    business = get_business_by_id_or_404(db, business_id)
+    settings, _ = ensure_automation_configuration(db, business)
+    db.refresh(settings, with_for_update=True)
+    sync_automation_period_status(settings, db=db)
+    normalized_key = (
+        idempotency_key.strip()[:120]
+        if isinstance(idempotency_key, str) and idempotency_key.strip()
+        else None
+    )
+    if _renewal_was_already_processed(
+        db, business_id=business.id, idempotency_key=normalized_key
+    ):
+        db.commit()
+        db.refresh(settings)
+        return {
+            "ok": True,
+            "idempotent_replay": True,
+            **owner_automation_payload(db, business, settings),
+        }
+
+    confirmed_at = utc_now()
+    last_confirmation = as_utc(settings.payment_confirmed_at)
+    if (
+        last_confirmation is not None
+        and confirmed_at - last_confirmation < timedelta(seconds=10)
+    ):
+        db.commit()
+        db.refresh(settings)
+        return {
+            "ok": True,
+            "idempotent_replay": True,
+            **owner_automation_payload(db, business, settings),
+        }
+    current_end = as_utc(settings.period_ends_at)
+    if (
+        settings.period_status == "active"
+        and current_end is not None
+        and confirmed_at < current_end
+        and not payload.confirm_active_period
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "El periodo sigue activo. Confirma expresamente que la renovación "
+                "sustituirá el periodo actual y comenzará ahora."
+            ),
+        )
+
+    old_started_at = settings.period_started_at
+    old_ends_at = settings.period_ends_at
+    old_usage = settings.auto_used_current_period
+    manually_suspended = (
+        not settings.automation_feature_enabled or settings.period_status == "suspended"
+    )
+    settings.payment_confirmed_at = confirmed_at
+    settings.period_started_at = confirmed_at
+    settings.period_ends_at = confirmed_at + timedelta(days=AUTOMATION_PERIOD_DAYS)
+    settings.period_status = "suspended" if manually_suspended else "active"
+    settings.auto_used_current_period = 0
+    settings.updated_at = confirmed_at
+    audit_metadata = _renewal_audit_metadata(
+        request=request,
+        actor=actor,
+        business=business,
+        settings=settings,
+        old_started_at=old_started_at,
+        old_ends_at=old_ends_at,
+        old_usage=old_usage,
+        reason=payload.reason,
+        amount=payload.amount,
+        payment_method=payload.payment_method,
+        external_reference=payload.external_reference,
+        idempotency_key=normalized_key,
+        confirmed_at=confirmed_at,
+    )
+    try:
+        for action in ("automation_payment_confirmed", "automation_period_renewed"):
+            record_audit(
+                db,
+                action=action,
+                request=request,
+                actor=actor,
+                business_id=business.id,
+                resource_type="conversation_automation_settings",
+                resource_id=settings.id,
+                metadata=audit_metadata,
+                commit=False,
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(settings)
+    return {
+        "ok": True,
+        "idempotent_replay": False,
+        **owner_automation_payload(db, business, settings),
+    }
+
+
+@router.post("/businesses/{business_id}/automation-period-adjustment")
+def adjust_owner_business_automation_period(
+    business_id: int,
+    payload: OwnerAutomationPeriodAdjustment,
     request: Request,
     actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
@@ -498,34 +695,49 @@ def reset_owner_business_automation_period(
     require_owner(actor)
     business = get_business_by_id_or_404(db, business_id)
     settings, _ = ensure_automation_configuration(db, business)
+    db.refresh(settings, with_for_update=True)
     old_value = {
-        "period_yyyymm": settings.period_yyyymm,
-        "auto_used_current_period": settings.auto_used_current_period,
+        "period_started_at": iso_utc(settings.period_started_at),
+        "period_ends_at": iso_utc(settings.period_ends_at),
+        "period_status": settings.period_status,
+        "usage": settings.auto_used_current_period,
     }
-    settings.period_yyyymm = current_period()
-    settings.auto_used_current_period = 0
-    settings.updated_at = datetime.utcnow()
-    new_value = {
-        "period_yyyymm": settings.period_yyyymm,
-        "auto_used_current_period": 0,
-    }
-    record_audit(
-        db,
-        action="automation_period_reset",
-        request=request,
-        actor=actor,
-        business_id=business.id,
-        resource_type="conversation_automation_settings",
-        resource_id=settings.id,
-        metadata=owner_audit_metadata(
-            request,
-            old_value=old_value,
-            new_value=new_value,
-            reason=payload.reason,
-        ),
-        commit=False,
+    settings.period_started_at = as_utc(payload.period_started_at)
+    settings.period_ends_at = as_utc(payload.period_ends_at)
+    settings.period_status = (
+        "suspended"
+        if not settings.automation_feature_enabled
+        else payload.period_status
     )
-    db.commit()
+    settings.updated_at = utc_now()
+    sync_automation_period_status(settings, db=db)
+    new_value = {
+        "period_started_at": iso_utc(settings.period_started_at),
+        "period_ends_at": iso_utc(settings.period_ends_at),
+        "period_status": settings.period_status,
+        "usage": settings.auto_used_current_period,
+    }
+    try:
+        record_audit(
+            db,
+            action="automation_period_adjusted",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="conversation_automation_settings",
+            resource_id=settings.id,
+            metadata=owner_audit_metadata(
+                request,
+                old_value=old_value,
+                new_value=new_value,
+                reason=payload.reason,
+            ),
+            commit=False,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(settings)
     return {"ok": True, **owner_automation_payload(db, business, settings)}
 

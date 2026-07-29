@@ -200,7 +200,14 @@ function renderBusinesses() {
 }
 
 function ownerAutomationStatusLabel(status) {
-  return ({ available: "Disponible", near_limit: "Cerca del límite", limit_reached: "Límite alcanzado", automation_paused: "Automatización pausada" })[status] || status;
+  return ({ available: "Activo", near_limit: "Activo · cerca del límite", limit_reached: "Límite alcanzado", automation_paused: "Activo · automatización pausada", pending_renewal: "Pendiente de renovación", suspended: "Suspendido" })[status] || status;
+}
+
+function formatAutomationDate(value) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(parsed);
 }
 
 function renderOwnerAutomation(panel, data) {
@@ -208,9 +215,16 @@ function renderOwnerAutomation(panel, data) {
   const usage = data.usage;
   const allowed = settings.allowed_limit_behaviors || ["disabled"];
   const lastIncident = data.last_incident;
+  panel.dataset.ownerPeriodStatus = usage.period_status || "pending_renewal";
+  panel.dataset.ownerPeriodDays = String(usage.days_remaining || 0);
+  panel.dataset.ownerPeriodStart = usage.period_start || "";
+  panel.dataset.ownerPeriodEnd = usage.period_end || "";
+  panel.dataset.ownerPlan = settings.plan || "—";
+  panel.dataset.ownerLimit = String(usage.limit);
+  panel.dataset.ownerUsage = String(usage.used);
   panel.querySelector("[data-owner-automation-content]").innerHTML = `
     <div class="owner-automation-summary">
-      <span><strong>${usage.used} / ${usage.limit}</strong>Mensajes automáticos</span><span><strong>${usage.percentage}%</strong>Consumido</span><span><strong>${escapeHtml(ownerAutomationStatusLabel(usage.status))}</strong>Estado</span><span><strong>${usage.period_end ? escapeHtml(new Date(`${usage.period_end}Z`).toLocaleDateString("es-ES")) : "—"}</strong>Fin del periodo</span>
+      <span><strong>${usage.used} / ${usage.limit}</strong>Mensajes del periodo</span><span><strong>${usage.percentage}%</strong>Consumido</span><span><strong>${escapeHtml(ownerAutomationStatusLabel(usage.status))}</strong>Estado</span><span><strong>${escapeHtml(formatAutomationDate(usage.period_start))}</strong>Inicio</span><span><strong>${escapeHtml(formatAutomationDate(usage.period_end))}</strong>Vencimiento</span><span><strong>${usage.days_remaining}</strong>Días restantes</span>
     </div>
     <div class="owner-automation-progress"><span style="width:${usage.percentage}%"></span></div>
     <div class="owner-automation-grid">
@@ -221,9 +235,10 @@ function renderOwnerAutomation(panel, data) {
       <label class="checkbox-row"><input data-owner-automation-whatsapp type="checkbox" ${settings.whatsapp_channel_enabled ? "checked" : ""}> WhatsApp habilitado</label>
       <fieldset class="owner-limit-behaviors"><legend>Opciones disponibles para el admin</legend><label class="checkbox-row"><input data-owner-limit-behavior="semi_automatic" type="checkbox" ${allowed.includes("semi_automatic") ? "checked" : ""}> Pasar a sugerencias</label><label class="checkbox-row"><input data-owner-limit-behavior="disabled" type="checkbox" ${allowed.includes("disabled") ? "checked" : ""}> No responder</label></fieldset>
     </div>
-    <p class="owner-automation-feature-state">Función de automatización: <strong>${settings.automation_feature_enabled ? "habilitada" : "suspendida"}</strong> · Estado operativo: <strong>${settings.automation_enabled ? "activo" : "pausado"}</strong></p>
+    <p class="owner-automation-feature-state">Último pago confirmado: <strong>${escapeHtml(formatAutomationDate(usage.payment_confirmed_at))}</strong> · Automatización comercial: <strong>${settings.automation_feature_enabled ? "habilitada" : "suspendida"}</strong> · Estado operativo: <strong>${settings.automation_enabled ? "activo" : "pausado"}</strong></p>
+    <p>Canales habilitados: <strong>${[settings.instagram_channel_enabled ? "Instagram" : null, settings.whatsapp_channel_enabled ? "WhatsApp" : null].filter(Boolean).join(" · ") || "ninguno"}</strong></p>
     <p>Última incidencia: ${lastIncident ? `<strong>${escapeHtml(lastIncident.incident_id)}</strong> · ${escapeHtml(lastIncident.status)} · ${escapeHtml(lastIncident.category)}` : "ninguna"}</p>
-    <div class="owner-automation-actions"><button class="button button-primary button-small" type="button" data-owner-automation-action="save">Guardar plan y cuota</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="usage">Ajustar consumo</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="reset">Reiniciar periodo</button><button class="button ${settings.automation_feature_enabled ? "button-danger" : "button-primary"} button-small" type="button" data-owner-automation-action="feature" data-next-enabled="${!settings.automation_feature_enabled}">${settings.automation_feature_enabled ? "Suspender automatización" : "Reactivar automatización"}</button></div>
+    <div class="owner-automation-actions"><button class="button button-primary button-small" type="button" data-owner-automation-action="renew">Confirmar pago y renovar 30 días</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="adjust-period">Corrección administrativa del periodo</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="save">Guardar plan y cuota</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="usage">Ajustar consumo</button><button class="button ${settings.automation_feature_enabled ? "button-danger" : "button-primary"} button-small" type="button" data-owner-automation-action="feature" data-next-enabled="${!settings.automation_feature_enabled}">${settings.automation_feature_enabled ? "Suspender automatización" : "Reactivar automatización"}</button></div>
     <p data-owner-automation-feedback class="status-text"></p>`;
 }
 
@@ -270,11 +285,40 @@ async function handleOwnerAutomationAction(button) {
     if (!reason?.trim()) throw new Error("El motivo es obligatorio.");
     if (!window.confirm(`Ajustar el consumo de ${businessName} a ${newUsage}. ¿Confirmar?`)) return;
     await ownerAutomationRequest(panel, "automation-usage-adjustment", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ new_usage: newUsage, reason: reason.trim() }) });
-  } else if (action === "reset") {
-    const reason = window.prompt(`Motivo obligatorio para reiniciar el periodo de ${businessName}:`);
+  } else if (action === "renew") {
+    const now = new Date();
+    const expectedEnd = new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000));
+    const activeWarning = panel.dataset.ownerPeriodStatus === "active"
+      ? `\n\nADVERTENCIA: todavía quedan ${panel.dataset.ownerPeriodDays} días activos. La renovación sustituirá el periodo actual y comenzará hoy.`
+      : "";
+    const confirmation = `Confirmar pago de ${businessName}\n\nPlan: ${panel.dataset.ownerPlan}\nLímite: ${panel.dataset.ownerLimit}\nConsumo actual: ${panel.dataset.ownerUsage}\nInicio previsto: ${formatAutomationDate(now.toISOString())}\nVencimiento previsto: ${formatAutomationDate(expectedEnd.toISOString())}\n\nEl consumo pasará a cero.${activeWarning}`;
+    if (!window.confirm(confirmation)) return;
+    const reason = window.prompt(`Motivo o referencia del pago para ${businessName} (obligatorio):`);
     if (!reason?.trim()) throw new Error("El motivo es obligatorio.");
-    if (!window.confirm(`El consumo de ${businessName} volverá a cero. ¿Confirmar?`)) return;
-    await ownerAutomationRequest(panel, "automation-period-reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: reason.trim() }) });
+    const amountText = window.prompt("Importe recibido (opcional, usa punto decimal):", "") ?? "";
+    const amount = amountText.trim() ? Number(amountText) : null;
+    if (amount !== null && (!Number.isFinite(amount) || amount < 0)) throw new Error("El importe no es válido.");
+    const paymentMethod = (window.prompt("Método de pago opcional (bank_transfer, cash, card u other):", "") ?? "").trim() || null;
+    const externalReference = (window.prompt("Referencia externa opcional:", "") ?? "").trim() || null;
+    const idempotencyKey = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    button.disabled = true;
+    try {
+      await ownerAutomationRequest(panel, "automation-period-renewal", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ reason: reason.trim(), amount, payment_method: paymentMethod, external_reference: externalReference, confirm_active_period: panel.dataset.ownerPeriodStatus === "active" }) });
+    } finally {
+      button.disabled = false;
+    }
+  } else if (action === "adjust-period") {
+    const startText = window.prompt("Inicio corregido en UTC (formato ISO, termina en Z):", panel.dataset.ownerPeriodStart || new Date().toISOString());
+    if (startText === null) return;
+    const endText = window.prompt("Vencimiento corregido en UTC (formato ISO, termina en Z):", panel.dataset.ownerPeriodEnd || new Date(Date.now() + (30 * 86400000)).toISOString());
+    if (endText === null) return;
+    const start = new Date(startText);
+    const end = new Date(endText);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) throw new Error("Las fechas corregidas no son válidas.");
+    const reason = window.prompt(`Motivo obligatorio de la corrección administrativa para ${businessName}:`);
+    if (!reason?.trim()) throw new Error("El motivo es obligatorio.");
+    if (!window.confirm(`Esta corrección modifica las fechas de ${businessName}, no confirma ningún pago y no reinicia el consumo. ¿Continuar?`)) return;
+    await ownerAutomationRequest(panel, "automation-period-adjustment", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: reason.trim(), period_started_at: start.toISOString(), period_ends_at: end.toISOString(), period_status: end > new Date() ? "active" : "pending_renewal", confirm_no_payment: true }) });
   } else if (action === "feature") {
     const enabled = button.dataset.nextEnabled === "true";
     if (!window.confirm(`${enabled ? "Reactivar" : "Suspender"} la automatización de ${businessName}. ¿Confirmar?`)) return;

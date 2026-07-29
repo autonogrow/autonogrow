@@ -123,7 +123,15 @@ class ConversationAutomationSettings(Base):
     automation_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
     monthly_auto_limit: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
     auto_used_current_period: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Deprecated compatibility field. Moving 30-day periods below are the source
+    # of truth and this value must never trigger an automatic usage reset.
     period_yyyymm: Mapped[str] = mapped_column(String(7), nullable=False)
+    period_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    period_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    payment_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    period_status: Mapped[str] = mapped_column(
+        String(30), default="pending_renewal", nullable=False
+    )
     on_limit_reached: Mapped[str] = mapped_column(
         String(30), default="semi_automatic", nullable=False
     )

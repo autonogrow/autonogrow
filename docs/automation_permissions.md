@@ -1,74 +1,115 @@
-# Permisos de automatización, planes y cuota
+# Permisos de automatización y ciclo comercial de 30 días
+
+## Regla comercial
+
+La cuota de automatización utiliza ciclos móviles de **30 días exactos**. No es un mes
+natural ni se renueva al cambiar de mes. El ciclo comienza en el instante UTC en que un
+owner confirma manualmente el pago y termina con `period_started_at + timedelta(days=30)`.
+
+La confirmación de pago:
+
+- fija `payment_confirmed_at` y `period_started_at` al instante de confirmación;
+- fija `period_ends_at` exactamente 30 días después;
+- reinicia `auto_used_current_period` a cero;
+- conserva plan, límite, canales y comportamiento al alcanzar la cuota;
+- activa el periodo si no existe una suspensión comercial manual;
+- no elimina una suspensión manual del owner.
+
+No existe renovación, prórroga ni reinicio automático. Al alcanzar el vencimiento, la
+evaluación perezosa cambia una sola vez `active` a `pending_renewal`, conserva fechas y
+consumo y bloquea únicamente nuevos mensajes automáticos. Los entrantes, mensajes
+manuales y paneles continúan según sus reglas habituales. El vencimiento comercial no
+es una incidencia técnica.
+
+## Estados y precedencia
+
+- `active`: existe un periodo no vencido y la función comercial está habilitada.
+- `pending_renewal`: no existe un periodo confirmado vigente. Requiere pago manual.
+- `suspended`: el owner ha suspendido comercialmente la función. Tiene precedencia
+  sobre un pago o vencimiento; confirmar un pago no levanta esta suspensión.
+
+El estado operativo `automation_enabled`, los canales habilitados y el límite no
+duplican `period_status`. Para un envío automático se comprueba, en orden: función
+comercial, periodo activo/no vencido, canal, activación operativa, pausa de conversación,
+cuota y proveedor.
+
+## Renovación anticipada y tardía
+
+Una renovación anticipada sustituye el periodo vigente y comienza en el momento de la
+confirmación; los días restantes no se acumulan. Requiere `confirm_active_period=true`
+y el panel muestra una advertencia con los días restantes.
+
+Una renovación tardía también empieza en el instante del nuevo pago, nunca en el
+vencimiento anterior. No se descuentan días retroactivamente. `Idempotency-Key` y una
+protección contra repeticiones inmediatas evitan crear dos periodos o dos auditorías por
+doble clic. Periodo, contador y auditoría se confirman en una única transacción.
 
 ## Matriz de permisos
 
 | Acción | Owner | Business admin | Business staff | Cliente |
 |---|---:|---:|---:|---:|
-| Ver límite contratado | Sí | Sí, solo su negocio | No | No |
-| Cambiar límite | Sí | No | No | No |
-| Ver consumo | Sí | Sí, solo su negocio | No | No |
-| Ajustar consumo | Sí, con motivo | No | No | No |
-| Reiniciar periodo | Sí, con motivo | No | No | No |
-| Pausar/reactivar automatización operativa | Sí | Sí, si la función está habilitada | No | No |
-| Editar plantillas autorizadas | Sí | Sí, solo su negocio | No | No |
-| Cambiar plan o funciones contratadas | Sí | No | No | No |
-| Habilitar canales por negocio | Sí | No | No | No |
-| Ver incidencias globales | Sí | No | No | No |
-| Ver aviso sencillo de su incidencia | Sí | Sí, solo su negocio | Según acceso operativo | No |
-| Resolver incidencias globales | Sí | No | No | No |
+| Ver periodo y vencimiento | Sí | Sí, de su negocio | No | No |
+| Confirmar pago | Sí | No | No | No |
+| Iniciar o renovar periodo | Sí | No | No | No |
+| Corregir fechas | Sí, con motivo | No | No | No |
+| Reiniciar consumo por pago | Sí | No | No | No |
+| Consultar consumo y límite | Sí | Sí, de su negocio | No | No |
+| Ajustar consumo administrativamente | Sí, con motivo | No | No | No |
+| Suspender/reactivar comercialmente | Sí | No | No | No |
+| Pausar/reactivar operativamente | Sí | Sí, con periodo y función activos | No | No |
+| Cambiar plan, límite o canales | Sí | No | No | No |
+| Editar reglas y plantillas autorizadas | Sí | Sí, de su negocio | No | No |
 
-La autorización se aplica en FastAPI mediante dependencias de owner o business admin y
-se vuelve a comprobar dentro de los endpoints sensibles. Los esquemas Pydantic usan
-`extra="forbid"`; un campo comercial inyectado en una petición admin devuelve 422.
+La autorización se aplica en FastAPI y vuelve a comprobarse dentro de los endpoints
+sensibles. Los contratos Pydantic usan `extra="forbid"`; fechas, estado, pago o consumo
+inyectados en una petición de business admin reciben HTTP 422.
 
-## Definición de consumo
-
-`auto_limit_per_period` es el límite contratado, almacenado de forma compatible en
-`monthly_auto_limit`. `auto_used_current_period` es un contador del sistema y no es
-editable desde `/api/admin/...`.
-
-Una unidad se consume únicamente después de que una respuesta **automática** haya sido
-entregada correctamente. No consumen cuota:
-
-- envíos fallidos;
-- mensajes manuales;
-- sugerencias sin enviar;
-- mensajes bloqueados por límite, función o canal no habilitado.
-
-El límite mínimo es cero, que bloquea nuevos envíos automáticos. El máximo explícito es
-1.000.000 por periodo. No existe por ahora un valor `null` o un modo ilimitado implícito.
-Al alcanzar el límite, se aplica `on_limit_reached`. El owner define la lista de opciones
-permitidas y el business admin solo puede escoger dentro de ella.
-
-El periodo usa meses UTC (`period_yyyymm`). Su inicio es el primer día del mes y el fin
-es el primer día del mes siguiente. El sistema reinicia el consumo al detectar un nuevo
-mes; el owner también puede reiniciarlo manualmente con un motivo obligatorio.
-
-## Ajustes owner y auditoría
-
-Endpoints exclusivos del owner:
+## Endpoints owner y auditoría
 
 - `GET/PATCH /api/owner/businesses/{business_id}/automation-settings`
+- `POST /api/owner/businesses/{business_id}/automation-period-renewal`
+- `POST /api/owner/businesses/{business_id}/automation-period-adjustment`
 - `POST /api/owner/businesses/{business_id}/automation-usage-adjustment`
-- `POST /api/owner/businesses/{business_id}/automation-period-reset`
 
-Los ajustes manuales de consumo y periodo requieren motivo. El panel solicita
-confirmación mostrando el negocio afectado. Los audit logs guardan actor owner,
-negocio, acción, valor anterior, valor nuevo, motivo, fecha y `X-Request-ID` cuando está
-disponible. No incluyen credenciales ni secretos.
+La renovación exige `reason`; `amount`, `payment_method` y `external_reference` son
+opcionales y solo sirven como metadatos de conciliación. La corrección administrativa
+exige motivo, fechas con zona horaria y `confirm_no_payment=true`; no cambia
+`payment_confirmed_at` ni reinicia el consumo.
 
-Acciones auditadas: `automation_limit_changed`, `automation_usage_adjusted`,
-`automation_period_reset`, `business_plan_changed`, `automation_feature_enabled`,
-`automation_feature_disabled` y cambios de comportamiento permitido.
+Acciones: `automation_payment_confirmed`, `automation_period_renewed`,
+`automation_period_expired` y `automation_period_adjusted`, además de los cambios de
+plan, límite, consumo, canales y suspensión. La auditoría registra owner, negocio,
+fechas anteriores/nuevas, consumo anterior/nuevo, plan, límite, motivo, metadatos
+opcionales, request ID y timestamp. Nunca guarda credenciales, datos bancarios
+completos, tarjetas, secretos ni conversaciones.
 
-## Compatibilidad y despliegue
+## Datos, UTC y compatibilidad
 
-La migración ligera añade de forma idempotente `plan_key`,
-`automation_feature_enabled`, `instagram_channel_enabled`,
-`whatsapp_channel_enabled` y `allowed_limit_behaviors_json` a
-`conversation_automation_settings`. Los valores por defecto mantienen habilitadas las
-funciones existentes. No se renombran ni reinician el límite, consumo o periodo actuales.
+La fuente de verdad es:
 
-Para desplegar: hacer copia de seguridad, instalar el código, reiniciar el backend para
-aplicar la migración idempotente, comprobar OpenAPI/healthcheck y validar primero en
-staging la lectura admin y un ajuste owner auditado.
+- `period_started_at` (`datetime`, nullable);
+- `period_ends_at` (`datetime`, nullable);
+- `payment_confirmed_at` (`datetime`, nullable);
+- `period_status` (`active`, `pending_renewal` o `suspended`).
+
+Se almacena y transmite UTC; la API devuelve ISO 8601 con `Z` y el navegador presenta
+las fechas en la zona local. El campo `period_yyyymm` se conserva temporalmente como
+deprecated para compatibilidad, pero no calcula fechas ni reinicia consumo.
+
+La migración ligera añade los cuatro campos de forma idempotente. Una migración única
+concede a los registros existentes un periodo de 30 días desde el instante de migración,
+sin modificar consumo, plan, límite, canales o suspensión y dejando
+`payment_confirmed_at=null` para no inventar un pago histórico. Los negocios creados
+después nacen en `pending_renewal` hasta su primera confirmación manual.
+
+## Despliegue y comprobación manual
+
+Realizar una copia de seguridad de la base de datos antes del despliegue. Después,
+instalar el código, reiniciar el backend para ejecutar la migración idempotente y validar
+OpenAPI/healthcheck primero en staging.
+
+Prueba manual recomendada: crear un negocio sin periodo, confirmar un pago, verificar
+30 días exactos y consumo cero, simular consumo y vencimiento, comprobar
+`pending_renewal` sin envío automático, verificar que entrantes/manuales continúan,
+confirmar otro pago desde la fecha actual y revisar auditoría y ambos paneles.
+El procedimiento reproducible completo está en `docs/manual_test_automation_periods.md`.

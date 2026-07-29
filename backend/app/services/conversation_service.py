@@ -344,7 +344,7 @@ def send_outbound_message(
             delivery_status = "failed"
             client_error_message = (
                 f"El canal {conversation.channel.title()} no está habilitado para este negocio. "
-                "Contacta con soporte de AutonoGrow."
+                "Contacta con el equipo de AutonoGrow."
             )
     if conversation.channel == "instagram" and not policy_blocked:
         if provider_configured:

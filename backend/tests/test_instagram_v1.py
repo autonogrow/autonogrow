@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -484,6 +484,9 @@ class InstagramV1Test(unittest.TestCase):
     def test_distinct_provider_ids_with_identical_text_are_debounced(self):
         settings_row, rules = ensure_automation_configuration(self.db, self.business_a)
         settings_row.automation_enabled = True
+        settings_row.period_started_at = datetime.now(timezone.utc) - timedelta(days=1)
+        settings_row.period_ends_at = datetime.now(timezone.utc) + timedelta(days=29)
+        settings_row.period_status = "active"
         booking_rule = next(rule for rule in rules if rule.intent == "booking_intent")
         booking_rule.mode = "automatic"
         self.db.commit()
@@ -521,6 +524,9 @@ class InstagramV1Test(unittest.TestCase):
     def test_same_provider_id_remains_idempotent_with_automation_enabled(self):
         settings_row, rules = ensure_automation_configuration(self.db, self.business_a)
         settings_row.automation_enabled = True
+        settings_row.period_started_at = datetime.now(timezone.utc) - timedelta(days=1)
+        settings_row.period_ends_at = datetime.now(timezone.utc) + timedelta(days=29)
+        settings_row.period_status = "active"
         welcome_rule = next(rule for rule in rules if rule.intent == "welcome_intent")
         welcome_rule.mode = "automatic"
         self.db.commit()
@@ -704,6 +710,9 @@ class InstagramV1Test(unittest.TestCase):
         provider_settings = self.settings(instagram_provider_enabled=True)
         settings_row, rules = ensure_automation_configuration(self.db, self.business_a)
         settings_row.automation_enabled = True
+        settings_row.period_started_at = datetime.now(timezone.utc) - timedelta(days=1)
+        settings_row.period_ends_at = datetime.now(timezone.utc) + timedelta(days=29)
+        settings_row.period_status = "active"
         booking_rule = next(rule for rule in rules if rule.intent == "booking_intent")
         booking_rule.mode = "automatic"
         self.db.commit()

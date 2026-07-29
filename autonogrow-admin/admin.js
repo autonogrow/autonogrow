@@ -2162,13 +2162,20 @@ function renderConversationAutomation() {
     available: "Disponible",
     near_limit: "Cerca del límite",
     limit_reached: "Límite alcanzado",
-    automation_paused: "Automatización pausada"
+    automation_paused: "Automatización pausada",
+    pending_renewal: "Pendiente de renovación",
+    suspended: "Suspendido"
   };
   const allowedLimitBehaviors = settings.allowed_limit_behaviors || ["disabled"];
   const limitBehaviorLabels = {
     semi_automatic: "Pasar a sugerencias",
     disabled: "No responder"
   };
+  const periodSummary = usage.period_status === "active"
+    ? `Inicio del periodo: ${new Date(usage.period_start).toLocaleString("es-ES")} · Periodo activo hasta: ${new Date(usage.period_end).toLocaleString("es-ES")} · ${usage.days_remaining} días restantes.`
+    : usage.period_status === "suspended"
+      ? `Periodo suspendido · Inicio: ${usage.period_start ? new Date(usage.period_start).toLocaleString("es-ES") : "sin fecha"} · Vencimiento: ${usage.period_end ? new Date(usage.period_end).toLocaleString("es-ES") : "sin fecha"}.`
+      : `Periodo pendiente de renovación · Inicio anterior: ${usage.period_start ? new Date(usage.period_start).toLocaleString("es-ES") : "sin fecha"} · Vencimiento anterior: ${usage.period_end ? new Date(usage.period_end).toLocaleString("es-ES") : "sin fecha"}.`;
   const templates = conversationAutomation.templates || [];
   const templateOptions = (selectedId) => `
     <option value="">Plantilla recomendada</option>
@@ -2187,11 +2194,11 @@ function renderConversationAutomation() {
     <article class="conversation-automation-usage-card">
       <div><p>Mensajes automáticos utilizados</p><strong>${usage.used} de ${usage.limit}</strong><span class="conversation-automation-usage-state state-${escapeHtml(usage.status)}">${usageStatusLabels[usage.status] || usage.status}</span></div>
       <div class="conversation-automation-quota-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${usage.percentage}"><span style="width:${usage.percentage}%"></span></div>
-      <p>${usage.percentage}% utilizado · Reinicio previsto: ${usage.period_end ? escapeHtml(new Date(`${usage.period_end}Z`).toLocaleDateString("es-ES")) : "sin fecha disponible"}.</p>
-      <p>El límite de mensajes forma parte de tu plan de AutonoGrow. Para modificarlo, contacta con soporte.</p>
+      <p>${usage.percentage}% utilizado · ${escapeHtml(periodSummary)}</p>
+      <p>${usage.period_status === "pending_renewal" ? "El periodo de automatización está pendiente de renovación. El equipo de AutonoGrow gestionará la reactivación." : "El límite de mensajes forma parte de tu plan de AutonoGrow. Para modificarlo, contacta con el equipo de AutonoGrow."}</p>
       ${settings.automation_feature_enabled ? "" : "<p class=\"conversation-automation-warning\">La automatización está pausada por AutonoGrow para este negocio.</p>"}
     </article>
-    ${usage.limit_reached ? `<p class="conversation-automation-warning">${settings.on_limit_reached === "semi_automatic" ? "Límite mensual alcanzado. Las respuestas automáticas pasan a modo sugerencia." : "Límite mensual alcanzado. No se enviarán más respuestas automáticas este mes."}</p>` : ""}
+    ${usage.limit_reached ? `<p class="conversation-automation-warning">${settings.on_limit_reached === "semi_automatic" ? "Límite del periodo alcanzado. Las respuestas automáticas pasan a modo sugerencia." : "Límite del periodo alcanzado. No se enviarán más respuestas automáticas durante este periodo."}</p>` : ""}
     <div class="conversation-automation-rules">
       <h3>Modo por intención</h3>
       ${(conversationAutomation.rules || []).map((rule) => `

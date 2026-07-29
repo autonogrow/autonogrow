@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -18,12 +19,12 @@ from app.routers.conversations import (
 from app.routers.owner import (
     adjust_owner_business_automation_usage,
     get_owner_business_automation_settings,
-    reset_owner_business_automation_period,
+    renew_owner_business_automation_period,
     update_owner_business_automation_settings,
 )
 from app.schemas.conversation import BusinessAutomationSettingsUpdate
 from app.schemas.owner import (
-    OwnerAutomationPeriodReset,
+    OwnerAutomationPeriodRenewal,
     OwnerAutomationUsageAdjustment,
     OwnerBusinessAutomationSettingsUpdate,
 )
@@ -81,6 +82,9 @@ class AutomationPermissionsTest(unittest.TestCase):
         self.settings, _ = ensure_automation_configuration(self.db, self.business)
         self.settings.monthly_auto_limit = 250
         self.settings.auto_used_current_period = 25
+        self.settings.period_started_at = datetime.now(timezone.utc) - timedelta(days=1)
+        self.settings.period_ends_at = datetime.now(timezone.utc) + timedelta(days=29)
+        self.settings.period_status = "active"
         self.db.commit()
 
     def tearDown(self):
@@ -116,6 +120,10 @@ class AutomationPermissionsTest(unittest.TestCase):
             {"auto_limit_per_period": 999},
             {"auto_used_current_period": 0},
             {"period_yyyymm": "2099-01"},
+            {"period_started_at": "2099-01-01T00:00:00Z"},
+            {"period_ends_at": "2099-02-01T00:00:00Z"},
+            {"payment_confirmed_at": "2099-01-01T00:00:00Z"},
+            {"period_status": "active"},
             {"reset_usage": True},
             {"plan": "premium"},
             {"billing": {"price": 1}},
@@ -208,7 +216,7 @@ class AutomationPermissionsTest(unittest.TestCase):
         self.assertEqual(metadata["new_value"], 500)
         self.assertEqual(metadata["request_id"], "req-automation-1")
 
-    def test_owner_adjusts_usage_and_resets_period_with_required_reason(self):
+    def test_owner_adjusts_usage_and_renews_period_with_required_reason(self):
         adjusted = adjust_owner_business_automation_usage(
             self.business.id,
             OwnerAutomationUsageAdjustment(
@@ -219,21 +227,25 @@ class AutomationPermissionsTest(unittest.TestCase):
             db=self.db,
         )
         self.assertEqual(adjusted["settings"]["auto_used_current_period"], 40)
-        reset = reset_owner_business_automation_period(
+        renewed = renew_owner_business_automation_period(
             self.business.id,
-            OwnerAutomationPeriodReset(reason="Inicio administrativo de ciclo"),
+            OwnerAutomationPeriodRenewal(
+                reason="Pago conciliado", confirm_active_period=True
+            ),
             self.request("POST"),
+            idempotency_key="permissions-renewal-1",
             actor=self.owner,
             db=self.db,
         )
-        self.assertEqual(reset["settings"]["auto_used_current_period"], 0)
+        self.assertEqual(renewed["settings"]["auto_used_current_period"], 0)
         actions = [item.action for item in self.db.query(AuditLog).all()]
         self.assertIn("automation_usage_adjusted", actions)
-        self.assertIn("automation_period_reset", actions)
+        self.assertIn("automation_payment_confirmed", actions)
+        self.assertIn("automation_period_renewed", actions)
         with self.assertRaises(ValidationError):
             OwnerAutomationUsageAdjustment.model_validate({"new_usage": 5, "reason": ""})
         with self.assertRaises(ValidationError):
-            OwnerAutomationPeriodReset.model_validate({"reason": ""})
+            OwnerAutomationPeriodRenewal.model_validate({"reason": ""})
 
     def test_negative_values_are_rejected_and_zero_limit_is_allowed(self):
         with self.assertRaises(ValidationError):
@@ -306,7 +318,11 @@ class AutomationPermissionsTest(unittest.TestCase):
         self.assertIn("El límite de mensajes forma parte de tu plan", admin_js)
         self.assertIn('data-owner-automation-limit', owner_js)
         self.assertIn('data-owner-automation-action="usage"', owner_js)
-        self.assertIn('data-owner-automation-action="reset"', owner_js)
+        self.assertNotIn("Reinicio previsto", admin_js)
+        self.assertNotIn("contacta con soporte", admin_js)
+        self.assertIn('data-owner-automation-action="renew"', owner_js)
+        self.assertIn("Confirmar pago y renovar 30 días", owner_js)
+        self.assertNotIn("automation-period-reset", owner_js)
 
 
 if __name__ == "__main__":

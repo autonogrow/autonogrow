@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -189,6 +191,51 @@ def run_lightweight_migrations(target_engine=None) -> None:
                             f"ADD COLUMN {column_name} {column_type}"
                         )
                     )
+
+            moving_period_columns = {
+                "period_started_at": "DATETIME",
+                "period_ends_at": "DATETIME",
+                "payment_confirmed_at": "DATETIME",
+                "period_status": "VARCHAR(30) NOT NULL DEFAULT 'pending_renewal'",
+            }
+            for column_name, column_type in moving_period_columns.items():
+                if column_name not in automation_settings_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE conversation_automation_settings "
+                            f"ADD COLUMN {column_name} {column_type}"
+                        )
+                    )
+
+            # One-time compatibility window for legacy businesses. It preserves
+            # usage and entitlements, does not fabricate a historical payment,
+            # and prevents an upgrade from blocking all existing automations.
+            moving_period_migration = "2026_07_moving_automation_periods"
+            moving_period_applied = connection.execute(
+                text("SELECT 1 FROM app_migrations WHERE name = :name"),
+                {"name": moving_period_migration},
+            ).first()
+            if moving_period_applied is None:
+                migration_started_at = datetime.now(timezone.utc)
+                connection.execute(
+                    text(
+                        "UPDATE conversation_automation_settings "
+                        "SET period_started_at = :started_at, "
+                        "period_ends_at = :ends_at, "
+                        "period_status = CASE "
+                        "WHEN automation_feature_enabled IS TRUE THEN 'active' "
+                        "ELSE 'suspended' END "
+                        "WHERE period_started_at IS NULL AND period_ends_at IS NULL"
+                    ),
+                    {
+                        "started_at": migration_started_at,
+                        "ends_at": migration_started_at + timedelta(days=30),
+                    },
+                )
+                connection.execute(
+                    text("INSERT INTO app_migrations (name) VALUES (:name)"),
+                    {"name": moving_period_migration},
+                )
 
         migration_name = "2026_07_backfill_business_user_services"
         migration_applied = connection.execute(

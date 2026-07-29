@@ -565,6 +565,8 @@ def admin_get_conversation_automation(
             "period_yyyymm": settings.period_yyyymm,
             "period_start": serialized_settings["period_start"],
             "period_end": serialized_settings["period_end"],
+            "period_status": serialized_settings["period_status"],
+            "days_remaining": serialized_settings["days_remaining"],
             "percentage": serialized_settings["usage_percentage"],
             "status": serialized_settings["usage_status"],
             "limit_reached": serialized_settings["limit_reached"],
@@ -597,6 +599,11 @@ def admin_update_conversation_automation_settings(
         raise HTTPException(
             status_code=403,
             detail="La automatización no está habilitada en el plan de este negocio",
+        )
+    if updates.get("automation_enabled") is True and settings.period_status != "active":
+        raise HTTPException(
+            status_code=403,
+            detail="El periodo de automatización está pendiente de renovación",
         )
     if (
         updates.get("on_limit_reached") is not None
@@ -707,7 +714,7 @@ def admin_list_conversation_suggestions(
         "suggestions": [serialize_suggestion(item) for item in suggestions],
         "limit_reached": limit_reached,
         "notice": (
-            "Límite mensual alcanzado. Las respuestas automáticas pasan a modo sugerencia."
+            "Límite del periodo alcanzado. Las respuestas automáticas pasan a modo sugerencia."
             if limit_reached and settings.on_limit_reached == "semi_automatic"
             else None
         ),

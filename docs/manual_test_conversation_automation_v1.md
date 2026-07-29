@@ -11,7 +11,7 @@ La automatización está desactivada por defecto en todos los negocios. Abrir el
 1. Inicia sesión como owner o `business_admin`.
 2. Abre **Admin > Conversaciones**.
 3. Despliega **Automatización**.
-4. Revisa el límite mensual y el umbral automático.
+4. Revisa el límite del periodo y el umbral automático.
 5. Marca **Activar automatización** y pulsa **Guardar configuración**.
 
 Un usuario `business_staff` puede consultar y gestionar sugerencias, pero no ve ni puede editar esta configuración.
@@ -79,19 +79,19 @@ Enviar, modificar o descartar una sugerencia no consume crédito automático.
 
 1. Activa la automatización.
 2. Configura `booking_intent` como **Automático seguro**.
-3. Mantén el umbral en `80` y verifica que queda saldo mensual.
+3. Mantén el umbral en `80` y verifica que queda saldo en el periodo.
 4. Envía `hay que pedir cita?`.
 5. Comprueba que aparece un outbound con emisor **Automatización**, estado `sent` y el enlace público absoluto.
-6. Comprueba que el contador **Automáticos usados este mes** aumenta en uno y la conversación queda respondida.
+6. Comprueba que el contador **Mensajes automáticos utilizados** aumenta en uno y la conversación queda respondida.
 
-## 7. Verificar el límite mensual
+## 7. Verificar el límite del periodo
 
 1. Configura un límite bajo en un entorno local de prueba.
 2. Selecciona **Pasar a sugerencias** al alcanzar el límite.
 3. Genera automáticos hasta consumir el saldo.
 4. Envía otro mensaje seguro.
 5. Comprueba que no se crea outbound, no aumenta el contador y aparece una sugerencia.
-6. Verifica el aviso: **Límite mensual alcanzado. Las respuestas automáticas pasan a modo sugerencia.**
+6. Verifica el aviso: **Límite del periodo alcanzado. Las respuestas automáticas pasan a modo sugerencia.**
 
 El contador se reinicia al primer acceso o inbound de un mes cuyo `YYYY-MM` no coincida con el periodo guardado.
 
