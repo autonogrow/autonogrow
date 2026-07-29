@@ -31,6 +31,11 @@ from app.services.conversation_service import (
     send_outbound_message,
 )
 from app.services.conversation_automation_state_service import automation_block_reason
+from app.services.automation_credit_service import (
+    consume_automation_credit,
+    serialize_credit_summary,
+    total_credits_available,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -146,6 +151,9 @@ def ensure_automation_configuration(
             automation_enabled=False,
             monthly_auto_limit=DEFAULT_AUTOMATION_MESSAGES_PER_PERIOD,
             auto_used_current_period=0,
+            included_credits_per_period=DEFAULT_AUTOMATION_MESSAGES_PER_PERIOD,
+            included_credits_used=0,
+            additional_credits_balance=0,
             period_yyyymm=current_period(),
             period_started_at=None,
             period_ends_at=None,
@@ -193,11 +201,19 @@ def ensure_automation_configuration(
 
 def serialize_settings(settings: ConversationAutomationSettings) -> dict[str, Any]:
     sync_automation_period_status(settings)
-    limit_reached = settings.auto_used_current_period >= settings.monthly_auto_limit
+    credits = serialize_credit_summary(settings)
+    limit_reached = credits["total_available"] <= 0
     percentage = (
         100
-        if settings.monthly_auto_limit == 0
-        else min(100, round(settings.auto_used_current_period * 100 / settings.monthly_auto_limit))
+        if settings.included_credits_per_period == 0
+        else min(
+            100,
+            round(
+                settings.included_credits_used
+                * 100
+                / settings.included_credits_per_period
+            ),
+        )
     )
     period_ends_at = as_utc(settings.period_ends_at)
     remaining_seconds = (
@@ -223,8 +239,9 @@ def serialize_settings(settings: ConversationAutomationSettings) -> dict[str, An
         "business_id": settings.business_id,
         "automation_enabled": settings.automation_enabled,
         "monthly_auto_limit": settings.monthly_auto_limit,
-        "auto_limit_per_period": settings.monthly_auto_limit,
+        "auto_limit_per_period": settings.included_credits_per_period,
         "auto_used_current_period": settings.auto_used_current_period,
+        **credits,
         "period_yyyymm": settings.period_yyyymm,
         "period_started_at": iso_utc(settings.period_started_at),
         "period_ends_at": iso_utc(settings.period_ends_at),
@@ -521,6 +538,10 @@ def process_inbound_automation(
         ensure_ascii=False,
     )
     settings, rules = ensure_automation_configuration(db, business)
+    # Lock the wallet row for the availability check and the post-delivery debit.
+    # Backends without row-level locks (SQLite) still retain message-level
+    # idempotency through the unique ledger constraint.
+    db.refresh(settings, with_for_update=True)
     result: dict[str, Any] = {
         "action": "manual",
         "status": "processed",
@@ -621,7 +642,7 @@ def process_inbound_automation(
         result.update(action="suggestion", suggestion_id=suggestion.id)
         return result
 
-    limit_reached = settings.auto_used_current_period >= settings.monthly_auto_limit
+    limit_reached = total_credits_available(settings) <= 0
     can_send_automatically = (
         rule.mode == "automatic"
         and detection.safe_for_auto
@@ -703,8 +724,11 @@ def process_inbound_automation(
                 incident_id=delivery.incident_id,
             )
             return result
-        settings.auto_used_current_period += 1
-        settings.updated_at = utc_now()
+        consume_automation_credit(
+            db,
+            settings=settings,
+            related_message_id=outbound.id,
+        )
         if detection.intent in {
             "complaint_intent",
             "human_intent",
@@ -716,6 +740,8 @@ def process_inbound_automation(
         return result
 
     result["limit_reached"] = limit_reached
+    if limit_reached:
+        result.update(status="skipped", reason="credits_exhausted")
     if not limit_reached or settings.on_limit_reached == "semi_automatic":
         suggestion = create_suggestion(
             db,

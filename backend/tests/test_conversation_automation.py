@@ -226,6 +226,9 @@ class ConversationAutomationTest(unittest.TestCase):
                 "period_ends_at",
                 "payment_confirmed_at",
                 "period_status",
+                "included_credits_per_period",
+                "included_credits_used",
+                "additional_credits_balance",
             ):
                 connection.execute(
                     text(
@@ -271,13 +274,17 @@ class ConversationAutomationTest(unittest.TestCase):
                 "period_ends_at",
                 "payment_confirmed_at",
                 "period_status",
+                "included_credits_per_period",
+                "included_credits_used",
+                "additional_credits_balance",
             } <= settings_columns
         )
         with self.engine.connect() as connection:
             preserved = connection.execute(
                 text(
                     "SELECT monthly_auto_limit, auto_used_current_period, period_yyyymm, "
-                    "period_started_at, period_ends_at, payment_confirmed_at, period_status "
+                    "period_started_at, period_ends_at, payment_confirmed_at, period_status, "
+                    "included_credits_per_period, included_credits_used, additional_credits_balance "
                     "FROM conversation_automation_settings WHERE business_id = :business_id"
                 ),
                 {"business_id": self.business_a.id},
@@ -288,6 +295,7 @@ class ConversationAutomationTest(unittest.TestCase):
         self.assertEqual(migrated_end - migrated_start, timedelta(days=30))
         self.assertIsNone(preserved[5])
         self.assertEqual(preserved[6], "active")
+        self.assertEqual(tuple(preserved[7:]), (321, 123, 0))
 
     def test_catalog_upsert_adds_missing_items_without_overwriting_or_duplicates(self):
         customized = ConversationTemplate(
@@ -687,6 +695,8 @@ class ConversationAutomationTest(unittest.TestCase):
         settings, _ = self.configure(self.business_a, mode="automatic")
         settings.monthly_auto_limit = 1
         settings.auto_used_current_period = 1
+        settings.included_credits_per_period = 1
+        settings.included_credits_used = 1
         self.db.commit()
 
         result = self.inbound("quiero una cita", external_user_id="limited")

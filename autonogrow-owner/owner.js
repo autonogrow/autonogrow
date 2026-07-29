@@ -11,6 +11,7 @@ let businesses = [];
 let incidents = [];
 let openIncidentCount = 0;
 let ownerAuthUser = null;
+const OWNER_CREDIT_PRESETS = [100, 200, 500];
 const PALETTES = { slate_gold: ["#334155", "#0f172a", "#f59e0b", "#f8fafc"], rose_beauty: ["#be123c", "#831843", "#f9a8d4", "#fff1f2"], emerald_clean: ["#047857", "#064e3b", "#6ee7b7", "#ecfdf5"], blue_clinic: ["#2563eb", "#1e3a8a", "#93c5fd", "#eff6ff"], amber_barber: ["#92400e", "#451a03", "#fbbf24", "#fffbeb"], violet_modern: ["#7c3aed", "#4c1d95", "#c4b5fd", "#f5f3ff"] };
 const TEMPLATE_DESCRIPTIONS = { classic: "Estructura equilibrada para cualquier negocio.", elegant: "Diseño más premium y visual.", beauty: "Pensada para estética, manicura y peluquería.", clinic: "Limpia y profesional para centros de salud o consulta.", urban: "Más impacto para barberías y negocios modernos.", minimal: "Directa y sencilla para servicios prácticos." };
 const BUSINESS_TEMPLATES = {
@@ -213,6 +214,7 @@ function formatAutomationDate(value) {
 function renderOwnerAutomation(panel, data) {
   const settings = data.settings;
   const usage = data.usage;
+  const credits = data.credits;
   const allowed = settings.allowed_limit_behaviors || ["disabled"];
   const lastIncident = data.last_incident;
   panel.dataset.ownerPeriodStatus = usage.period_status || "pending_renewal";
@@ -227,6 +229,12 @@ function renderOwnerAutomation(panel, data) {
       <span><strong>${usage.used} / ${usage.limit}</strong>Mensajes del periodo</span><span><strong>${usage.percentage}%</strong>Consumido</span><span><strong>${escapeHtml(ownerAutomationStatusLabel(usage.status))}</strong>Estado</span><span><strong>${escapeHtml(formatAutomationDate(usage.period_start))}</strong>Inicio</span><span><strong>${escapeHtml(formatAutomationDate(usage.period_end))}</strong>Vencimiento</span><span><strong>${usage.days_remaining}</strong>Días restantes</span>
     </div>
     <div class="owner-automation-progress"><span style="width:${usage.percentage}%"></span></div>
+    <section class="owner-credit-wallet">
+      <h4>Créditos de automatización</h4>
+      <div class="owner-automation-summary"><span><strong>${credits.included_credits_remaining} / ${credits.included_credits_per_period}</strong>Incluidos disponibles</span><span><strong>${credits.included_credits_used}</strong>Incluidos utilizados</span><span><strong>${credits.additional_credits_balance}</strong>Adicionales acumulados</span><span><strong>${credits.total_available}</strong>Total disponible</span></div>
+      <div class="owner-automation-actions">${OWNER_CREDIT_PRESETS.map((amount) => `<button class="button button-secondary button-small" type="button" data-owner-automation-action="purchase-credit" data-credit-amount="${amount}">+${amount} créditos</button>`).join("")}<button class="button button-primary button-small" type="button" data-owner-automation-action="purchase-credit">Añadir créditos adicionales</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="adjust-credits">Ajustar saldo</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="credit-history">Ver historial</button></div>
+      <div data-owner-credit-history class="owner-credit-history">${(data.credit_transactions || []).map((item) => `<p><strong>${escapeHtml(item.transaction_type)}</strong> · ${item.included_delta >= 0 ? "+" : ""}${item.included_delta} incluidos · ${item.additional_delta >= 0 ? "+" : ""}${item.additional_delta} adicionales · saldo ${item.total_balance_after} · ${escapeHtml(formatAutomationDate(item.created_at))}</p>`).join("") || "<p>Sin movimientos.</p>"}</div>
+    </section>
     <div class="owner-automation-grid">
       <label>Plan<input data-owner-automation-plan maxlength="60" value="${escapeHtml(settings.plan || "")}" placeholder="standard"></label>
       <label>Límite por periodo<input data-owner-automation-limit type="number" min="0" max="${data.limit_max}" value="${settings.auto_limit_per_period}"></label>
@@ -238,7 +246,7 @@ function renderOwnerAutomation(panel, data) {
     <p class="owner-automation-feature-state">Último pago confirmado: <strong>${escapeHtml(formatAutomationDate(usage.payment_confirmed_at))}</strong> · Automatización comercial: <strong>${settings.automation_feature_enabled ? "habilitada" : "suspendida"}</strong> · Estado operativo: <strong>${settings.automation_enabled ? "activo" : "pausado"}</strong></p>
     <p>Canales habilitados: <strong>${[settings.instagram_channel_enabled ? "Instagram" : null, settings.whatsapp_channel_enabled ? "WhatsApp" : null].filter(Boolean).join(" · ") || "ninguno"}</strong></p>
     <p>Última incidencia: ${lastIncident ? `<strong>${escapeHtml(lastIncident.incident_id)}</strong> · ${escapeHtml(lastIncident.status)} · ${escapeHtml(lastIncident.category)}` : "ninguna"}</p>
-    <div class="owner-automation-actions"><button class="button button-primary button-small" type="button" data-owner-automation-action="renew">Confirmar pago y renovar 30 días</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="adjust-period">Corrección administrativa del periodo</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="save">Guardar plan y cuota</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="usage">Ajustar consumo</button><button class="button ${settings.automation_feature_enabled ? "button-danger" : "button-primary"} button-small" type="button" data-owner-automation-action="feature" data-next-enabled="${!settings.automation_feature_enabled}">${settings.automation_feature_enabled ? "Suspender automatización" : "Reactivar automatización"}</button></div>
+    <div class="owner-automation-actions"><button class="button button-primary button-small" type="button" data-owner-automation-action="renew">Confirmar pago y renovar 30 días</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="adjust-period">Corrección administrativa del periodo</button><button class="button button-secondary button-small" type="button" data-owner-automation-action="save">Guardar plan y créditos incluidos</button><button class="button ${settings.automation_feature_enabled ? "button-danger" : "button-primary"} button-small" type="button" data-owner-automation-action="feature" data-next-enabled="${!settings.automation_feature_enabled}">${settings.automation_feature_enabled ? "Suspender automatización" : "Reactivar automatización"}</button></div>
     <p data-owner-automation-feedback class="status-text"></p>`;
 }
 
@@ -267,7 +275,36 @@ async function handleOwnerAutomationAction(button) {
   const panel = button.closest("[data-owner-automation-id]");
   const businessName = panel.dataset.ownerAutomationName;
   const action = button.dataset.ownerAutomationAction;
-  if (action === "save") {
+  if (action === "purchase-credit") {
+    const preset = Number(button.dataset.creditAmount || 0);
+    const rawCredits = preset || Number(window.prompt(`Créditos adicionales para ${businessName}:`));
+    if (!Number.isInteger(rawCredits) || rawCredits <= 0) throw new Error("Los créditos deben ser un entero positivo.");
+    const amountText = window.prompt("Importe pagado (opcional):", "") ?? "";
+    const paymentAmount = amountText.trim() ? Number(amountText) : null;
+    if (paymentAmount !== null && (!Number.isFinite(paymentAmount) || paymentAmount <= 0)) throw new Error("El importe debe ser positivo.");
+    const paymentMethod = (window.prompt("Método de pago opcional (bank_transfer, cash, card u other):", "") ?? "").trim() || null;
+    const externalReference = (window.prompt("Referencia externa opcional:", "") ?? "").trim() || null;
+    const reason = window.prompt(`Motivo obligatorio para añadir ${rawCredits} créditos a ${businessName}:`);
+    if (!reason?.trim()) throw new Error("El motivo es obligatorio.");
+    if (!window.confirm(`Añadir ${rawCredits} créditos adicionales a ${businessName}. No se modificará el periodo ni el plan. ¿Confirmar?`)) return;
+    const idempotencyKey = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    await ownerAutomationRequest(panel, "automation-credits/purchase", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credits: rawCredits, payment_amount: paymentAmount, payment_method: paymentMethod, external_reference: externalReference, reason: reason.trim(), idempotency_key: idempotencyKey }) });
+  } else if (action === "adjust-credits") {
+    const includedDelta = Number(window.prompt("Variación de créditos incluidos disponibles (puede ser negativa):", "0"));
+    const additionalDelta = Number(window.prompt("Variación de créditos adicionales (puede ser negativa):", "0"));
+    if (!Number.isInteger(includedDelta) || !Number.isInteger(additionalDelta) || (includedDelta === 0 && additionalDelta === 0)) throw new Error("Introduce al menos una variación entera distinta de cero.");
+    const reason = window.prompt(`Motivo obligatorio del ajuste de saldo para ${businessName}:`);
+    if (!reason?.trim()) throw new Error("El motivo es obligatorio.");
+    const warning = includedDelta < 0 || additionalDelta < 0 ? " ADVERTENCIA: este ajuste reducirá el saldo disponible." : "";
+    if (!window.confirm(`Ajustar saldo de ${businessName}: incluidos ${includedDelta >= 0 ? "+" : ""}${includedDelta}, adicionales ${additionalDelta >= 0 ? "+" : ""}${additionalDelta}.${warning} ¿Confirmar?`)) return;
+    const idempotencyKey = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    await ownerAutomationRequest(panel, "automation-credits/adjustment", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ included_delta: includedDelta, additional_delta: additionalDelta, reason: reason.trim(), idempotency_key: idempotencyKey }) });
+  } else if (action === "credit-history") {
+    const response = await fetch(`${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerAutomationId}/automation-credits/transactions?limit=100`);
+    const body = await readResponseBody(response);
+    if (!response.ok) throw new Error(body.detail || "No se pudo cargar el historial de créditos");
+    panel.querySelector("[data-owner-credit-history]").innerHTML = body.map((item) => `<p><strong>${escapeHtml(item.transaction_type)}</strong> · ${item.included_delta >= 0 ? "+" : ""}${item.included_delta} incluidos · ${item.additional_delta >= 0 ? "+" : ""}${item.additional_delta} adicionales · saldo ${item.total_balance_after} · ${escapeHtml(formatAutomationDate(item.created_at))} · ${escapeHtml(item.reason)}</p>`).join("") || "<p>Sin movimientos.</p>";
+  } else if (action === "save") {
     const allowed = Array.from(panel.querySelectorAll("[data-owner-limit-behavior]:checked"), (item) => item.dataset.ownerLimitBehavior);
     if (!allowed.length) throw new Error("Selecciona al menos una opción permitida para el admin.");
     const behavior = panel.querySelector("[data-owner-automation-limit-mode]").value;
@@ -276,15 +313,6 @@ async function handleOwnerAutomationAction(button) {
     const reason = window.prompt(`Motivo opcional del cambio para ${businessName}:`, "") ?? "";
     const payload = { plan: panel.querySelector("[data-owner-automation-plan]").value.trim() || null, auto_limit_per_period: Number(panel.querySelector("[data-owner-automation-limit]").value), on_limit_reached: behavior, allowed_limit_behaviors: allowed, instagram_channel_enabled: panel.querySelector("[data-owner-automation-instagram]").checked, whatsapp_channel_enabled: panel.querySelector("[data-owner-automation-whatsapp]").checked, reason };
     await ownerAutomationRequest(panel, "automation-settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-  } else if (action === "usage") {
-    const rawUsage = window.prompt(`Nuevo consumo acumulado para ${businessName}:`);
-    if (rawUsage === null) return;
-    const newUsage = Number(rawUsage);
-    if (!Number.isInteger(newUsage) || newUsage < 0) throw new Error("El consumo debe ser un entero no negativo.");
-    const reason = window.prompt(`Motivo obligatorio del ajuste de consumo para ${businessName}:`);
-    if (!reason?.trim()) throw new Error("El motivo es obligatorio.");
-    if (!window.confirm(`Ajustar el consumo de ${businessName} a ${newUsage}. ¿Confirmar?`)) return;
-    await ownerAutomationRequest(panel, "automation-usage-adjustment", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ new_usage: newUsage, reason: reason.trim() }) });
   } else if (action === "renew") {
     const now = new Date();
     const expectedEnd = new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000));

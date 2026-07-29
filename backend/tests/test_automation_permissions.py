@@ -82,6 +82,8 @@ class AutomationPermissionsTest(unittest.TestCase):
         self.settings, _ = ensure_automation_configuration(self.db, self.business)
         self.settings.monthly_auto_limit = 250
         self.settings.auto_used_current_period = 25
+        self.settings.included_credits_per_period = 250
+        self.settings.included_credits_used = 25
         self.settings.period_started_at = datetime.now(timezone.utc) - timedelta(days=1)
         self.settings.period_ends_at = datetime.now(timezone.utc) + timedelta(days=29)
         self.settings.period_status = "active"
@@ -124,6 +126,12 @@ class AutomationPermissionsTest(unittest.TestCase):
             {"period_ends_at": "2099-02-01T00:00:00Z"},
             {"payment_confirmed_at": "2099-01-01T00:00:00Z"},
             {"period_status": "active"},
+            {"included_credits_per_period": 999},
+            {"included_credits_used": 1},
+            {"additional_credits_balance": 10},
+            {"purchase": {"credits": 100}},
+            {"adjustment": {"additional_delta": 1}},
+            {"transaction": "manual_adjustment"},
             {"reset_usage": True},
             {"plan": "premium"},
             {"billing": {"price": 1}},
@@ -317,7 +325,7 @@ class AutomationPermissionsTest(unittest.TestCase):
         self.assertNotIn("monthly_auto_limit: Number", admin_js)
         self.assertIn("El límite de mensajes forma parte de tu plan", admin_js)
         self.assertIn('data-owner-automation-limit', owner_js)
-        self.assertIn('data-owner-automation-action="usage"', owner_js)
+        self.assertIn('data-owner-automation-action="adjust-credits"', owner_js)
         self.assertNotIn("Reinicio previsto", admin_js)
         self.assertNotIn("contacta con soporte", admin_js)
         self.assertIn('data-owner-automation-action="renew"', owner_js)

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -307,3 +308,100 @@ class OwnerAutomationPeriodAdjustment(BaseModel):
         if self.period_ends_at <= self.period_started_at:
             raise ValueError("Period end must be after period start")
         return self
+
+
+class AutomationCreditPurchaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    credits: int = Field(gt=0, le=10_000_000)
+    payment_amount: float | None = Field(default=None, gt=0, le=10_000_000)
+    payment_method: str | None = Field(
+        default=None, max_length=60, pattern=r"^[a-z0-9_-]+$"
+    )
+    reason: str = Field(min_length=3, max_length=500)
+    external_reference: str | None = Field(default=None, max_length=120)
+    idempotency_key: str = Field(
+        min_length=8, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$"
+    )
+
+    @field_validator("reason", "idempotency_key")
+    @classmethod
+    def strip_required_credit_text(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("Value is required")
+        return value
+
+    @field_validator("payment_method", "external_reference")
+    @classmethod
+    def validate_optional_credit_text(cls, value: str | None, info: ValidationInfo) -> str | None:
+        value = value.strip() if value and value.strip() else None
+        if value and info.field_name == "external_reference":
+            compact = value.replace(" ", "").replace("-", "")
+            if compact.isdigit() and 13 <= len(compact) <= 19:
+                raise ValueError("Card numbers must not be stored as payment references")
+        return value
+
+
+class AutomationCreditAdjustmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    included_delta: int = Field(default=0, ge=-10_000_000, le=10_000_000)
+    additional_delta: int = Field(default=0, ge=-10_000_000, le=10_000_000)
+    reason: str = Field(min_length=3, max_length=500)
+    idempotency_key: str = Field(
+        min_length=8, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$"
+    )
+
+    @field_validator("reason", "idempotency_key")
+    @classmethod
+    def strip_required_adjustment_text(cls, value: str, info: ValidationInfo) -> str:
+        value = value.strip()
+        minimum = 8 if info.field_name == "idempotency_key" else 3
+        if len(value) < minimum:
+            raise ValueError("Value is required")
+        return value
+
+    @model_validator(mode="after")
+    def require_a_credit_delta(self):
+        if self.included_delta == 0 and self.additional_delta == 0:
+            raise ValueError("At least one credit delta is required")
+        return self
+
+
+class AutomationCreditSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    business_id: int
+    included_credits_per_period: int
+    included_credits_used: int
+    included_credits_remaining: int
+    additional_credits_balance: int
+    total_available: int
+    period_status: str
+    period_ends_at: str | None
+    idempotent_replay: bool = False
+
+
+class AutomationCreditTransactionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    business_id: int
+    transaction_type: str
+    amount: int
+    included_delta: int
+    additional_delta: int
+    included_balance_after: int
+    additional_balance_after: int
+    total_balance_after: int
+    payment_amount: float | None
+    payment_method: str | None
+    reason: str
+    external_reference: str | None
+    related_message_id: int | None
+    period_started_at: str | None
+    owner_user_id: int | None
+    idempotency_key: str | None
+    safe_metadata: dict[str, Any] | None
+    created_at: str

@@ -13,6 +13,7 @@ from starlette.requests import Request
 from app.core.database import Base, run_lightweight_migrations
 from app.models import (
     AuditLog,
+    AutomationCreditTransaction,
     Business,
     BusinessUser,
     Conversation,
@@ -59,6 +60,8 @@ class AutomationMovingPeriodTest(unittest.TestCase):
         self.settings.plan_key = "growth"
         self.settings.monthly_auto_limit = 450
         self.settings.auto_used_current_period = 73
+        self.settings.included_credits_per_period = 450
+        self.settings.included_credits_used = 73
         self.settings.automation_enabled = True
         self.settings.instagram_channel_enabled = False
         self.settings.whatsapp_channel_enabled = True
@@ -119,7 +122,11 @@ class AutomationMovingPeriodTest(unittest.TestCase):
         logs = self.db.query(AuditLog).order_by(AuditLog.id).all()
         self.assertEqual(
             [item.action for item in logs],
-            ["automation_payment_confirmed", "automation_period_renewed"],
+            [
+                "automation_payment_confirmed",
+                "automation_period_renewed",
+                "automation_period_allowance_granted",
+            ],
         )
         metadata = json.loads(logs[-1].metadata_json)
         self.assertEqual(metadata["owner_user_id"], self.owner.id)
@@ -327,6 +334,11 @@ class AutomationMovingPeriodTest(unittest.TestCase):
         self.assertEqual(migrated.allowed_limit_behaviors_json, original["behaviors"])
         self.assertEqual(migrated.period_started_at, first_start)
         self.assertIsNone(migrated.payment_confirmed_at)
+        self.assertEqual(migrated.additional_credits_balance, 0)
+        opening = self.db.query(AutomationCreditTransaction).filter(
+            AutomationCreditTransaction.transaction_type == "migration_opening_balance"
+        ).one()
+        self.assertEqual(opening.additional_balance_after, 0)
 
     def test_frontends_separate_payment_from_admin_period_view(self):
         root = Path(__file__).resolve().parents[2]

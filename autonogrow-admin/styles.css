@@ -617,6 +617,9 @@ select {
 .conversation-automation-usage-card strong { font-size: 1.25rem; color: var(--text); }
 .conversation-automation-quota-progress { height: 12px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
 .conversation-automation-quota-progress span { display: block; height: 100%; border-radius: inherit; background: #2563eb; }
+.conversation-credit-breakdown { display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: 10px; margin: 12px 0; }
+.conversation-credit-breakdown span { color: var(--muted); font-size: .8rem; }
+.conversation-credit-breakdown strong { display: block; color: var(--text); font-size: 1rem; }
 .conversation-automation-usage-state { margin-left: auto; padding: 4px 9px; border-radius: 999px; font-size: .78rem; font-weight: 800; background: #dcfce7; color: #166534; }
 .conversation-automation-usage-state.state-near_limit { background: #fef3c7; color: #92400e; }
 .conversation-automation-usage-state.state-limit_reached { background: #fee2e2; color: #991b1b; }
@@ -1443,7 +1446,7 @@ input {
   .conversation-create-panel, .conversation-filters { grid-template-columns: 1fr 1fr; }
   .conversation-center { grid-template-columns: 1fr; }
   .conversation-list { max-height: 280px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .conversation-template-create, .conversation-template-item, .conversation-automation-settings, .conversation-automation-rule { grid-template-columns: 1fr; }
+  .conversation-template-create, .conversation-template-item, .conversation-automation-settings, .conversation-automation-rule, .conversation-credit-breakdown { grid-template-columns: 1fr; }
 }
 @media (max-width: 520px) {
   .conversation-create-panel, .conversation-filters { grid-template-columns: 1fr; }

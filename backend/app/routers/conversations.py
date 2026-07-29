@@ -27,6 +27,7 @@ from app.schemas.conversation import (
     ConversationTemplateUpdate,
     ConversationSuggestionUpdate,
     TestInboundMessageCreate,
+    AutomationCreditReadOnlyResponse,
 )
 from app.services.conversation_automation_service import (
     allowed_limit_behaviors,
@@ -61,6 +62,10 @@ from app.services.conversation_service import (
     update_status,
 )
 from app.services.incident_service import client_message_for_incident, incident_reference
+from app.services.automation_credit_service import (
+    serialize_credit_summary,
+    total_credits_available,
+)
 
 
 admin_router = APIRouter(
@@ -557,11 +562,13 @@ def admin_get_conversation_automation(
         "rules": [serialize_rule(rule) for rule in rules],
         "usage": {
             "used": settings.auto_used_current_period,
-            "limit": settings.monthly_auto_limit,
-            "remaining": max(
-                0,
-                settings.monthly_auto_limit - settings.auto_used_current_period,
-            ),
+            "limit": settings.included_credits_per_period,
+            "remaining": serialized_settings["total_available"],
+            "included_credits_per_period": serialized_settings["included_credits_per_period"],
+            "included_credits_used": serialized_settings["included_credits_used"],
+            "included_credits_remaining": serialized_settings["included_credits_remaining"],
+            "additional_credits_balance": serialized_settings["additional_credits_balance"],
+            "total_available": serialized_settings["total_available"],
             "period_yyyymm": settings.period_yyyymm,
             "period_start": serialized_settings["period_start"],
             "period_end": serialized_settings["period_end"],
@@ -576,6 +583,27 @@ def admin_get_conversation_automation(
             for intent in AVAILABLE_INTENTS
         ],
         "templates": [serialize_template(template, business) for template in templates],
+    }
+
+
+@admin_router.get(
+    "/automation-credits",
+    response_model=AutomationCreditReadOnlyResponse,
+)
+def admin_get_business_automation_credits(
+    business_slug: str,
+    actor: User = Depends(require_business_admin),
+    db: Session = Depends(get_db),
+):
+    require_business_admin(business_slug, actor, db)
+    business = get_business_or_404(db, business_slug)
+    settings, _ = ensure_automation_configuration(db, business)
+    db.commit()
+    db.refresh(settings)
+    return {
+        **serialize_credit_summary(settings),
+        "period_status": settings.period_status,
+        "period_ends_at": serialize_settings(settings)["period_ends_at"],
     }
 
 
@@ -704,10 +732,7 @@ def admin_list_conversation_suggestions(
         .order_by(ConversationSuggestion.created_at.desc(), ConversationSuggestion.id.desc())
         .all()
     )
-    limit_reached = (
-        settings.automation_enabled
-        and settings.auto_used_current_period >= settings.monthly_auto_limit
-    )
+    limit_reached = settings.automation_enabled and total_credits_available(settings) <= 0
     return {
         "business_slug": business.slug,
         "conversation_id": conversation.id,

@@ -192,6 +192,68 @@ def run_lightweight_migrations(target_engine=None) -> None:
                         )
                     )
 
+            automation_credit_columns = {
+                "included_credits_per_period": "INTEGER NOT NULL DEFAULT 1000",
+                "included_credits_used": "INTEGER NOT NULL DEFAULT 0",
+                "additional_credits_balance": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for column_name, column_type in automation_credit_columns.items():
+                if column_name not in automation_settings_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE conversation_automation_settings "
+                            f"ADD COLUMN {column_name} {column_type}"
+                        )
+                    )
+
+            credit_migration = "2026_07_automation_credit_wallets"
+            credit_migration_applied = connection.execute(
+                text("SELECT 1 FROM app_migrations WHERE name = :name"),
+                {"name": credit_migration},
+            ).first()
+            if credit_migration_applied is None:
+                connection.execute(
+                    text(
+                        "UPDATE conversation_automation_settings SET "
+                        "included_credits_per_period = CASE "
+                        "WHEN monthly_auto_limit < 0 THEN 0 ELSE monthly_auto_limit END, "
+                        "included_credits_used = CASE "
+                        "WHEN auto_used_current_period < 0 THEN 0 "
+                        "WHEN auto_used_current_period > monthly_auto_limit "
+                        "THEN monthly_auto_limit ELSE auto_used_current_period END, "
+                        "additional_credits_balance = 0"
+                    )
+                )
+                if "automation_credit_transactions" in table_names:
+                    connection.execute(
+                        text(
+                            "INSERT INTO automation_credit_transactions ("
+                            "business_id, transaction_type, amount, included_delta, "
+                            "additional_delta, included_balance_after, "
+                            "additional_balance_after, total_balance_after, reason, "
+                            "period_started_at, idempotency_key, safe_metadata_json, created_at"
+                            ") SELECT business_id, 'migration_opening_balance', "
+                            "included_credits_per_period - included_credits_used, "
+                            "included_credits_per_period - included_credits_used, 0, "
+                            "included_credits_per_period - included_credits_used, 0, "
+                            "included_credits_per_period - included_credits_used, "
+                            "'Migración segura desde contadores heredados', "
+                            "NULL, 'migration-opening-' || business_id, "
+                            ":safe_metadata, "
+                            "CURRENT_TIMESTAMP FROM conversation_automation_settings"
+                        ),
+                        {
+                            "safe_metadata": (
+                                '{"source":"legacy_fields",'
+                                '"additional_credits_granted":0}'
+                            )
+                        },
+                    )
+                connection.execute(
+                    text("INSERT INTO app_migrations (name) VALUES (:name)"),
+                    {"name": credit_migration},
+                )
+
             moving_period_columns = {
                 "period_started_at": "DATETIME",
                 "period_ends_at": "DATETIME",

@@ -104,6 +104,19 @@ class BusinessAutomationSettingsUpdate(BaseModel):
 ConversationAutomationSettingsUpdate = BusinessAutomationSettingsUpdate
 
 
+class AutomationCreditReadOnlyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    business_id: int
+    included_credits_per_period: int
+    included_credits_used: int
+    included_credits_remaining: int
+    additional_credits_balance: int
+    total_available: int
+    period_status: str
+    period_ends_at: str | None
+
+
 class ConversationAutomationControlUpdate(BaseModel):
     action: str
     duration_minutes: int | None = None

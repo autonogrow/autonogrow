@@ -54,6 +54,10 @@ doble clic. Periodo, contador y auditoría se confirman en una única transacci�
 | Corregir fechas | Sí, con motivo | No | No | No |
 | Reiniciar consumo por pago | Sí | No | No | No |
 | Consultar consumo y límite | Sí | Sí, de su negocio | No | No |
+| Ver créditos incluidos y adicionales | Sí | Sí, de su negocio | No | No |
+| Comprar créditos adicionales | Sí | No | No | No |
+| Ajustar saldos de créditos | Sí, con motivo | No | No | No |
+| Ver libro de movimientos | Sí | No | No | No |
 | Ajustar consumo administrativamente | Sí, con motivo | No | No | No |
 | Suspender/reactivar comercialmente | Sí | No | No | No |
 | Pausar/reactivar operativamente | Sí | Sí, con periodo y función activos | No | No |

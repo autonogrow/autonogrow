@@ -2192,13 +2192,16 @@ function renderConversationAutomation() {
       <button class="btn btn-primary" type="button" onclick="saveConversationAutomationSettings()">Guardar configuración</button>
     </div>
     <article class="conversation-automation-usage-card">
-      <div><p>Mensajes automáticos utilizados</p><strong>${usage.used} de ${usage.limit}</strong><span class="conversation-automation-usage-state state-${escapeHtml(usage.status)}">${usageStatusLabels[usage.status] || usage.status}</span></div>
+      <div><p>Créditos de automatización</p><strong>${usage.total_available} disponibles</strong><span class="conversation-automation-usage-state state-${escapeHtml(usage.status)}">${usageStatusLabels[usage.status] || usage.status}</span></div>
+      <div class="conversation-credit-breakdown"><span><strong>${usage.included_credits_remaining} de ${usage.included_credits_per_period}</strong>Incluidos disponibles</span><span><strong>${usage.additional_credits_balance}</strong>Créditos adicionales acumulados</span><span><strong>${usage.total_available}</strong>Total disponible</span></div>
       <div class="conversation-automation-quota-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${usage.percentage}"><span style="width:${usage.percentage}%"></span></div>
       <p>${usage.percentage}% utilizado · ${escapeHtml(periodSummary)}</p>
       <p>${usage.period_status === "pending_renewal" ? "El periodo de automatización está pendiente de renovación. El equipo de AutonoGrow gestionará la reactivación." : "El límite de mensajes forma parte de tu plan de AutonoGrow. Para modificarlo, contacta con el equipo de AutonoGrow."}</p>
+      ${usage.included_credits_remaining === 0 && usage.additional_credits_balance > 0 ? "<p>Has utilizado los mensajes incluidos en tu plan. A partir de ahora se utilizarán tus créditos adicionales.</p>" : ""}
+      ${usage.total_available === 0 ? "<p class=\"conversation-automation-warning\">No quedan créditos de automatización disponibles. El equipo de AutonoGrow gestionará la ampliación del servicio.</p>" : ""}
       ${settings.automation_feature_enabled ? "" : "<p class=\"conversation-automation-warning\">La automatización está pausada por AutonoGrow para este negocio.</p>"}
     </article>
-    ${usage.limit_reached ? `<p class="conversation-automation-warning">${settings.on_limit_reached === "semi_automatic" ? "Límite del periodo alcanzado. Las respuestas automáticas pasan a modo sugerencia." : "Límite del periodo alcanzado. No se enviarán más respuestas automáticas durante este periodo."}</p>` : ""}
+    ${usage.limit_reached ? `<p class="conversation-automation-warning">${settings.on_limit_reached === "semi_automatic" ? "Sin créditos disponibles. Las respuestas automáticas pasan a modo sugerencia." : "Sin créditos disponibles. No se enviarán más respuestas automáticas."}</p>` : ""}
     <div class="conversation-automation-rules">
       <h3>Modo por intención</h3>
       ${(conversationAutomation.rules || []).map((rule) => `

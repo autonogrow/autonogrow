@@ -17,6 +17,7 @@ from app.core.config import Settings
 from app.core.database import Base
 from app.core.security import get_current_user, require_business_access
 from app.models import (
+    AutomationCreditTransaction,
     Business,
     BusinessUser,
     Conversation,
@@ -738,8 +739,17 @@ class InstagramV1Test(unittest.TestCase):
         self.assertEqual(success["action"], "automatic")
         self.assertEqual(success["delivery_status"], "sent")
         self.assertEqual(settings_row.auto_used_current_period, 1)
+        self.assertEqual(settings_row.included_credits_used, 1)
+        consumed_before_failure = (
+            self.db.query(AutomationCreditTransaction)
+            .filter(
+                AutomationCreditTransaction.business_id == self.business_a.id,
+                AutomationCreditTransaction.transaction_type
+                == "automatic_message_consumed",
+            )
+            .count()
+        )
 
-        settings_row.auto_used_current_period = 0
         failed_conversation = self.create_instagram_conversation(user_id="auto-failed")
         failed_inbound = add_message(
             self.db,
@@ -760,8 +770,55 @@ class InstagramV1Test(unittest.TestCase):
             )
         self.assertEqual(failed["action"], "automatic_failed")
         self.assertEqual(failed["delivery_status"], "failed")
-        self.assertEqual(settings_row.auto_used_current_period, 0)
+        self.assertEqual(settings_row.auto_used_current_period, 1)
+        self.assertEqual(settings_row.included_credits_used, 1)
+        self.assertEqual(
+            self.db.query(AutomationCreditTransaction)
+            .filter(
+                AutomationCreditTransaction.business_id == self.business_a.id,
+                AutomationCreditTransaction.transaction_type
+                == "automatic_message_consumed",
+            )
+            .count(),
+            consumed_before_failure,
+        )
         self.assertEqual(failed_conversation.status, "pending")
+
+        timeout_conversation = self.create_instagram_conversation(user_id="auto-timeout")
+        timeout_inbound = add_message(
+            self.db,
+            conversation=timeout_conversation,
+            direction="inbound",
+            sender_type="customer",
+            body="quiero una cita",
+        )
+        with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
+            "app.services.conversation_service.send_instagram_text_message",
+            return_value=ProviderSendResult(
+                "failed",
+                error_message="Instagram provider request timed out",
+                timed_out=True,
+            ),
+        ):
+            timed_out = process_inbound_automation(
+                self.db,
+                business=self.business_a,
+                conversation=timeout_conversation,
+                message=timeout_inbound,
+        )
+        self.assertEqual(timed_out["action"], "automatic_failed")
+        self.assertEqual(timed_out["delivery_status"], "failed")
+        self.assertEqual(settings_row.included_credits_used, 1)
+        self.assertEqual(
+            self.db.query(AutomationCreditTransaction)
+            .filter(
+                AutomationCreditTransaction.business_id == self.business_a.id,
+                AutomationCreditTransaction.transaction_type
+                == "automatic_message_consumed",
+            )
+            .count(),
+            consumed_before_failure,
+        )
 
         retry_inbound = add_message(
             self.db,
@@ -781,7 +838,8 @@ class InstagramV1Test(unittest.TestCase):
                 message=retry_inbound,
             )
         self.assertEqual(retry["action"], "automatic")
-        self.assertEqual(settings_row.auto_used_current_period, 1)
+        self.assertEqual(settings_row.auto_used_current_period, 2)
+        self.assertEqual(settings_row.included_credits_used, 2)
 
     def test_outbound_permissions_and_tenant_isolation(self):
         other_conversation = self.create_instagram_conversation(

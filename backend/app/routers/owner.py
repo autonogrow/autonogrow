@@ -26,6 +26,7 @@ from app.models import (
     ReviewRequest,
     SystemIncident,
     ConversationAutomationSettings,
+    AutomationCreditTransaction,
     AuditLog,
 )
 from app.schemas.owner import (
@@ -38,6 +39,10 @@ from app.schemas.owner import (
     OwnerAutomationUsageAdjustment,
     OwnerAutomationPeriodRenewal,
     OwnerAutomationPeriodAdjustment,
+    AutomationCreditPurchaseRequest,
+    AutomationCreditAdjustmentRequest,
+    AutomationCreditSummaryResponse,
+    AutomationCreditTransactionResponse,
 )
 from app.schemas.branding import resolve_branding
 from app.services.availability_service import serialize_settings
@@ -51,6 +56,14 @@ from app.services.conversation_automation_service import (
     serialize_settings as serialize_automation_settings,
     sync_automation_period_status,
     utc_now,
+)
+from app.services.automation_credit_service import (
+    adjust_credit_balances,
+    get_credit_transaction_by_idempotency,
+    grant_period_allowance,
+    purchase_additional_credits,
+    serialize_credit_summary,
+    serialize_credit_transaction,
 )
 
 
@@ -131,12 +144,19 @@ def owner_automation_payload(
         .first()
     )
     serialized = serialize_automation_settings(settings)
+    recent_credit_transactions = (
+        db.query(AutomationCreditTransaction)
+        .filter(AutomationCreditTransaction.business_id == business.id)
+        .order_by(AutomationCreditTransaction.created_at.desc(), AutomationCreditTransaction.id.desc())
+        .limit(8)
+        .all()
+    )
     return {
         "business": {"id": business.id, "slug": business.slug, "name": business.name},
         "settings": serialized,
         "usage": {
             "used": settings.auto_used_current_period,
-            "limit": settings.monthly_auto_limit,
+            "limit": settings.included_credits_per_period,
             "percentage": serialized["usage_percentage"],
             "status": serialized["usage_status"],
             "period_start": serialized["period_start"],
@@ -146,7 +166,24 @@ def owner_automation_payload(
             "days_remaining": serialized["days_remaining"],
         },
         "last_incident": serialize_incident(latest_incident) if latest_incident else None,
+        "credits": credit_summary_payload(settings),
+        "credit_transactions": [
+            serialize_credit_transaction(item) for item in recent_credit_transactions
+        ],
         "limit_max": 1_000_000,
+    }
+
+
+def credit_summary_payload(
+    settings: ConversationAutomationSettings,
+    *,
+    idempotent_replay: bool = False,
+) -> dict:
+    return {
+        **serialize_credit_summary(settings),
+        "period_status": settings.period_status,
+        "period_ends_at": iso_utc(settings.period_ends_at),
+        "idempotent_replay": idempotent_replay,
     }
 
 
@@ -405,6 +442,12 @@ def update_owner_business_automation_settings(
         if old_value == new_value:
             continue
         setattr(settings, model_field, new_value)
+        if api_field == "auto_limit_per_period":
+            settings.included_credits_per_period = int(new_value)
+            settings.included_credits_used = min(
+                settings.included_credits_used,
+                settings.included_credits_per_period,
+            )
         if api_field == "automation_feature_enabled":
             settings.automation_enabled = bool(new_value)
             if not new_value:
@@ -481,7 +524,13 @@ def adjust_owner_business_automation_usage(
     business = get_business_by_id_or_404(db, business_id)
     settings, _ = ensure_automation_configuration(db, business)
     old_usage = settings.auto_used_current_period
+    if payload.new_usage > settings.included_credits_per_period:
+        raise HTTPException(
+            status_code=422,
+            detail="El ajuste heredado no puede superar los créditos incluidos del periodo",
+        )
     settings.auto_used_current_period = payload.new_usage
+    settings.included_credits_used = payload.new_usage
     settings.updated_at = utc_now()
     record_audit(
         db,
@@ -603,6 +652,24 @@ def renew_owner_business_automation_period(
             "idempotent_replay": True,
             **owner_automation_payload(db, business, settings),
         }
+    existing_credit_transaction = (
+        get_credit_transaction_by_idempotency(
+            db,
+            business_id=business.id,
+            idempotency_key=normalized_key,
+        )
+        if normalized_key
+        else None
+    )
+    if existing_credit_transaction is not None:
+        if existing_credit_transaction.transaction_type != "period_allowance_granted":
+            raise HTTPException(status_code=409, detail="Idempotency key already used")
+        db.commit()
+        return {
+            "ok": True,
+            "idempotent_replay": True,
+            **owner_automation_payload(db, business, settings),
+        }
 
     confirmed_at = utc_now()
     last_confirmation = as_utc(settings.payment_confirmed_at)
@@ -642,8 +709,14 @@ def renew_owner_business_automation_period(
     settings.period_started_at = confirmed_at
     settings.period_ends_at = confirmed_at + timedelta(days=AUTOMATION_PERIOD_DAYS)
     settings.period_status = "suspended" if manually_suspended else "active"
-    settings.auto_used_current_period = 0
     settings.updated_at = confirmed_at
+    allowance_transaction = grant_period_allowance(
+        db,
+        settings=settings,
+        owner_user_id=actor.id,
+        reason=payload.reason,
+        idempotency_key=normalized_key,
+    )
     audit_metadata = _renewal_audit_metadata(
         request=request,
         actor=actor,
@@ -672,6 +745,20 @@ def renew_owner_business_automation_period(
                 metadata=audit_metadata,
                 commit=False,
             )
+        record_audit(
+            db,
+            action="automation_period_allowance_granted",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="automation_credit_transaction",
+            resource_id=allowance_transaction.id,
+            metadata={
+                **audit_metadata,
+                **serialize_credit_summary(settings),
+            },
+            commit=False,
+        )
         db.commit()
     except Exception:
         db.rollback()
@@ -740,6 +827,205 @@ def adjust_owner_business_automation_period(
         raise
     db.refresh(settings)
     return {"ok": True, **owner_automation_payload(db, business, settings)}
+
+
+@router.get(
+    "/businesses/{business_id}/automation-credits",
+    response_model=AutomationCreditSummaryResponse,
+)
+def get_owner_business_automation_credits(
+    business_id: int,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    business = get_business_by_id_or_404(db, business_id)
+    settings, _ = ensure_automation_configuration(db, business)
+    db.commit()
+    db.refresh(settings)
+    return credit_summary_payload(settings)
+
+
+@router.post(
+    "/businesses/{business_id}/automation-credits/purchase",
+    response_model=AutomationCreditSummaryResponse,
+)
+def purchase_owner_business_automation_credits(
+    business_id: int,
+    payload: AutomationCreditPurchaseRequest,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    business = get_business_by_id_or_404(db, business_id)
+    settings, _ = ensure_automation_configuration(db, business)
+    db.refresh(settings, with_for_update=True)
+    existing = get_credit_transaction_by_idempotency(
+        db,
+        business_id=business.id,
+        idempotency_key=payload.idempotency_key,
+    )
+    if existing is not None:
+        if existing.transaction_type != "additional_credits_purchased":
+            raise HTTPException(status_code=409, detail="Idempotency key already used")
+        db.commit()
+        return credit_summary_payload(settings, idempotent_replay=True)
+    old_summary = serialize_credit_summary(settings)
+    try:
+        transaction = purchase_additional_credits(
+            db,
+            settings=settings,
+            credits=payload.credits,
+            payment_amount=payload.payment_amount,
+            payment_method=payload.payment_method,
+            reason=payload.reason,
+            external_reference=payload.external_reference,
+            owner_user_id=actor.id,
+            idempotency_key=payload.idempotency_key,
+        )
+        record_audit(
+            db,
+            action="automation_additional_credits_purchased",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="automation_credit_transaction",
+            resource_id=transaction.id,
+            metadata={
+                "owner_user_id": actor.id,
+                "business_id": business.id,
+                "type": transaction.transaction_type,
+                "delta": payload.credits,
+                "old_balance": old_summary,
+                "new_balance": serialize_credit_summary(settings),
+                "payment_amount": payload.payment_amount,
+                "payment_method": payload.payment_method,
+                "external_reference": payload.external_reference,
+                "reason": payload.reason,
+                "idempotency_key": payload.idempotency_key,
+                "request_id": request.headers.get("x-request-id"),
+                "timestamp": iso_utc(utc_now()),
+            },
+            commit=False,
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = get_credit_transaction_by_idempotency(
+            db,
+            business_id=business.id,
+            idempotency_key=payload.idempotency_key,
+        )
+        if existing is None or existing.transaction_type != "additional_credits_purchased":
+            raise
+        settings, _ = ensure_automation_configuration(db, business)
+        return credit_summary_payload(settings, idempotent_replay=True)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    db.refresh(settings)
+    return credit_summary_payload(settings)
+
+
+@router.post(
+    "/businesses/{business_id}/automation-credits/adjustment",
+    response_model=AutomationCreditSummaryResponse,
+)
+def adjust_owner_business_automation_credits(
+    business_id: int,
+    payload: AutomationCreditAdjustmentRequest,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    business = get_business_by_id_or_404(db, business_id)
+    settings, _ = ensure_automation_configuration(db, business)
+    db.refresh(settings, with_for_update=True)
+    existing = get_credit_transaction_by_idempotency(
+        db,
+        business_id=business.id,
+        idempotency_key=payload.idempotency_key,
+    )
+    if existing is not None:
+        if existing.transaction_type != "manual_adjustment":
+            raise HTTPException(status_code=409, detail="Idempotency key already used")
+        db.commit()
+        return credit_summary_payload(settings, idempotent_replay=True)
+    old_summary = serialize_credit_summary(settings)
+    try:
+        transaction = adjust_credit_balances(
+            db,
+            settings=settings,
+            included_delta=payload.included_delta,
+            additional_delta=payload.additional_delta,
+            reason=payload.reason,
+            owner_user_id=actor.id,
+            idempotency_key=payload.idempotency_key,
+        )
+        record_audit(
+            db,
+            action="automation_credit_adjusted",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="automation_credit_transaction",
+            resource_id=transaction.id,
+            metadata={
+                "owner_user_id": actor.id,
+                "business_id": business.id,
+                "type": transaction.transaction_type,
+                "included_delta": payload.included_delta,
+                "additional_delta": payload.additional_delta,
+                "old_balance": old_summary,
+                "new_balance": serialize_credit_summary(settings),
+                "reason": payload.reason,
+                "idempotency_key": payload.idempotency_key,
+                "request_id": request.headers.get("x-request-id"),
+                "timestamp": iso_utc(utc_now()),
+            },
+            commit=False,
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = get_credit_transaction_by_idempotency(
+            db,
+            business_id=business.id,
+            idempotency_key=payload.idempotency_key,
+        )
+        if existing is None or existing.transaction_type != "manual_adjustment":
+            raise
+        settings, _ = ensure_automation_configuration(db, business)
+        return credit_summary_payload(settings, idempotent_replay=True)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    db.refresh(settings)
+    return credit_summary_payload(settings)
+
+
+@router.get(
+    "/businesses/{business_id}/automation-credits/transactions",
+    response_model=list[AutomationCreditTransactionResponse],
+)
+def list_owner_business_automation_credit_transactions(
+    business_id: int,
+    limit: int = Query(default=50, ge=1, le=500),
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    get_business_by_id_or_404(db, business_id)
+    rows = (
+        db.query(AutomationCreditTransaction)
+        .filter(AutomationCreditTransaction.business_id == business_id)
+        .order_by(AutomationCreditTransaction.created_at.desc(), AutomationCreditTransaction.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [serialize_credit_transaction(item) for item in rows]
 
 
 @router.patch("/incidents/{incident_id}")
