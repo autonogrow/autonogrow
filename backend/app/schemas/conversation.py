@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -183,3 +185,12 @@ class TestInboundMessageCreate(BaseModel):
         if not value:
             raise ValueError("Value cannot be empty")
         return value
+
+
+class BusinessIntegrationStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    state: str
+    message: str
+    token_expires_at: datetime | None

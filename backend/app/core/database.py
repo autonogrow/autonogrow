@@ -45,6 +45,16 @@ def create_db_and_tables() -> None:
 
     Base.metadata.create_all(bind=engine)
     run_lightweight_migrations()
+    from app.services.instagram_integration_service import initialize_instagram_integrations
+
+    db = SessionLocal()
+    try:
+        initialize_instagram_integrations(db)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def run_lightweight_migrations(target_engine=None) -> None:
@@ -127,6 +137,37 @@ def run_lightweight_migrations(target_engine=None) -> None:
             for column_name, column_type in branding_columns.items():
                 if column_name not in business_columns:
                     connection.execute(text(f"ALTER TABLE businesses ADD COLUMN {column_name} {column_type}"))
+
+        if "system_incidents" in table_names:
+            incident_columns = {
+                column["name"] for column in inspector.get_columns("system_incidents")
+            }
+            if "integration_id" not in incident_columns:
+                connection.execute(
+                    text("ALTER TABLE system_incidents ADD COLUMN integration_id INTEGER")
+                )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_system_incidents_integration_id "
+                    "ON system_incidents (integration_id)"
+                )
+            )
+
+        if "business_channel_integrations" in table_names:
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "uq_channel_integration_provider_account "
+                    "ON business_channel_integrations (provider, external_account_id)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "uq_channel_integration_business_provider "
+                    "ON business_channel_integrations (business_id, provider)"
+                )
+            )
 
         if "conversations" in table_names:
             conversation_columns = {

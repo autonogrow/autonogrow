@@ -19,6 +19,7 @@ from app.core.security import get_current_user, require_business_access
 from app.models import (
     AutomationCreditTransaction,
     Business,
+    BusinessChannelIntegration,
     BusinessUser,
     Conversation,
     ConversationMessage,
@@ -92,6 +93,16 @@ class InstagramV1Test(unittest.TestCase):
                 ),
             ]
         )
+        self.instagram_integration = BusinessChannelIntegration(
+            business_id=self.business_a.id,
+            channel="instagram",
+            provider="instagram",
+            external_account_id="ig-business-1",
+            encrypted_access_token="test-ciphertext",
+            encryption_key_version="v1",
+            integration_status="connected",
+        )
+        self.db.add(self.instagram_integration)
         self.db.commit()
 
     def tearDown(self):
@@ -581,6 +592,8 @@ class InstagramV1Test(unittest.TestCase):
             result = send_instagram_text_message(
                 "ig-user",
                 "Respuesta",
+                access_token="test-access-token",
+                external_account_id="ig-business-1",
                 settings=configured,
             )
 
@@ -606,7 +619,13 @@ class InstagramV1Test(unittest.TestCase):
         with patch("app.services.instagram_provider.requests.post", return_value=response), patch(
             "logging.Logger._log"
         ) as logger_log:
-            result = send_instagram_text_message("ig-user", "Respuesta", settings=settings)
+            result = send_instagram_text_message(
+                "ig-user",
+                "Respuesta",
+                access_token="test-access-token",
+                external_account_id="ig-business-1",
+                settings=settings,
+            )
 
         self.assertEqual(result.delivery_status, "failed")
         self.assertEqual(
@@ -637,8 +656,8 @@ class InstagramV1Test(unittest.TestCase):
         settings = self.settings(instagram_provider_enabled=True)
         success_conversation = self.create_instagram_conversation(user_id="success-user")
         with patch("app.services.conversation_service.get_settings", return_value=settings), patch(
-            "app.services.conversation_service.send_instagram_text_message",
-            return_value=ProviderSendResult("sent", "provider-out-1"),
+            "app.services.conversation_service.send_business_instagram_message",
+            return_value=(ProviderSendResult("sent", "provider-out-1"), self.instagram_integration),
         ):
             sent = admin_send_conversation_message(
                 self.business_a.slug,
@@ -653,8 +672,8 @@ class InstagramV1Test(unittest.TestCase):
 
         failed_conversation = self.create_instagram_conversation(user_id="failed-user")
         with patch("app.services.conversation_service.get_settings", return_value=settings), patch(
-            "app.services.conversation_service.send_instagram_text_message",
-            return_value=ProviderSendResult("failed", error_message="safe failure"),
+            "app.services.conversation_service.send_business_instagram_message",
+            return_value=(ProviderSendResult("failed", error_message="safe failure"), self.instagram_integration),
         ):
             with self.assertRaises(HTTPException) as failed:
                 admin_send_conversation_message(
@@ -691,8 +710,8 @@ class InstagramV1Test(unittest.TestCase):
         provider_settings = self.settings(instagram_provider_enabled=True)
 
         with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
-            "app.services.conversation_service.send_instagram_text_message",
-            return_value=ProviderSendResult("sent", "suggestion-provider-mid"),
+            "app.services.conversation_service.send_business_instagram_message",
+            return_value=(ProviderSendResult("sent", "suggestion-provider-mid"), self.instagram_integration),
         ):
             result = admin_send_conversation_suggestion(
                 self.business_a.slug,
@@ -727,8 +746,8 @@ class InstagramV1Test(unittest.TestCase):
             body="quiero una cita",
         )
         with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
-            "app.services.conversation_service.send_instagram_text_message",
-            return_value=ProviderSendResult("sent", "auto-provider-mid"),
+            "app.services.conversation_service.send_business_instagram_message",
+            return_value=(ProviderSendResult("sent", "auto-provider-mid"), self.instagram_integration),
         ):
             success = process_inbound_automation(
                 self.db,
@@ -759,8 +778,8 @@ class InstagramV1Test(unittest.TestCase):
             body="quiero una cita",
         )
         with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
-            "app.services.conversation_service.send_instagram_text_message",
-            return_value=ProviderSendResult("failed", error_message="safe failure"),
+            "app.services.conversation_service.send_business_instagram_message",
+            return_value=(ProviderSendResult("failed", error_message="safe failure"), self.instagram_integration),
         ):
             failed = process_inbound_automation(
                 self.db,
@@ -793,12 +812,12 @@ class InstagramV1Test(unittest.TestCase):
             body="quiero una cita",
         )
         with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
-            "app.services.conversation_service.send_instagram_text_message",
-            return_value=ProviderSendResult(
+            "app.services.conversation_service.send_business_instagram_message",
+            return_value=(ProviderSendResult(
                 "failed",
                 error_message="Instagram provider request timed out",
                 timed_out=True,
-            ),
+            ), self.instagram_integration),
         ):
             timed_out = process_inbound_automation(
                 self.db,
@@ -828,8 +847,8 @@ class InstagramV1Test(unittest.TestCase):
             body="quiero una cita",
         )
         with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
-            "app.services.conversation_service.send_instagram_text_message",
-            return_value=ProviderSendResult("sent", "auto-provider-retry-mid"),
+            "app.services.conversation_service.send_business_instagram_message",
+            return_value=(ProviderSendResult("sent", "auto-provider-retry-mid"), self.instagram_integration),
         ):
             retry = process_inbound_automation(
                 self.db,

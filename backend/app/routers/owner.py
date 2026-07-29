@@ -28,6 +28,7 @@ from app.models import (
     ConversationAutomationSettings,
     AutomationCreditTransaction,
     AuditLog,
+    BusinessChannelIntegration,
 )
 from app.schemas.owner import (
     OwnerBusinessCreate,
@@ -43,10 +44,20 @@ from app.schemas.owner import (
     AutomationCreditAdjustmentRequest,
     AutomationCreditSummaryResponse,
     AutomationCreditTransactionResponse,
+    InstagramIntegrationCreateRequest,
+    InstagramIntegrationReconnectRequest,
+    InstagramIntegrationDisconnectRequest,
+    InstagramIntegrationResponse,
+    InstagramIntegrationVerificationResponse,
 )
 from app.schemas.branding import resolve_branding
 from app.services.availability_service import serialize_settings
-from app.services.incident_service import SEVERITY_ORDER, serialize_incident
+from app.services.incident_service import (
+    ACTIVE_STATUSES,
+    SEVERITY_ORDER,
+    resolve_related_incidents,
+    serialize_incident,
+)
 from app.services.conversation_automation_service import (
     AUTOMATION_PERIOD_DAYS,
     allowed_limit_behaviors,
@@ -65,6 +76,19 @@ from app.services.automation_credit_service import (
     serialize_credit_summary,
     serialize_credit_transaction,
 )
+from app.services.integration_crypto_service import IntegrationCryptoError
+from app.services.instagram_integration_service import (
+    INSTAGRAM_CHANNEL,
+    INSTAGRAM_PROVIDER,
+    evaluate_integration_expiration,
+    get_instagram_integration,
+    mask_external_account_id,
+    replace_integration_credentials,
+    report_integration_incident,
+    serialize_instagram_integration,
+    verify_instagram_integration,
+)
+from app.services.instagram_provider import verify_instagram_access_token
 
 
 router = APIRouter(prefix="/api/owner", tags=["owner"], dependencies=[Depends(require_owner)])
@@ -185,6 +209,23 @@ def credit_summary_payload(
         "period_ends_at": iso_utc(settings.period_ends_at),
         "idempotent_replay": idempotent_replay,
     }
+
+
+def owner_instagram_integration_payload(
+    db: Session,
+    integration: BusinessChannelIntegration,
+) -> dict:
+    payload = serialize_instagram_integration(integration)
+    payload["has_open_incident"] = (
+        db.query(SystemIncident)
+        .filter(
+            SystemIncident.integration_id == integration.id,
+            SystemIncident.status.in_(ACTIVE_STATUSES),
+        )
+        .count()
+        > 0
+    )
+    return payload
 
 
 def owner_audit_metadata(
@@ -827,6 +868,412 @@ def adjust_owner_business_automation_period(
         raise
     db.refresh(settings)
     return {"ok": True, **owner_automation_payload(db, business, settings)}
+
+
+@router.get(
+    "/businesses/{business_id}/integrations",
+    response_model=list[InstagramIntegrationResponse],
+)
+def list_owner_business_integrations(
+    business_id: int,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    get_business_by_id_or_404(db, business_id)
+    rows = (
+        db.query(BusinessChannelIntegration)
+        .filter(BusinessChannelIntegration.business_id == business_id)
+        .order_by(BusinessChannelIntegration.provider, BusinessChannelIntegration.id)
+        .all()
+    )
+    for item in rows:
+        evaluate_integration_expiration(db, item)
+    db.commit()
+    return [owner_instagram_integration_payload(db, item) for item in rows]
+
+
+@router.get(
+    "/businesses/{business_id}/integrations/instagram",
+    response_model=InstagramIntegrationResponse,
+)
+def get_owner_business_instagram_integration(
+    business_id: int,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    get_business_by_id_or_404(db, business_id)
+    integration = get_instagram_integration(db, business_id=business_id)
+    if integration is None:
+        raise HTTPException(status_code=404, detail="Instagram integration not found")
+    evaluate_integration_expiration(db, integration)
+    db.commit()
+    db.refresh(integration)
+    return owner_instagram_integration_payload(db, integration)
+
+
+@router.post(
+    "/businesses/{business_id}/integrations/instagram",
+    response_model=InstagramIntegrationResponse,
+    status_code=201,
+)
+def create_owner_business_instagram_integration(
+    business_id: int,
+    payload: InstagramIntegrationCreateRequest,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    business = get_business_by_id_or_404(db, business_id)
+    if get_instagram_integration(db, business_id=business_id) is not None:
+        raise HTTPException(status_code=409, detail="Business already has an Instagram integration")
+    conflict = (
+        db.query(BusinessChannelIntegration)
+        .filter(
+            BusinessChannelIntegration.provider == INSTAGRAM_PROVIDER,
+            BusinessChannelIntegration.external_account_id == payload.external_account_id,
+        )
+        .first()
+    )
+    if conflict is not None:
+        raise HTTPException(status_code=409, detail="Instagram account already belongs to another business")
+    access_token = payload.access_token.get_secret_value()
+    verification = verify_instagram_access_token(payload.external_account_id, access_token)
+    if not verification.ok:
+        report_integration_incident(
+            db,
+            integration=None,
+            business_id=business.id,
+            category="instagram_verification_failed",
+            severity="high" if verification.error_code == "190" else "medium",
+            operation="create_integration",
+            error_code=verification.error_code,
+            safe_details={
+                "error_type": verification.error_type,
+                "error_subcode": verification.error_subcode,
+                "http_status": verification.http_status,
+            },
+        )
+        db.commit()
+        raise HTTPException(status_code=422, detail="Instagram account verification failed")
+    now = utc_now()
+    integration = BusinessChannelIntegration(
+        business_id=business.id,
+        channel=INSTAGRAM_CHANNEL,
+        provider=INSTAGRAM_PROVIDER,
+        external_account_id=payload.external_account_id,
+        external_account_name=verification.account_name or payload.external_account_name,
+        token_type="bearer",
+        token_expires_at=payload.token_expires_at,
+        granted_scopes_json=json.dumps(list(verification.scopes)),
+        integration_status="connected",
+        provider_status=verification.provider_status or "available",
+        connected_at=now,
+        last_verified_at=now,
+        last_success_at=now,
+    )
+    try:
+        replace_integration_credentials(
+            integration,
+            access_token=access_token,
+            token_expires_at=payload.token_expires_at,
+        )
+        db.add(integration)
+        db.flush()
+        record_audit(
+            db,
+            action="instagram_integration_created",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="business_channel_integration",
+            resource_id=integration.id,
+            metadata={
+                "owner_user_id": actor.id,
+                "business_id": business.id,
+                "integration_id": integration.id,
+                "external_account_id": mask_external_account_id(payload.external_account_id),
+                "old_status": None,
+                "new_status": "connected",
+                "reason": payload.reason,
+                "request_id": request.headers.get("x-request-id"),
+                "timestamp": now.isoformat(),
+            },
+            commit=False,
+        )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Instagram account already belongs to another business") from exc
+    except IntegrationCryptoError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    db.refresh(integration)
+    return owner_instagram_integration_payload(db, integration)
+
+
+@router.post(
+    "/businesses/{business_id}/integrations/instagram/verify",
+    response_model=InstagramIntegrationVerificationResponse,
+)
+def verify_owner_business_instagram_integration(
+    business_id: int,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    get_business_by_id_or_404(db, business_id)
+    integration = get_instagram_integration(db, business_id=business_id)
+    if integration is None:
+        raise HTTPException(status_code=404, detail="Instagram integration not found")
+    now = utc_now()
+    last_verified = as_utc(integration.last_verified_at)
+    if last_verified and now - last_verified < timedelta(seconds=15):
+        return {
+            "verified": integration.integration_status == "connected",
+            "rate_limited": True,
+            "integration": owner_instagram_integration_payload(db, integration),
+        }
+    old_status = integration.integration_status
+    verification = verify_instagram_integration(db, integration)
+    record_audit(
+        db,
+        action="instagram_integration_verified",
+        request=request,
+        actor=actor,
+        business_id=business_id,
+        resource_type="business_channel_integration",
+        resource_id=integration.id,
+        metadata={
+            "owner_user_id": actor.id,
+            "business_id": business_id,
+            "integration_id": integration.id,
+            "external_account_id": mask_external_account_id(integration.external_account_id),
+            "old_status": old_status,
+            "new_status": integration.integration_status,
+            "safe_code": verification.error_code,
+            "request_id": request.headers.get("x-request-id"),
+            "timestamp": now.isoformat(),
+        },
+        commit=False,
+    )
+    db.commit()
+    db.refresh(integration)
+    return {
+        "verified": verification.ok,
+        "rate_limited": False,
+        "integration": owner_instagram_integration_payload(db, integration),
+    }
+
+
+@router.post(
+    "/businesses/{business_id}/integrations/instagram/reconnect",
+    response_model=InstagramIntegrationResponse,
+)
+def reconnect_owner_business_instagram_integration(
+    business_id: int,
+    payload: InstagramIntegrationReconnectRequest,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    get_business_by_id_or_404(db, business_id)
+    integration = get_instagram_integration(db, business_id=business_id)
+    if integration is None:
+        raise HTTPException(status_code=404, detail="Instagram integration not found")
+    if payload.external_account_id != integration.external_account_id:
+        conflict = (
+            db.query(BusinessChannelIntegration)
+            .filter(
+                BusinessChannelIntegration.provider == INSTAGRAM_PROVIDER,
+                BusinessChannelIntegration.external_account_id == payload.external_account_id,
+            )
+            .first()
+        )
+        if conflict is not None:
+            raise HTTPException(status_code=409, detail="Instagram account already belongs to another business")
+        raise HTTPException(status_code=409, detail="Reconnect cannot move an integration to another account")
+    access_token = payload.access_token.get_secret_value()
+    verification = verify_instagram_access_token(payload.external_account_id, access_token)
+    if not verification.ok:
+        report_integration_incident(
+            db,
+            integration=integration,
+            category=(
+                "instagram_token_revoked"
+                if verification.error_code == "190"
+                else "instagram_verification_failed"
+            ),
+            severity="high" if verification.error_code == "190" else "medium",
+            operation="reconnect_integration",
+            error_code=verification.error_code,
+            safe_details={
+                "error_type": verification.error_type,
+                "error_subcode": verification.error_subcode,
+                "http_status": verification.http_status,
+            },
+        )
+        db.commit()
+        raise HTTPException(status_code=422, detail="Instagram account verification failed")
+    old_status = integration.integration_status
+    try:
+        replace_integration_credentials(
+            integration,
+            access_token=access_token,
+            token_expires_at=payload.token_expires_at,
+        )
+    except IntegrationCryptoError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    now = utc_now()
+    integration.integration_status = "connected"
+    integration.provider_status = verification.provider_status or "available"
+    integration.external_account_name = verification.account_name or integration.external_account_name
+    integration.granted_scopes_json = json.dumps(list(verification.scopes))
+    integration.connected_at = integration.connected_at or now
+    integration.last_verified_at = now
+    integration.last_success_at = now
+    integration.last_error_at = None
+    integration.last_error_code = None
+    integration.last_error_subcode = None
+    integration.last_error_type = None
+    integration.safe_error_message = None
+    for operation in ("verify_integration", "send_message", "decrypt_credentials", "token_expiration"):
+        resolve_related_incidents(
+            db,
+            business_id=business_id,
+            integration_id=integration.id,
+            channel=INSTAGRAM_CHANNEL,
+            provider=INSTAGRAM_PROVIDER,
+            operation=operation,
+        )
+    record_audit(
+        db,
+        action="instagram_integration_reconnected",
+        request=request,
+        actor=actor,
+        business_id=business_id,
+        resource_type="business_channel_integration",
+        resource_id=integration.id,
+        metadata={
+            "owner_user_id": actor.id,
+            "business_id": business_id,
+            "integration_id": integration.id,
+            "external_account_id": mask_external_account_id(integration.external_account_id),
+            "old_status": old_status,
+            "new_status": "connected",
+            "reason": payload.reason,
+            "request_id": request.headers.get("x-request-id"),
+            "timestamp": now.isoformat(),
+        },
+        commit=False,
+    )
+    db.commit()
+    db.refresh(integration)
+    return owner_instagram_integration_payload(db, integration)
+
+
+@router.post(
+    "/businesses/{business_id}/integrations/instagram/disconnect",
+    response_model=InstagramIntegrationResponse,
+)
+def disconnect_owner_business_instagram_integration(
+    business_id: int,
+    payload: InstagramIntegrationDisconnectRequest,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    get_business_by_id_or_404(db, business_id)
+    integration = get_instagram_integration(db, business_id=business_id)
+    if integration is None:
+        raise HTTPException(status_code=404, detail="Instagram integration not found")
+    old_status = integration.integration_status
+    now = utc_now()
+    integration.integration_status = "disconnected"
+    integration.provider_status = "manually_disconnected"
+    integration.disconnected_at = now
+    record_audit(
+        db,
+        action="instagram_integration_disconnected",
+        request=request,
+        actor=actor,
+        business_id=business_id,
+        resource_type="business_channel_integration",
+        resource_id=integration.id,
+        metadata={
+            "owner_user_id": actor.id,
+            "business_id": business_id,
+            "integration_id": integration.id,
+            "external_account_id": mask_external_account_id(integration.external_account_id),
+            "old_status": old_status,
+            "new_status": "disconnected",
+            "reason": payload.reason,
+            "request_id": request.headers.get("x-request-id"),
+            "timestamp": now.isoformat(),
+        },
+        commit=False,
+    )
+    db.commit()
+    db.refresh(integration)
+    return owner_instagram_integration_payload(db, integration)
+
+
+@router.delete(
+    "/businesses/{business_id}/integrations/instagram/credentials",
+    response_model=InstagramIntegrationResponse,
+)
+def delete_owner_business_instagram_credentials(
+    business_id: int,
+    payload: InstagramIntegrationDisconnectRequest,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    require_owner(actor)
+    get_business_by_id_or_404(db, business_id)
+    integration = get_instagram_integration(db, business_id=business_id)
+    if integration is None:
+        raise HTTPException(status_code=404, detail="Instagram integration not found")
+    old_status = integration.integration_status
+    now = utc_now()
+    integration.encrypted_access_token = None
+    integration.encryption_key_version = None
+    integration.token_type = None
+    integration.token_expires_at = None
+    integration.token_last_refreshed_at = None
+    integration.integration_status = "disconnected"
+    integration.provider_status = "credentials_deleted"
+    integration.disconnected_at = now
+    record_audit(
+        db,
+        action="instagram_credentials_deleted",
+        request=request,
+        actor=actor,
+        business_id=business_id,
+        resource_type="business_channel_integration",
+        resource_id=integration.id,
+        metadata={
+            "owner_user_id": actor.id,
+            "business_id": business_id,
+            "integration_id": integration.id,
+            "external_account_id": mask_external_account_id(integration.external_account_id),
+            "old_status": old_status,
+            "new_status": "disconnected",
+            "reason": payload.reason,
+            "request_id": request.headers.get("x-request-id"),
+            "timestamp": now.isoformat(),
+        },
+        commit=False,
+    )
+    db.commit()
+    db.refresh(integration)
+    return owner_instagram_integration_payload(db, integration)
 
 
 @router.get(

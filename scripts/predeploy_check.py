@@ -72,7 +72,9 @@ def check_required_files(reporter: Reporter) -> None:
         "docs/security_predeploy_checklist.md",
         "docs/vps_security_deploy_plan.md",
         "docs/staging_deploy_checklist.md",
+        "docs/instagram_multi_business_integrations.md",
         "scripts/backup_sqlite_uploads.py",
+        "scripts/rotate_integration_encryption.py",
         "scripts/smoke_test_staging.py",
     ]
     for relative in required:
@@ -91,6 +93,8 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "UPLOADS_DIR=/var/lib/autonogrow/uploads",
             "INSTAGRAM_PROVIDER_ENABLED=false",
             "INSTAGRAM_REQUIRE_SIGNATURE=true",
+            "INTEGRATION_ENCRYPTION_KEYS_JSON=CHANGE_ME_JSON_KEYRING",
+            "INTEGRATION_ENCRYPTION_ACTIVE_KEY_VERSION=v1",
             "INCIDENT_ALERTS_ENABLED=false",
             "INCIDENT_ALERT_MIN_SEVERITY=high",
             "INCIDENT_DEDUP_WINDOW_MINUTES=30",
@@ -103,6 +107,8 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "UPLOADS_DIR=/var/lib/autonogrow-staging/uploads",
             "INSTAGRAM_PROVIDER_ENABLED=false",
             "INSTAGRAM_REQUIRE_SIGNATURE=true",
+            "INTEGRATION_ENCRYPTION_KEYS_JSON=CHANGE_ME_JSON_KEYRING",
+            "INTEGRATION_ENCRYPTION_ACTIVE_KEY_VERSION=v1",
             "INCIDENT_ALERTS_ENABLED=false",
             "INCIDENT_ALERT_MIN_SEVERITY=high",
             "INCIDENT_DEDUP_WINDOW_MINUTES=30",

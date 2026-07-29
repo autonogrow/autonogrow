@@ -46,6 +46,11 @@ class Business(Base):
     message_outbox = relationship("MessageOutbox", back_populates="business", cascade="all, delete-orphan")
     system_incidents = relationship("SystemIncident", back_populates="business")
     google_integrations = relationship("GoogleIntegration", back_populates="business", cascade="all, delete-orphan")
+    channel_integrations = relationship(
+        "BusinessChannelIntegration",
+        back_populates="business",
+        cascade="all, delete-orphan",
+    )
     gallery_images = relationship("BusinessGalleryImage", back_populates="business", cascade="all, delete-orphan")
     user_memberships = relationship("BusinessUser", back_populates="business", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="business", cascade="all, delete-orphan")

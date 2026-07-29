@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationInfo, field_validator, model_validator
 
 from app.schemas.branding import COLOR_PALETTES, TEMPLATE_KEYS, resolve_branding, validate_color
 
@@ -405,3 +405,113 @@ class AutomationCreditTransactionResponse(BaseModel):
     idempotency_key: str | None
     safe_metadata: dict[str, Any] | None
     created_at: str
+
+
+class InstagramIntegrationCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    external_account_id: str = Field(
+        min_length=1, max_length=255, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    access_token: SecretStr = Field(min_length=8, max_length=4096)
+    token_expires_at: datetime | None = None
+    external_account_name: str | None = Field(default=None, max_length=255)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("external_account_id", "external_account_name", "reason")
+    @classmethod
+    def strip_instagram_create_text(cls, value: str | None, info: ValidationInfo) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if info.field_name in {"external_account_id", "reason"} and not value:
+            raise ValueError("Value is required")
+        return value or None
+
+    @field_validator("token_expires_at")
+    @classmethod
+    def validate_create_expiration(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("Token expiration must include a timezone")
+        if value is not None and value.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            raise ValueError("Token expiration must be in the future")
+        return value
+
+
+class InstagramIntegrationReconnectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    external_account_id: str = Field(
+        min_length=1, max_length=255, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    access_token: SecretStr = Field(min_length=8, max_length=4096)
+    token_expires_at: datetime | None = None
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("external_account_id", "reason")
+    @classmethod
+    def strip_instagram_reconnect_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Value is required")
+        return value
+
+    @field_validator("token_expires_at")
+    @classmethod
+    def validate_reconnect_expiration(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("Token expiration must include a timezone")
+        if value is not None and value.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            raise ValueError("Token expiration must be in the future")
+        return value
+
+
+class InstagramIntegrationDisconnectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_instagram_disconnect_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Reason is required")
+        return value
+
+
+class InstagramIntegrationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    business_id: int
+    channel: str
+    provider: str
+    external_account_id_masked: str | None
+    external_account_name: str | None
+    integration_status: str
+    provider_status: str | None
+    connected_at: datetime | None
+    disconnected_at: datetime | None
+    last_verified_at: datetime | None
+    last_success_at: datetime | None
+    last_error_at: datetime | None
+    last_error_code: str | None
+    last_error_subcode: str | None
+    last_error_type: str | None
+    safe_error_message: str | None
+    token_expires_at: datetime | None
+    days_remaining: int | None
+    expires_soon: bool
+    has_credentials: bool
+    has_open_incident: bool = False
+    granted_scopes: list[str]
+    encryption_key_version: str | None
+
+
+class InstagramIntegrationVerificationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verified: bool
+    rate_limited: bool = False
+    integration: InstagramIntegrationResponse

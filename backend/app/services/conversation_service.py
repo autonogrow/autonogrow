@@ -14,11 +14,13 @@ from app.models import (
     ConversationAutomationSettings,
     ConversationTemplate,
 )
-from app.services.instagram_provider import (
-    is_instagram_provider_configured,
-    send_instagram_text_message,
+from app.services.instagram_integration_service import (
+    get_instagram_integration,
+    integration_expiration_state,
+    send_business_instagram_message,
 )
 from app.services.incident_service import (
+    INSTAGRAM_AUTH_CLIENT_MESSAGE,
     classify_provider_error,
     client_message_for_incident,
     incident_reference,
@@ -144,7 +146,15 @@ def serialize_conversation(
         "matched_patterns": matched_patterns,
         "automation": serialize_conversation_automation_state(conversation),
         "instagram_provider_configured": (
-            is_instagram_provider_configured(get_settings())
+            bool(
+                getattr(get_settings(), "instagram_provider_enabled", False)
+                and (integration := get_instagram_integration(
+                    db, business_id=conversation.business_id
+                ))
+                and integration.integration_status in {"connected", "degraded"}
+                and integration.encrypted_access_token
+                and not integration_expiration_state(integration)[0]
+            )
             if conversation.channel == "instagram"
             else None
         ),
@@ -317,9 +327,17 @@ def send_outbound_message(
     intent: str | None = None,
 ) -> OutboundMessageResult:
     settings = get_settings()
-    provider_configured = (
-        conversation.channel == "instagram"
-        and is_instagram_provider_configured(settings)
+    integration = (
+        get_instagram_integration(db, business_id=conversation.business_id)
+        if conversation.channel == "instagram"
+        else None
+    )
+    provider_configured = bool(
+        getattr(settings, "instagram_provider_enabled", False)
+        and integration
+        and integration.encrypted_access_token
+        and integration.integration_status in {"connected", "degraded"}
+        and not integration_expiration_state(integration)[0]
     )
     provider_attempted = False
     provider_message_id = None
@@ -347,13 +365,22 @@ def send_outbound_message(
                 "Contacta con el equipo de AutonoGrow."
             )
     if conversation.channel == "instagram" and not policy_blocked:
-        if provider_configured:
-            provider_attempted = True
-            provider_result = send_instagram_text_message(
-                conversation.external_user_id or "",
-                body,
+        if getattr(settings, "instagram_provider_enabled", False):
+            provider_result, integration = send_business_instagram_message(
+                db,
+                business_id=conversation.business_id,
+                recipient_id=conversation.external_user_id or "",
+                text=body,
                 settings=settings,
             )
+            provider_attempted = provider_result.error_code not in {
+                "integration_not_configured",
+                "integration_expired",
+                "integration_disconnected",
+                "integration_revoked",
+                "integration_unavailable",
+                "integration_decryption_failed",
+            }
             delivery_status = provider_result.delivery_status
             provider_message_id = provider_result.provider_message_id
             error_message = provider_result.error_message
@@ -379,17 +406,40 @@ def send_outbound_message(
                 provider_attempted=False,
                 client_error_message=client_error_message,
             )
+        if provider_result and provider_result.error_code in {
+            "integration_not_configured",
+            "integration_expired",
+            "integration_disconnected",
+            "integration_revoked",
+            "integration_unavailable",
+            "integration_decryption_failed",
+        }:
+            client_error_message = INSTAGRAM_AUTH_CLIENT_MESSAGE
+            return OutboundMessageResult(
+                message=message,
+                provider_configured=provider_configured,
+                provider_attempted=False,
+                error_message=error_message,
+                client_error_message=client_error_message,
+            )
         category, severity = classify_provider_error(
             provider="instagram",
             error_code=provider_result.error_code if provider_result else None,
             error_type=provider_result.error_type if provider_result else None,
             timed_out=provider_result.timed_out if provider_result else False,
         )
+        if provider_result and provider_result.error_code == "190" and integration:
+            category = (
+                "instagram_token_expired"
+                if integration.integration_status == "expired"
+                else "instagram_token_revoked"
+            )
         incident = report_incident(
             db,
             category=category,
             severity=severity,
             business_id=conversation.business_id,
+            integration_id=integration.id if integration else None,
             channel=conversation.channel,
             provider="instagram",
             provider_error_code=provider_result.error_code if provider_result else None,
@@ -421,6 +471,7 @@ def send_outbound_message(
         resolve_related_incidents(
             db,
             business_id=conversation.business_id,
+            integration_id=integration.id if integration else None,
             channel=conversation.channel,
             provider="instagram",
             operation="send_message",

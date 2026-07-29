@@ -1,4 +1,5 @@
 import json
+import hashlib
 from secrets import compare_digest
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.audit import record_audit
 from app.models import Business, Conversation, ConversationMessage
 from app.services.conversation_automation_service import process_inbound_automation
 from app.services.conversation_service import add_message, create_or_get_conversation
@@ -15,6 +17,12 @@ from app.services.instagram_provider import (
     verify_meta_signature,
 )
 from app.services.instagram_echo_service import process_instagram_echo
+from app.services.instagram_integration_service import (
+    mask_external_account_id,
+    report_integration_incident,
+    resolve_instagram_integration_for_event,
+    utc_now,
+)
 
 
 router = APIRouter(prefix="/api/webhooks/instagram", tags=["instagram-webhook"])
@@ -58,35 +66,92 @@ async def receive_instagram_webhook(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
 
-    message_events = parse_instagram_webhook(
-        payload,
-        business_account_id=settings.instagram_business_account_id.strip() or None,
-    )
+    message_events = parse_instagram_webhook(payload)
     processed = 0
     duplicates = 0
     echoes = 0
     reconciled = 0
     ignored = 0
     automation_results = []
-    account_id = settings.instagram_business_account_id.strip()
-    business_slug = settings.instagram_default_business_slug.strip()
     for inbound in message_events:
-        account_matches = (
-            inbound.sender_id == account_id
-            if inbound.is_echo
-            else inbound.recipient_id == account_id
+        integration = resolve_instagram_integration_for_event(
+            db,
+            sender_id=inbound.sender_id,
+            recipient_id=inbound.recipient_id,
+            is_echo=inbound.is_echo,
         )
-        if not account_id or not account_matches or not business_slug:
+        external_account_id = (
+            inbound.sender_id if inbound.is_echo else inbound.recipient_id
+        )
+        if integration is None:
+            account_fingerprint = hashlib.sha256(
+                external_account_id.encode("utf-8")
+            ).hexdigest()[:16]
+            report_integration_incident(
+                db,
+                integration=None,
+                business_id=None,
+                category="instagram_unmapped_account",
+                severity="medium",
+                operation="receive_webhook",
+                error_code=f"unmapped-{account_fingerprint}",
+                safe_details={
+                    "external_account_id": mask_external_account_id(
+                        external_account_id
+                    ),
+                    "event_type": "echo" if inbound.is_echo else "inbound",
+                    "provider_message_id": inbound.message_id,
+                },
+            )
+            record_audit(
+                db,
+                action="instagram_unmapped_account_received",
+                resource_type="instagram_webhook_event",
+                resource_id=inbound.message_id,
+                metadata={
+                    "external_account_id": mask_external_account_id(
+                        external_account_id
+                    ),
+                    "event_type": "echo" if inbound.is_echo else "inbound",
+                    "provider_message_id": inbound.message_id,
+                    "timestamp": utc_now().isoformat(),
+                },
+                commit=False,
+            )
+            ignored += 1
+            continue
+        if integration.integration_status not in {"connected", "degraded"}:
+            category = {
+                "expired": "instagram_token_expired",
+                "revoked": "instagram_token_revoked",
+            }.get(integration.integration_status, "instagram_authentication")
+            report_integration_incident(
+                db,
+                integration=integration,
+                category=category,
+                severity="high",
+                operation="receive_webhook",
+                error_code=f"integration_{integration.integration_status}",
+                safe_details={
+                    "external_account_id": mask_external_account_id(
+                        external_account_id
+                    ),
+                    "event_type": "echo" if inbound.is_echo else "inbound",
+                    "provider_message_id": inbound.message_id,
+                    "integration_status": integration.integration_status,
+                },
+            )
             ignored += 1
             continue
         business = (
             db.query(Business)
-            .filter(Business.slug == business_slug, Business.status == "active")
+            .filter(Business.id == integration.business_id, Business.status == "active")
             .first()
         )
         if business is None:
             ignored += 1
             continue
+        integration.last_success_at = utc_now()
         if inbound.is_echo:
             action, _ = process_instagram_echo(
                 db,

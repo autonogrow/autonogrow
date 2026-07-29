@@ -180,6 +180,7 @@ function businessCard(business) {
         <div class="owner-user-form"><input data-owner-user-email type="email" placeholder="persona@negocio.com"><select data-owner-user-role><option value="business_admin">Administrador</option><option value="business_staff">Personal</option></select><button type="button" class="button button-primary button-small" data-owner-user-action="add">Añadir usuario</button></div>
         <div data-owner-users-list class="owner-users-list"><p>Cargando usuarios...</p></div><p data-owner-users-feedback class="status-text"></p>
       </details>
+      <details class="owner-integration-editor" data-owner-integration-id="${business.id}" data-owner-integration-name="${escapeHtml(business.name)}"><summary>Integraciones</summary><div data-owner-integration-content><p>Cargando Instagram...</p></div></details>
       <details class="owner-automation-editor" data-owner-automation-id="${business.id}" data-owner-automation-name="${escapeHtml(business.name)}"><summary>Plan, automatización y cuota</summary><div data-owner-automation-content><p>Cargando configuración...</p></div></details>
     </article>`;
 }
@@ -196,6 +197,7 @@ function renderBusinesses() {
   byId("list-status").textContent = `${businesses.length} negocio${businesses.length === 1 ? "" : "s"}`;
   document.querySelectorAll("[data-owner-editor]").forEach(loadOwnerGallery);
   document.querySelectorAll("[data-owner-users]").forEach(loadOwnerUsers);
+  document.querySelectorAll("[data-owner-integration-id]").forEach(loadOwnerIntegration);
   document.querySelectorAll("[data-owner-automation-id]").forEach(loadOwnerAutomation);
   restoreOwnerMediaStatus();
 }
@@ -209,6 +211,85 @@ function formatAutomationDate(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "—";
   return new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(parsed);
+}
+
+function ownerIntegrationStatusLabel(status) {
+  return ({ pending: "Pendiente", connected: "Conectado", degraded: "Necesita revisión", expired: "Caducado", disconnected: "Desconectado", revoked: "Revocado", error: "Error" })[status] || status;
+}
+
+function ownerInstagramCredentialForm(mode) {
+  return `<div class="owner-integration-form" data-owner-integration-form="${mode}">
+    <label>Instagram Business Account ID<input data-integration-account-id maxlength="255" autocomplete="off" required></label>
+    <label>Token de acceso<input data-integration-token type="password" maxlength="4096" autocomplete="new-password" required></label>
+    <label>Caducidad opcional<input data-integration-expiration type="datetime-local"></label>
+    <label>Motivo<input data-integration-reason maxlength="500" required></label>
+    <p class="wide helper">El token se envía una sola vez y se almacena cifrado. No se mostrará de nuevo.</p>
+    <button class="button button-primary button-small" type="button" data-owner-integration-action="${mode}">${mode === "connect" ? "Conectar" : "Reconectar"}</button>
+  </div>`;
+}
+
+function renderOwnerIntegration(panel, integration) {
+  const content = panel.querySelector("[data-owner-integration-content]");
+  if (!integration) {
+    content.innerHTML = `<article class="owner-integration-card"><h4>Instagram</h4><p>No conectado.</p>${ownerInstagramCredentialForm("connect")}<p data-owner-integration-feedback class="status-text"></p></article>`;
+    return;
+  }
+  content.innerHTML = `<article class="owner-integration-card">
+    <div class="owner-integration-heading"><h4>Instagram</h4><span class="state-badge ${integration.integration_status === "connected" ? "active" : "inactive"}">${escapeHtml(ownerIntegrationStatusLabel(integration.integration_status))}</span></div>
+    <div class="owner-integration-summary"><span><strong>${escapeHtml(integration.external_account_id_masked || "—")}</strong>Cuenta</span><span><strong>${escapeHtml(integration.external_account_name || "—")}</strong>Nombre</span><span><strong>${escapeHtml(formatAutomationDate(integration.connected_at))}</strong>Conectado desde</span><span><strong>${escapeHtml(formatAutomationDate(integration.last_verified_at))}</strong>Última verificación</span><span><strong>${escapeHtml(formatAutomationDate(integration.last_success_at))}</strong>Último éxito</span><span><strong>${escapeHtml(formatAutomationDate(integration.token_expires_at))}</strong>Caducidad</span></div>
+    ${integration.expires_soon ? `<p class="owner-integration-warning">El token caduca próximamente (${integration.days_remaining} días).</p>` : ""}
+    ${integration.safe_error_message ? `<p class="owner-integration-warning">${escapeHtml(integration.safe_error_message)}</p>` : ""}
+    ${integration.has_open_incident ? `<p class="owner-integration-warning">Existe una incidencia abierta para esta integración.</p>` : ""}
+    <p>Scopes: <strong>${(integration.granted_scopes || []).map(escapeHtml).join(" · ") || "No disponibles"}</strong></p>
+    <div class="owner-integration-actions"><button class="button button-secondary button-small" type="button" data-owner-integration-action="verify">Verificar conexión</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="show-reconnect">Reconectar</button><button class="button button-danger button-small" type="button" data-owner-integration-action="disconnect">Desconectar</button><button class="button button-danger button-small" type="button" data-owner-integration-action="delete-credentials">Eliminar credenciales</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="incidents">Ver incidencias</button></div>
+    <div data-owner-integration-reconnect></div><p data-owner-integration-feedback class="status-text"></p>
+  </article>`;
+}
+
+async function loadOwnerIntegration(panel) {
+  const response = await fetch(`${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerIntegrationId}/integrations/instagram`);
+  if (response.status === 404) { renderOwnerIntegration(panel, null); return; }
+  const body = await readResponseBody(response);
+  if (!response.ok) { panel.querySelector("[data-owner-integration-content]").innerHTML = `<p class="error-box">${escapeHtml(body.detail || "No se pudo cargar Instagram")}</p>`; return; }
+  renderOwnerIntegration(panel, body);
+}
+
+async function handleOwnerIntegrationAction(button) {
+  const panel = button.closest("[data-owner-integration-id]");
+  const action = button.dataset.ownerIntegrationAction;
+  const feedback = panel.querySelector("[data-owner-integration-feedback]");
+  const base = `${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerIntegrationId}/integrations/instagram`;
+  if (action === "show-reconnect") {
+    panel.querySelector("[data-owner-integration-reconnect]").innerHTML = ownerInstagramCredentialForm("reconnect");
+    return;
+  }
+  if (action === "incidents") { setActiveTab("incidents"); await loadIncidents(); return; }
+  let response;
+  if (action === "connect" || action === "reconnect") {
+    const form = button.closest("[data-owner-integration-form]");
+    const tokenInput = form.querySelector("[data-integration-token]");
+    const accountId = form.querySelector("[data-integration-account-id]").value.trim();
+    const accessToken = tokenInput.value;
+    const expiration = form.querySelector("[data-integration-expiration]").value;
+    const reason = form.querySelector("[data-integration-reason]").value.trim();
+    if (!accountId || !accessToken || !reason) throw new Error("Cuenta, token y motivo son obligatorios.");
+    if (!window.confirm(`${action === "connect" ? "Conectar" : "Reconectar"} Instagram para ${panel.dataset.ownerIntegrationName}. ¿Continuar?`)) { tokenInput.value = ""; return; }
+    const payload = { external_account_id: accountId, access_token: accessToken, token_expires_at: expiration ? new Date(expiration).toISOString() : null, reason };
+    tokenInput.value = "";
+    response = await fetch(action === "connect" ? base : `${base}/reconnect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    payload.access_token = "";
+  } else if (action === "verify") {
+    response = await fetch(`${base}/verify`, { method: "POST" });
+  } else if (action === "disconnect" || action === "delete-credentials") {
+    const reason = window.prompt(`Motivo obligatorio para ${action === "disconnect" ? "desconectar" : "eliminar las credenciales"}:`);
+    if (!reason?.trim()) return;
+    if (!window.confirm(action === "delete-credentials" ? "Las credenciales cifradas se eliminarán definitivamente. ¿Continuar?" : "Se impedirán nuevos envíos. ¿Continuar?")) return;
+    response = await fetch(action === "disconnect" ? `${base}/disconnect` : `${base}/credentials`, { method: action === "disconnect" ? "POST" : "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: reason.trim() }) });
+  }
+  const body = await readResponseBody(response);
+  if (!response.ok) throw new Error(body.detail || "No se pudo actualizar la integración");
+  if (feedback) feedback.textContent = "Integración actualizada.";
+  await loadOwnerIntegration(panel);
 }
 
 function renderOwnerAutomation(panel, data) {
@@ -633,6 +714,7 @@ byId("business-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-toggle-slug]");
   if (button) toggleBusiness(button.dataset.toggleSlug, button.dataset.nextActive === "true", button);
   else if (event.target.closest("[data-owner-user-action]")) handleOwnerUserAction(event.target.closest("[data-owner-user-action]")).catch((error) => console.error("Business user action failed", error));
+  else if (event.target.closest("[data-owner-integration-action]")) handleOwnerIntegrationAction(event.target.closest("[data-owner-integration-action]")).catch((error) => { const feedback = event.target.closest("[data-owner-integration-id]")?.querySelector("[data-owner-integration-feedback]"); if (feedback) feedback.textContent = error.message; });
   else if (event.target.closest("[data-owner-automation-action]")) handleOwnerAutomationAction(event.target.closest("[data-owner-automation-action]")).catch((error) => { const feedback = event.target.closest("[data-owner-automation-id]")?.querySelector("[data-owner-automation-feedback]"); if (feedback) feedback.textContent = error.message; });
   else handleOwnerBrandClick(event).catch((error) => {
     console.error("Fallo gestionando marca en Owner", error);

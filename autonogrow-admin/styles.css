@@ -620,6 +620,12 @@ select {
 .conversation-credit-breakdown { display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: 10px; margin: 12px 0; }
 .conversation-credit-breakdown span { color: var(--muted); font-size: .8rem; }
 .conversation-credit-breakdown strong { display: block; color: var(--text); font-size: 1rem; }
+.conversation-integration-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; padding: 14px 16px; border: 1px solid var(--border); border-left: 5px solid #64748b; border-radius: 14px; background: #fff; }
+.conversation-integration-status p { margin: 0 0 3px; color: var(--muted); font-size: .78rem; }
+.conversation-integration-status strong { display: block; }
+.conversation-integration-status > span { color: var(--muted); font-size: .8rem; }
+.conversation-integration-status.state-connected { border-left-color: #16a34a; }
+.conversation-integration-status.state-needs_review { border-left-color: #d97706; background: #fffbeb; }
 .conversation-automation-usage-state { margin-left: auto; padding: 4px 9px; border-radius: 999px; font-size: .78rem; font-weight: 800; background: #dcfce7; color: #166534; }
 .conversation-automation-usage-state.state-near_limit { background: #fef3c7; color: #92400e; }
 .conversation-automation-usage-state.state-limit_reached { background: #fee2e2; color: #991b1b; }

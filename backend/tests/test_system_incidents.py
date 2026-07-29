@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import Settings
 from app.core.database import Base
 from app.core.security import require_owner
-from app.models import Business, Conversation, SystemIncident, User
+from app.models import Business, BusinessChannelIntegration, Conversation, SystemIncident, User
 from app.routers.conversations import admin_list_business_incidents
 from app.services.conversation_service import send_outbound_message
 from app.services.incident_service import (
@@ -31,6 +31,17 @@ class SystemIncidentTest(unittest.TestCase):
         self.business_a = Business(slug="incident-a", name="Incident A", status="active")
         self.business_b = Business(slug="incident-b", name="Incident B", status="active")
         self.db.add_all([self.business_a, self.business_b])
+        self.db.flush()
+        self.instagram_integration = BusinessChannelIntegration(
+            business_id=self.business_a.id,
+            channel="instagram",
+            provider="instagram",
+            external_account_id="ig-business",
+            encrypted_access_token="test-ciphertext",
+            encryption_key_version="v1",
+            integration_status="connected",
+        )
+        self.db.add(self.instagram_integration)
         self.db.commit()
 
     def tearDown(self):
@@ -191,8 +202,8 @@ class SystemIncidentTest(unittest.TestCase):
             error_type="OAuthException",
         )
         with patch("app.services.conversation_service.get_settings", return_value=settings), patch(
-            "app.services.conversation_service.send_instagram_text_message",
-            return_value=oauth_error,
+            "app.services.conversation_service.send_business_instagram_message",
+            return_value=(oauth_error, self.instagram_integration),
         ):
             failed = send_outbound_message(
                 self.db,
@@ -206,7 +217,7 @@ class SystemIncidentTest(unittest.TestCase):
         incident = self.db.query(SystemIncident).one()
         self.assertFalse(failed.ok)
         self.assertEqual(incident.severity, "high")
-        self.assertEqual(incident.category, "provider_authentication")
+        self.assertEqual(incident.category, "instagram_token_revoked")
         self.assertEqual(incident.provider_error_code, "190")
         self.assertIn(INSTAGRAM_AUTH_CLIENT_MESSAGE, failed.client_error_message)
         self.assertIn("AGW-2026", failed.client_error_message)
@@ -214,8 +225,8 @@ class SystemIncidentTest(unittest.TestCase):
         self.assertNotIn("Customer-facing response body", incident.safe_details_json)
 
         with patch("app.services.conversation_service.get_settings", return_value=settings), patch(
-            "app.services.conversation_service.send_instagram_text_message",
-            return_value=ProviderSendResult("sent", "provider-mid"),
+            "app.services.conversation_service.send_business_instagram_message",
+            return_value=(ProviderSendResult("sent", "provider-mid"), self.instagram_integration),
         ):
             success = send_outbound_message(
                 self.db,
@@ -244,7 +255,11 @@ class SystemIncidentTest(unittest.TestCase):
         )
         with patch("app.services.instagram_provider.requests.post", return_value=response):
             result = send_instagram_text_message(
-                "ig-customer", "Hello", settings=self.settings()
+                "ig-customer",
+                "Hello",
+                access_token="test-access-token",
+                external_account_id="ig-business",
+                settings=self.settings(),
             )
         self.assertEqual(result.http_status, 400)
         self.assertEqual(result.error_code, "190")

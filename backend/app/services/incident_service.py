@@ -35,6 +35,10 @@ SAFE_DETAIL_KEYS = {
     "retryable",
     "component",
     "source",
+    "external_account_id",
+    "event_type",
+    "provider_message_id",
+    "integration_status",
 }
 DEFAULT_CATEGORY_SEVERITIES = {
     "database_unavailable": "critical",
@@ -52,6 +56,12 @@ DEFAULT_CATEGORY_SEVERITIES = {
     "attachment_incompatible": "medium",
     "provider_temporary_error": "medium",
     "provider_send_failure": "medium",
+    "instagram_authentication": "high",
+    "instagram_token_expired": "high",
+    "instagram_token_revoked": "high",
+    "instagram_verification_failed": "medium",
+    "instagram_unmapped_account": "medium",
+    "integration_decryption_failed": "high",
     "polling_failure": "low",
     "interface_recoverable": "low",
     "static_resource_failure": "low",
@@ -79,6 +89,7 @@ def build_incident_key(
     channel: str | None,
     provider_error_code: str | int | None,
     operation: str,
+    integration_id: int | None = None,
 ) -> str:
     parts = (
         str(business_id or "global"),
@@ -86,6 +97,7 @@ def build_incident_key(
         (channel or "none").strip().lower(),
         str(provider_error_code or "none").strip().lower(),
         operation.strip().lower(),
+        str(integration_id or "none"),
     )
     digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest().upper()
     return f"AGW-{digest[:32]}"
@@ -118,9 +130,12 @@ def classify_provider_error(
     normalized_code = str(error_code) if error_code is not None else None
     normalized_type = (error_type or "").strip().lower()
     if normalized_provider == "instagram" and normalized_code == "190":
-        return "provider_authentication", "high"
+        return "instagram_token_revoked", "high"
     if any(marker in normalized_type for marker in ("oauth", "authentication", "invalid_token")):
-        return "provider_authentication", "high"
+        return (
+            "instagram_authentication" if normalized_provider == "instagram" else "provider_authentication",
+            "high",
+        )
     if timed_out:
         return "provider_timeout", "medium"
     return "provider_send_failure", "medium"
@@ -140,7 +155,14 @@ def enforce_incident_severity(
 def client_message_for_incident(incident: SystemIncident) -> str:
     message = (
         INSTAGRAM_AUTH_CLIENT_MESSAGE
-        if incident.category == "provider_authentication" and incident.channel == "instagram"
+        if incident.category in {
+            "provider_authentication",
+            "instagram_authentication",
+            "instagram_token_expired",
+            "instagram_token_revoked",
+            "integration_decryption_failed",
+        }
+        and incident.channel == "instagram"
         else GENERIC_SEND_CLIENT_MESSAGE
     )
     return f"{message} Incidencia: {incident_reference(incident)}."
@@ -162,6 +184,7 @@ def serialize_incident(incident: SystemIncident, *, include_safe_details: bool =
         "severity": incident.severity,
         "category": incident.category,
         "business_id": incident.business_id,
+        "integration_id": incident.integration_id,
         "business_slug": incident.business.slug if incident.business else None,
         "business_name": incident.business.name if incident.business else None,
         "channel": incident.channel,
@@ -191,7 +214,14 @@ def _incident_email(incident: SystemIncident, *, recovery: bool = False) -> tupl
     local_time = utc_time.astimezone(ZoneInfo("Europe/Madrid"))
     prefix = "Recuperación" if recovery else (
         "Fallo de conexión con Instagram"
-        if incident.category == "provider_authentication" and incident.channel == "instagram"
+        if incident.category in {
+            "provider_authentication",
+            "instagram_authentication",
+            "instagram_token_expired",
+            "instagram_token_revoked",
+            "integration_decryption_failed",
+        }
+        and incident.channel == "instagram"
         else incident.category.replace("_", " ").capitalize()
     )
     subject = (
@@ -259,6 +289,7 @@ def report_incident(
     provider: str | None,
     provider_error_code: str | int | None,
     operation: str,
+    integration_id: int | None = None,
     conversation_id: int | None = None,
     message_id: int | None = None,
     safe_details: dict[str, Any] | None = None,
@@ -284,6 +315,7 @@ def report_incident(
         channel=channel,
         provider_error_code=code,
         operation=normalized_operation,
+        integration_id=integration_id,
     )
     incident = db.query(SystemIncident).filter(SystemIncident.incident_key == key).first()
     if incident is None:
@@ -293,6 +325,7 @@ def report_incident(
             category=normalized_category,
             status="open",
             business_id=business_id,
+            integration_id=integration_id,
             channel=channel.strip().lower() if channel else None,
             provider=provider.strip().lower() if provider else None,
             provider_error_code=code,
@@ -358,21 +391,21 @@ def resolve_related_incidents(
     channel: str | None,
     provider: str | None,
     operation: str,
+    integration_id: int | None = None,
     settings: Settings | None = None,
     resolved_at: datetime | None = None,
 ) -> list[SystemIncident]:
     now = resolved_at or datetime.utcnow()
-    rows = (
-        db.query(SystemIncident)
-        .filter(
+    query = db.query(SystemIncident).filter(
             SystemIncident.business_id == business_id,
             SystemIncident.channel == channel,
             SystemIncident.provider == provider,
             SystemIncident.operation == operation,
             SystemIncident.status.in_(ACTIVE_STATUSES),
         )
-        .all()
-    )
+    if integration_id is not None:
+        query = query.filter(SystemIncident.integration_id == integration_id)
+    rows = query.all()
     active_settings = settings or get_settings()
     for incident in rows:
         incident.status = "resolved"

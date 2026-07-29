@@ -17,6 +17,9 @@ class SystemIncident(Base):
     business_id: Mapped[int | None] = mapped_column(
         ForeignKey("businesses.id", ondelete="SET NULL"), index=True
     )
+    integration_id: Mapped[int | None] = mapped_column(
+        ForeignKey("business_channel_integrations.id", ondelete="SET NULL"), index=True
+    )
     channel: Mapped[str | None] = mapped_column(String(40), index=True)
     provider: Mapped[str | None] = mapped_column(String(60), index=True)
     provider_error_code: Mapped[str | None] = mapped_column(String(80), index=True)

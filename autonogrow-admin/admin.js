@@ -32,6 +32,7 @@ let selectedStaffFilter = "";
 let conversations = [];
 let conversationTemplates = [];
 let conversationAutomation = null;
+let businessIntegrationStatus = null;
 let conversationSuggestions = [];
 let selectedConversationSuggestionId = null;
 let conversationSuggestionNotice = null;
@@ -2134,14 +2135,16 @@ async function loadConversationAutomation({ background = false } = {}) {
   const container = document.getElementById("conversation-automation-content");
   if (!container || !canManageConversationTemplates()) return;
   try {
-    const response = await fetch(
-      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation`,
-      { cache: "no-store" }
-    );
+    const [response, integrationResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation`, { cache: "no-store" }),
+      fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/integrations/status`, { cache: "no-store" })
+    ]);
     const body = await readAdminResponseBody(response);
+    const integrationBody = await readAdminResponseBody(integrationResponse);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cargar la automatización."));
     if (requestVersion !== conversationAutomationLoadVersion) return;
     conversationAutomation = body;
+    businessIntegrationStatus = integrationResponse.ok ? integrationBody : null;
     renderConversationAutomation();
   } catch (error) {
     if (requestVersion !== conversationAutomationLoadVersion) return;
@@ -2184,6 +2187,7 @@ function renderConversationAutomation() {
     `).join("")}
   `;
   container.innerHTML = `
+    <article class="conversation-integration-status state-${escapeHtml(businessIntegrationStatus?.state || "disconnected")}"><div><p>Integración de canal</p><strong>${escapeHtml(businessIntegrationStatus?.message || "Instagram no está conectado.")}</strong></div>${businessIntegrationStatus?.token_expires_at ? `<span>Caducidad: ${escapeHtml(new Date(businessIntegrationStatus.token_expires_at).toLocaleString("es-ES"))}</span>` : ""}</article>
     <div class="conversation-automation-settings">
       <label class="active-setting"><input id="conversation-automation-enabled" type="checkbox" ${settings.automation_enabled ? "checked" : ""} ${settings.automation_feature_enabled ? "" : "disabled"} />Activar automatización</label>
       <label>Umbral automático (%)<input id="conversation-automation-threshold" type="number" min="0" max="100" value="${settings.auto_threshold}" /></label>

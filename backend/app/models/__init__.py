@@ -21,6 +21,7 @@ from app.models.business_user import BusinessUser
 from app.models.business_user_service import BusinessUserService
 from app.models.audit_log import AuditLog
 from app.models.automation_credit import AutomationCreditTransaction
+from app.models.business_channel_integration import BusinessChannelIntegration
 from app.models.system_incident import SystemIncident
 from app.models.conversation import (
     Conversation,
@@ -53,6 +54,7 @@ __all__ = [
     "BusinessUserService",
     "AuditLog",
     "AutomationCreditTransaction",
+    "BusinessChannelIntegration",
     "SystemIncident",
     "Conversation",
     "ConversationAutomationRule",

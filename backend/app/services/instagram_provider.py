@@ -38,6 +38,21 @@ class ProviderSendResult:
         return self.delivery_status == "sent"
 
 
+@dataclass(frozen=True)
+class InstagramVerificationResult:
+    ok: bool
+    account_id: str | None = None
+    account_name: str | None = None
+    provider_status: str | None = None
+    scopes: tuple[str, ...] = ()
+    error_message: str | None = None
+    http_status: int | None = None
+    error_code: str | None = None
+    error_subcode: str | None = None
+    error_type: str | None = None
+    timed_out: bool = False
+
+
 def is_instagram_provider_configured(settings: Settings) -> bool:
     return bool(
         getattr(settings, "instagram_provider_enabled", False)
@@ -133,12 +148,14 @@ def parse_instagram_webhook(
     return parsed
 
 
-def _has_safe_graph_api_configuration(settings: Settings) -> bool:
+def _has_safe_graph_api_configuration(
+    settings: Settings,
+    external_account_id: str,
+) -> bool:
     version = settings.meta_graph_api_version.strip()
-    account_id = settings.instagram_business_account_id.strip()
     if not re.fullmatch(r"v\d+\.\d+", version):
         return False
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", account_id):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", external_account_id.strip()):
         return False
     return True
 
@@ -147,17 +164,20 @@ def send_instagram_text_message(
     recipient_id: str,
     text: str,
     *,
+    access_token: str,
+    external_account_id: str,
     settings: Settings | None = None,
     timeout_seconds: float = 10.0,
 ) -> ProviderSendResult:
     settings = settings or get_settings()
-    if not is_instagram_provider_configured(settings):
+    if not settings.instagram_provider_enabled or not access_token.strip():
         return ProviderSendResult(
             delivery_status="failed",
             error_message="Instagram provider is not configured",
+            error_code="integration_not_configured",
         )
     if (
-        not _has_safe_graph_api_configuration(settings)
+        not _has_safe_graph_api_configuration(settings, external_account_id)
         or not recipient_id.strip()
         or not text.strip()
     ):
@@ -171,7 +191,7 @@ def send_instagram_text_message(
         response = requests.post(
             url,
             headers={
-                "Authorization": f"Bearer {settings.instagram_access_token.strip()}",
+                "Authorization": f"Bearer {access_token.strip()}",
                 "Content-Type": "application/json",
             },
             json={
@@ -219,6 +239,83 @@ def send_instagram_text_message(
             if error_code is not None
             else "Instagram provider rejected the message"
         ),
+        http_status=getattr(response, "status_code", None),
+        error_code=str(error_code) if error_code is not None else None,
+        error_subcode=str(error_subcode) if error_subcode is not None else None,
+        error_type=str(error_type)[:120] if error_type is not None else None,
+    )
+
+
+def verify_instagram_access_token(
+    external_account_id: str,
+    access_token: str,
+    *,
+    settings: Settings | None = None,
+    timeout_seconds: float = 10.0,
+) -> InstagramVerificationResult:
+    settings = settings or get_settings()
+    if (
+        not access_token.strip()
+        or not _has_safe_graph_api_configuration(settings, external_account_id)
+    ):
+        return InstagramVerificationResult(
+            ok=False,
+            error_message="Instagram integration configuration is invalid",
+            error_code="invalid_integration_configuration",
+        )
+    version = settings.meta_graph_api_version.strip()
+    url = f"https://graph.instagram.com/{version}/{external_account_id.strip()}"
+    try:
+        response = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {access_token.strip()}"},
+            params={"fields": "id,username,name"},
+            timeout=timeout_seconds,
+        )
+    except requests.Timeout:
+        return InstagramVerificationResult(
+            ok=False,
+            error_message="Instagram verification timed out",
+            error_code="verification_timeout",
+            timed_out=True,
+        )
+    except requests.RequestException:
+        return InstagramVerificationResult(
+            ok=False,
+            error_message="Instagram verification request failed",
+            error_code="verification_request_failed",
+        )
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if response.ok:
+        account_id = str(payload.get("id", "")).strip()
+        if account_id != external_account_id.strip():
+            return InstagramVerificationResult(
+                ok=False,
+                account_id=account_id or None,
+                error_message="Instagram account ID did not match",
+                http_status=getattr(response, "status_code", None),
+                error_code="account_id_mismatch",
+            )
+        account_name = payload.get("username") or payload.get("name")
+        scopes = payload.get("scopes")
+        return InstagramVerificationResult(
+            ok=True,
+            account_id=account_id,
+            account_name=str(account_name)[:255] if account_name else None,
+            provider_status="available",
+            scopes=tuple(str(item)[:120] for item in scopes) if isinstance(scopes, list) else (),
+            http_status=getattr(response, "status_code", None),
+        )
+    error = payload.get("error") if isinstance(payload, dict) else None
+    error_code = error.get("code") if isinstance(error, dict) else None
+    error_subcode = error.get("error_subcode") if isinstance(error, dict) else None
+    error_type = error.get("type") if isinstance(error, dict) else None
+    return InstagramVerificationResult(
+        ok=False,
+        error_message="Instagram verification was rejected",
         http_status=getattr(response, "status_code", None),
         error_code=str(error_code) if error_code is not None else None,
         error_subcode=str(error_subcode) if error_subcode is not None else None,

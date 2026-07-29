@@ -28,6 +28,7 @@ from app.schemas.conversation import (
     ConversationSuggestionUpdate,
     TestInboundMessageCreate,
     AutomationCreditReadOnlyResponse,
+    BusinessIntegrationStatusResponse,
 )
 from app.services.conversation_automation_service import (
     allowed_limit_behaviors,
@@ -65,6 +66,11 @@ from app.services.incident_service import client_message_for_incident, incident_
 from app.services.automation_credit_service import (
     serialize_credit_summary,
     total_credits_available,
+)
+from app.services.instagram_integration_service import (
+    evaluate_integration_expiration,
+    get_instagram_integration,
+    serialize_admin_integration_status,
 )
 
 
@@ -605,6 +611,25 @@ def admin_get_business_automation_credits(
         "period_status": settings.period_status,
         "period_ends_at": serialize_settings(settings)["period_ends_at"],
     }
+
+
+@admin_router.get(
+    "/integrations/status",
+    response_model=BusinessIntegrationStatusResponse,
+)
+def admin_get_business_integration_status(
+    business_slug: str,
+    actor: User = Depends(require_business_admin),
+    db: Session = Depends(get_db),
+):
+    require_business_admin(business_slug, actor, db)
+    business = get_business_or_404(db, business_slug)
+    integration = get_instagram_integration(db, business_id=business.id)
+    if integration is not None:
+        evaluate_integration_expiration(db, integration)
+        db.commit()
+        db.refresh(integration)
+    return serialize_admin_integration_status(integration)
 
 
 @admin_router.patch("/conversation-automation/settings")

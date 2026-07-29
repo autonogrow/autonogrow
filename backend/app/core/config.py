@@ -1,5 +1,6 @@
 ﻿from functools import lru_cache
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import json
 import shutil
 import re
 from urllib.parse import urlsplit
@@ -68,6 +69,8 @@ class Settings(BaseSettings):
     instagram_default_business_slug: str = ""
     instagram_provider_enabled: bool = False
     instagram_require_signature: bool = True
+    integration_encryption_keys_json: str = ""
+    integration_encryption_active_key_version: str = "v1"
     incident_alerts_enabled: bool = False
     incident_alert_email: str = ""
     incident_alert_min_severity: str = "high"
@@ -179,9 +182,7 @@ class Settings(BaseSettings):
                 "META_APP_ID": self.meta_app_id,
                 "META_APP_SECRET": self.meta_app_secret,
                 "META_VERIFY_TOKEN": self.meta_verify_token,
-                "INSTAGRAM_ACCESS_TOKEN": self.instagram_access_token,
-                "INSTAGRAM_BUSINESS_ACCOUNT_ID": self.instagram_business_account_id,
-                "INSTAGRAM_DEFAULT_BUSINESS_SLUG": self.instagram_default_business_slug,
+                "INTEGRATION_ENCRYPTION_KEYS_JSON": self.integration_encryption_keys_json,
             }
             missing_instagram = [
                 name
@@ -199,6 +200,18 @@ class Settings(BaseSettings):
                 )
             if not re.fullmatch(r"v\d+\.\d+", self.meta_graph_api_version.strip()):
                 errors.append("META_GRAPH_API_VERSION no es válida")
+            try:
+                encryption_keys = json.loads(self.integration_encryption_keys_json)
+            except (TypeError, ValueError):
+                encryption_keys = None
+            active_version = self.integration_encryption_active_key_version.strip()
+            if (
+                not isinstance(encryption_keys, dict)
+                or not encryption_keys
+                or not active_version
+                or active_version not in encryption_keys
+            ):
+                errors.append("Configuración de cifrado de integraciones no válida")
         if errors:
             raise ValueError("Configuración de producción insegura: " + "; ".join(errors))
         return self
