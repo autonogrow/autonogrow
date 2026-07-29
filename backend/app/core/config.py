@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     instagram_default_business_slug: str = ""
     instagram_provider_enabled: bool = False
     instagram_require_signature: bool = True
+    incident_alerts_enabled: bool = False
+    incident_alert_email: str = ""
+    incident_alert_min_severity: str = "high"
+    incident_dedup_window_minutes: int = 30
+    incident_recovery_email_enabled: bool = True
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = True
 
     model_config = SettingsConfigDict(
         env_file=(str(BACKEND_DIR / ".env"), ".env"),
@@ -80,6 +91,27 @@ class Settings(BaseSettings):
         self.app_env = self.app_env.strip().lower()
         if self.app_env not in {"local", "production"}:
             raise ValueError("APP_ENV debe ser local o production")
+        self.incident_alert_min_severity = self.incident_alert_min_severity.strip().lower()
+        if self.incident_alert_min_severity not in {"low", "medium", "high", "critical"}:
+            raise ValueError("INCIDENT_ALERT_MIN_SEVERITY debe ser low, medium, high o critical")
+        if self.incident_dedup_window_minutes < 1 or self.incident_dedup_window_minutes > 10080:
+            raise ValueError("INCIDENT_DEDUP_WINDOW_MINUTES debe estar entre 1 y 10080")
+        if self.smtp_port < 1 or self.smtp_port > 65535:
+            raise ValueError("SMTP_PORT no es válido")
+        if self.incident_alerts_enabled:
+            alert_errors = []
+            if "@" not in self.incident_alert_email.strip():
+                alert_errors.append("INCIDENT_ALERT_EMAIL")
+            if not self.smtp_host.strip():
+                alert_errors.append("SMTP_HOST")
+            if "@" not in self.smtp_from.strip():
+                alert_errors.append("SMTP_FROM")
+            if bool(self.smtp_username.strip()) != bool(self.smtp_password):
+                alert_errors.append("SMTP_USERNAME/SMTP_PASSWORD")
+            if alert_errors:
+                raise ValueError(
+                    "Configuración de alertas incompleta: " + ", ".join(alert_errors)
+                )
         if self.upload_max_size_mb < 1 or self.upload_max_size_mb > 25:
             raise ValueError("UPLOAD_MAX_SIZE_MB debe estar entre 1 y 25")
         if self.app_env != "production":

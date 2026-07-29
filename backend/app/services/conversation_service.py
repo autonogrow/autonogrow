@@ -17,6 +17,13 @@ from app.services.instagram_provider import (
     is_instagram_provider_configured,
     send_instagram_text_message,
 )
+from app.services.incident_service import (
+    classify_provider_error,
+    client_message_for_incident,
+    incident_reference,
+    report_incident,
+    resolve_related_incidents,
+)
 from app.services.conversation_automation_state_service import (
     serialize_conversation_automation_state,
 )
@@ -28,6 +35,8 @@ class OutboundMessageResult:
     provider_configured: bool
     provider_attempted: bool
     error_message: str | None = None
+    client_error_message: str | None = None
+    incident_id: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -304,6 +313,7 @@ def send_outbound_message(
     conversation: Conversation,
     body: str,
     sender_type: str,
+    intent: str | None = None,
 ) -> OutboundMessageResult:
     settings = get_settings()
     provider_configured = (
@@ -313,6 +323,9 @@ def send_outbound_message(
     provider_attempted = False
     provider_message_id = None
     error_message = None
+    client_error_message = None
+    incident_id = None
+    provider_result = None
     delivery_status = "sent"
     if conversation.channel == "instagram":
         if provider_configured:
@@ -340,11 +353,60 @@ def send_outbound_message(
     if delivery_status == "failed":
         conversation.status = "pending"
         conversation.last_outbound_at = previous_last_outbound_at
+        category, severity = classify_provider_error(
+            provider="instagram",
+            error_code=provider_result.error_code if provider_result else None,
+            error_type=provider_result.error_type if provider_result else None,
+            timed_out=provider_result.timed_out if provider_result else False,
+        )
+        incident = report_incident(
+            db,
+            category=category,
+            severity=severity,
+            business_id=conversation.business_id,
+            channel=conversation.channel,
+            provider="instagram",
+            provider_error_code=provider_result.error_code if provider_result else None,
+            operation="send_message",
+            conversation_id=conversation.id,
+            message_id=message.id,
+            safe_details={
+                "http_status": provider_result.http_status if provider_result else None,
+                "error_subcode": provider_result.error_subcode if provider_result else None,
+                "error_type": provider_result.error_type if provider_result else None,
+                "intent": intent,
+                "retryable": category != "provider_authentication",
+                "impact": (
+                    "Canal Instagram desconectado para envíos salientes."
+                    if category == "provider_authentication"
+                    else "Un mensaje saliente no se ha entregado."
+                ),
+                "recommended_action": (
+                    "Revisar de forma interna la conexión del proveedor."
+                    if category == "provider_authentication"
+                    else "Comprobar el estado del proveedor y el formato del mensaje."
+                ),
+            },
+            settings=settings,
+        )
+        incident_id = incident_reference(incident)
+        client_error_message = client_message_for_incident(incident)
+    elif provider_attempted and delivery_status == "sent":
+        resolve_related_incidents(
+            db,
+            business_id=conversation.business_id,
+            channel=conversation.channel,
+            provider="instagram",
+            operation="send_message",
+            settings=settings,
+        )
     return OutboundMessageResult(
         message=message,
         provider_configured=provider_configured,
         provider_attempted=provider_attempted,
         error_message=error_message,
+        client_error_message=client_error_message,
+        incident_id=incident_id,
     )
 
 

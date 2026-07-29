@@ -91,6 +91,10 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "UPLOADS_DIR=/var/lib/autonogrow/uploads",
             "INSTAGRAM_PROVIDER_ENABLED=false",
             "INSTAGRAM_REQUIRE_SIGNATURE=true",
+            "INCIDENT_ALERTS_ENABLED=false",
+            "INCIDENT_ALERT_MIN_SEVERITY=high",
+            "INCIDENT_DEDUP_WINDOW_MINUTES=30",
+            "SMTP_USE_TLS=true",
         ),
         "deploy/staging.backend.env.example": (
             "APP_ENV=production",
@@ -99,6 +103,10 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "UPLOADS_DIR=/var/lib/autonogrow-staging/uploads",
             "INSTAGRAM_PROVIDER_ENABLED=false",
             "INSTAGRAM_REQUIRE_SIGNATURE=true",
+            "INCIDENT_ALERTS_ENABLED=false",
+            "INCIDENT_ALERT_MIN_SEVERITY=high",
+            "INCIDENT_DEDUP_WINDOW_MINUTES=30",
+            "SMTP_USE_TLS=true",
         ),
         "deploy/autonogrow.service.example": (
             "User=autonogrow",
@@ -223,6 +231,7 @@ def check_production_validation(reporter: Reporter, Settings) -> None:
         "UPLOADS_DIR dentro del frontend": {"uploads_dir": str(ROOT / "autonogrow-landing" )},
         "firma Instagram desactivada": {"instagram_require_signature": False},
         "provider Instagram incompleto": {"instagram_provider_enabled": True},
+        "alertas de incidencias incompletas": {"incident_alerts_enabled": True},
     }
     accepted: list[str] = []
     for label, override in unsafe_cases.items():

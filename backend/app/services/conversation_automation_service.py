@@ -542,6 +542,7 @@ def process_inbound_automation(
             conversation=conversation,
             sender_type="automation",
             body=render_template(template.body, business),
+            intent=detection.intent,
         )
         outbound = delivery.message
         outbound.raw_payload_json = json.dumps(
@@ -558,7 +559,11 @@ def process_inbound_automation(
             delivery_status=outbound.delivery_status,
         )
         if not delivery.ok:
-            result.update(action="automatic_failed")
+            result.update(
+                action="automatic_failed",
+                error_message=delivery.client_error_message,
+                incident_id=delivery.incident_id,
+            )
             return result
         settings.auto_used_current_period += 1
         settings.updated_at = datetime.utcnow()

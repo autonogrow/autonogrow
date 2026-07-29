@@ -6,7 +6,7 @@ import unicodedata
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -24,15 +24,18 @@ from app.models import (
     User,
     MessageOutbox,
     ReviewRequest,
+    SystemIncident,
 )
 from app.schemas.owner import (
     OwnerBusinessCreate,
     OwnerBusinessUpdate,
     OwnerBusinessUserCreate,
     OwnerBusinessUserUpdate,
+    OwnerIncidentUpdate,
 )
 from app.schemas.branding import resolve_branding
 from app.services.availability_service import serialize_settings
+from app.services.incident_service import SEVERITY_ORDER, serialize_incident
 
 
 router = APIRouter(prefix="/api/owner", tags=["owner"], dependencies=[Depends(require_owner)])
@@ -228,6 +231,81 @@ def serialize_owner_summary(db: Session, business: Business) -> dict:
 def list_owner_businesses(db: Session = Depends(get_db)):
     businesses = db.query(Business).order_by(Business.created_at.desc(), Business.id.desc()).all()
     return [serialize_owner_summary(db, business) for business in businesses]
+
+
+@router.get("/incidents")
+def list_owner_incidents(
+    status: str | None = None,
+    severity: str | None = None,
+    business_id: int | None = None,
+    channel: str | None = None,
+    open_only: bool = False,
+    limit: int = Query(default=200, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    query = db.query(SystemIncident)
+    if open_only:
+        query = query.filter(SystemIncident.status.in_(("open", "acknowledged")))
+    elif status:
+        normalized_status = status.strip().lower()
+        if normalized_status not in {"open", "acknowledged", "resolved", "ignored"}:
+            raise HTTPException(status_code=422, detail="Invalid incident status")
+        query = query.filter(SystemIncident.status == normalized_status)
+    if severity:
+        normalized_severity = severity.strip().lower()
+        if normalized_severity not in SEVERITY_ORDER:
+            raise HTTPException(status_code=422, detail="Invalid incident severity")
+        query = query.filter(SystemIncident.severity == normalized_severity)
+    if business_id is not None:
+        query = query.filter(SystemIncident.business_id == business_id)
+    if channel:
+        query = query.filter(SystemIncident.channel == channel.strip().lower())
+    rows = query.order_by(
+        SystemIncident.last_occurred_at.desc(), SystemIncident.id.desc()
+    ).limit(limit).all()
+    open_count = db.query(SystemIncident).filter(
+        SystemIncident.status.in_(("open", "acknowledged"))
+    ).count()
+    return {
+        "incidents": [serialize_incident(item) for item in rows],
+        "open_count": open_count,
+    }
+
+
+@router.patch("/incidents/{incident_id}")
+def update_owner_incident(
+    incident_id: int,
+    payload: OwnerIncidentUpdate,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    incident = db.query(SystemIncident).filter(SystemIncident.id == incident_id).first()
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    now = datetime.utcnow()
+    next_status = {
+        "acknowledge": "acknowledged",
+        "resolve": "resolved",
+        "ignore": "ignored",
+        "reopen": "open",
+    }[payload.action]
+    incident.status = next_status
+    incident.updated_at = now
+    incident.resolved_at = now if next_status == "resolved" else None
+    db.commit()
+    db.refresh(incident)
+    record_audit(
+        db,
+        action=f"incident_{payload.action}",
+        request=request,
+        actor=actor,
+        business_id=incident.business_id,
+        resource_type="system_incident",
+        resource_id=incident.id,
+        metadata={"status": incident.status, "severity": incident.severity},
+    )
+    return {"ok": True, "incident": serialize_incident(incident)}
 
 
 @router.get("/businesses/{business_slug}")

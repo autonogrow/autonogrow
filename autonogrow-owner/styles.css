@@ -16,7 +16,7 @@ h1 { margin-bottom: 10px; font-family: Georgia, serif; font-size: clamp(2.4rem, 
 h2 { margin-bottom: 4px; font-size: 1.65rem; }
 h3 { margin-bottom: 4px; font-size: 1.2rem; }
 .subtitle, .section-heading p, .business-card-header p, .helper { color: var(--muted); margin-bottom: 0; }
-.summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
+.summary-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 24px; }
 .summary-card, .business-card, .panel, fieldset, .creation-result { background: rgba(255,255,255,.94); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow); }
 .summary-card { padding: 18px; }
 .summary-card span { display: block; min-height: 42px; color: var(--muted); font-size: .82rem; font-weight: 700; }
@@ -86,5 +86,22 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .success-label { color: var(--green); font-weight: 900; margin-bottom: 5px; }
 .empty-state, .error-box { grid-column: 1 / -1; padding: 36px; border: 1px dashed var(--line); border-radius: 16px; text-align: center; color: var(--muted); }
 .error-box { color: var(--red); background: #fff7f5; }
-@media (max-width: 900px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } .business-grid { grid-template-columns: 1fr; } .service-row { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 600px) { .owner-page { width: min(100% - 20px, 1240px); padding-top: 22px; } .owner-header, .section-heading { align-items: stretch; flex-direction: column; } .summary-grid, .form-grid, .owner-brand-grid, .owner-user-form { grid-template-columns: 1fr; } .panel { padding: 15px; } .metrics-grid { grid-template-columns: repeat(3, 1fr); row-gap: 12px; } .service-row, .owner-gallery article, .owner-users-list article { grid-template-columns: 1fr; } }
+.incident-filters { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)) auto; gap: 10px; align-items: end; margin-bottom: 18px; }
+.incident-list { display: grid; gap: 12px; }
+.incident-card { border: 1px solid var(--line); border-left: 6px solid #94a3b8; border-radius: 14px; padding: 16px; background: #fff; }
+.incident-card.severity-critical { border-left-color: #7f1d1d; }
+.incident-card.severity-high { border-left-color: #dc2626; }
+.incident-card.severity-medium { border-left-color: #d97706; }
+.incident-card.severity-low { border-left-color: #64748b; }
+.incident-heading { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.incident-heading p { margin-bottom: 0; color: var(--muted); }
+.incident-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.incident-badge { border-radius: 999px; padding: 4px 8px; background: #eef1ed; font-size: .72rem; font-weight: 900; text-transform: uppercase; }
+.incident-badge.severity-critical, .incident-badge.severity-high { color: #991b1b; background: #fee2e2; }
+.incident-badge.severity-medium { color: #92400e; background: #fef3c7; }
+.incident-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 14px 0; }
+.incident-meta span { color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
+.incident-meta strong { display: block; color: var(--ink); font-size: .86rem; }
+.incident-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+@media (max-width: 900px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } .business-grid { grid-template-columns: 1fr; } .service-row { grid-template-columns: repeat(2, 1fr); } .incident-filters, .incident-meta { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 600px) { .owner-page { width: min(100% - 20px, 1240px); padding-top: 22px; } .owner-header, .section-heading, .incident-heading { align-items: stretch; flex-direction: column; } .summary-grid, .form-grid, .owner-brand-grid, .owner-user-form, .incident-filters, .incident-meta { grid-template-columns: 1fr; } .panel { padding: 15px; } .metrics-grid { grid-template-columns: repeat(3, 1fr); row-gap: 12px; } .service-row, .owner-gallery article, .owner-users-list article { grid-template-columns: 1fr; } .incident-badges { justify-content: flex-start; } }

@@ -30,11 +30,13 @@
       <article class="summary-card"><span>Reservas pendientes</span><strong id="pending-bookings">—</strong></article>
       <article class="summary-card"><span>Mensajes pendientes</span><strong id="pending-messages">—</strong></article>
       <article class="summary-card"><span>Reseñas pendientes</span><strong id="pending-reviews">—</strong></article>
+      <article class="summary-card"><span>Incidencias abiertas</span><strong id="open-incidents">—</strong></article>
     </section>
 
     <nav class="tabs" aria-label="Secciones del panel">
       <button class="tab active" type="button" data-tab="businesses">Negocios</button>
       <button class="tab" type="button" data-tab="new-business">Nuevo negocio</button>
+      <button class="tab" type="button" data-tab="incidents">Incidencias</button>
     </nav>
 
     <section id="businesses-section" class="panel active" data-panel="businesses">
@@ -43,6 +45,21 @@
         <span id="list-status" class="status-text" aria-live="polite">Cargando…</span>
       </div>
       <div id="business-list" class="business-grid"></div>
+    </section>
+
+    <section class="panel" data-panel="incidents">
+      <div class="section-heading">
+        <div><h2>Incidencias</h2><p>Alertas técnicas seguras y agrupadas de todos los negocios.</p></div>
+        <span id="incidents-status" class="status-text" aria-live="polite"></span>
+      </div>
+      <form id="incident-filters" class="incident-filters">
+        <label>Estado<select name="status"><option value="active">Abiertas</option><option value="">Todos</option><option value="open">Sin reconocer</option><option value="acknowledged">Reconocidas</option><option value="resolved">Resueltas</option><option value="ignored">Ignoradas</option></select></label>
+        <label>Severidad<select name="severity"><option value="">Todas</option><option value="critical">Críticas</option><option value="high">Altas</option><option value="medium">Medias</option><option value="low">Bajas</option></select></label>
+        <label>Negocio<select name="business_id"><option value="">Todos</option></select></label>
+        <label>Canal<select name="channel"><option value="">Todos</option><option value="instagram">Instagram</option><option value="whatsapp">WhatsApp</option></select></label>
+        <button class="button button-secondary" type="submit">Filtrar</button>
+      </form>
+      <div id="incident-list" class="incident-list"></div>
     </section>
 
     <section class="panel" data-panel="new-business">

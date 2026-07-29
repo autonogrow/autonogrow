@@ -8,6 +8,8 @@ const fetch = async (input, options = {}) => {
   return response;
 };
 let businesses = [];
+let incidents = [];
+let openIncidentCount = 0;
 let ownerAuthUser = null;
 const PALETTES = { slate_gold: ["#334155", "#0f172a", "#f59e0b", "#f8fafc"], rose_beauty: ["#be123c", "#831843", "#f9a8d4", "#fff1f2"], emerald_clean: ["#047857", "#064e3b", "#6ee7b7", "#ecfdf5"], blue_clinic: ["#2563eb", "#1e3a8a", "#93c5fd", "#eff6ff"], amber_barber: ["#92400e", "#451a03", "#fbbf24", "#fffbeb"], violet_modern: ["#7c3aed", "#4c1d95", "#c4b5fd", "#f5f3ff"] };
 const TEMPLATE_DESCRIPTIONS = { classic: "Estructura equilibrada para cualquier negocio.", elegant: "Diseño más premium y visual.", beauty: "Pensada para estética, manicura y peluquería.", clinic: "Limpia y profesional para centros de salud o consulta.", urban: "Más impacto para barberías y negocios modernos.", minimal: "Directa y sencilla para servicios prácticos." };
@@ -51,6 +53,7 @@ function slugify(value) {
 function setActiveTab(name) {
   document.querySelectorAll("[data-tab]").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
   document.querySelectorAll("[data-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === name));
+  if (name === "incidents") loadIncidents();
 }
 
 function renderSummary() {
@@ -59,6 +62,74 @@ function renderSummary() {
   byId("pending-bookings").textContent = sum(businesses, (item) => item.metrics.pending_bookings);
   byId("pending-messages").textContent = sum(businesses, (item) => item.metrics.message_outbox_pending);
   byId("pending-reviews").textContent = sum(businesses, (item) => item.metrics.review_requests_pending);
+  byId("open-incidents").textContent = openIncidentCount;
+}
+
+function formatIncidentDate(value) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(new Date(`${value}Z`));
+}
+
+function incidentCard(incident) {
+  const actions = incident.status === "open"
+    ? [["acknowledge", "Marcar reconocida"], ["resolve", "Resolver"], ["ignore", "Ignorar"]]
+    : incident.status === "acknowledged"
+      ? [["resolve", "Resolver"], ["ignore", "Ignorar"]]
+      : [["reopen", "Reabrir"]];
+  return `<article class="incident-card severity-${escapeHtml(incident.severity)}">
+    <div class="incident-heading"><div><h3>${escapeHtml(incident.incident_id)}</h3><p>${escapeHtml(incident.category)} · ${escapeHtml(incident.operation)}</p></div><div class="incident-badges"><span class="incident-badge severity-${escapeHtml(incident.severity)}">${escapeHtml(incident.severity)}</span><span class="incident-badge">${escapeHtml(incident.status)}</span></div></div>
+    <div class="incident-meta">
+      <span><strong>Negocio</strong>${escapeHtml(incident.business_slug || incident.business_id || "Global")}</span>
+      <span><strong>Canal / proveedor</strong>${escapeHtml(incident.channel || "—")} / ${escapeHtml(incident.provider || "—")}</span>
+      <span><strong>Código</strong>${escapeHtml(incident.provider_error_code || "—")}</span>
+      <span><strong>Ocurrencias</strong>${escapeHtml(incident.occurrence_count)}</span>
+      <span><strong>Primera</strong>${escapeHtml(formatIncidentDate(incident.first_occurred_at))}</span>
+      <span><strong>Última</strong>${escapeHtml(formatIncidentDate(incident.last_occurred_at))}</span>
+      <span><strong>Último aviso</strong>${escapeHtml(formatIncidentDate(incident.notified_at))}</span>
+      <span><strong>Conversación / mensaje</strong>${escapeHtml(incident.conversation_id || "—")} / ${escapeHtml(incident.message_id || "—")}</span>
+    </div><div class="incident-actions">${actions.map(([action, label]) => `<button class="button ${action === "ignore" ? "button-danger" : "button-secondary"} button-small" type="button" data-incident-id="${incident.id}" data-incident-action="${action}">${label}</button>`).join("")}</div>
+  </article>`;
+}
+
+function renderIncidents() {
+  byId("incident-list").innerHTML = incidents.length ? incidents.map(incidentCard).join("") : '<div class="empty-state">No hay incidencias para estos filtros.</div>';
+  byId("incidents-status").textContent = `${incidents.length} incidencia${incidents.length === 1 ? "" : "s"}`;
+  const businessSelect = byId("incident-filters").elements.business_id;
+  const selected = businessSelect.value;
+  businessSelect.innerHTML = '<option value="">Todos</option>' + businesses.map((item) => `<option value="${item.id}">${escapeHtml(item.name)} (${escapeHtml(item.slug)})</option>`).join("");
+  businessSelect.value = selected;
+  renderSummary();
+}
+
+async function loadIncidents() {
+  const form = byId("incident-filters");
+  if (!form) return;
+  byId("incidents-status").textContent = "Cargando…";
+  const params = new URLSearchParams();
+  if (form.elements.status.value === "active") params.set("open_only", "true");
+  else if (form.elements.status.value) params.set("status", form.elements.status.value);
+  if (form.elements.severity.value) params.set("severity", form.elements.severity.value);
+  if (form.elements.business_id.value) params.set("business_id", form.elements.business_id.value);
+  if (form.elements.channel.value) params.set("channel", form.elements.channel.value);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/owner/incidents?${params}`);
+    const body = await readResponseBody(response);
+    if (!response.ok) throw new Error(body.detail || "No se pudieron cargar las incidencias");
+    incidents = body.incidents || [];
+    openIncidentCount = Number(body.open_count || 0);
+    renderIncidents();
+  } catch (error) {
+    byId("incidents-status").textContent = "No disponible";
+    byId("incident-list").innerHTML = `<div class="error-box">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function updateIncident(incidentId, action, button) {
+  button.disabled = true;
+  const response = await fetch(`${API_BASE_URL}/api/owner/incidents/${incidentId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+  const body = await readResponseBody(response);
+  if (!response.ok) { button.disabled = false; throw new Error(body.detail || "No se pudo actualizar la incidencia"); }
+  await loadIncidents();
 }
 
 function healthBadge(label, healthy) {
@@ -395,7 +466,9 @@ function applyBusinessTemplate(key) {
 }
 
 document.querySelectorAll("[data-tab]").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
-byId("refresh-button").addEventListener("click", loadBusinesses);
+byId("refresh-button").addEventListener("click", async () => { await loadBusinesses(); await loadIncidents(); });
+byId("incident-filters").addEventListener("submit", (event) => { event.preventDefault(); loadIncidents(); });
+byId("incident-list").addEventListener("click", (event) => { const button = event.target.closest("[data-incident-action]"); if (button) updateIncident(button.dataset.incidentId, button.dataset.incidentAction, button).catch((error) => { byId("incidents-status").textContent = error.message; }); });
 byId("add-service").addEventListener("click", addServiceRow);
 byId("business-form").addEventListener("submit", createBusiness);
 byId("business-list").addEventListener("click", (event) => {
@@ -456,6 +529,7 @@ async function bootstrapOwnerAuth() {
     byId("owner-app").hidden = false;
     byId("owner-auth-user").textContent = ownerAuthUser.name || ownerAuthUser.email;
     await loadBusinesses();
+    await loadIncidents();
   } catch (error) {
     console.error("Owner authentication failed", error);
     await showOwnerLogin(error.message);

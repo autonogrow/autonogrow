@@ -27,6 +27,11 @@ class ProviderSendResult:
     delivery_status: str
     provider_message_id: str | None = None
     error_message: str | None = None
+    http_status: int | None = None
+    error_code: str | None = None
+    error_subcode: str | None = None
+    error_type: str | None = None
+    timed_out: bool = False
 
     @property
     def ok(self) -> bool:
@@ -175,6 +180,12 @@ def send_instagram_text_message(
             },
             timeout=timeout_seconds,
         )
+    except requests.Timeout:
+        return ProviderSendResult(
+            delivery_status="failed",
+            error_message="Instagram provider request timed out",
+            timed_out=True,
+        )
     except requests.RequestException:
         return ProviderSendResult(
             delivery_status="failed",
@@ -195,9 +206,12 @@ def send_instagram_text_message(
             provider_message_id=(
                 str(provider_message_id) if provider_message_id is not None else None
             ),
+            http_status=getattr(response, "status_code", None),
         )
     error = response_payload.get("error")
     error_code = error.get("code") if isinstance(error, dict) else None
+    error_subcode = error.get("error_subcode") if isinstance(error, dict) else None
+    error_type = error.get("type") if isinstance(error, dict) else None
     return ProviderSendResult(
         delivery_status="failed",
         error_message=(
@@ -205,4 +219,8 @@ def send_instagram_text_message(
             if error_code is not None
             else "Instagram provider rejected the message"
         ),
+        http_status=getattr(response, "status_code", None),
+        error_code=str(error_code) if error_code is not None else None,
+        error_subcode=str(error_subcode) if error_subcode is not None else None,
+        error_type=str(error_type)[:120] if error_type is not None else None,
     )

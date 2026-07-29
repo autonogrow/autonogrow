@@ -20,6 +20,7 @@ from app.models.user import User
 from app.models.business_user import BusinessUser
 from app.models.business_user_service import BusinessUserService
 from app.models.audit_log import AuditLog
+from app.models.system_incident import SystemIncident
 from app.models.conversation import (
     Conversation,
     ConversationAutomationRule,
@@ -50,6 +51,7 @@ __all__ = [
     "BusinessUser",
     "BusinessUserService",
     "AuditLog",
+    "SystemIncident",
     "Conversation",
     "ConversationAutomationRule",
     "ConversationAutomationSettings",

@@ -162,3 +162,15 @@ class OwnerBusinessUserUpdate(BaseModel):
         if value is not None and value not in {"business_admin", "business_staff"}:
             raise ValueError("Role must be business_admin or business_staff")
         return value
+
+
+class OwnerIncidentUpdate(BaseModel):
+    action: str
+
+    @field_validator("action")
+    @classmethod
+    def valid_action(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"acknowledge", "resolve", "ignore", "reopen"}:
+            raise ValueError("Action must be acknowledge, resolve, ignore or reopen")
+        return normalized

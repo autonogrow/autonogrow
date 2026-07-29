@@ -44,6 +44,7 @@ class Business(Base):
     bookings = relationship("Booking", back_populates="business", cascade="all, delete-orphan")
     review_requests = relationship("ReviewRequest", back_populates="business", cascade="all, delete-orphan")
     message_outbox = relationship("MessageOutbox", back_populates="business", cascade="all, delete-orphan")
+    system_incidents = relationship("SystemIncident", back_populates="business")
     google_integrations = relationship("GoogleIntegration", back_populates="business", cascade="all, delete-orphan")
     gallery_images = relationship("BusinessGalleryImage", back_populates="business", cascade="all, delete-orphan")
     user_memberships = relationship("BusinessUser", back_populates="business", cascade="all, delete-orphan")

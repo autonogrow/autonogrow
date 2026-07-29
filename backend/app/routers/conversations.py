@@ -11,6 +11,7 @@ from app.models import (
     Business,
     ConversationSuggestion,
     ConversationTemplate,
+    SystemIncident,
     User,
 )
 from app.schemas.conversation import (
@@ -58,6 +59,7 @@ from app.services.conversation_service import (
     serialize_template,
     update_status,
 )
+from app.services.incident_service import client_message_for_incident, incident_reference
 
 
 admin_router = APIRouter(
@@ -73,6 +75,36 @@ def get_business_or_404(db: Session, business_slug: str) -> Business:
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
     return business
+
+
+@admin_router.get("/incidents")
+def admin_list_business_incidents(
+    business_slug: str,
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    rows = (
+        db.query(SystemIncident)
+        .filter(
+            SystemIncident.business_id == business.id,
+            SystemIncident.status.in_(("open", "acknowledged")),
+        )
+        .order_by(SystemIncident.last_occurred_at.desc(), SystemIncident.id.desc())
+        .limit(20)
+        .all()
+    )
+    return {
+        "incidents": [
+            {
+                "incident_id": incident_reference(item),
+                "status": item.status,
+                "channel": item.channel,
+                "message": client_message_for_incident(item),
+                "last_occurred_at": item.last_occurred_at.isoformat(),
+            }
+            for item in rows
+        ]
+    }
 
 
 def get_conversation_or_404(
@@ -250,7 +282,8 @@ def admin_send_conversation_message(
     if not delivery.ok:
         raise HTTPException(
             status_code=502,
-            detail="No se pudo enviar por Instagram. Revisa la configuración del proveedor.",
+            detail=delivery.client_error_message
+            or "No se ha podido enviar el mensaje. El equipo de AutonoGrow revisará la incidencia.",
         )
     return {
         "ok": True,
@@ -758,7 +791,8 @@ def admin_send_conversation_suggestion(
     if not delivery.ok:
         raise HTTPException(
             status_code=502,
-            detail="No se pudo enviar por Instagram. Revisa la configuración del proveedor.",
+            detail=delivery.client_error_message
+            or "No se ha podido enviar el mensaje. El equipo de AutonoGrow revisará la incidencia.",
         )
     return {
         "ok": True,
