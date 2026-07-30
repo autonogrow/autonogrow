@@ -7,7 +7,6 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models import Booking, User
 
-
 router = APIRouter(prefix="/api/customer", tags=["customer"])
 
 

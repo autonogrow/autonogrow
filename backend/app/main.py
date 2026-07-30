@@ -5,41 +5,47 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings, get_uploads_dir, migrate_legacy_uploads
-from app.core.database import create_db_and_tables
-from app.middleware.csrf import CSRFMiddleware
+from app.core.database import initialize_database
 from app.middleware.audit import FailedAccessAuditMiddleware
+from app.middleware.csrf import CSRFMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
-from app.routers.admin_availability import router as admin_availability_router
 from app.routers.admin import router as admin_router
+from app.routers.admin_availability import router as admin_availability_router
 from app.routers.attachments import router as attachments_router
+from app.routers.auth import router as auth_router
 from app.routers.availability import router as availability_router
 from app.routers.bookings import router as bookings_router
 from app.routers.businesses import router as businesses_router
-from app.routers.customers import router as customers_router
-from app.routers.health import router as health_router
-from app.routers.owner import router as owner_router
-from app.routers.media import router as media_router
-from app.routers.services import router as services_router
-from app.routers.auth import router as auth_router
 from app.routers.config import router as config_router
-from app.routers.customer import router as customer_router
-from app.routers.staff import (
-    admin_router as admin_staff_router,
-    member_router as member_staff_router,
-    public_router as public_staff_router,
-)
 from app.routers.conversations import (
     admin_router as conversations_router,
+)
+from app.routers.conversations import (
     webhook_router as test_webhook_router,
 )
+from app.routers.customer import router as customer_router
+from app.routers.customers import router as customers_router
+from app.routers.health import router as health_router
 from app.routers.instagram_webhook import router as instagram_webhook_router
+from app.routers.media import router as media_router
+from app.routers.owner import router as owner_router
+from app.routers.services import router as services_router
+from app.routers.staff import (
+    admin_router as admin_staff_router,
+)
+from app.routers.staff import (
+    member_router as member_staff_router,
+)
+from app.routers.staff import (
+    public_router as public_staff_router,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     migrate_legacy_uploads()
-    create_db_and_tables()
+    initialize_database()
     yield
 
 

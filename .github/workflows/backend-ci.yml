@@ -1,0 +1,90 @@
+name: Backend CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_ENV: test
+      PYTHONPATH: backend
+      DATABASE_URL: sqlite:///${{ runner.temp }}/autonogrow-ci.db
+      DATABASE_MIGRATION_CHECK: "true"
+      ENABLE_LEGACY_STARTUP_MIGRATIONS: "false"
+      SQLITE_BUSY_TIMEOUT_MS: "5000"
+      SQLITE_JOURNAL_MODE: WAL
+      SQLITE_SYNCHRONOUS: NORMAL
+      SESSION_SECRET: ci-fake-session-secret-32-characters-minimum
+      GOOGLE_CLIENT_ID: 1234567890-ci.apps.googleusercontent.com
+      OWNER_ALLOWED_EMAILS: owner@autonogrow.test
+      FRONTEND_ORIGINS: http://testserver
+      WEBHOOK_TEST_SECRET: ci-fake-webhook-secret
+      META_APP_ID: ci-fake-meta-app
+      META_APP_SECRET: ci-fake-meta-secret
+      META_VERIFY_TOKEN: ci-fake-verify-token
+      INTEGRATION_ENCRYPTION_KEYS_JSON: '{"v1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+      INTEGRATION_ENCRYPTION_ACTIVE_KEY_VERSION: v1
+      INSTAGRAM_PROVIDER_ENABLED: "false"
+      INSTAGRAM_REQUIRE_SIGNATURE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install locked development dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format (incremental scope)
+        run: >-
+          ruff format --check
+          alembic/env.py
+          alembic/versions/20260730_02_add_message_timeline_index.py
+          backend/app/core/config.py
+          backend/app/core/database.py
+          backend/app/core/migration_state.py
+          backend/app/models/registry.py
+          backend/tests/test_database_infrastructure.py
+          scripts/check_database_migration_state.py
+          scripts/manage_migrations.py
+          scripts/test_migration_on_copy.py
+
+      - name: Incremental mypy
+        run: mypy
+
+      - name: Bandit medium and higher
+        run: bandit -c pyproject.toml -r backend/app scripts --severity-level medium
+
+      - name: Audit locked production dependencies
+        run: pip-audit -r backend/requirements.txt
+
+      - name: Tests and coverage
+        run: >-
+          pytest
+          --cov=app
+          --cov-report=term-missing
+          --cov-report=xml
+          --cov-fail-under=60
+
+      - name: Migrate an empty SQLite database
+        run: alembic upgrade head
+
+      - name: Confirm Alembic current and head
+        run: |
+          alembic current
+          alembic heads
+          python scripts/manage_migrations.py validate

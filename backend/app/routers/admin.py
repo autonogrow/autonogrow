@@ -1,12 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
 from datetime import datetime
 
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import case
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
 from app.core.audit import record_audit
+from app.core.database import get_db
 from app.core.security import (
     ensure_can_manage_booking,
     get_business_membership,
@@ -24,16 +24,16 @@ from app.models import (
     User,
 )
 from app.routers.bookings import parse_reschedule_start
+from app.schemas.branding import resolve_branding
+from app.schemas.business import BusinessSettingsUpdate
+from app.schemas.message_outbox import MessageOutboxStatusUpdate
+from app.schemas.review_request import ReviewRequestStatusUpdate
+from app.schemas.service import AdminServiceCreate, AdminServiceUpdate
 from app.services.booking_service import (
     list_bookings_for_business,
     reschedule_existing_booking,
     serialize_booking,
 )
-from app.schemas.review_request import ReviewRequestStatusUpdate
-from app.schemas.message_outbox import MessageOutboxStatusUpdate
-from app.schemas.business import BusinessSettingsUpdate
-from app.schemas.branding import resolve_branding
-from app.schemas.service import AdminServiceCreate, AdminServiceUpdate
 from app.services.message_outbox_service import (
     create_booking_confirmed_message,
     create_booking_rejected_message,
@@ -48,7 +48,6 @@ from app.services.review_request_service import (
     get_or_create_review_request,
     serialize_review_request,
 )
-
 
 router = APIRouter(prefix="/api/admin/businesses/{business_slug}", tags=["admin"], dependencies=[Depends(require_business_access)])
 

@@ -6,7 +6,6 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.models import Booking, Business, BusinessUser, User
 
-
 SESSION_COOKIE = "autonogrow_session"
 SESSION_MAX_AGE = 7 * 24 * 60 * 60
 

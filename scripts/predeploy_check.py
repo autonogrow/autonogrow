@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
 
+from sqlalchemy import create_engine
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -25,7 +27,9 @@ def relaunch_with_project_venv_if_needed() -> int | None:
     for candidate in candidates:
         if candidate.is_file() and candidate.resolve() != current:
             print("[INFO] Relanzando comprobaciones con el virtualenv del proyecto", flush=True)
-            completed = subprocess.run([str(candidate), str(Path(__file__).resolve()), *sys.argv[1:]], check=False)
+            completed = subprocess.run(
+                [str(candidate), str(Path(__file__).resolve()), *sys.argv[1:]], check=False
+            )
             return completed.returncode
     return None
 
@@ -73,7 +77,26 @@ def check_required_files(reporter: Reporter) -> None:
         "docs/vps_security_deploy_plan.md",
         "docs/staging_deploy_checklist.md",
         "docs/instagram_multi_business_integrations.md",
+        "docs/database_migrations.md",
+        "docs/dependency_management.md",
+        "docs/ci_pipeline.md",
+        "docs/sqlite_operations.md",
+        "docs/database_backup_and_restore.md",
+        "docs/pending_final_validation.md",
+        "docs/final_release_validation_matrix.md",
+        "alembic.ini",
+        "alembic/env.py",
+        "alembic/script.py.mako",
+        "backend/requirements.in",
+        "backend/requirements.txt",
+        "backend/requirements-dev.in",
+        "backend/requirements-dev.txt",
+        "pyproject.toml",
+        ".github/workflows/backend-ci.yml",
         "scripts/backup_sqlite_uploads.py",
+        "scripts/check_database_migration_state.py",
+        "scripts/manage_migrations.py",
+        "scripts/test_migration_on_copy.py",
         "scripts/rotate_integration_encryption.py",
         "scripts/smoke_test_staging.py",
     ]
@@ -90,6 +113,11 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "APP_ENV=production",
             "COOKIE_SECURE=true",
             "DATABASE_URL=sqlite:////var/lib/autonogrow/data/autonogrow.db",
+            "DATABASE_MIGRATION_CHECK=true",
+            "ENABLE_LEGACY_STARTUP_MIGRATIONS=false",
+            "SQLITE_BUSY_TIMEOUT_MS=5000",
+            "SQLITE_JOURNAL_MODE=WAL",
+            "SQLITE_SYNCHRONOUS=NORMAL",
             "UPLOADS_DIR=/var/lib/autonogrow/uploads",
             "INSTAGRAM_PROVIDER_ENABLED=false",
             "INSTAGRAM_REQUIRE_SIGNATURE=true",
@@ -104,6 +132,11 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "APP_ENV=production",
             "FRONTEND_ORIGINS=https://staging.example.com",
             "DATABASE_URL=sqlite:////var/lib/autonogrow-staging/data/autonogrow.db",
+            "DATABASE_MIGRATION_CHECK=true",
+            "ENABLE_LEGACY_STARTUP_MIGRATIONS=false",
+            "SQLITE_BUSY_TIMEOUT_MS=5000",
+            "SQLITE_JOURNAL_MODE=WAL",
+            "SQLITE_SYNCHRONOUS=NORMAL",
             "UPLOADS_DIR=/var/lib/autonogrow-staging/uploads",
             "INSTAGRAM_PROVIDER_ENABLED=false",
             "INSTAGRAM_REQUIRE_SIGNATURE=true",
@@ -153,7 +186,10 @@ def check_frontend_api_base(reporter: Reporter) -> None:
         ROOT / "autonogrow-customer/customer.js",
     ]
     shared_ok = "http://127.0.0.1:8000" in shared and "window.location.origin" in shared
-    consumers_ok = all("AutonoGrowAuth.API_BASE_URL" in path.read_text(encoding="utf-8-sig") for path in entrypoints)
+    consumers_ok = all(
+        "AutonoGrowAuth.API_BASE_URL" in path.read_text(encoding="utf-8-sig")
+        for path in entrypoints
+    )
     if shared_ok and consumers_ok:
         reporter.passed("Frontend usa backend local en desarrollo y mismo origen en production")
     else:
@@ -186,6 +222,117 @@ def check_git_env_tracking(reporter: Reporter) -> None:
         reporter.fail("Un fichero .env real está tracked por Git")
     else:
         reporter.passed("Los ficheros .env reales no están tracked por Git")
+
+
+def tracked_files() -> list[Path]:
+    completed = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "--cached", "--others", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if completed.returncode:
+        return []
+    return [ROOT / item for item in completed.stdout.splitlines() if item]
+
+
+def check_dependency_locks(reporter: Reporter) -> None:
+    for relative in ("backend/requirements.txt", "backend/requirements-dev.txt"):
+        path = ROOT / relative
+        if not path.is_file():
+            continue
+        floating = []
+        for line_number, raw_line in enumerate(
+            path.read_text(encoding="utf-8-sig").splitlines(), start=1
+        ):
+            line = raw_line.strip()
+            if not line or line.startswith("#") or line.startswith("--"):
+                continue
+            if "==" not in line:
+                floating.append(line_number)
+        if floating:
+            reporter.fail(f"{relative} contiene dependencias no fijadas")
+        else:
+            reporter.passed(f"{relative} contiene solo versiones exactas")
+
+
+def check_alembic(reporter: Reporter) -> None:
+    try:
+        from alembic.script import ScriptDirectory
+
+        from app.core.migration_state import alembic_config
+
+        heads = ScriptDirectory.from_config(alembic_config()).get_heads()
+    except Exception:
+        reporter.fail("Alembic no puede cargar su configuración o revisiones")
+        return
+    if len(heads) == 1:
+        reporter.passed(f"Alembic tiene una única head: {heads[0]}")
+    else:
+        reporter.fail("Alembic debe tener exactamente una head")
+
+
+def check_database_revision(reporter: Reporter, config_module) -> None:
+    from app.core.migration_state import inspect_database_migration_state
+
+    database_url = config_module.get_database_url()
+    database_path = config_module.sqlite_file_path(database_url)
+    if database_path is not None and not Path(database_path).is_file():
+        reporter.fail("La base configurada no existe; no se crea durante predeploy")
+        return
+    diagnostic_engine = create_engine(database_url)
+    try:
+        state = inspect_database_migration_state(diagnostic_engine)
+    except Exception:
+        reporter.fail("No se pudo comprobar la revisión de la base configurada")
+        return
+    finally:
+        diagnostic_engine.dispose()
+    if state.is_at_head:
+        reporter.passed("La base configurada está en Alembic head")
+    else:
+        reporter.fail(f"La base configurada requiere: {state.recommendation}")
+
+
+def check_tracked_secrets(reporter: Reporter) -> None:
+    assignment = re.compile(
+        r"(?im)^[ \t]*(session_secret|smtp_password|meta_app_secret|"
+        r"integration_encryption_keys_json)[ \t]*=[ \t]*([^\s#]+)"
+    )
+    allowed_markers = (
+        "change_me",
+        "placeholder",
+        "replace-with",
+        "example",
+        "test",
+        "fake",
+        "clave_",
+        "aleatorio",
+        "server-vault",
+        "<",
+    )
+    findings: list[str] = []
+    for path in tracked_files():
+        if path.suffix.lower() not in {".py", ".env", ".example", ".yml", ".yaml", ".md"}:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeError):
+            continue
+        for match in assignment.finditer(content):
+            raw_value = match.group(2)
+            if path.suffix.lower() == ".py" and not raw_value.startswith(("\"", "'")):
+                continue
+            value = raw_value.strip("\"'").lower()
+            if value and not any(marker in value for marker in allowed_markers):
+                findings.append(str(path.relative_to(ROOT)))
+    if findings:
+        reporter.fail(
+            "Posibles secretos reales detectados en: " + ", ".join(sorted(set(findings)))
+        )
+    else:
+        reporter.passed("No se detectaron secretos reales en archivos versionados")
 
 
 def production_baseline() -> dict[str, object]:
@@ -223,18 +370,22 @@ def check_production_validation(reporter: Reporter, Settings) -> None:
         "security headers desactivados": {"security_headers_enabled": False},
         "SESSION_SECRET placeholder": {"session_secret": "CHANGE_ME_LONG_RANDOM_SECRET_CHANGE_ME"},
         "SESSION_SECRET corto": {"session_secret": "too-short"},
-        "GOOGLE_CLIENT_ID placeholder": {"google_client_id": "CHANGE_ME.apps.googleusercontent.com"},
+        "GOOGLE_CLIENT_ID placeholder": {
+            "google_client_id": "CHANGE_ME.apps.googleusercontent.com"
+        },
         "OWNER_ALLOWED_EMAILS vacío": {"owner_allowed_emails": ""},
         "CORS wildcard": {"frontend_origins": "*"},
         "CORS HTTP": {"frontend_origins": "http://app.autonogrow.test"},
         "CORS placeholder": {"frontend_origins": "https://app.example.com"},
         "DATABASE_URL relativa": {"database_url": "sqlite:///./data/autonogrow.db"},
         "DATABASE_URL vacía": {"database_url": ""},
-        "DATABASE_URL dentro del repo": {"database_url": f"sqlite:///{(BACKEND / 'data' / 'autonogrow.db').as_posix()}"},
+        "DATABASE_URL dentro del repo": {
+            "database_url": f"sqlite:///{(BACKEND / 'data' / 'autonogrow.db').as_posix()}"
+        },
         "UPLOADS_DIR relativa": {"uploads_dir": "backend/uploads"},
         "UPLOADS_DIR vacía": {"uploads_dir": ""},
         "UPLOADS_DIR pública": {"uploads_dir": "/var/www/autonogrow/uploads"},
-        "UPLOADS_DIR dentro del frontend": {"uploads_dir": str(ROOT / "autonogrow-landing" )},
+        "UPLOADS_DIR dentro del frontend": {"uploads_dir": str(ROOT / "autonogrow-landing")},
         "firma Instagram desactivada": {"instagram_require_signature": False},
         "provider Instagram incompleto": {"instagram_provider_enabled": True},
         "alertas de incidencias incompletas": {"incident_alerts_enabled": True},
@@ -250,13 +401,17 @@ def check_production_validation(reporter: Reporter, Settings) -> None:
     if accepted:
         reporter.fail("Alguna configuración production insegura no fue rechazada")
     else:
-        reporter.passed(f"Las {len(unsafe_cases)} configuraciones production inseguras fueron rechazadas")
+        reporter.passed(
+            f"Las {len(unsafe_cases)} configuraciones production inseguras fueron rechazadas"
+        )
 
 
 def check_real_env(reporter: Reporter, Settings) -> None:
     env_path = BACKEND / ".env"
     if not env_path.exists():
-        reporter.warn("backend/.env no existe; correcto para repo, pero el VPS necesita /etc/autonogrow/backend.env")
+        reporter.warn(
+            "backend/.env no existe; correcto para repo, pero el VPS necesita /etc/autonogrow/backend.env"
+        )
         return
     try:
         values = parse_env_file(env_path)
@@ -264,13 +419,17 @@ def check_real_env(reporter: Reporter, Settings) -> None:
         reporter.fail("No se pudo leer backend/.env")
         return
     if values.get("app_env", "local").lower() != "production":
-        reporter.warn("backend/.env existe pero no declara APP_ENV=production; válido solo para local")
+        reporter.warn(
+            "backend/.env existe pero no declara APP_ENV=production; válido solo para local"
+        )
         return
     try:
         Settings(_env_file=None, **values)
         reporter.passed("backend/.env production no contiene placeholders ni rutas inseguras")
     except Exception:
-        reporter.fail("backend/.env production contiene valores ausentes, placeholders o rutas inseguras")
+        reporter.fail(
+            "backend/.env production contiene valores ausentes, placeholders o rutas inseguras"
+        )
 
 
 def check_application(reporter: Reporter):
@@ -308,10 +467,15 @@ def main() -> int:
     check_deploy_templates(reporter)
     check_frontend_api_base(reporter)
     check_git_env_tracking(reporter)
+    check_dependency_locks(reporter)
+    check_alembic(reporter)
+    check_tracked_secrets(reporter)
     Settings = check_application(reporter)
     if Settings is not None:
+        config_module = importlib.import_module("app.core.config")
         check_production_validation(reporter, Settings)
         check_real_env(reporter, Settings)
+        check_database_revision(reporter, config_module)
     else:
         reporter.fail("No se pudieron ejecutar las validaciones production")
 

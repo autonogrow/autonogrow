@@ -8,7 +8,6 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.core.config import Settings, get_settings
 
-
 NONCE_BYTES = 12
 CIPHERTEXT_PREFIX = "ag1"
 

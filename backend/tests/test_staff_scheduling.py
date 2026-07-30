@@ -17,13 +17,13 @@ from app.models import (
     BusinessUserAvailability,
     User,
 )
-from app.schemas.booking import BookingRequestCreate
 from app.routers.availability import (
     get_availability,
     list_available_slots,
     list_calendar_days,
 )
 from app.routers.bookings import create_booking_response
+from app.schemas.booking import BookingRequestCreate
 from app.services.availability_service import (
     build_availability,
     business_weekday,

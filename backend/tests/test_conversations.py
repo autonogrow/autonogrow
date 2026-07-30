@@ -14,15 +14,17 @@ from app.models import Business, BusinessUser, Conversation, ConversationMessage
 from app.routers.conversations import (
     admin_create_conversation,
     admin_create_conversation_template,
+    admin_delete_conversation_template,
     admin_get_conversation,
     admin_list_conversation_templates,
     admin_list_conversations,
     admin_send_conversation_message,
-    admin_delete_conversation_template,
-    admin_update_conversation_template,
     admin_update_conversation_status,
-    test_inbound_message as inbound_message_endpoint,
+    admin_update_conversation_template,
     verify_test_webhook_secret,
+)
+from app.routers.conversations import (
+    test_inbound_message as inbound_message_endpoint,
 )
 from app.schemas.conversation import (
     ConversationCreate,

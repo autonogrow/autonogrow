@@ -1,28 +1,75 @@
+import logging
+import sqlite3
+import warnings
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import Engine, create_engine, event, inspect, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-from app.core.config import get_database_url
+from app.core.config import Settings, get_database_url, get_settings
 
 
 class Base(DeclarativeBase):
     pass
 
 
+logger = logging.getLogger(__name__)
+
 DATABASE_URL = get_database_url()
 
-connect_args = {}
 
-if DATABASE_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
+def _sqlite_is_memory(database_url: str) -> bool:
+    url = make_url(database_url)
+    return url.database in {None, "", ":memory:"} or url.query.get("mode") == "memory"
 
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args=connect_args,
-    echo=False,
-)
+def create_database_engine(
+    database_url: str,
+    *,
+    settings: Settings | None = None,
+    echo: bool = False,
+) -> Engine:
+    """Create an engine with the SQLite safety policy applied per connection."""
+
+    active_settings = settings or get_settings()
+    if not database_url.startswith("sqlite"):
+        return create_engine(database_url, echo=echo)
+
+    timeout_seconds = active_settings.sqlite_busy_timeout_ms / 1000
+    database_engine = create_engine(
+        database_url,
+        connect_args={
+            "check_same_thread": False,
+            "timeout": timeout_seconds,
+        },
+        echo=echo,
+    )
+    memory_database = _sqlite_is_memory(database_url)
+
+    @event.listens_for(database_engine, "connect")
+    def configure_sqlite_connection(
+        dbapi_connection: sqlite3.Connection,
+        _connection_record: object,
+    ) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys = ON")
+            cursor.execute(f"PRAGMA busy_timeout = {active_settings.sqlite_busy_timeout_ms}")
+            if not memory_database:
+                cursor.execute(f"PRAGMA journal_mode = {active_settings.sqlite_journal_mode}")
+                actual_mode = str(cursor.fetchone()[0]).upper()
+                if actual_mode != active_settings.sqlite_journal_mode:
+                    raise RuntimeError("SQLite no pudo activar el journal_mode configurado")
+            cursor.execute(f"PRAGMA synchronous = {active_settings.sqlite_synchronous}")
+        finally:
+            cursor.close()
+
+    return database_engine
+
+
+engine = create_database_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(
     bind=engine,
@@ -40,10 +87,37 @@ def get_db():
         db.close()
 
 
-def create_db_and_tables() -> None:
-    import app.models  # noqa: F401
+def initialize_database() -> None:
+    """Prepare local databases or validate managed environments without mutating them."""
 
+    from app.models.registry import register_models
+
+    register_models()
+    settings = get_settings()
+    managed_environment = settings.app_env in {"staging", "production"}
+
+    if managed_environment:
+        if settings.database_migration_check:
+            from app.core.migration_state import assert_database_at_head
+
+            assert_database_at_head(engine)
+        return
+
+    # Local and test environments retain an intentionally simple bootstrap.
+    # Integration tests and CI exercise Alembic directly against empty databases.
     Base.metadata.create_all(bind=engine)
+    if not settings.enable_legacy_startup_migrations:
+        return
+
+    warnings.warn(
+        "ENABLE_LEGACY_STARTUP_MIGRATIONS está activo. Esta ruta está obsoleta; "
+        "no debe usarse después de adoptar Alembic.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    logger.warning(
+        "Ejecutando migraciones legacy solicitadas explícitamente; no se ejecutó Alembic"
+    )
     run_lightweight_migrations()
     from app.services.instagram_integration_service import initialize_instagram_integrations
 
@@ -57,7 +131,21 @@ def create_db_and_tables() -> None:
         db.close()
 
 
+def create_db_and_tables() -> None:
+    """Compatibility alias for callers predating the Alembic transition."""
+
+    initialize_database()
+
+
+def is_sqlite_locked_error(exc: BaseException) -> bool:
+    """Return true only for SQLite lock contention, not general DB failures."""
+
+    return isinstance(exc, OperationalError) and "database is locked" in str(exc).lower()
+
+
 def run_lightweight_migrations(target_engine=None) -> None:
+    """Deprecated compatibility migrations; use Alembic for structural changes."""
+
     migration_engine = target_engine or engine
     inspector = inspect(migration_engine)
 
@@ -93,16 +181,24 @@ def run_lightweight_migrations(target_engine=None) -> None:
                 )
 
         connection.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_bookings_customer_user_id ON bookings (customer_user_id)")
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_bookings_customer_user_id ON bookings (customer_user_id)"
+            )
         )
         connection.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_bookings_customer_email ON bookings (customer_email)")
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_bookings_customer_email ON bookings (customer_email)"
+            )
         )
         connection.execute(
-            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_bookings_public_manage_token ON bookings (public_manage_token)")
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_bookings_public_manage_token ON bookings (public_manage_token)"
+            )
         )
         connection.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_bookings_staff_business_user_id ON bookings (staff_business_user_id)")
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_bookings_staff_business_user_id ON bookings (staff_business_user_id)"
+            )
         )
 
         if "business_users" in table_names:
@@ -136,7 +232,9 @@ def run_lightweight_migrations(target_engine=None) -> None:
             }
             for column_name, column_type in branding_columns.items():
                 if column_name not in business_columns:
-                    connection.execute(text(f"ALTER TABLE businesses ADD COLUMN {column_name} {column_type}"))
+                    connection.execute(
+                        text(f"ALTER TABLE businesses ADD COLUMN {column_name} {column_type}")
+                    )
 
         if "system_incidents" in table_names:
             incident_columns = {
@@ -186,9 +284,7 @@ def run_lightweight_migrations(target_engine=None) -> None:
             for column_name, column_type in automation_columns.items():
                 if column_name not in conversation_columns:
                     connection.execute(
-                        text(
-                            f"ALTER TABLE conversations ADD COLUMN {column_name} {column_type}"
-                        )
+                        text(f"ALTER TABLE conversations ADD COLUMN {column_name} {column_type}")
                     )
             connection.execute(
                 text(
@@ -221,7 +317,7 @@ def run_lightweight_migrations(target_engine=None) -> None:
                 "instagram_channel_enabled": "BOOLEAN NOT NULL DEFAULT 1",
                 "whatsapp_channel_enabled": "BOOLEAN NOT NULL DEFAULT 1",
                 "allowed_limit_behaviors_json": (
-                    "TEXT NOT NULL DEFAULT '[\"semi_automatic\", \"disabled\"]'"
+                    'TEXT NOT NULL DEFAULT \'["semi_automatic", "disabled"]\''
                 ),
             }
             for column_name, column_type in automation_commercial_columns.items():
@@ -285,8 +381,7 @@ def run_lightweight_migrations(target_engine=None) -> None:
                         ),
                         {
                             "safe_metadata": (
-                                '{"source":"legacy_fields",'
-                                '"additional_credits_granted":0}'
+                                '{"source":"legacy_fields","additional_credits_granted":0}'
                             )
                         },
                     )

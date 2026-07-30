@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
-from app.core.config import get_owner_allowed_emails, get_settings
-from app.core.database import get_db
 from app.core.audit import record_audit
+from app.core.config import get_owner_allowed_emails, get_settings
 from app.core.csrf import CSRF_COOKIE, CSRF_MAX_AGE, create_csrf_token
+from app.core.database import get_db
 from app.core.security import (
     SESSION_COOKIE,
     SESSION_MAX_AGE,
@@ -15,7 +15,6 @@ from app.core.security import (
     get_current_user,
 )
 from app.models import BusinessUser, User
-
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 

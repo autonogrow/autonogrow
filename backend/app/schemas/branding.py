@@ -2,7 +2,6 @@ import re
 
 from pydantic import BaseModel, Field, field_validator
 
-
 COLOR_PALETTES = {
     "slate_gold": {"primary_color": "#334155", "secondary_color": "#0f172a", "accent_color": "#f59e0b", "background_color": "#f8fafc"},
     "rose_beauty": {"primary_color": "#be123c", "secondary_color": "#831843", "accent_color": "#f9a8d4", "background_color": "#fff1f2"},

@@ -3,8 +3,8 @@
 from app.core.config import get_settings
 from app.core.database import SessionLocal, create_db_and_tables
 from app.models import BusinessChannelIntegration
-from app.services.integration_crypto_service import load_encryption_configuration
 from app.services.instagram_integration_service import reencrypt_integration_secret
+from app.services.integration_crypto_service import load_encryption_configuration
 
 
 def main() -> int:

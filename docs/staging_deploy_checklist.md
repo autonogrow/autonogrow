@@ -16,6 +16,8 @@ Registrar fecha, responsable, dominio, versión desplegada y resultado de cada p
 ## Entorno y autenticación
 
 - [ ] `APP_ENV=production`.
+- [ ] `DATABASE_MIGRATION_CHECK=true` y `ENABLE_LEGACY_STARTUP_MIGRATIONS=false`.
+- [ ] Política SQLite validada: timeout 5000, WAL y synchronous NORMAL.
 - [ ] `COOKIE_SECURE=true`.
 - [ ] `CSRF_ENABLED=true`, `RATE_LIMIT_ENABLED=true` y `SECURITY_HEADERS_ENABLED=true`.
 - [ ] `FRONTEND_ORIGINS` contiene únicamente el dominio HTTPS real de staging.
@@ -42,6 +44,11 @@ Registrar fecha, responsable, dominio, versión desplegada y resultado de cada p
 ## Smoke test y operación
 
 - [ ] `python scripts/predeploy_check.py` termina con 0 FAIL antes de subir.
+- [ ] Servicio detenido y backup DB/uploads/keyring verificado antes de migrar.
+- [ ] `python scripts/check_database_migration_state.py` no informa ausencias.
+- [ ] Una base heredada completa se marcó con baseline solo mediante confirmación explícita.
+- [ ] `alembic upgrade head` terminó y `python scripts/manage_migrations.py validate` devuelve 0.
+- [ ] `alembic heads` devuelve únicamente `20260730_02`.
 - [ ] `python scripts/smoke_test_staging.py --base-url https://DOMINIO-STAGING` termina con 0 FAIL.
 - [ ] Backup local SQLite + uploads creado y verificado.
 - [ ] Backup copiado a almacenamiento externo cifrado.
@@ -50,3 +57,7 @@ Registrar fecha, responsable, dominio, versión desplegada y resultado de cada p
 - [ ] Alertas básicas de disco, 5xx, certificado y backup revisadas.
 - [ ] Rollback preparado con versión anterior identificable y backup previo consistente.
 - [ ] Incidencias, excepciones y WARN documentados antes de decidir producción.
+- [ ] Las 40 pruebas IG-S1 siguen registradas en `docs/pending_final_validation.md`; cada ejecución
+  tiene estado, fecha, responsable y evidencia.
+- [ ] La matriz `docs/final_release_validation_matrix.md` no contiene bloqueantes pendientes al
+  autorizar producción.

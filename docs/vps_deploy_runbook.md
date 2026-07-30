@@ -75,6 +75,9 @@ sudo .venv/bin/python -m pip check
 sudo .venv/bin/python -m compileall backend/app
 ```
 
+No instalar desde `requirements.in` en servidores. Los `.in` solo se compilan durante mantenimiento
+controlado; CI y despliegues consumen locks exactos.
+
 Aplicar ownership de lectura acorde al modelo de despliegue. No ejecutar Uvicorn como root.
 
 ## 5. Entorno production
@@ -102,6 +105,30 @@ sudo -u autonogrow bash -c 'set -a; source /etc/autonogrow/backend.env; set +a; 
 ```
 
 Si falla, revisar nombres y permisos; no volcar `env` a consola.
+
+## 5.1 Migración de base de datos
+
+El arranque no crea ni migra tablas. Antes de iniciar una release, detener el servicio y crear el
+backup descrito en la sección 10. Después, desde la raíz y con el entorno cargado:
+
+```bash
+python scripts/check_database_migration_state.py
+alembic current
+alembic heads
+```
+
+Para una base nueva ejecutar `alembic upgrade head`. Para una base heredada, solo si el diagnóstico
+confirma esquema completo y recomienda stamp:
+
+```bash
+python scripts/manage_migrations.py stamp-baseline --confirm STAMP-BASELINE
+alembic upgrade head
+python scripts/manage_migrations.py validate
+```
+
+No arrancar con una base detrás de head. No mezclar estos comandos con
+`ENABLE_LEGACY_STARTUP_MIGRATIONS=true`. Consultar `docs/database_migrations.md` para secuencia de
+staging y rollback técnico.
 
 ## 6. Google OAuth
 

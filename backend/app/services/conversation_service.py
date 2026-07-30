@@ -10,14 +10,12 @@ from app.core.config import get_settings
 from app.models import (
     Business,
     Conversation,
-    ConversationMessage,
     ConversationAutomationSettings,
+    ConversationMessage,
     ConversationTemplate,
 )
-from app.services.instagram_integration_service import (
-    get_instagram_integration,
-    integration_expiration_state,
-    send_business_instagram_message,
+from app.services.conversation_automation_state_service import (
+    serialize_conversation_automation_state,
 )
 from app.services.incident_service import (
     INSTAGRAM_AUTH_CLIENT_MESSAGE,
@@ -27,8 +25,10 @@ from app.services.incident_service import (
     report_incident,
     resolve_related_incidents,
 )
-from app.services.conversation_automation_state_service import (
-    serialize_conversation_automation_state,
+from app.services.instagram_integration_service import (
+    get_instagram_integration,
+    integration_expiration_state,
+    send_business_instagram_message,
 )
 
 

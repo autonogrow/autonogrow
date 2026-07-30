@@ -2,7 +2,6 @@ import re
 import unicodedata
 from dataclasses import asdict, dataclass
 
-
 INTENT_PATTERNS = {
     "booking_intent": (
         "cita",

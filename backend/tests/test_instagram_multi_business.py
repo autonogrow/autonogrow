@@ -22,7 +22,6 @@ from app.models import (
     BusinessChannelIntegration,
     BusinessUser,
     Conversation,
-    ConversationMessage,
     SystemIncident,
     User,
 )
@@ -44,11 +43,6 @@ from app.services.conversation_automation_service import (
     process_inbound_automation,
 )
 from app.services.conversation_service import add_message
-from app.services.integration_crypto_service import (
-    IntegrationCryptoError,
-    decrypt_secret,
-    encrypt_secret,
-)
 from app.services.instagram_integration_service import (
     integration_expiration_state,
     migrate_global_instagram_integration,
@@ -61,6 +55,11 @@ from app.services.instagram_provider import (
     InstagramVerificationResult,
     ProviderSendResult,
     verify_instagram_access_token,
+)
+from app.services.integration_crypto_service import (
+    IntegrationCryptoError,
+    decrypt_secret,
+    encrypt_secret,
 )
 
 

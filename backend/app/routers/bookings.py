@@ -5,9 +5,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
 from app.core.audit import record_audit
-from app.core.security import get_current_user, get_optional_current_user, require_booking_business_access
+from app.core.database import get_db
+from app.core.security import (
+    get_current_user,
+    get_optional_current_user,
+    require_booking_business_access,
+)
 from app.models import Booking, MessageOutbox, User
 from app.schemas.booking import BookingRequestCreate
 from app.services.booking_service import (

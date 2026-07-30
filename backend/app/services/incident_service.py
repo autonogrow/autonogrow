@@ -12,8 +12,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
-from app.models import Business, SystemIncident
-
+from app.models import SystemIncident
 
 logger = logging.getLogger(__name__)
 

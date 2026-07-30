@@ -8,19 +8,18 @@ from app.core.audit import record_audit
 from app.core.config import Settings, get_settings
 from app.models import Business, BusinessChannelIntegration
 from app.services.incident_service import report_incident, resolve_related_incidents
-from app.services.integration_crypto_service import (
-    IntegrationCryptoError,
-    decrypt_secret,
-    encrypt_secret,
-    load_encryption_configuration,
-)
 from app.services.instagram_provider import (
     InstagramVerificationResult,
     ProviderSendResult,
     send_instagram_text_message,
     verify_instagram_access_token,
 )
-
+from app.services.integration_crypto_service import (
+    IntegrationCryptoError,
+    decrypt_secret,
+    encrypt_secret,
+    load_encryption_configuration,
+)
 
 INSTAGRAM_PROVIDER = "instagram"
 INSTAGRAM_CHANNEL = "instagram"

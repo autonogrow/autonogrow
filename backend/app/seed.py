@@ -14,7 +14,6 @@ from app.models import (
     WeeklyAvailability,
 )
 
-
 DEFAULT_WEEKLY_SCHEDULE = {
     0: [],
     1: [{"start": "10:00", "end": "20:00"}],

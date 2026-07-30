@@ -32,12 +32,14 @@ from app.routers.conversations import (
     admin_update_conversation_automation_settings,
     admin_update_conversation_automation_state,
     admin_update_conversation_suggestion,
+)
+from app.routers.conversations import (
     test_inbound_message as inbound_message_endpoint,
 )
 from app.schemas.conversation import (
+    ConversationAutomationControlUpdate,
     ConversationAutomationRuleUpdate,
     ConversationAutomationSettingsUpdate,
-    ConversationAutomationControlUpdate,
     ConversationMessageCreate,
     ConversationSuggestionUpdate,
     TestInboundMessageCreate,
@@ -172,9 +174,9 @@ class ConversationAutomationTest(unittest.TestCase):
             ("¿dónde estáis?", "location_intent", True),
             ("me habéis cobrado mal", "complaint_intent", True),
         )
-        for text, expected_intent, safe_for_auto in cases:
-            with self.subTest(text=text):
-                detected = detect_intent(text)
+        for message_text, expected_intent, safe_for_auto in cases:
+            with self.subTest(text=message_text):
+                detected = detect_intent(message_text)
                 self.assertEqual(detected.intent, expected_intent)
                 self.assertGreaterEqual(detected.confidence, 80)
                 self.assertEqual(detected.safe_for_auto, safe_for_auto)

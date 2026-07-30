@@ -11,7 +11,6 @@ from app.services.conversation_intent_service import normalize_text
 from app.services.conversation_service import add_message, create_or_get_conversation
 from app.services.instagram_provider import InstagramInboundMessage
 
-
 INSTAGRAM_ECHO_RECONCILIATION_SECONDS = 120
 
 

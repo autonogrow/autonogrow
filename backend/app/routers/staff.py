@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
-from app.core.security import get_business_membership, require_business_access, require_business_admin
+from app.core.security import (
+    get_business_membership,
+    require_business_access,
+    require_business_admin,
+)
 from app.models import (
     AvailabilitySettings,
     Booking,
@@ -28,7 +32,6 @@ from app.services.availability_service import (
     parse_windows_from_json,
     serialize_public_staff,
 )
-
 
 public_router = APIRouter(prefix="/api/businesses/{business_slug}/staff", tags=["staff"])
 admin_router = APIRouter(

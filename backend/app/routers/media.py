@@ -4,13 +4,12 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.config import get_settings, get_uploads_dir
 from app.core.database import get_db
-from app.core.audit import record_audit
 from app.core.security import get_current_user, require_business_admin, require_owner
 from app.models import Business, BusinessGalleryImage, User
 from app.schemas.branding import GalleryImageUpdate
-
 
 router = APIRouter(tags=["business-media"])
 ALLOWED_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}

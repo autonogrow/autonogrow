@@ -4,7 +4,6 @@ from typing import Any
 
 from app.models import Conversation, ConversationAutomationSettings
 
-
 DEFAULT_HUMAN_REPLY_PAUSE_MINUTES = 60
 ALLOWED_HUMAN_REPLY_PAUSE_MINUTES = {0, 15, 60, 240, -1}
 ALLOWED_CONVERSATION_PAUSE_MINUTES = {15, 60, 240, -1}

@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.models import AutomationCreditTransaction, ConversationAutomationSettings
 
-
 MAX_CREDIT_BALANCE = 10_000_000
 CREDIT_TRANSACTION_TYPES = {
     "period_allowance_granted",

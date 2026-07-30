@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
-
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -54,13 +52,17 @@ def normalize_base_url(value: str) -> str:
 
 def fetch(base_url: str, path: str, timeout: float) -> HttpResult:
     url = urljoin(base_url, path.lstrip("/"))
+    parsed_url = urlsplit(url)
+    if parsed_url.scheme not in {"http", "https"} or parsed_url.username or parsed_url.password:
+        raise ValueError("La URL resultante del smoke test no es HTTP(S) segura")
     request = Request(
         url,
         method="GET",
         headers={"Accept": "application/json", "User-Agent": "AutonoGrow-Staging-Smoke/1.0"},
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        # The scheme and absence of URL credentials are checked immediately above.
+        with urlopen(request, timeout=timeout) as response:  # nosec B310
             return HttpResult(
                 status=response.status,
                 headers=response.headers,
@@ -75,7 +77,9 @@ def fetch(base_url: str, path: str, timeout: float) -> HttpResult:
             final_url=exc.geturl(),
         )
     except (URLError, TimeoutError, OSError):
-        return HttpResult(status=None, headers=None, body=b"", final_url=url, error="connection_failed")
+        return HttpResult(
+            status=None, headers=None, body=b"", final_url=url, error="connection_failed"
+        )
 
 
 def parse_json(result: HttpResult):
@@ -157,9 +161,13 @@ def check_legal_page(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Smoke test HTTP sin credenciales para staging AutonoGrow")
+    parser = argparse.ArgumentParser(
+        description="Smoke test HTTP sin credenciales para staging AutonoGrow"
+    )
     parser.add_argument("--base-url", required=True, help="Ejemplo: https://staging.example.com")
-    parser.add_argument("--timeout", type=float, default=10.0, help="Timeout por request en segundos")
+    parser.add_argument(
+        "--timeout", type=float, default=10.0, help="Timeout por request en segundos"
+    )
     args = parser.parse_args()
     if args.timeout <= 0 or args.timeout > 60:
         parser.error("--timeout debe estar entre 0 y 60 segundos")
@@ -207,7 +215,9 @@ def main() -> int:
         reporter.fail("La raíz de uploads públicos responde de forma potencialmente sensible")
 
     private_owner = fetch(base_url, "/api/owner/businesses", args.timeout)
-    check_status(reporter, "Ruta owner sin sesión rechazada sin error 500", private_owner, {401, 403})
+    check_status(
+        reporter, "Ruta owner sin sesión rechazada sin error 500", private_owner, {401, 403}
+    )
 
     print(
         f"Resumen: {reporter.counts['PASS']} PASS, "

@@ -1,14 +1,13 @@
-﻿from pathlib import Path
-from secrets import compare_digest
+﻿from secrets import compare_digest
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.config import get_settings, get_uploads_dir
 from app.core.database import get_db
-from app.core.audit import record_audit
 from app.core.security import (
     ensure_can_manage_booking,
     get_optional_current_user,

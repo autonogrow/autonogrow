@@ -7,7 +7,6 @@ from app.core.config import get_settings
 from app.core.csrf import CSRF_COOKIE, CSRF_HEADER, is_valid_csrf_token
 from app.core.security import SESSION_COOKIE
 
-
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 EXEMPT_PATHS = {"/api/auth/google"}
 

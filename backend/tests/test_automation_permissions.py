@@ -18,7 +18,6 @@ from app.routers.conversations import (
 )
 from app.routers.owner import (
     adjust_owner_business_automation_usage,
-    get_owner_business_automation_settings,
     renew_owner_business_automation_period,
     update_owner_business_automation_settings,
 )

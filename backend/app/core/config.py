@@ -1,20 +1,21 @@
-﻿from functools import lru_cache
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import json
-import shutil
 import re
+import shutil
+from functools import lru_cache
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 REPO_DIR = BACKEND_DIR.parent
 
 
 def is_absolute_path_text(value: str) -> bool:
-    return any(path.is_absolute() for path in (Path(value), PurePosixPath(value), PureWindowsPath(value)))
+    return any(
+        path.is_absolute() for path in (Path(value), PurePosixPath(value), PureWindowsPath(value))
+    )
 
 
 def sqlite_file_path(database_url: str) -> str | None:
@@ -82,6 +83,11 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = ""
     smtp_use_tls: bool = True
+    enable_legacy_startup_migrations: bool = False
+    database_migration_check: bool = True
+    sqlite_busy_timeout_ms: int = 5000
+    sqlite_journal_mode: str = "WAL"
+    sqlite_synchronous: str = "NORMAL"
 
     model_config = SettingsConfigDict(
         env_file=(str(BACKEND_DIR / ".env"), ".env"),
@@ -92,8 +98,16 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_security_configuration(self):
         self.app_env = self.app_env.strip().lower()
-        if self.app_env not in {"local", "production"}:
-            raise ValueError("APP_ENV debe ser local o production")
+        if self.app_env not in {"local", "test", "staging", "production"}:
+            raise ValueError("APP_ENV debe ser local, test, staging o production")
+        self.sqlite_journal_mode = self.sqlite_journal_mode.strip().upper()
+        self.sqlite_synchronous = self.sqlite_synchronous.strip().upper()
+        if self.sqlite_busy_timeout_ms < 1 or self.sqlite_busy_timeout_ms > 60000:
+            raise ValueError("SQLITE_BUSY_TIMEOUT_MS debe estar entre 1 y 60000")
+        if self.sqlite_journal_mode not in {"DELETE", "TRUNCATE", "PERSIST", "WAL"}:
+            raise ValueError("SQLITE_JOURNAL_MODE debe ser DELETE, TRUNCATE, PERSIST o WAL")
+        if self.sqlite_synchronous not in {"OFF", "NORMAL", "FULL", "EXTRA"}:
+            raise ValueError("SQLITE_SYNCHRONOUS debe ser OFF, NORMAL, FULL o EXTRA")
         self.incident_alert_min_severity = self.incident_alert_min_severity.strip().lower()
         if self.incident_alert_min_severity not in {"low", "medium", "high", "critical"}:
             raise ValueError("INCIDENT_ALERT_MIN_SEVERITY debe ser low, medium, high o critical")
@@ -112,12 +126,10 @@ class Settings(BaseSettings):
             if bool(self.smtp_username.strip()) != bool(self.smtp_password):
                 alert_errors.append("SMTP_USERNAME/SMTP_PASSWORD")
             if alert_errors:
-                raise ValueError(
-                    "Configuración de alertas incompleta: " + ", ".join(alert_errors)
-                )
+                raise ValueError("Configuración de alertas incompleta: " + ", ".join(alert_errors))
         if self.upload_max_size_mb < 1 or self.upload_max_size_mb > 25:
             raise ValueError("UPLOAD_MAX_SIZE_MB debe estar entre 1 y 25")
-        if self.app_env != "production":
+        if self.app_env not in {"staging", "production"}:
             return self
 
         errors: list[str] = []
@@ -125,16 +137,23 @@ class Settings(BaseSettings):
         origins = self.frontend_origin_list
         if not self.cookie_secure:
             errors.append("COOKIE_SECURE debe ser true")
-        if len(secret) < 32 or any(marker in secret.lower() for marker in ("replace-with", "change-me", "change_me", "changeme", "placeholder")):
+        if len(secret) < 32 or any(
+            marker in secret.lower()
+            for marker in ("replace-with", "change-me", "change_me", "changeme", "placeholder")
+        ):
             errors.append("SESSION_SECRET debe ser real y tener al menos 32 caracteres")
         google_client_id = self.google_client_id.strip().lower()
-        if (
-            not google_client_id.endswith(".apps.googleusercontent.com")
-            or any(marker in google_client_id for marker in ("placeholder", "change_me", "change-me", "example"))
+        if not google_client_id.endswith(".apps.googleusercontent.com") or any(
+            marker in google_client_id
+            for marker in ("placeholder", "change_me", "change-me", "example")
         ):
             errors.append("GOOGLE_CLIENT_ID debe estar configurado")
-        owner_emails = [item.strip().lower() for item in self.owner_allowed_emails.split(",") if item.strip()]
-        if not owner_emails or any("@" not in email or email.endswith("@example.com") for email in owner_emails):
+        owner_emails = [
+            item.strip().lower() for item in self.owner_allowed_emails.split(",") if item.strip()
+        ]
+        if not owner_emails or any(
+            "@" not in email or email.endswith("@example.com") for email in owner_emails
+        ):
             errors.append("OWNER_ALLOWED_EMAILS debe contener emails reales")
         if not origins:
             errors.append("FRONTEND_ORIGINS no puede estar vacío")
@@ -177,6 +196,10 @@ class Settings(BaseSettings):
             errors.append("SECURITY_HEADERS_ENABLED debe estar activo")
         if not self.instagram_require_signature:
             errors.append("INSTAGRAM_REQUIRE_SIGNATURE debe estar activo")
+        if self.enable_legacy_startup_migrations:
+            errors.append("ENABLE_LEGACY_STARTUP_MIGRATIONS debe ser false")
+        if not self.database_migration_check:
+            errors.append("DATABASE_MIGRATION_CHECK debe ser true")
         if self.instagram_provider_enabled:
             instagram_required = {
                 "META_APP_ID": self.meta_app_id,
@@ -194,10 +217,7 @@ class Settings(BaseSettings):
                 )
             ]
             if missing_instagram:
-                errors.append(
-                    "Configuración Instagram incompleta: "
-                    + ", ".join(missing_instagram)
-                )
+                errors.append("Configuración Instagram incompleta: " + ", ".join(missing_instagram))
             if not re.fullmatch(r"v\d+\.\d+", self.meta_graph_api_version.strip()):
                 errors.append("META_GRAPH_API_VERSION no es válida")
             try:
@@ -218,7 +238,11 @@ class Settings(BaseSettings):
 
     @property
     def frontend_origin_list(self) -> list[str]:
-        return [origin.strip().rstrip("/") for origin in self.frontend_origins.split(",") if origin.strip()]
+        return [
+            origin.strip().rstrip("/")
+            for origin in self.frontend_origins.split(",")
+            if origin.strip()
+        ]
 
 
 @lru_cache

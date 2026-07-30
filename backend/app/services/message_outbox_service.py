@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.models import Booking, Business, MessageOutbox, ReviewRequest
 
-
 MADRID_TIMEZONE = ZoneInfo("Europe/Madrid")
 SPANISH_WEEKDAYS = (
     "lunes",

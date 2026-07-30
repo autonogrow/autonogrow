@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
 from app.core.audit import record_audit
+from app.core.database import get_db
 from app.core.security import require_business_admin
 from app.models import AvailabilityException, AvailabilitySettings, Business, User
 from app.services.availability_service import (
@@ -21,7 +21,6 @@ from app.services.availability_service import (
     serialize_exception,
     serialize_settings,
 )
-
 
 router = APIRouter(prefix="/api/admin/{business_slug}", tags=["admin-availability"], dependencies=[Depends(require_business_admin)])
 

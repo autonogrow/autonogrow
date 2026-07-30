@@ -2,7 +2,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
 CHANNELS = {"manual", "whatsapp", "instagram"}
 CONVERSATION_STATUSES = {"pending", "replied", "closed"}
 AUTOMATION_RULE_MODES = {"disabled", "semi_automatic", "automatic"}

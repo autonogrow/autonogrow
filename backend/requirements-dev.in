@@ -1,0 +1,12 @@
+-r requirements.in
+
+pytest
+pytest-cov
+ruff
+mypy
+pip-audit
+bandit
+pip-tools
+types-requests
+types-python-dateutil
+httpx

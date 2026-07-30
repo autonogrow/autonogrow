@@ -19,7 +19,6 @@ from app.models import (
     WeeklyAvailability,
 )
 
-
 BLOCKING_STATUSES = {"requested", "pending", "confirmed"}
 DEFAULT_TIMEZONE = "Europe/Madrid"
 DEFAULT_SLOT_INTERVAL_MINUTES = 15

@@ -17,6 +17,12 @@ from app.models import (
     ConversationSuggestion,
     ConversationTemplate,
 )
+from app.services.automation_credit_service import (
+    consume_automation_credit,
+    serialize_credit_summary,
+    total_credits_available,
+)
+from app.services.conversation_automation_state_service import automation_block_reason
 from app.services.conversation_intent_service import (
     AVAILABLE_INTENTS,
     INTENT_LABELS,
@@ -30,13 +36,6 @@ from app.services.conversation_service import (
     render_template,
     send_outbound_message,
 )
-from app.services.conversation_automation_state_service import automation_block_reason
-from app.services.automation_credit_service import (
-    consume_automation_credit,
-    serialize_credit_summary,
-    total_credits_available,
-)
-
 
 logger = logging.getLogger(__name__)
 

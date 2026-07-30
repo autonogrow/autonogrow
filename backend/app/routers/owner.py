@@ -11,62 +11,45 @@ from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
 from app.core.audit import record_audit
+from app.core.database import get_db
 from app.core.security import require_owner
 from app.models import (
+    AuditLog,
+    AutomationCreditTransaction,
     AvailabilitySettings,
     Booking,
     Business,
-    BusinessService,
+    BusinessChannelIntegration,
     BusinessGalleryImage,
+    BusinessService,
     BusinessUser,
-    User,
+    ConversationAutomationSettings,
     MessageOutbox,
     ReviewRequest,
     SystemIncident,
-    ConversationAutomationSettings,
-    AutomationCreditTransaction,
-    AuditLog,
-    BusinessChannelIntegration,
+    User,
 )
+from app.schemas.branding import resolve_branding
 from app.schemas.owner import (
+    AutomationCreditAdjustmentRequest,
+    AutomationCreditPurchaseRequest,
+    AutomationCreditSummaryResponse,
+    AutomationCreditTransactionResponse,
+    InstagramIntegrationCreateRequest,
+    InstagramIntegrationDisconnectRequest,
+    InstagramIntegrationReconnectRequest,
+    InstagramIntegrationResponse,
+    InstagramIntegrationVerificationResponse,
+    OwnerAutomationPeriodAdjustment,
+    OwnerAutomationPeriodRenewal,
+    OwnerAutomationUsageAdjustment,
+    OwnerBusinessAutomationSettingsUpdate,
     OwnerBusinessCreate,
     OwnerBusinessUpdate,
     OwnerBusinessUserCreate,
     OwnerBusinessUserUpdate,
     OwnerIncidentUpdate,
-    OwnerBusinessAutomationSettingsUpdate,
-    OwnerAutomationUsageAdjustment,
-    OwnerAutomationPeriodRenewal,
-    OwnerAutomationPeriodAdjustment,
-    AutomationCreditPurchaseRequest,
-    AutomationCreditAdjustmentRequest,
-    AutomationCreditSummaryResponse,
-    AutomationCreditTransactionResponse,
-    InstagramIntegrationCreateRequest,
-    InstagramIntegrationReconnectRequest,
-    InstagramIntegrationDisconnectRequest,
-    InstagramIntegrationResponse,
-    InstagramIntegrationVerificationResponse,
-)
-from app.schemas.branding import resolve_branding
-from app.services.availability_service import serialize_settings
-from app.services.incident_service import (
-    ACTIVE_STATUSES,
-    SEVERITY_ORDER,
-    resolve_related_incidents,
-    serialize_incident,
-)
-from app.services.conversation_automation_service import (
-    AUTOMATION_PERIOD_DAYS,
-    allowed_limit_behaviors,
-    as_utc,
-    ensure_automation_configuration,
-    iso_utc,
-    serialize_settings as serialize_automation_settings,
-    sync_automation_period_status,
-    utc_now,
 )
 from app.services.automation_credit_service import (
     adjust_credit_balances,
@@ -76,7 +59,25 @@ from app.services.automation_credit_service import (
     serialize_credit_summary,
     serialize_credit_transaction,
 )
-from app.services.integration_crypto_service import IntegrationCryptoError
+from app.services.availability_service import serialize_settings
+from app.services.conversation_automation_service import (
+    AUTOMATION_PERIOD_DAYS,
+    allowed_limit_behaviors,
+    as_utc,
+    ensure_automation_configuration,
+    iso_utc,
+    sync_automation_period_status,
+    utc_now,
+)
+from app.services.conversation_automation_service import (
+    serialize_settings as serialize_automation_settings,
+)
+from app.services.incident_service import (
+    ACTIVE_STATUSES,
+    SEVERITY_ORDER,
+    resolve_related_incidents,
+    serialize_incident,
+)
 from app.services.instagram_integration_service import (
     INSTAGRAM_CHANNEL,
     INSTAGRAM_PROVIDER,
@@ -89,7 +90,7 @@ from app.services.instagram_integration_service import (
     verify_instagram_integration,
 )
 from app.services.instagram_provider import verify_instagram_access_token
-
+from app.services.integration_crypto_service import IntegrationCryptoError
 
 router = APIRouter(prefix="/api/owner", tags=["owner"], dependencies=[Depends(require_owner)])
 

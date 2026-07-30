@@ -4,7 +4,6 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.core.config import get_settings
 
-
 CSRF_COOKIE = "autonogrow_csrf"
 CSRF_HEADER = "X-CSRF-Token"
 CSRF_MAX_AGE = 7 * 24 * 60 * 60

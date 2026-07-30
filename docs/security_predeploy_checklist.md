@@ -42,6 +42,11 @@
 
 ## Operación
 
+- [ ] Alembic tiene una única head y la base configurada está en ella.
+- [ ] Las dependencias de producción/desarrollo se instalan desde locks con `==`.
+- [ ] CI completó Ruff, mypy, Bandit, pip-audit, tests, cobertura y migración vacía.
+- [ ] `ENABLE_LEGACY_STARTUP_MIGRATIONS=false` y `DATABASE_MIGRATION_CHECK=true`.
+- [ ] Backup de base, uploads y keyring cifrada disponible antes de migrar.
 - [ ] Backup diario y retenciones 7/4/3 configurados.
 - [ ] Backup cifrado y copia fuera del servidor.
 - [ ] Restauración probada durante el último mes.

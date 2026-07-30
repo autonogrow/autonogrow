@@ -1,21 +1,17 @@
-import json
 import hashlib
+import json
 from secrets import compare_digest
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.audit import record_audit
 from app.models import Business, Conversation, ConversationMessage
 from app.services.conversation_automation_service import process_inbound_automation
 from app.services.conversation_service import add_message, create_or_get_conversation
-from app.services.instagram_provider import (
-    parse_instagram_webhook,
-    verify_meta_signature,
-)
 from app.services.instagram_echo_service import process_instagram_echo
 from app.services.instagram_integration_service import (
     mask_external_account_id,
@@ -23,7 +19,10 @@ from app.services.instagram_integration_service import (
     resolve_instagram_integration_for_event,
     utc_now,
 )
-
+from app.services.instagram_provider import (
+    parse_instagram_webhook,
+    verify_meta_signature,
+)
 
 router = APIRouter(prefix="/api/webhooks/instagram", tags=["instagram-webhook"])
 
