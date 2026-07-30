@@ -98,12 +98,61 @@ from app.services.instagram_integration_service import (
 )
 from app.services.instagram_provider import verify_instagram_access_token
 from app.services.integration_crypto_service import IntegrationCryptoError
+from app.services.maintenance_service import maintenance_state, set_maintenance
+from app.services.operational_health_service import owner_system_health
 from app.services.worker_heartbeat_service import heartbeat_is_stale
 
 router = APIRouter(prefix="/api/owner", tags=["owner"], dependencies=[Depends(require_owner)])
 
 PENDING_BOOKING_STATUSES = ("requested", "pending")
 UPCOMING_BOOKING_STATUSES = ("requested", "pending", "confirmed")
+
+
+@router.get("/system/health")
+def get_system_health(db: Session = Depends(get_db)):
+    return owner_system_health(db)
+
+
+@router.get("/system/maintenance")
+def get_maintenance_status(db: Session = Depends(get_db)):
+    row = maintenance_state(db)
+    return {
+        "enabled": bool(row and row.enabled),
+        "reason": row.safe_reason if row else None,
+        "updated_at": row.updated_at.isoformat() if row else None,
+    }
+
+
+@router.post("/system/maintenance/{action}")
+def change_maintenance_status(
+    action: str,
+    request: Request,
+    reason: str = Query(default="Owner operational action", min_length=3, max_length=500),
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_owner),
+):
+    if action not in {"enable", "disable"}:
+        raise HTTPException(status_code=404, detail="Unknown maintenance action")
+    enabled = action == "enable"
+    row = set_maintenance(
+        db,
+        enabled=enabled,
+        safe_reason=reason,
+        updated_by_user_id=actor.id,
+    )
+    record_audit(
+        db,
+        action=f"maintenance_{action}d",
+        request=request,
+        actor=actor,
+        resource_type="operational_state",
+        resource_id=row.id,
+        metadata={"enabled": enabled, "reason": row.safe_reason},
+        commit=False,
+    )
+    db.commit()
+    return {"enabled": enabled, "reason": row.safe_reason}
+
 
 DEFAULT_BUSINESS_HOURS = {
     "0": [],

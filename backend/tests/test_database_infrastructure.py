@@ -343,7 +343,7 @@ def test_application_starts_and_serves_health_with_schema_at_head(
     monkeypatch.setattr(main, "migrate_legacy_uploads", lambda: None)
     monkeypatch.setattr(main, "initialize_database", lambda: assert_database_at_head(engine))
     with TestClient(main.app) as client:
-        assert client.get("/health").json() == {"status": "ok", "app": "autonogrow"}
+        assert client.get("/health").json() == {"status": "ok"}
 
 
 def test_stamp_baseline_requires_confirmation_and_rejects_incomplete_db(

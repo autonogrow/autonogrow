@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
 
+from app.core.config import get_settings
 from app.core.database import Base, run_lightweight_migrations
 from app.core.security import require_business_access, require_business_admin
 from app.models import (
@@ -159,7 +160,7 @@ class ConversationAutomationTest(unittest.TestCase):
                 external_user_id=external_user_id,
                 body=body,
             ),
-            x_autonogrow_webhook_secret=None,
+            x_autonogrow_webhook_secret=get_settings().webhook_test_secret or None,
             db=self.db,
         )
 

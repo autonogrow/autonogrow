@@ -1,5 +1,10 @@
 # Checklist de despliegue staging
 
+- [ ] Release metadata y decisión GO/NO-GO registradas.
+- [ ] `/health` y `/ready` separados; métricas bloqueadas externamente.
+- [ ] Backup conjunto verificado y restore temporal reciente.
+- [ ] Timers y alertas reales siguen inactivos hasta Sprint 7.
+
 - [ ] PostgreSQL 16 creado con usuario de mínimo privilegio y acceso no público.
 - [ ] `DATABASE_URL=postgresql+psycopg://...` y `ALLOW_SQLITE_IN_PRODUCTION=false`.
 - [ ] Pool y timeouts revisados; `WORKER_CONCURRENCY_MODE=single` para el primer corte.

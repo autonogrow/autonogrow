@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.core.observability import request_id_context
 from app.models import SystemIncident
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ SAFE_DETAIL_KEYS = {
     "event_type",
     "provider_message_id",
     "integration_status",
+    "request_id",
 }
 DEFAULT_CATEGORY_SEVERITIES = {
     "database_unavailable": "critical",
@@ -350,7 +352,12 @@ def report_incident(
             occurrence_count=1,
             first_occurred_at=now,
             last_occurred_at=now,
-            safe_details_json=json.dumps(sanitize_safe_details(safe_details), ensure_ascii=False),
+            safe_details_json=json.dumps(
+                sanitize_safe_details(
+                    {**(safe_details or {}), "request_id": request_id_context.get()}
+                ),
+                ensure_ascii=False,
+            ),
             created_at=now,
             updated_at=now,
         )
@@ -363,7 +370,8 @@ def report_incident(
         incident.conversation_id = conversation_id or incident.conversation_id
         incident.message_id = message_id or incident.message_id
         incident.safe_details_json = json.dumps(
-            sanitize_safe_details(safe_details), ensure_ascii=False
+            sanitize_safe_details({**(safe_details or {}), "request_id": request_id_context.get()}),
+            ensure_ascii=False,
         )
         if SEVERITY_ORDER[normalized_severity] > SEVERITY_ORDER[incident.severity]:
             incident.severity = normalized_severity

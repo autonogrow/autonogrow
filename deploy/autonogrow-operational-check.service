@@ -1,0 +1,18 @@
+[Unit]
+Description=AutonoGrow bounded operational checks
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=autonogrow
+Group=autonogrow
+WorkingDirectory=/opt/autonogrow
+EnvironmentFile=/etc/autonogrow/backend.env
+ExecStart=/usr/bin/flock -n /run/lock/autonogrow-operations.lock /opt/autonogrow/.venv/bin/python /opt/autonogrow/scripts/run_operational_checks.py --json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/autonogrow /var/log/autonogrow /run/lock
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077

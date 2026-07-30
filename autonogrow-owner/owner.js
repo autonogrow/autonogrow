@@ -12,6 +12,7 @@ let incidents = [];
 let openIncidentCount = 0;
 let ownerAuthUser = null;
 let queueStatus = null;
+let operationsStatus = null;
 const OWNER_CREDIT_PRESETS = [100, 200, 500];
 const PALETTES = { slate_gold: ["#334155", "#0f172a", "#f59e0b", "#f8fafc"], rose_beauty: ["#be123c", "#831843", "#f9a8d4", "#fff1f2"], emerald_clean: ["#047857", "#064e3b", "#6ee7b7", "#ecfdf5"], blue_clinic: ["#2563eb", "#1e3a8a", "#93c5fd", "#eff6ff"], amber_barber: ["#92400e", "#451a03", "#fbbf24", "#fffbeb"], violet_modern: ["#7c3aed", "#4c1d95", "#c4b5fd", "#f5f3ff"] };
 const TEMPLATE_DESCRIPTIONS = { classic: "Estructura equilibrada para cualquier negocio.", elegant: "Diseño más premium y visual.", beauty: "Pensada para estética, manicura y peluquería.", clinic: "Limpia y profesional para centros de salud o consulta.", urban: "Más impacto para barberías y negocios modernos.", minimal: "Directa y sencilla para servicios prácticos." };
@@ -57,6 +58,46 @@ function setActiveTab(name) {
   document.querySelectorAll("[data-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === name));
   if (name === "incidents") loadIncidents();
   if (name === "queues") loadQueueStatus();
+  if (name === "operations") loadOperationsStatus();
+}
+
+function renderOperationsStatus() {
+  if (!operationsStatus) return;
+  const items = [
+    ["Release", operationsStatus.backend.release_id],
+    ["PostgreSQL", operationsStatus.database.at_head ? "En head" : "Revisar migración"],
+    ["Workers activos", operationsStatus.workers.active],
+    ["Workers stale", operationsStatus.workers.stale],
+    ["Disco libre", `${operationsStatus.storage.free_percent}%`],
+    ["Último backup", operationsStatus.backups.last_status],
+    ["Alertas abiertas", operationsStatus.alerts.open_incidents],
+    ["Mantenimiento", operationsStatus.maintenance ? "Activo" : "Inactivo"],
+  ];
+  byId("operations-summary").innerHTML = items.map(([label, value]) => `<article class="summary-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("");
+  byId("maintenance-toggle").textContent = operationsStatus.maintenance ? "Desactivar mantenimiento" : "Activar mantenimiento";
+  byId("operations-details").textContent = JSON.stringify({ database: operationsStatus.database, workers: operationsStatus.workers, queues: operationsStatus.queues, storage: operationsStatus.storage, backups: operationsStatus.backups }, null, 2);
+}
+
+async function loadOperationsStatus() {
+  byId("operations-status").textContent = "Comprobando...";
+  const response = await fetch(`${API_BASE_URL}/api/owner/system/health`);
+  const body = await readResponseBody(response);
+  if (!response.ok) { byId("operations-status").textContent = body.detail || "No se pudo cargar el estado"; return; }
+  operationsStatus = body;
+  renderOperationsStatus();
+  byId("operations-status").textContent = `Actualizado ${formatIncidentDate(body.generated_at)}`;
+}
+
+async function toggleMaintenance() {
+  if (!operationsStatus) return;
+  const action = operationsStatus.maintenance ? "disable" : "enable";
+  const reason = window.prompt("Motivo operativo obligatorio:", "Ventana de mantenimiento planificada");
+  if (!reason || reason.trim().length < 3) return;
+  if (!window.confirm(`${action === "enable" ? "Activar" : "Desactivar"} el modo mantenimiento. ¿Continuar?`)) return;
+  const response = await fetch(`${API_BASE_URL}/api/owner/system/maintenance/${action}?reason=${encodeURIComponent(reason.trim())}`, { method: "POST" });
+  const body = await readResponseBody(response);
+  if (!response.ok) throw new Error(body.detail || "No se pudo cambiar mantenimiento");
+  await loadOperationsStatus();
 }
 
 function renderQueueStatus() {
@@ -861,6 +902,8 @@ async function saveOnboardingStep() {
 document.querySelectorAll("[data-tab]").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
 byId("refresh-button").addEventListener("click", async () => { await loadBusinesses(); await loadIncidents(); if (queueStatus) await loadQueueStatus(); });
 byId("queue-refresh").addEventListener("click", loadQueueStatus);
+byId("operations-refresh").addEventListener("click", loadOperationsStatus);
+byId("maintenance-toggle").addEventListener("click", () => toggleMaintenance().catch((error) => { byId("operations-status").textContent = error.message; }));
 byId("queue-business-filter").addEventListener("change", renderQueueStatus);
 byId("queue-jobs").addEventListener("click", (event) => { const button = event.target.closest("[data-queue-action]"); if (button) updateQueueJob(button.dataset.jobType, button.dataset.jobId, button.dataset.queueAction).catch((error) => window.alert(error.message)); });
 byId("incident-filters").addEventListener("submit", (event) => { event.preventDefault(); loadIncidents(); });

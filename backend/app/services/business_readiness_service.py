@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
+from app.core.migration_state import head_revisions
 from app.models import (
     AvailabilitySettings,
     Business,
@@ -75,9 +76,10 @@ def _database_migration_check(db: Session) -> tuple[str, str, bool]:
     if "alembic_version" not in inspect(db.connection()).get_table_names():
         return "not_applicable", "Entorno local sin control Alembic consultable", False
     current = db.execute(text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if current == "20260730_05":
-        return "passed", "Base de datos en la revisión de onboarding", False
-    return "failed", "La base de datos no está en la revisión de onboarding", True
+    heads = head_revisions()
+    if len(heads) == 1 and current == heads[0]:
+        return "passed", "Base de datos en la revisión operativa vigente", False
+    return "failed", "La base de datos no está en la revisión operativa vigente", True
 
 
 def evaluate_business_readiness(db: Session, business: Business) -> dict[str, Any]:

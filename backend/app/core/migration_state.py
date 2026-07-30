@@ -20,6 +20,8 @@ POST_BASELINE_TABLES = {
     "webhook_inbox_events",
     "channel_outbox_messages",
     "worker_heartbeats",
+    "operational_states",
+    "backup_records",
 }
 
 CRITICAL_COLUMNS: dict[str, set[str]] = {
@@ -44,15 +46,25 @@ CRITICAL_COLUMNS: dict[str, set[str]] = {
     },
     "system_incidents": {"id", "incident_key", "integration_id"},
     "audit_logs": {"id", "created_at", "action"},
-    "webhook_inbox_events": {"id", "idempotency_key", "payload_hash", "status", "lock_expires_at"},
+    "webhook_inbox_events": {
+        "id",
+        "idempotency_key",
+        "payload_hash",
+        "status",
+        "lock_expires_at",
+        "request_id",
+    },
     "channel_outbox_messages": {
         "id",
         "business_id",
         "conversation_message_id",
         "status",
         "lock_expires_at",
+        "request_id",
     },
     "worker_heartbeats": {"id", "worker_id", "status", "last_seen_at"},
+    "operational_states": {"id", "key", "enabled", "updated_at"},
+    "backup_records": {"id", "backup_set_id", "backup_type", "status", "created_at"},
 }
 
 

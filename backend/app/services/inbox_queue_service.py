@@ -60,7 +60,11 @@ def extract_instagram_webhook_events(payload: dict[str, Any]) -> list[ExtractedW
 
 
 def enqueue_instagram_events(
-    db: Session, events: list[ExtractedWebhookEvent], *, max_attempts: int
+    db: Session,
+    events: list[ExtractedWebhookEvent],
+    *,
+    max_attempts: int,
+    request_id: str | None = None,
 ) -> tuple[int, int]:
     accepted = duplicates = 0
     for extracted in events:
@@ -76,6 +80,7 @@ def enqueue_instagram_events(
                         payload_hash=extracted.payload_hash,
                         payload_json=extracted.payload_json,
                         payload_size_bytes=extracted.payload_size_bytes,
+                        request_id=request_id,
                         status="pending",
                         max_attempts=max_attempts,
                     )

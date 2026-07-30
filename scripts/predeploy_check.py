@@ -122,6 +122,46 @@ def check_required_files(reporter: Reporter) -> None:
         "docs/business_activation.md",
         "docs/configuration_cloning.md",
         "docs/manual_test_business_onboarding.md",
+        "docs/operations_architecture.md",
+        "docs/health_and_readiness.md",
+        "docs/logging_and_redaction.md",
+        "docs/metrics.md",
+        "docs/alerting.md",
+        "docs/postgresql_backup_automation.md",
+        "docs/backup_verification.md",
+        "docs/restore_testing.md",
+        "docs/maintenance_operations.md",
+        "docs/deployment_procedure.md",
+        "docs/release_rollback.md",
+        "docs/secret_rotation.md",
+        "docs/go_no_go.md",
+        "docs/systemd_operations.md",
+        "docs/caddy_operations.md",
+        "docs/incident_response.md",
+        "docs/manual_test_operations.md",
+        "scripts/backup_postgresql.py",
+        "scripts/backup_uploads.py",
+        "scripts/verify_backup.py",
+        "scripts/test_postgresql_restore.py",
+        "scripts/prune_backups.py",
+        "scripts/run_maintenance.py",
+        "scripts/manage_maintenance.py",
+        "scripts/run_operational_checks.py",
+        "scripts/deploy_release.py",
+        "scripts/rollback_release.py",
+        "scripts/release_readiness.py",
+        "scripts/check_secret_rotation_readiness.py",
+        "scripts/postgresql_health_check.py",
+        "scripts/postgresql_slow_query_report.py",
+        "scripts/postgresql_index_health.py",
+        "scripts/generate_release_metadata.py",
+        "alembic/versions/20260730_06_add_operational_state.py",
+        "deploy/autonogrow-operational-check.service",
+        "deploy/autonogrow-operational-check.timer",
+        "deploy/autonogrow-backup.service",
+        "deploy/autonogrow-backup.timer",
+        "deploy/autonogrow-maintenance.service",
+        "deploy/autonogrow-maintenance.timer",
     ]
     for relative in required:
         if (ROOT / relative).is_file():
@@ -192,7 +232,7 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "/uploads/businesses/*",
         ),
         "deploy/autonogrow-worker.service": (
-            "User=deploy",
+            "User=autonogrow",
             "python -m app.workers.channel_worker",
             "KillSignal=SIGTERM",
             "NoNewPrivileges=true",
@@ -312,8 +352,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260730_05":
-            reporter.fail("La head esperada para onboarding es 20260730_05")
+        if heads[0] != "20260730_06":
+            reporter.fail("La head operativa esperada es 20260730_06")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 
@@ -509,7 +549,7 @@ def check_application(reporter: Reporter):
 
     try:
         payload = importlib.import_module("app.routers.health").health_check()
-        if payload == {"status": "ok", "app": "autonogrow"}:
+        if payload == {"status": "ok"}:
             reporter.passed("El healthcheck es mínimo y no expone configuración")
         else:
             reporter.fail("El healthcheck contiene un payload inesperado")

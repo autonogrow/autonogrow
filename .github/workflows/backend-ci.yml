@@ -111,6 +111,19 @@ jobs:
       - name: Confirm persistent queue tables
         run: python -c "from sqlalchemy import create_engine,inspect; from app.core.config import get_database_url; assert {'webhook_inbox_events','channel_outbox_messages','worker_heartbeats'} <= set(inspect(create_engine(get_database_url())).get_table_names())"
 
+      - name: Operational layer dry-runs and static contracts
+        run: |
+          python scripts/backup_postgresql.py --output-dir "${RUNNER_TEMP}/backups" --json
+          python scripts/backup_uploads.py --uploads-dir backend/uploads --output-dir "${RUNNER_TEMP}/backups" --json
+          python scripts/prune_backups.py --backup-dir "${RUNNER_TEMP}/backups" --json
+          python scripts/deploy_release.py --release ci --environment staging --json
+          python scripts/rollback_release.py --target-release previous --environment staging --json
+          python -c "from scripts.run_operational_checks import main; assert main(['--dry-run','--no-notify','--json']) in (0,1,2)"
+          python -c "from scripts.release_readiness import main; assert main(['--json']) in (0,1,2)"
+          python scripts/check_secret_rotation_readiness.py --help
+          python scripts/test_postgresql_restore.py --help
+          python scripts/predeploy_check.py
+
   postgresql:
     runs-on: ubuntu-latest
     timeout-minutes: 20

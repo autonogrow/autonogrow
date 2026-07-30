@@ -1,6 +1,7 @@
 [Unit]
 Description=AutonoGrow FastAPI
-After=network.target
+After=network-online.target postgresql.service
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -11,12 +12,21 @@ EnvironmentFile=/etc/autonogrow/backend.env
 ExecStart=/opt/autonogrow/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+KillSignal=SIGTERM
 PrivateTmp=true
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/autonogrow
+ReadWritePaths=/var/lib/autonogrow /var/log/autonogrow
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+LimitNOFILE=65536
 UMask=0027
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

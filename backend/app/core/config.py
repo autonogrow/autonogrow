@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import re
 import shutil
@@ -68,6 +69,9 @@ def sanitize_database_url(database_url: str) -> str:
 class Settings(BaseSettings):
     app_name: str = "AutonoGrow Backend"
     app_version: str = "0.1.0"
+    app_release_id: str = "local"
+    app_git_commit: str = "unknown"
+    app_build_time: str = "unknown"
     environment: str = "development"
     database_url: str = ""
     allow_sqlite_in_production: bool = False
@@ -134,6 +138,42 @@ class Settings(BaseSettings):
     webhook_inbox_retention_days: int = 30
     outbox_retention_days: int = 90
     worker_heartbeat_retention_days: int = 7
+    readiness_timeout_seconds: float = 2.0
+    readiness_min_disk_free_bytes: int = 268_435_456
+    log_level: str = "INFO"
+    log_format: str = "auto"
+    log_include_source: bool = False
+    log_max_field_length: int = 2048
+    log_redact_sensitive: bool = True
+    metrics_enabled: bool = False
+    metrics_path: str = "/internal/metrics"
+    metrics_auth_token: str = ""
+    metrics_allowed_ips: str = "127.0.0.1,::1"
+    operational_alerts_enabled: bool = False
+    alert_email_recipients: str = ""
+    alert_webhook_url: str = ""
+    alert_webhook_secret: str = ""
+    alert_cooldown_minutes: int = 30
+    alert_queue_backlog_warning: int = 100
+    alert_queue_backlog_critical: int = 500
+    alert_queue_oldest_warning_seconds: int = 300
+    alert_queue_oldest_critical_seconds: int = 1800
+    alert_disk_free_warning_percent: float = 20.0
+    alert_disk_free_critical_percent: float = 10.0
+    alert_backup_max_age_hours: int = 30
+    alert_restore_test_max_age_days: int = 14
+    backup_enabled: bool = False
+    backup_dir: str = ""
+    backup_state_dir: str = ""
+    backup_retention_days: int = 30
+    backup_minimum_count: int = 7
+    backup_pg_dump_path: str = "pg_dump"
+    backup_pg_restore_path: str = "pg_restore"
+    backup_timeout_seconds: int = 1800
+    maintenance_worker_mode: str = "continue"
+    maintenance_public_message: str = "Service temporarily unavailable"
+    storage_cache_seconds: int = 60
+    storage_scan_max_files: int = 10000
 
     model_config = SettingsConfigDict(
         env_file=(str(BACKEND_DIR / ".env"), ".env"),
@@ -150,6 +190,23 @@ class Settings(BaseSettings):
         self.sqlite_synchronous = self.sqlite_synchronous.strip().upper()
         self.worker_concurrency_mode = self.worker_concurrency_mode.strip().lower()
         self.database_application_name = self.database_application_name.strip()
+        self.log_level = self.log_level.strip().upper()
+        self.log_format = self.log_format.strip().lower()
+        if self.log_format == "auto":
+            self.log_format = "json" if self.app_env in {"staging", "production"} else "text"
+        self.maintenance_worker_mode = self.maintenance_worker_mode.strip().lower()
+        self.metrics_path = "/" + self.metrics_path.strip().lstrip("/")
+        self.app_release_id = self.app_release_id.strip() or "local"
+        self.app_git_commit = self.app_git_commit.strip() or "unknown"
+        self.app_build_time = self.app_build_time.strip() or "unknown"
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", self.app_release_id):
+            raise ValueError("APP_RELEASE_ID no es válido")
+        if not re.fullmatch(r"(?:[0-9a-fA-F]{7,64}|unknown)", self.app_git_commit):
+            raise ValueError("APP_GIT_COMMIT no es válido")
+        if len(self.app_build_time) > 80:
+            raise ValueError("APP_BUILD_TIME es demasiado largo")
+        if not 3 <= len(self.maintenance_public_message.strip()) <= 200:
+            raise ValueError("MAINTENANCE_PUBLIC_MESSAGE debe tener entre 3 y 200 caracteres")
         if self.sqlite_busy_timeout_ms < 1 or self.sqlite_busy_timeout_ms > 60000:
             raise ValueError("SQLITE_BUSY_TIMEOUT_MS debe estar entre 1 y 60000")
         if self.sqlite_journal_mode not in {"DELETE", "TRUNCATE", "PERSIST", "WAL"}:
@@ -178,6 +235,90 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_APPLICATION_NAME no es válido")
         if self.worker_concurrency_mode not in {"single", "multi"}:
             raise ValueError("WORKER_CONCURRENCY_MODE debe ser single o multi")
+        if self.log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise ValueError("LOG_LEVEL no es válido")
+        if self.log_format not in {"text", "json"}:
+            raise ValueError("LOG_FORMAT debe ser auto, text o json")
+        if not 128 <= self.log_max_field_length <= 65536:
+            raise ValueError("LOG_MAX_FIELD_LENGTH debe estar entre 128 y 65536")
+        if not 0.1 <= self.readiness_timeout_seconds <= 10:
+            raise ValueError("READINESS_TIMEOUT_SECONDS debe estar entre 0.1 y 10")
+        if self.readiness_min_disk_free_bytes < 0:
+            raise ValueError("READINESS_MIN_DISK_FREE_BYTES no puede ser negativo")
+        if not re.fullmatch(r"/[A-Za-z0-9_./-]{1,120}", self.metrics_path):
+            raise ValueError("METRICS_PATH no es válido")
+        for allowed_ip in self.metrics_allowed_ip_list:
+            try:
+                ipaddress.ip_address(allowed_ip)
+            except ValueError as exc:
+                raise ValueError("METRICS_ALLOWED_IPS contiene una IP no válida") from exc
+        if self.metrics_auth_token and len(self.metrics_auth_token) < 32:
+            raise ValueError("METRICS_AUTH_TOKEN debe tener al menos 32 caracteres")
+        if (
+            self.metrics_enabled
+            and not self.metrics_allowed_ip_list
+            and not self.metrics_auth_token
+        ):
+            raise ValueError("METRICS_ENABLED requiere IPs permitidas o token")
+        if self.maintenance_worker_mode not in {"continue", "pause"}:
+            raise ValueError("MAINTENANCE_WORKER_MODE debe ser continue o pause")
+        if not 1 <= self.storage_cache_seconds <= 3600:
+            raise ValueError("STORAGE_CACHE_SECONDS debe estar entre 1 y 3600")
+        if not 100 <= self.storage_scan_max_files <= 1_000_000:
+            raise ValueError("STORAGE_SCAN_MAX_FILES debe estar entre 100 y 1000000")
+        operational_ranges = (
+            ("ALERT_COOLDOWN_MINUTES", self.alert_cooldown_minutes, 1, 10080),
+            ("ALERT_QUEUE_BACKLOG_WARNING", self.alert_queue_backlog_warning, 1, 1_000_000),
+            ("ALERT_QUEUE_BACKLOG_CRITICAL", self.alert_queue_backlog_critical, 1, 1_000_000),
+            (
+                "ALERT_QUEUE_OLDEST_WARNING_SECONDS",
+                self.alert_queue_oldest_warning_seconds,
+                1,
+                604800,
+            ),
+            (
+                "ALERT_QUEUE_OLDEST_CRITICAL_SECONDS",
+                self.alert_queue_oldest_critical_seconds,
+                1,
+                604800,
+            ),
+            ("ALERT_BACKUP_MAX_AGE_HOURS", self.alert_backup_max_age_hours, 1, 8760),
+            ("ALERT_RESTORE_TEST_MAX_AGE_DAYS", self.alert_restore_test_max_age_days, 1, 3650),
+            ("BACKUP_RETENTION_DAYS", self.backup_retention_days, 1, 3650),
+            ("BACKUP_MINIMUM_COUNT", self.backup_minimum_count, 1, 1000),
+            ("BACKUP_TIMEOUT_SECONDS", self.backup_timeout_seconds, 30, 86400),
+        )
+        for name, value, minimum, maximum in operational_ranges:
+            if not minimum <= value <= maximum:
+                raise ValueError(f"{name} debe estar entre {minimum} y {maximum}")
+        if self.alert_queue_backlog_critical <= self.alert_queue_backlog_warning:
+            raise ValueError("El umbral crítico de cola debe superar al de warning")
+        if self.alert_queue_oldest_critical_seconds <= self.alert_queue_oldest_warning_seconds:
+            raise ValueError("El umbral crítico de antigüedad debe superar al de warning")
+        if (
+            not 0
+            < self.alert_disk_free_critical_percent
+            < self.alert_disk_free_warning_percent
+            < 100
+        ):
+            raise ValueError("Los umbrales de disco deben cumplir 0 < critical < warning < 100")
+        if self.alert_webhook_url and not self.alert_webhook_url.startswith("https://"):
+            raise ValueError("ALERT_WEBHOOK_URL debe utilizar HTTPS")
+        if self.alert_webhook_url and len(self.alert_webhook_secret) < 32:
+            raise ValueError("ALERT_WEBHOOK_SECRET debe tener al menos 32 caracteres")
+        if any("@" not in value for value in self.alert_email_recipient_list):
+            raise ValueError("ALERT_EMAIL_RECIPIENTS contiene un email no válido")
+        if self.backup_enabled:
+            for name, path_value in (
+                ("BACKUP_DIR", self.backup_dir),
+                ("BACKUP_STATE_DIR", self.backup_state_dir),
+            ):
+                if (
+                    not path_value
+                    or not is_absolute_path_text(path_value)
+                    or path_is_inside_repo(path_value)
+                ):
+                    raise ValueError(f"{name} debe ser una ruta absoluta fuera del repo")
         configured_url = self.database_url.strip()
         try:
             database_backend = (
@@ -354,6 +495,18 @@ class Settings(BaseSettings):
             origin.strip().rstrip("/")
             for origin in self.frontend_origins.split(",")
             if origin.strip()
+        ]
+
+    @property
+    def metrics_allowed_ip_list(self) -> list[str]:
+        return [value.strip() for value in self.metrics_allowed_ips.split(",") if value.strip()]
+
+    @property
+    def alert_email_recipient_list(self) -> list[str]:
+        return [
+            value.strip().lower()
+            for value in self.alert_email_recipients.split(",")
+            if value.strip()
         ]
 
 

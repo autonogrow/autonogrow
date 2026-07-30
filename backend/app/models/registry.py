@@ -25,6 +25,7 @@ MODEL_MODULES = (
     "app.models.customer",
     "app.models.google_integration",
     "app.models.message_outbox",
+    "app.models.operations",
     "app.models.review_request",
     "app.models.service",
     "app.models.sync_job",

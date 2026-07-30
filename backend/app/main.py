@@ -1,14 +1,19 @@
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings, get_uploads_dir, migrate_legacy_uploads
 from app.core.database import initialize_database
+from app.core.observability import configure_logging
 from app.middleware.audit import FailedAccessAuditMiddleware
 from app.middleware.csrf import CSRFMiddleware
+from app.middleware.maintenance import MaintenanceMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.request_context import RequestContextMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routers.admin import router as admin_router
 from app.routers.admin_availability import router as admin_availability_router
@@ -51,12 +56,30 @@ async def lifespan(app: FastAPI):
 
 
 settings = get_settings()
+configure_logging(settings)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(Exception)
+async def unexpected_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", None)
+    logger.exception(
+        "unexpected request failure",
+        exc_info=exc,
+        extra={"event": "unexpected_exception", "request_id": request_id, "result": "error"},
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "request_id": request_id},
+        headers={"X-Request-ID": request_id} if request_id else None,
+    )
+
 
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RateLimitMiddleware)
@@ -75,6 +98,8 @@ app.add_middleware(
         "X-Request-ID",
     ],
 )
+app.add_middleware(MaintenanceMiddleware)
+app.add_middleware(RequestContextMiddleware)
 
 uploads_dir = get_uploads_dir()
 public_uploads_dir = uploads_dir / "businesses"

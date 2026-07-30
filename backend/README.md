@@ -1,5 +1,9 @@
 # AutonoGrow backend
 
+## Operaciones industrializadas
+
+La superficie distingue `/health` (proceso), `/ready` (tráfico), métricas internas protegidas y diagnóstico global owner. La head es `20260730_06`; staging/production nunca ejecutan DDL al arrancar. Backups, restore temporal, mantenimiento, alertas, deploy, rollback y GO/NO-GO son secos por defecto. Véase `docs/operations_architecture.md`.
+
 El webhook Instagram persiste en una inbox y responde tras commit. Ejecutar el proceso separado con `python -m app.workers.channel_worker`. Arquitectura y operación: `docs/persistent_queue_architecture.md` y `docs/channel_worker_operations.md`.
 
 Backend FastAPI/SQLAlchemy con PostgreSQL oficial en staging/producción, SQLite local y migraciones

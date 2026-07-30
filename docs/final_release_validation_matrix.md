@@ -1,5 +1,7 @@
 # Matriz acumulada de validación final
 
+La familia `OPS-S7-01..50` permanece en `manual_test_operations.md` y requiere evidencia manual separada para probes, logs, métricas, alertas, backups, restore, mantenimiento, systemd, Caddy e incidentes.
+
 `Pendiente` no implica aceptación. Las filas bloqueantes deben quedar Correctas con evidencia antes
 de producción. Los detalles operativos de IG-S1 están en `pending_final_validation.md`.
 

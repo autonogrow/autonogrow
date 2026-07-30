@@ -1,5 +1,7 @@
 # Operación del channel worker
 
+`MAINTENANCE_WORKER_MODE=pause` mantiene heartbeat sin reclamar trabajos; `continue` permite drenar colas. El `request_id` del webhook se conserva en inbox, logs e incidencias y se propaga al outbox del ciclo.
+
 PostgreSQL admite `WORKER_CONCURRENCY_MODE=multi`: cada proceso reclama filas con `FOR UPDATE SKIP
 LOCKED`, confirma la reclamación y procesa después. SQLite exige `single`. El panel owner muestra
 workers activos/stale y trabajo actual sin hostname. Dimensionar el pool sumando todos los procesos;

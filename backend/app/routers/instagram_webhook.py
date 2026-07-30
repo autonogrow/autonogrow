@@ -64,7 +64,10 @@ async def receive_instagram_webhook(
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
     message_events = extract_instagram_webhook_events(payload)
     accepted, duplicates = enqueue_instagram_events(
-        db, message_events, max_attempts=settings.worker_max_attempts
+        db,
+        message_events,
+        max_attempts=settings.worker_max_attempts,
+        request_id=getattr(request.state, "request_id", None),
     )
     db.commit()
     return {

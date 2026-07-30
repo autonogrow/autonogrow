@@ -33,6 +33,7 @@ from app.models.conversation import (
 from app.models.customer import Customer
 from app.models.google_integration import GoogleIntegration
 from app.models.message_outbox import MessageOutbox
+from app.models.operations import BackupRecord, OperationalState
 from app.models.review_request import ReviewRequest
 from app.models.service import BusinessService
 from app.models.sync_job import SyncJob
@@ -55,6 +56,8 @@ __all__ = [
     "SyncJob",
     "ReviewRequest",
     "MessageOutbox",
+    "BackupRecord",
+    "OperationalState",
     "BusinessGalleryImage",
     "BusinessOnboardingSession",
     "BusinessOnboardingTemplate",

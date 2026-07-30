@@ -1,5 +1,7 @@
 # Operación PostgreSQL
 
+Los scripts `postgresql_health_check.py`, `postgresql_slow_query_report.py` y `postgresql_index_health.py` son read-only: no cancelan consultas, instalan extensiones ni crean índices. `pg_stat_statements`, logging de duración y `EXPLAIN` requieren revisión DBA.
+
 Variables mínimas: `DATABASE_URL`, `ALLOW_SQLITE_IN_PRODUCTION=false`, pool 5+5, timeouts documentados,
 `DATABASE_APPLICATION_NAME` por entorno y `WORKER_CONCURRENCY_MODE=single` inicialmente. PostgreSQL
 permite `multi`; SQLite lo rechaza.

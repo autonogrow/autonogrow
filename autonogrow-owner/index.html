@@ -38,6 +38,7 @@
       <button class="tab" type="button" data-tab="new-business">Nuevo negocio</button>
       <button class="tab" type="button" data-tab="incidents">Incidencias</button>
       <button class="tab" type="button" data-tab="queues">Colas y worker</button>
+      <button class="tab" type="button" data-tab="operations">Operaciones</button>
     </nav>
 
     <section id="businesses-section" class="panel active" data-panel="businesses">
@@ -46,6 +47,20 @@
         <span id="list-status" class="status-text" aria-live="polite">Cargando…</span>
       </div>
       <div id="business-list" class="business-grid"></div>
+    </section>
+
+    <section class="panel" data-panel="operations">
+      <div class="section-heading">
+        <div><h2>Operaciones</h2><p>Estado global seguro de la versión, PostgreSQL, workers, almacenamiento y recuperación.</p></div>
+        <button id="operations-refresh" class="button button-secondary" type="button">Comprobar ahora</button>
+      </div>
+      <div id="operations-summary" class="summary-grid"></div>
+      <div class="incident-actions">
+        <button id="maintenance-toggle" class="button button-secondary" type="button">Cambiar mantenimiento</button>
+      </div>
+      <p id="operations-status" class="status-text" aria-live="polite"></p>
+      <pre id="operations-details" class="operations-details"></pre>
+      <p class="helper">Backups, verificación, mantenimiento seco y decisión GO/NO-GO se ejecutan mediante los scripts auditables del servidor. Restaurar, desplegar, rotar secretos o hacer rollback nunca se inicia desde este panel.</p>
     </section>
 
     <section class="panel" data-panel="queues">

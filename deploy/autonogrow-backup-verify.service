@@ -1,0 +1,16 @@
+[Unit]
+Description=AutonoGrow weekly backup verification handoff
+
+[Service]
+Type=oneshot
+User=autonogrow
+Group=autonogrow
+WorkingDirectory=/opt/autonogrow
+EnvironmentFile=/etc/autonogrow/backend.env
+ExecStart=/usr/bin/flock -n /run/lock/autonogrow-backup.lock /opt/autonogrow/.venv/bin/python /opt/autonogrow/scripts/verify_latest_backups.py --json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/autonogrow /var/backups/autonogrow /run/lock
+UMask=0077

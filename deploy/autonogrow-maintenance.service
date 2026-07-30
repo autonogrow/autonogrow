@@ -1,0 +1,16 @@
+[Unit]
+Description=AutonoGrow bounded maintenance
+
+[Service]
+Type=oneshot
+User=autonogrow
+Group=autonogrow
+WorkingDirectory=/opt/autonogrow
+EnvironmentFile=/etc/autonogrow/backend.env
+ExecStart=/usr/bin/flock -n /run/lock/autonogrow-maintenance.lock /opt/autonogrow/.venv/bin/python /opt/autonogrow/scripts/run_maintenance.py --apply --json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/autonogrow /run/lock
+UMask=0077

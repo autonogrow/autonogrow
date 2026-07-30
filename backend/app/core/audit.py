@@ -29,7 +29,12 @@ def record_audit(
     metadata: dict[str, Any] | None = None,
     commit: bool = True,
 ) -> AuditLog:
-    safe_metadata = metadata or None
+    request_id = getattr(request.state, "request_id", None) if request else None
+    safe_metadata: dict[str, Any] | None = dict(metadata or {})
+    if request_id:
+        assert safe_metadata is not None
+        safe_metadata.setdefault("request_id", request_id)
+    safe_metadata = safe_metadata or None
     item = AuditLog(
         actor_user_id=actor.id if actor else None,
         actor_email=actor.email if actor else None,

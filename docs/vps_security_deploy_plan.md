@@ -1,5 +1,7 @@
 # Plan de despliegue seguro en VPS
 
+Las plantillas endurecen procesos no root y aportan timers solo como ejemplos. Validar systemd/Caddy y completar las 50 pruebas manuales Sprint 7 antes de habilitarlos.
+
 ## Arquitectura recomendada
 
 ```text

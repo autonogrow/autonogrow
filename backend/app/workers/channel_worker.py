@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal, is_sqlite_locked_error
+from app.core.observability import request_id_context
 from app.models import (
     BusinessChannelIntegration,
     ChannelOutboxMessage,
@@ -30,6 +31,7 @@ from app.services.instagram_inbox_processor import (
 from app.services.instagram_integration_service import integration_expiration_state
 from app.services.instagram_provider import ProviderSendResult, send_instagram_text_message
 from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
+from app.services.maintenance_service import maintenance_enabled
 from app.services.outbox_queue_service import claim_outbox_jobs, fail_outbox_job, finish_outbox_job
 from app.services.queue_error_service import classify_queue_error
 from app.services.worker_heartbeat_service import update_worker_heartbeat
@@ -81,7 +83,7 @@ class ChannelWorker:
                 status=status,
                 current_job_type=job_type,
                 current_job_id=job_id,
-                version=self.settings.app_version,
+                version=f"{self.settings.app_version}:{self.settings.app_release_id}"[:80],
                 hostname=socket.gethostname(),
             )
             db.commit()
@@ -107,8 +109,13 @@ class ChannelWorker:
         started = time.monotonic()
         try:
             with self.session_factory() as db:
-                result = process_instagram_inbox_event(db, inbox_id)
-                db.commit()
+                row = db.get(WebhookInboxEvent, inbox_id)
+                token = request_id_context.set(row.request_id if row else None)
+                try:
+                    result = process_instagram_inbox_event(db, inbox_id)
+                    db.commit()
+                finally:
+                    request_id_context.reset(token)
             logger.info(
                 "queue_job_completed worker_id=%s job_type=inbox inbox_id=%s result=%s duration_ms=%s",
                 self.worker_id,
@@ -316,6 +323,10 @@ class ChannelWorker:
 
     def run_once(self) -> int:
         self._heartbeat("idle")
+        if getattr(self.settings, "maintenance_worker_mode", "continue") == "pause":
+            with self.session_factory() as db:
+                if maintenance_enabled(db):
+                    return 0
         inbox_ids, outbox_ids = self._claim()
         for inbox_id in inbox_ids:
             if self._stop_requested:

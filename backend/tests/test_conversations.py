@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.database import Base
 from app.core.security import get_current_user, require_business_access, require_business_admin
 from app.models import Business, BusinessUser, Conversation, ConversationMessage, User
@@ -257,7 +257,7 @@ class ConversationsTest(unittest.TestCase):
                 customer_username="cliente_demo",
                 body="Hola",
             ),
-            x_autonogrow_webhook_secret=None,
+            x_autonogrow_webhook_secret=get_settings().webhook_test_secret or None,
             db=self.db,
         )
         second = inbound_message_endpoint(
@@ -267,7 +267,7 @@ class ConversationsTest(unittest.TestCase):
                 external_user_id="ig-user-123",
                 body="Quería una cita",
             ),
-            x_autonogrow_webhook_secret=None,
+            x_autonogrow_webhook_secret=get_settings().webhook_test_secret or None,
             db=self.db,
         )
         self.assertTrue(first["created"])

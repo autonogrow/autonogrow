@@ -1,5 +1,7 @@
 # Migraciones de base de datos
 
+La head vigente es `20260730_06`. Añade estado operativo, metadatos de backup y `request_id` nullable en inbox/outbox; baja a `20260730_05` solo con servicio detenido, backup verificado y código compatible.
+
 La head actual es `20260730_04` y depende de `20260730_03`. Añade checks de créditos y reservas e
 índices para comprobar solapamientos. Funciona en SQLite y PostgreSQL. Su ciclo técnico es `upgrade
 head`, `downgrade 20260730_03`, `upgrade head`, siempre con backend y worker detenidos.

@@ -1,5 +1,7 @@
 # Validación funcional final pendiente
 
+Las 50 validaciones `OPS-S7-01..50` están en `manual_test_operations.md` y siguen `Pendiente`. No se han activado timers, enviado alertas reales, desplegado ni restaurado staging/production.
+
 ## Sprint 2 — colas persistentes (todas pendientes)
 
 Estas pruebas requieren staging o Meta real y no se han ejecutado:

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
+from app.core.observability import request_id_context
 from app.models import ChannelOutboxMessage, Conversation, ConversationMessage
 from app.services.queue_error_service import QueueErrorClassification, calculate_next_retry
 
@@ -30,6 +31,7 @@ def create_channel_outbox(
         recipient_external_id=recipient_external_id,
         payload_json=json.dumps({"text": message.body}, ensure_ascii=False),
         idempotency_key=f"instagram:outbound-message:{message.id}",
+        request_id=request_id_context.get(),
         status="pending",
         max_attempts=max_attempts,
     )

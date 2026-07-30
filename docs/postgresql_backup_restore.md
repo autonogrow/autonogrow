@@ -1,5 +1,7 @@
 # Backup y restore PostgreSQL
 
+La automatización usa `run_backup_set.py`, manifests SHA-256 y restore solo en `autonogrow_restore_*`. Véanse `postgresql_backup_automation.md`, `backup_verification.md` y `restore_testing.md`; el keyring se conserva cifrado por separado.
+
 Usar formato custom y no poner contraseñas en la línea de comandos. Preferir `.pgpass` con permisos
 0600, prompt o variable temporal protegida.
 
