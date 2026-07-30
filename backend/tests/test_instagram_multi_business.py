@@ -43,6 +43,8 @@ from app.services.conversation_automation_service import (
     process_inbound_automation,
 )
 from app.services.conversation_service import add_message
+from app.services.inbox_queue_service import claim_inbox_jobs
+from app.services.instagram_inbox_processor import process_instagram_inbox_event
 from app.services.instagram_integration_service import (
     integration_expiration_state,
     migrate_global_instagram_integration,
@@ -112,9 +114,12 @@ class InstagramAccessTokenVerificationTest(unittest.TestCase):
             {"id": account_id, "username": "autonogrow"},
             {"id": account_id, "user_id": "", "name": "AutonoGrow"},
         ):
-            with self.subTest(payload=payload), patch(
-                "app.services.instagram_provider.requests.get",
-                return_value=self.response(payload),
+            with (
+                self.subTest(payload=payload),
+                patch(
+                    "app.services.instagram_provider.requests.get",
+                    return_value=self.response(payload),
+                ),
             ):
                 result = verify_instagram_access_token(
                     account_id,
@@ -152,21 +157,24 @@ class InstagramAccessTokenVerificationTest(unittest.TestCase):
 
     def test_oauth_failure_is_preserved_and_does_not_expose_the_token(self):
         token = "super-secret-instagram-token"
-        with patch(
-            "app.services.instagram_provider.requests.get",
-            return_value=self.response(
-                {
-                    "error": {
-                        "message": f"Invalid OAuth access token: {token}",
-                        "type": "OAuthException",
-                        "code": 190,
-                        "error_subcode": 463,
-                    }
-                },
-                ok=False,
-                status_code=400,
+        with (
+            patch(
+                "app.services.instagram_provider.requests.get",
+                return_value=self.response(
+                    {
+                        "error": {
+                            "message": f"Invalid OAuth access token: {token}",
+                            "type": "OAuthException",
+                            "code": 190,
+                            "error_subcode": 463,
+                        }
+                    },
+                    ok=False,
+                    status_code=400,
+                ),
             ),
-        ), patch("logging.Logger._log") as log:
+            patch("logging.Logger._log") as log,
+        ):
             result = verify_instagram_access_token(
                 "17841411668616113",
                 token,
@@ -209,9 +217,24 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
         self.db.flush()
         self.db.add_all(
             [
-                BusinessUser(business_id=self.business_a.id, user_id=self.admin_a.id, role="business_admin", active=True),
-                BusinessUser(business_id=self.business_b.id, user_id=self.admin_b.id, role="business_admin", active=True),
-                BusinessUser(business_id=self.business_a.id, user_id=self.staff.id, role="business_staff", active=True),
+                BusinessUser(
+                    business_id=self.business_a.id,
+                    user_id=self.admin_a.id,
+                    role="business_admin",
+                    active=True,
+                ),
+                BusinessUser(
+                    business_id=self.business_b.id,
+                    user_id=self.admin_b.id,
+                    role="business_admin",
+                    active=True,
+                ),
+                BusinessUser(
+                    business_id=self.business_a.id,
+                    user_id=self.staff.id,
+                    role="business_staff",
+                    active=True,
+                ),
             ]
         )
         self.db.commit()
@@ -322,12 +345,15 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
             access_token=secret,
             reason="Alta inicial segura",
         )
-        with patch(
-            "app.routers.owner.verify_instagram_access_token",
-            return_value=self.verification("account-create"),
-        ), patch(
-            "app.services.integration_crypto_service.get_settings",
-            return_value=self.settings,
+        with (
+            patch(
+                "app.routers.owner.verify_instagram_access_token",
+                return_value=self.verification("account-create"),
+            ),
+            patch(
+                "app.services.integration_crypto_service.get_settings",
+                return_value=self.settings,
+            ),
         ):
             response = create_owner_business_instagram_integration(
                 self.business_a.id,
@@ -394,13 +420,26 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
         raw = json.dumps(payload).encode("utf-8")
         with patch("app.routers.instagram_webhook.get_settings", return_value=self.settings):
             result = asyncio.run(receive_instagram_webhook(self.request(body=raw), db=self.db))
-        self.assertEqual(result["processed"], 2)
-        self.assertEqual(result["ignored"], 1)
+        self.assertEqual(result["accepted"], 3)
+        job_ids = claim_inbox_jobs(
+            self.db, worker_id="test-worker", limit=10, lock_timeout_seconds=60
+        )
+        self.db.commit()
+        outcomes = []
+        for job_id in job_ids:
+            outcomes.append(process_instagram_inbox_event(self.db, job_id).action)
+            self.db.commit()
+        self.assertEqual(outcomes.count("processed"), 2)
+        self.assertEqual(outcomes.count("ignored"), 1)
         rows = self.db.query(Conversation).order_by(Conversation.business_id).all()
-        self.assertEqual([item.business_id for item in rows], [self.business_a.id, self.business_b.id])
-        incident = self.db.query(SystemIncident).filter(
-            SystemIncident.category == "instagram_unmapped_account"
-        ).one()
+        self.assertEqual(
+            [item.business_id for item in rows], [self.business_a.id, self.business_b.id]
+        )
+        incident = (
+            self.db.query(SystemIncident)
+            .filter(SystemIncident.category == "instagram_unmapped_account")
+            .one()
+        )
         self.assertNotIn("Sensitive body", incident.safe_details_json)
         self.assertNotIn("unknown-account", incident.safe_details_json)
 
@@ -472,9 +511,11 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(result.error_code, "integration_decryption_failed")
         self.assertEqual(integration.integration_status, "error")
-        incident = self.db.query(SystemIncident).filter(
-            SystemIncident.category == "integration_decryption_failed"
-        ).one()
+        incident = (
+            self.db.query(SystemIncident)
+            .filter(SystemIncident.category == "integration_decryption_failed")
+            .one()
+        )
         serialized = incident.safe_details_json
         self.assertNotIn("never-log-this-token", serialized)
         self.assertNotIn(integration.encrypted_access_token, serialized)
@@ -486,7 +527,9 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
             "token-expired",
             token_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
         )
-        with patch("app.services.instagram_integration_service.send_instagram_text_message") as provider:
+        with patch(
+            "app.services.instagram_integration_service.send_instagram_text_message"
+        ) as provider:
             result, _ = send_business_instagram_message(
                 self.db,
                 business_id=self.business_a.id,
@@ -534,7 +577,9 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
         integration_b = self.add_integration(self.business_b, "account-B", "token-B")
         with patch(
             "app.services.instagram_integration_service.send_instagram_text_message",
-            return_value=ProviderSendResult("failed", error_code="190", error_type="OAuthException"),
+            return_value=ProviderSendResult(
+                "failed", error_code="190", error_type="OAuthException"
+            ),
         ):
             send_business_instagram_message(
                 self.db,
@@ -553,12 +598,15 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
             access_token="new-secret-token",
             reason="Rotación por seguridad",
         )
-        with patch(
-            "app.routers.owner.verify_instagram_access_token",
-            return_value=self.verification("account-A"),
-        ), patch(
-            "app.services.integration_crypto_service.get_settings",
-            return_value=self.settings,
+        with (
+            patch(
+                "app.routers.owner.verify_instagram_access_token",
+                return_value=self.verification("account-A"),
+            ),
+            patch(
+                "app.services.integration_crypto_service.get_settings",
+                return_value=self.settings,
+            ),
         ):
             response = reconnect_owner_business_instagram_integration(
                 self.business_a.id,
@@ -631,12 +679,8 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
                 "instagram_default_business_slug": self.business_a.slug,
             }
         )
-        with patch(
-            "app.services.instagram_integration_service.logger.warning"
-        ) as warning:
-            first = migrate_global_instagram_integration(
-                self.db, settings=migration_settings
-            )
+        with patch("app.services.instagram_integration_service.logger.warning") as warning:
+            first = migrate_global_instagram_integration(self.db, settings=migration_settings)
         self.assertNotIn("legacy-secret-token", str(warning.call_args_list))
         self.db.commit()
         second = migrate_global_instagram_integration(self.db, settings=migration_settings)
@@ -651,9 +695,7 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
         )
         validate_persisted_integration_secrets(self.db, settings=migration_settings)
 
-        missing_key = migration_settings.model_copy(
-            update={"integration_encryption_keys_json": ""}
-        )
+        missing_key = migration_settings.model_copy(update={"integration_encryption_keys_json": ""})
         self.db.delete(first)
         self.db.commit()
         with self.assertRaises(IntegrationCryptoError):
@@ -678,7 +720,7 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
         owner_js = (root / "autonogrow-owner" / "owner.js").read_text(encoding="utf-8")
         admin_js = (root / "autonogrow-admin" / "admin.js").read_text(encoding="utf-8")
         self.assertIn('data-integration-token type="password"', owner_js)
-        self.assertIn("payload.access_token = \"\"", owner_js)
+        self.assertIn('payload.access_token = ""', owner_js)
         self.assertIn("integrations/instagram", owner_js)
         self.assertIn("integrations/status", admin_js)
         self.assertNotIn("integrations/instagram/reconnect", admin_js)

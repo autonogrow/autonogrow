@@ -1,5 +1,7 @@
 # Runbook de despliegue VPS
 
+El worker se instala en el futuro desde `deploy/autonogrow-worker.service`. Tras migrar, arrancar primero backend y luego `sudo systemctl start autonogrow-worker`; para rollback detener worker antes de bajar a `20260730_02`.
+
 Este runbook prepara un despliegue inicial de un solo worker con SQLite. Sustituir `app.example.com`, IPs y rutas indicadas antes de ejecutar. Probar primero en un VPS de staging o snapshot recuperable.
 
 ## 1. Preparación local

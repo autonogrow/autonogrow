@@ -21,6 +21,7 @@ from app.models import (
     Business,
     BusinessChannelIntegration,
     BusinessUser,
+    ChannelOutboxMessage,
     Conversation,
     ConversationMessage,
     ConversationSuggestion,
@@ -40,8 +41,9 @@ from app.services.conversation_automation_service import (
     process_inbound_automation,
 )
 from app.services.conversation_service import add_message
+from app.services.inbox_queue_service import claim_inbox_jobs
+from app.services.instagram_inbox_processor import process_instagram_inbox_event
 from app.services.instagram_provider import (
-    ProviderSendResult,
     is_instagram_provider_configured,
     parse_instagram_webhook,
     send_instagram_text_message,
@@ -197,13 +199,45 @@ class InstagramV1Test(unittest.TestCase):
     def post_webhook(self, payload, settings, signature=None):
         raw_body = json.dumps(payload).encode("utf-8")
         with patch("app.routers.instagram_webhook.get_settings", return_value=settings):
-            return asyncio.run(
+            reception = asyncio.run(
                 receive_instagram_webhook(
                     self.webhook_request(raw_body),
                     x_hub_signature_256=signature,
                     db=self.db,
                 )
             )
+        job_ids = claim_inbox_jobs(
+            self.db,
+            worker_id="legacy-test-worker",
+            limit=100,
+            lock_timeout_seconds=60,
+        )
+        self.db.commit()
+        result = {
+            "ok": True,
+            "processed": 0,
+            "duplicates": reception["duplicates"],
+            "echoes": 0,
+            "reconciled": 0,
+            "ignored": 0,
+            "automation": [],
+        }
+        for job_id in job_ids:
+            processed = process_instagram_inbox_event(self.db, job_id)
+            self.db.commit()
+            if processed.automation is not None:
+                result["automation"].append(processed.automation)
+            if processed.action == "ignored":
+                result["ignored"] += 1
+            elif processed.action == "duplicate":
+                result["duplicates"] += 1
+            else:
+                result["processed"] += 1
+                if processed.action in {"created", "reconciled"}:
+                    result["echoes"] += 1
+                if processed.action == "reconciled":
+                    result["reconciled"] += 1
+        return result
 
     def create_instagram_conversation(self, *, business=None, user_id="ig-user"):
         business = business or self.business_a
@@ -236,11 +270,14 @@ class InstagramV1Test(unittest.TestCase):
 
     def test_signature_validation_and_required_signature(self):
         raw_body = json.dumps(self.payload()).encode("utf-8")
-        valid_signature = "sha256=" + hmac.new(
-            b"meta-secret",
-            raw_body,
-            hashlib.sha256,
-        ).hexdigest()
+        valid_signature = (
+            "sha256="
+            + hmac.new(
+                b"meta-secret",
+                raw_body,
+                hashlib.sha256,
+            ).hexdigest()
+        )
         self.assertTrue(verify_meta_signature(raw_body, valid_signature, "meta-secret"))
         self.assertFalse(verify_meta_signature(raw_body, "sha256=invalid", "meta-secret"))
 
@@ -435,7 +472,9 @@ class InstagramV1Test(unittest.TestCase):
             self.payload(
                 mid="echo-attachment",
                 text=None,
-                attachments=[{"type": "image", "payload": {"url": "https://example.test/safe-image"}}],
+                attachments=[
+                    {"type": "image", "payload": {"url": "https://example.test/safe-image"}}
+                ],
                 is_echo=True,
             ),
             self.settings(),
@@ -616,9 +655,10 @@ class InstagramV1Test(unittest.TestCase):
             ok=False,
             json=lambda: {"error": {"code": 190, "message": "provider detail"}},
         )
-        with patch("app.services.instagram_provider.requests.post", return_value=response), patch(
-            "logging.Logger._log"
-        ) as logger_log:
+        with (
+            patch("app.services.instagram_provider.requests.post", return_value=response),
+            patch("logging.Logger._log") as logger_log,
+        ):
             result = send_instagram_text_message(
                 "ig-user",
                 "Respuesta",
@@ -648,17 +688,15 @@ class InstagramV1Test(unittest.TestCase):
                 db=self.db,
             )
 
-        self.assertEqual(result["message"]["delivery_status"], "simulated")
+        self.assertEqual(result["message"]["delivery_status"], "queued")
         self.assertIsNone(result["message"]["provider_message_id"])
         self.assertFalse(result["provider_configured"])
+        self.assertEqual(self.db.query(ChannelOutboxMessage).count(), 1)
 
     def test_manual_outbound_provider_success_and_failure(self):
         settings = self.settings(instagram_provider_enabled=True)
         success_conversation = self.create_instagram_conversation(user_id="success-user")
-        with patch("app.services.conversation_service.get_settings", return_value=settings), patch(
-            "app.services.conversation_service.send_business_instagram_message",
-            return_value=(ProviderSendResult("sent", "provider-out-1"), self.instagram_integration),
-        ):
+        with patch("app.services.conversation_service.get_settings", return_value=settings):
             sent = admin_send_conversation_message(
                 self.business_a.slug,
                 success_conversation.id,
@@ -667,33 +705,30 @@ class InstagramV1Test(unittest.TestCase):
                 actor=self.admin_user,
                 db=self.db,
             )
-        self.assertEqual(sent["message"]["delivery_status"], "sent")
-        self.assertEqual(sent["message"]["provider_message_id"], "provider-out-1")
+        self.assertEqual(sent["message"]["delivery_status"], "queued")
+        self.assertIsNone(sent["message"]["provider_message_id"])
 
         failed_conversation = self.create_instagram_conversation(user_id="failed-user")
-        with patch("app.services.conversation_service.get_settings", return_value=settings), patch(
-            "app.services.conversation_service.send_business_instagram_message",
-            return_value=(ProviderSendResult("failed", error_message="safe failure"), self.instagram_integration),
-        ):
-            with self.assertRaises(HTTPException) as failed:
-                admin_send_conversation_message(
-                    self.business_a.slug,
-                    failed_conversation.id,
-                    ConversationMessageCreate(body="No entregado"),
-                    self.request(),
-                    actor=self.admin_user,
-                    db=self.db,
-                )
-        self.assertEqual(failed.exception.status_code, 502)
+        with patch("app.services.conversation_service.get_settings", return_value=settings):
+            queued = admin_send_conversation_message(
+                self.business_a.slug,
+                failed_conversation.id,
+                ConversationMessageCreate(body="No entregado"),
+                self.request(),
+                actor=self.admin_user,
+                db=self.db,
+            )
+        self.assertEqual(queued["message"]["delivery_status"], "queued")
         self.db.refresh(failed_conversation)
         failed_message = (
             self.db.query(ConversationMessage)
             .filter(ConversationMessage.conversation_id == failed_conversation.id)
             .one()
         )
-        self.assertEqual(failed_message.delivery_status, "failed")
-        self.assertEqual(failed_conversation.status, "pending")
-        self.assertIsNone(failed_conversation.automation_paused_until)
+        self.assertEqual(failed_message.delivery_status, "queued")
+        self.assertEqual(failed_conversation.status, "replied")
+        self.assertIsNotNone(failed_conversation.automation_paused_until)
+        self.assertEqual(self.db.query(ChannelOutboxMessage).count(), 2)
 
     def test_suggestion_send_uses_provider_without_automatic_credit(self):
         conversation = self.create_instagram_conversation(user_id="suggestion-user")
@@ -709,9 +744,8 @@ class InstagramV1Test(unittest.TestCase):
         self.db.commit()
         provider_settings = self.settings(instagram_provider_enabled=True)
 
-        with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
-            "app.services.conversation_service.send_business_instagram_message",
-            return_value=(ProviderSendResult("sent", "suggestion-provider-mid"), self.instagram_integration),
+        with patch(
+            "app.services.conversation_service.get_settings", return_value=provider_settings
         ):
             result = admin_send_conversation_suggestion(
                 self.business_a.slug,
@@ -723,10 +757,12 @@ class InstagramV1Test(unittest.TestCase):
 
         self.assertEqual(result["suggestion"]["status"], "used")
         self.assertEqual(result["message"]["sender_type"], "business")
-        self.assertEqual(result["message"]["provider_message_id"], "suggestion-provider-mid")
+        self.assertEqual(result["message"]["delivery_status"], "queued")
+        self.assertIsNone(result["message"]["provider_message_id"])
+        self.assertEqual(self.db.query(ChannelOutboxMessage).count(), 1)
         self.assertEqual(settings_row.auto_used_current_period, 0)
 
-    def test_automatic_uses_provider_and_failure_does_not_consume_credit(self):
+    def test_automatic_enqueues_and_consumes_credit_once_per_message(self):
         provider_settings = self.settings(instagram_provider_enabled=True)
         settings_row, rules = ensure_automation_configuration(self.db, self.business_a)
         settings_row.automation_enabled = True
@@ -745,9 +781,8 @@ class InstagramV1Test(unittest.TestCase):
             sender_type="customer",
             body="quiero una cita",
         )
-        with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
-            "app.services.conversation_service.send_business_instagram_message",
-            return_value=(ProviderSendResult("sent", "auto-provider-mid"), self.instagram_integration),
+        with patch(
+            "app.services.conversation_service.get_settings", return_value=provider_settings
         ):
             success = process_inbound_automation(
                 self.db,
@@ -756,109 +791,32 @@ class InstagramV1Test(unittest.TestCase):
                 message=success_inbound,
             )
         self.assertEqual(success["action"], "automatic")
-        self.assertEqual(success["delivery_status"], "sent")
+        self.assertEqual(success["delivery_status"], "queued")
         self.assertEqual(settings_row.auto_used_current_period, 1)
         self.assertEqual(settings_row.included_credits_used, 1)
         consumed_before_failure = (
             self.db.query(AutomationCreditTransaction)
             .filter(
                 AutomationCreditTransaction.business_id == self.business_a.id,
-                AutomationCreditTransaction.transaction_type
-                == "automatic_message_consumed",
+                AutomationCreditTransaction.transaction_type == "automatic_message_consumed",
             )
             .count()
         )
 
-        failed_conversation = self.create_instagram_conversation(user_id="auto-failed")
-        failed_inbound = add_message(
-            self.db,
-            conversation=failed_conversation,
-            direction="inbound",
-            sender_type="customer",
-            body="quiero una cita",
-        )
-        with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
-            "app.services.conversation_service.send_business_instagram_message",
-            return_value=(ProviderSendResult("failed", error_message="safe failure"), self.instagram_integration),
-        ):
-            failed = process_inbound_automation(
-                self.db,
-                business=self.business_a,
-                conversation=failed_conversation,
-                message=failed_inbound,
-            )
-        self.assertEqual(failed["action"], "automatic_failed")
-        self.assertEqual(failed["delivery_status"], "failed")
-        self.assertEqual(settings_row.auto_used_current_period, 1)
-        self.assertEqual(settings_row.included_credits_used, 1)
+        outbox = self.db.query(ChannelOutboxMessage).one()
+        outbox.status = "retry"
+        outbox.attempt_count = 2
+        self.db.flush()
         self.assertEqual(
             self.db.query(AutomationCreditTransaction)
             .filter(
                 AutomationCreditTransaction.business_id == self.business_a.id,
-                AutomationCreditTransaction.transaction_type
-                == "automatic_message_consumed",
+                AutomationCreditTransaction.transaction_type == "automatic_message_consumed",
             )
             .count(),
             consumed_before_failure,
         )
-        self.assertEqual(failed_conversation.status, "pending")
-
-        timeout_conversation = self.create_instagram_conversation(user_id="auto-timeout")
-        timeout_inbound = add_message(
-            self.db,
-            conversation=timeout_conversation,
-            direction="inbound",
-            sender_type="customer",
-            body="quiero una cita",
-        )
-        with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
-            "app.services.conversation_service.send_business_instagram_message",
-            return_value=(ProviderSendResult(
-                "failed",
-                error_message="Instagram provider request timed out",
-                timed_out=True,
-            ), self.instagram_integration),
-        ):
-            timed_out = process_inbound_automation(
-                self.db,
-                business=self.business_a,
-                conversation=timeout_conversation,
-                message=timeout_inbound,
-        )
-        self.assertEqual(timed_out["action"], "automatic_failed")
-        self.assertEqual(timed_out["delivery_status"], "failed")
-        self.assertEqual(settings_row.included_credits_used, 1)
-        self.assertEqual(
-            self.db.query(AutomationCreditTransaction)
-            .filter(
-                AutomationCreditTransaction.business_id == self.business_a.id,
-                AutomationCreditTransaction.transaction_type
-                == "automatic_message_consumed",
-            )
-            .count(),
-            consumed_before_failure,
-        )
-
-        retry_inbound = add_message(
-            self.db,
-            conversation=failed_conversation,
-            direction="inbound",
-            sender_type="customer",
-            body="quiero una cita",
-        )
-        with patch("app.services.conversation_service.get_settings", return_value=provider_settings), patch(
-            "app.services.conversation_service.send_business_instagram_message",
-            return_value=(ProviderSendResult("sent", "auto-provider-retry-mid"), self.instagram_integration),
-        ):
-            retry = process_inbound_automation(
-                self.db,
-                business=self.business_a,
-                conversation=failed_conversation,
-                message=retry_inbound,
-            )
-        self.assertEqual(retry["action"], "automatic")
-        self.assertEqual(settings_row.auto_used_current_period, 2)
-        self.assertEqual(settings_row.included_credits_used, 2)
+        self.assertEqual(self.db.query(ChannelOutboxMessage).count(), 1)
 
     def test_outbound_permissions_and_tenant_isolation(self):
         other_conversation = self.create_instagram_conversation(
@@ -882,14 +840,10 @@ class InstagramV1Test(unittest.TestCase):
 
     def test_admin_exposes_provider_and_delivery_indicators(self):
         admin_js = (
-            Path(__file__).resolve().parents[2]
-            / "autonogrow-admin"
-            / "admin.js"
+            Path(__file__).resolve().parents[2] / "autonogrow-admin" / "admin.js"
         ).read_text(encoding="utf-8")
         admin_styles = (
-            Path(__file__).resolve().parents[2]
-            / "autonogrow-admin"
-            / "styles.css"
+            Path(__file__).resolve().parents[2] / "autonogrow-admin" / "styles.css"
         ).read_text(encoding="utf-8")
         self.assertIn("Instagram conectado", admin_js)
         self.assertIn("Instagram no conectado · modo interno", admin_js)

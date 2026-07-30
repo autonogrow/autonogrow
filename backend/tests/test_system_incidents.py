@@ -11,16 +11,16 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import Settings
 from app.core.database import Base
 from app.core.security import require_owner
-from app.models import Business, BusinessChannelIntegration, Conversation, SystemIncident, User
+from app.models import Business, BusinessChannelIntegration, SystemIncident, User
 from app.routers.conversations import admin_list_business_incidents
-from app.services.conversation_service import send_outbound_message
 from app.services.incident_service import (
     GENERIC_SEND_CLIENT_MESSAGE,
     INSTAGRAM_AUTH_CLIENT_MESSAGE,
     report_incident,
     resolve_related_incidents,
 )
-from app.services.instagram_provider import ProviderSendResult, send_instagram_text_message
+from app.services.instagram_provider import send_instagram_text_message
+from app.services.queue_error_service import classify_queue_error
 
 
 class SystemIncidentTest(unittest.TestCase):
@@ -110,10 +110,26 @@ class SystemIncidentTest(unittest.TestCase):
         columns = {item["name"] for item in inspect(self.engine).get_columns("system_incidents")}
         self.assertTrue(
             {
-                "id", "incident_key", "severity", "category", "status", "business_id",
-                "channel", "provider", "provider_error_code", "operation", "conversation_id",
-                "message_id", "occurrence_count", "first_occurred_at", "last_occurred_at",
-                "notified_at", "resolved_at", "safe_details_json", "created_at", "updated_at",
+                "id",
+                "incident_key",
+                "severity",
+                "category",
+                "status",
+                "business_id",
+                "channel",
+                "provider",
+                "provider_error_code",
+                "operation",
+                "conversation_id",
+                "message_id",
+                "occurrence_count",
+                "first_occurred_at",
+                "last_occurred_at",
+                "notified_at",
+                "resolved_at",
+                "safe_details_json",
+                "created_at",
+                "updated_at",
             }.issubset(columns)
         )
 
@@ -153,9 +169,7 @@ class SystemIncidentTest(unittest.TestCase):
         self.assertEqual(disabled.status, "open")
 
         settings = self.alert_settings()
-        with patch(
-            "app.services.incident_service._send_email", side_effect=OSError("mail down")
-        ):
+        with patch("app.services.incident_service._send_email", side_effect=OSError("mail down")):
             failed_mail = self.report(code="191", settings=settings)
         self.assertEqual(failed_mail.status, "open")
         self.assertIsNone(failed_mail.notified_at)
@@ -178,65 +192,44 @@ class SystemIncidentTest(unittest.TestCase):
 
     def test_known_critical_category_cannot_be_underclassified(self):
         incident = self.report(
-            code=None, category="security_incident", severity="low", provider=None,
-            channel=None, operation="security_check",
+            code=None,
+            category="security_incident",
+            severity="low",
+            provider=None,
+            channel=None,
+            operation="security_check",
         )
         self.assertEqual(incident.severity, "critical")
 
     def test_oauth_190_creates_high_safe_incident_and_success_resolves_it(self):
-        conversation = Conversation(
+        classification = classify_queue_error(error_code="190", http_status=400)
+        self.assertTrue(classification.blocked)
+        incident = report_incident(
+            self.db,
+            category="integration_unavailable",
+            severity="high",
             business_id=self.business_a.id,
+            integration_id=self.instagram_integration.id,
             channel="instagram",
-            external_user_id="ig-customer",
-            status="pending",
+            provider="instagram",
+            provider_error_code="190",
+            operation="process_outbox_1",
+            safe_details={"outbox_id": 1, "error_subcode": "463"},
         )
-        self.db.add(conversation)
-        self.db.commit()
-        settings = self.settings()
-        oauth_error = ProviderSendResult(
-            "failed",
-            error_message="safe provider error",
-            http_status=400,
-            error_code="190",
-            error_subcode="463",
-            error_type="OAuthException",
-        )
-        with patch("app.services.conversation_service.get_settings", return_value=settings), patch(
-            "app.services.conversation_service.send_business_instagram_message",
-            return_value=(oauth_error, self.instagram_integration),
-        ):
-            failed = send_outbound_message(
-                self.db,
-                conversation=conversation,
-                body="Customer-facing response body",
-                sender_type="automation",
-                intent="booking_intent",
-            )
-        self.db.commit()
-
-        incident = self.db.query(SystemIncident).one()
-        self.assertFalse(failed.ok)
         self.assertEqual(incident.severity, "high")
-        self.assertEqual(incident.category, "instagram_token_revoked")
+        self.assertEqual(incident.category, "integration_unavailable")
         self.assertEqual(incident.provider_error_code, "190")
-        self.assertIn(INSTAGRAM_AUTH_CLIENT_MESSAGE, failed.client_error_message)
-        self.assertIn("AGW-2026", failed.client_error_message)
-        self.assertNotIn("token", failed.client_error_message.lower())
         self.assertNotIn("Customer-facing response body", incident.safe_details_json)
-
-        with patch("app.services.conversation_service.get_settings", return_value=settings), patch(
-            "app.services.conversation_service.send_business_instagram_message",
-            return_value=(ProviderSendResult("sent", "provider-mid"), self.instagram_integration),
-        ):
-            success = send_outbound_message(
-                self.db,
-                conversation=conversation,
-                body="Recovered",
-                sender_type="business",
-            )
+        resolve_related_incidents(
+            self.db,
+            business_id=self.business_a.id,
+            integration_id=self.instagram_integration.id,
+            channel="instagram",
+            provider="instagram",
+            operation="process_outbox_1",
+        )
         self.db.commit()
         self.db.refresh(incident)
-        self.assertTrue(success.ok)
         self.assertEqual(incident.status, "resolved")
         self.assertIsNotNone(incident.resolved_at)
 
@@ -293,9 +286,7 @@ class SystemIncidentTest(unittest.TestCase):
         self.assertTrue(configured.incident_alerts_enabled)
 
     def test_generic_failure_uses_generic_safe_message(self):
-        incident = self.report(
-            code="10", category="provider_send_failure", severity="medium"
-        )
+        incident = self.report(code="10", category="provider_send_failure", severity="medium")
         from app.services.incident_service import client_message_for_incident
 
         message = client_message_for_incident(incident)

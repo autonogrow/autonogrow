@@ -69,6 +69,7 @@ def check_required_files(reporter: Reporter) -> None:
         "deploy/backend.env.example",
         "deploy/staging.backend.env.example",
         "deploy/autonogrow.service.example",
+        "deploy/autonogrow-worker.service",
         "deploy/Caddyfile.example",
         "privacy/index.html",
         "data-deletion/index.html",
@@ -84,6 +85,11 @@ def check_required_files(reporter: Reporter) -> None:
         "docs/database_backup_and_restore.md",
         "docs/pending_final_validation.md",
         "docs/final_release_validation_matrix.md",
+        "docs/persistent_queue_architecture.md",
+        "docs/channel_worker_operations.md",
+        "docs/webhook_inbox.md",
+        "docs/channel_outbox.md",
+        "docs/queue_incident_recovery.md",
         "alembic.ini",
         "alembic/env.py",
         "alembic/script.py.mako",
@@ -99,6 +105,7 @@ def check_required_files(reporter: Reporter) -> None:
         "scripts/test_migration_on_copy.py",
         "scripts/rotate_integration_encryption.py",
         "scripts/smoke_test_staging.py",
+        "scripts/cleanup_queue_history.py",
     ]
     for relative in required:
         if (ROOT / relative).is_file():
@@ -159,6 +166,12 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "root * /var/www/autonogrow",
             "reverse_proxy 127.0.0.1:8000",
             "/uploads/businesses/*",
+        ),
+        "deploy/autonogrow-worker.service": (
+            "User=deploy",
+            "python -m app.workers.channel_worker",
+            "KillSignal=SIGTERM",
+            "NoNewPrivileges=true",
         ),
     }
     for relative, markers in checks.items():
@@ -269,6 +282,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
+        if heads[0] != "20260730_03":
+            reporter.fail("La head esperada para colas es 20260730_03")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 
@@ -322,15 +337,13 @@ def check_tracked_secrets(reporter: Reporter) -> None:
             continue
         for match in assignment.finditer(content):
             raw_value = match.group(2)
-            if path.suffix.lower() == ".py" and not raw_value.startswith(("\"", "'")):
+            if path.suffix.lower() == ".py" and not raw_value.startswith(('"', "'")):
                 continue
             value = raw_value.strip("\"'").lower()
             if value and not any(marker in value for marker in allowed_markers):
                 findings.append(str(path.relative_to(ROOT)))
     if findings:
-        reporter.fail(
-            "Posibles secretos reales detectados en: " + ", ".join(sorted(set(findings)))
-        )
+        reporter.fail("Posibles secretos reales detectados en: " + ", ".join(sorted(set(findings))))
     else:
         reporter.passed("No se detectaron secretos reales en archivos versionados")
 
@@ -447,6 +460,17 @@ def check_application(reporter: Reporter):
         if not schema.get("paths"):
             raise RuntimeError("OpenAPI sin paths")
         reporter.passed("app.main importa y OpenAPI carga")
+        queue_paths = {
+            "/api/owner/system/queue-status",
+            "/api/owner/queue/inbox/{job_id}/retry",
+            "/api/owner/queue/inbox/{job_id}/cancel",
+            "/api/owner/queue/outbox/{job_id}/retry",
+            "/api/owner/queue/outbox/{job_id}/cancel",
+        }
+        if queue_paths <= set(schema.get("paths", {})):
+            reporter.passed("Endpoints owner de colas registrados")
+        else:
+            reporter.fail("Faltan endpoints owner de colas")
     except Exception:
         reporter.fail("No se pudo importar app.main o generar OpenAPI")
 
@@ -461,6 +485,42 @@ def check_application(reporter: Reporter):
     return config_module.Settings
 
 
+def check_persistent_queue_contract(reporter: Reporter) -> None:
+    from app.core.database import Base
+    from app.models.registry import register_models
+
+    register_models()
+    required_tables = {"webhook_inbox_events", "channel_outbox_messages", "worker_heartbeats"}
+    if required_tables <= set(Base.metadata.tables):
+        reporter.passed("Modelos de cola registrados")
+    else:
+        reporter.fail("Faltan modelos de cola en metadata")
+    env_text = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8-sig")
+        for path in (
+            "backend/.env.example",
+            "deploy/backend.env.example",
+            "deploy/staging.backend.env.example",
+        )
+    )
+    required_vars = {
+        "WEBHOOK_MAX_PAYLOAD_BYTES",
+        "WORKER_ENABLED",
+        "WORKER_LOCK_TIMEOUT_SECONDS",
+        "WORKER_HEARTBEAT_INTERVAL_SECONDS",
+        "PROCESS_WEBHOOK_SYNCHRONOUSLY=false",
+    }
+    if all(value in env_text for value in required_vars):
+        reporter.passed("Variables de worker e inbox documentadas")
+    else:
+        reporter.fail("Faltan variables de worker documentadas")
+    pending = (ROOT / "docs/pending_final_validation.md").read_text(encoding="utf-8-sig")
+    if all(f"Q-S2-{index:02d}" in pending and "Pendiente" in pending for index in range(1, 31)):
+        reporter.passed("Matriz contiene 30 pruebas manuales pendientes")
+    else:
+        reporter.fail("Faltan pruebas manuales pendientes de colas")
+
+
 def main() -> int:
     reporter = Reporter()
     check_required_files(reporter)
@@ -469,6 +529,7 @@ def main() -> int:
     check_git_env_tracking(reporter)
     check_dependency_locks(reporter)
     check_alembic(reporter)
+    check_persistent_queue_contract(reporter)
     check_tracked_secrets(reporter)
     Settings = check_application(reporter)
     if Settings is not None:

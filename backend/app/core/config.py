@@ -88,6 +88,20 @@ class Settings(BaseSettings):
     sqlite_busy_timeout_ms: int = 5000
     sqlite_journal_mode: str = "WAL"
     sqlite_synchronous: str = "NORMAL"
+    webhook_max_payload_bytes: int = 1_048_576
+    worker_enabled: bool = True
+    worker_id: str = ""
+    worker_poll_interval_seconds: float = 1.0
+    worker_batch_size: int = 10
+    worker_lock_timeout_seconds: int = 60
+    worker_max_attempts: int = 5
+    worker_job_timeout_seconds: int = 30
+    worker_heartbeat_interval_seconds: int = 15
+    worker_stale_after_seconds: int = 60
+    process_webhook_synchronously: bool = False
+    webhook_inbox_retention_days: int = 30
+    outbox_retention_days: int = 90
+    worker_heartbeat_retention_days: int = 7
 
     model_config = SettingsConfigDict(
         env_file=(str(BACKEND_DIR / ".env"), ".env"),
@@ -108,6 +122,31 @@ class Settings(BaseSettings):
             raise ValueError("SQLITE_JOURNAL_MODE debe ser DELETE, TRUNCATE, PERSIST o WAL")
         if self.sqlite_synchronous not in {"OFF", "NORMAL", "FULL", "EXTRA"}:
             raise ValueError("SQLITE_SYNCHRONOUS debe ser OFF, NORMAL, FULL o EXTRA")
+        if not 1024 <= self.webhook_max_payload_bytes <= 10_485_760:
+            raise ValueError("WEBHOOK_MAX_PAYLOAD_BYTES debe estar entre 1024 y 10485760")
+        if not 0.1 <= self.worker_poll_interval_seconds <= 60:
+            raise ValueError("WORKER_POLL_INTERVAL_SECONDS debe estar entre 0.1 y 60")
+        if not 1 <= self.worker_batch_size <= 100:
+            raise ValueError("WORKER_BATCH_SIZE debe estar entre 1 y 100")
+        if not self.worker_poll_interval_seconds < self.worker_lock_timeout_seconds <= 3600:
+            raise ValueError(
+                "WORKER_LOCK_TIMEOUT_SECONDS debe ser mayor que poll y no superar 3600"
+            )
+        if not 1 <= self.worker_max_attempts <= 20:
+            raise ValueError("WORKER_MAX_ATTEMPTS debe estar entre 1 y 20")
+        if not 1 <= self.worker_job_timeout_seconds <= 600:
+            raise ValueError("WORKER_JOB_TIMEOUT_SECONDS debe estar entre 1 y 600")
+        if not 1 <= self.worker_heartbeat_interval_seconds <= 300:
+            raise ValueError("WORKER_HEARTBEAT_INTERVAL_SECONDS debe estar entre 1 y 300")
+        if not self.worker_heartbeat_interval_seconds < self.worker_stale_after_seconds <= 3600:
+            raise ValueError("WORKER_STALE_AFTER_SECONDS debe ser mayor que heartbeat")
+        for name, value in (
+            ("WEBHOOK_INBOX_RETENTION_DAYS", self.webhook_inbox_retention_days),
+            ("OUTBOX_RETENTION_DAYS", self.outbox_retention_days),
+            ("WORKER_HEARTBEAT_RETENTION_DAYS", self.worker_heartbeat_retention_days),
+        ):
+            if not 1 <= value <= 3650:
+                raise ValueError(f"{name} debe estar entre 1 y 3650")
         self.incident_alert_min_severity = self.incident_alert_min_severity.strip().lower()
         if self.incident_alert_min_severity not in {"low", "medium", "high", "critical"}:
             raise ValueError("INCIDENT_ALERT_MIN_SEVERITY debe ser low, medium, high o critical")
@@ -198,6 +237,8 @@ class Settings(BaseSettings):
             errors.append("INSTAGRAM_REQUIRE_SIGNATURE debe estar activo")
         if self.enable_legacy_startup_migrations:
             errors.append("ENABLE_LEGACY_STARTUP_MIGRATIONS debe ser false")
+        if self.process_webhook_synchronously:
+            errors.append("PROCESS_WEBHOOK_SYNCHRONOUSLY debe ser false")
         if not self.database_migration_check:
             errors.append("DATABASE_MIGRATION_CHECK debe ser true")
         if self.instagram_provider_enabled:

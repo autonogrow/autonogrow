@@ -1,5 +1,7 @@
 # AutonoGrow backend
 
+El webhook Instagram persiste en una inbox y responde tras commit. Ejecutar el proceso separado con `python -m app.workers.channel_worker`. Arquitectura y operación: `docs/persistent_queue_architecture.md` y `docs/channel_worker_operations.md`.
+
 Backend FastAPI/SQLAlchemy con SQLite y migraciones oficiales Alembic. Ejecutar comandos desde la
 raíz del repositorio salvo indicación contraria.
 

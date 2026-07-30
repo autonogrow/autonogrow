@@ -19,6 +19,7 @@ MODEL_MODULES = (
     "app.models.business_media",
     "app.models.business_user",
     "app.models.business_user_service",
+    "app.models.channel_queue",
     "app.models.conversation",
     "app.models.customer",
     "app.models.google_integration",

@@ -37,6 +37,7 @@
       <button class="tab active" type="button" data-tab="businesses">Negocios</button>
       <button class="tab" type="button" data-tab="new-business">Nuevo negocio</button>
       <button class="tab" type="button" data-tab="incidents">Incidencias</button>
+      <button class="tab" type="button" data-tab="queues">Colas y worker</button>
     </nav>
 
     <section id="businesses-section" class="panel active" data-panel="businesses">
@@ -45,6 +46,17 @@
         <span id="list-status" class="status-text" aria-live="polite">Cargando…</span>
       </div>
       <div id="business-list" class="business-grid"></div>
+    </section>
+
+    <section class="panel" data-panel="queues">
+      <div class="section-heading">
+        <div><h2>Colas y worker</h2><p>Estado operativo seguro de inbox, outbox y proceso independiente.</p></div>
+        <button id="queue-refresh" class="button button-secondary" type="button">Refrescar</button>
+      </div>
+      <label>Filtrar por negocio <select id="queue-business-filter"><option value="">Todos</option></select></label>
+      <div id="queue-summary" class="summary-grid"></div>
+      <div id="queue-jobs" class="incident-list"></div>
+      <div id="queue-incidents" class="incident-list"></div>
     </section>
 
     <section class="panel" data-panel="incidents">

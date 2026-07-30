@@ -11,6 +11,7 @@ let businesses = [];
 let incidents = [];
 let openIncidentCount = 0;
 let ownerAuthUser = null;
+let queueStatus = null;
 const OWNER_CREDIT_PRESETS = [100, 200, 500];
 const PALETTES = { slate_gold: ["#334155", "#0f172a", "#f59e0b", "#f8fafc"], rose_beauty: ["#be123c", "#831843", "#f9a8d4", "#fff1f2"], emerald_clean: ["#047857", "#064e3b", "#6ee7b7", "#ecfdf5"], blue_clinic: ["#2563eb", "#1e3a8a", "#93c5fd", "#eff6ff"], amber_barber: ["#92400e", "#451a03", "#fbbf24", "#fffbeb"], violet_modern: ["#7c3aed", "#4c1d95", "#c4b5fd", "#f5f3ff"] };
 const TEMPLATE_DESCRIPTIONS = { classic: "Estructura equilibrada para cualquier negocio.", elegant: "Diseño más premium y visual.", beauty: "Pensada para estética, manicura y peluquería.", clinic: "Limpia y profesional para centros de salud o consulta.", urban: "Más impacto para barberías y negocios modernos.", minimal: "Directa y sencilla para servicios prácticos." };
@@ -55,6 +56,46 @@ function setActiveTab(name) {
   document.querySelectorAll("[data-tab]").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
   document.querySelectorAll("[data-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === name));
   if (name === "incidents") loadIncidents();
+  if (name === "queues") loadQueueStatus();
+}
+
+function renderQueueStatus() {
+  if (!queueStatus) return;
+  const cards = [
+    ["Worker", queueStatus.worker_active ? "Activo" : "Inactivo"],
+    ["Heartbeat", formatIncidentDate(queueStatus.last_heartbeat)],
+    ["Inbox pendientes", queueStatus.pending_inbox],
+    ["Outbox pendientes", queueStatus.pending_outbox],
+    ["Reintentos", queueStatus.retry_inbox + queueStatus.retry_outbox],
+    ["Bloqueados", queueStatus.blocked_outbox],
+    ["Dead letters", queueStatus.dead_letter_inbox + queueStatus.dead_letter_outbox],
+    ["Más antiguo", formatIncidentDate(queueStatus.oldest_pending_at)],
+  ];
+  byId("queue-summary").innerHTML = cards.map(([label, value]) => `<article class="summary-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("");
+  const filter = byId("queue-business-filter");
+  const selected = filter.value;
+  filter.innerHTML = '<option value="">Todos</option>' + businesses.map((item) => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("");
+  filter.value = selected;
+  const jobs = (queueStatus.jobs || []).filter((job) => !selected || String(job.business_id) === selected);
+  byId("queue-jobs").innerHTML = jobs.length ? jobs.map((job) => `<article class="incident-card"><div class="incident-heading"><div><h3>${escapeHtml(job.job_type)} #${escapeHtml(job.id)}</h3><p>Estado: ${escapeHtml(job.status)} · intentos ${escapeHtml(job.attempt_count)}/${escapeHtml(job.max_attempts)}</p></div></div><div class="incident-actions"><button class="button button-secondary button-small" data-queue-action="retry" data-job-type="${escapeHtml(job.job_type)}" data-job-id="${escapeHtml(job.id)}">Reintentar</button><button class="button button-danger button-small" data-queue-action="cancel" data-job-type="${escapeHtml(job.job_type)}" data-job-id="${escapeHtml(job.id)}">Cancelar</button></div></article>`).join("") : '<div class="empty-state">No hay trabajos accionables.</div>';
+  byId("queue-incidents").innerHTML = (queueStatus.incidents || []).map(incidentCard).join("");
+}
+
+async function loadQueueStatus() {
+  const response = await fetch(`${API_BASE_URL}/api/owner/system/queue-status`);
+  const body = await readResponseBody(response);
+  if (!response.ok) throw new Error(body.detail || "No se pudo consultar la cola");
+  queueStatus = body;
+  renderQueueStatus();
+}
+
+async function updateQueueJob(jobType, jobId, action) {
+  const reason = window.prompt("Motivo obligatorio de la acción:");
+  if (!reason || reason.trim().length < 3) return;
+  const response = await fetch(`${API_BASE_URL}/api/owner/queue/${jobType}/${jobId}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: reason.trim() }) });
+  const body = await readResponseBody(response);
+  if (!response.ok) throw new Error(body.detail || "No se pudo actualizar el trabajo");
+  await loadQueueStatus();
 }
 
 function renderSummary() {
@@ -705,7 +746,10 @@ function applyBusinessTemplate(key) {
 }
 
 document.querySelectorAll("[data-tab]").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
-byId("refresh-button").addEventListener("click", async () => { await loadBusinesses(); await loadIncidents(); });
+byId("refresh-button").addEventListener("click", async () => { await loadBusinesses(); await loadIncidents(); if (queueStatus) await loadQueueStatus(); });
+byId("queue-refresh").addEventListener("click", loadQueueStatus);
+byId("queue-business-filter").addEventListener("change", renderQueueStatus);
+byId("queue-jobs").addEventListener("click", (event) => { const button = event.target.closest("[data-queue-action]"); if (button) updateQueueJob(button.dataset.jobType, button.dataset.jobId, button.dataset.queueAction).catch((error) => window.alert(error.message)); });
 byId("incident-filters").addEventListener("submit", (event) => { event.preventDefault(); loadIncidents(); });
 byId("incident-list").addEventListener("click", (event) => { const button = event.target.closest("[data-incident-action]"); if (button) updateIncident(button.dataset.incidentId, button.dataset.incidentAction, button).catch((error) => { byId("incidents-status").textContent = error.message; }); });
 byId("add-service").addEventListener("click", addServiceRow);

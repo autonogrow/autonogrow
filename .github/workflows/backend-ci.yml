@@ -33,6 +33,16 @@ jobs:
       INTEGRATION_ENCRYPTION_ACTIVE_KEY_VERSION: v1
       INSTAGRAM_PROVIDER_ENABLED: "false"
       INSTAGRAM_REQUIRE_SIGNATURE: "true"
+      WEBHOOK_MAX_PAYLOAD_BYTES: "1048576"
+      WORKER_ENABLED: "true"
+      WORKER_POLL_INTERVAL_SECONDS: "1"
+      WORKER_BATCH_SIZE: "10"
+      WORKER_LOCK_TIMEOUT_SECONDS: "60"
+      WORKER_MAX_ATTEMPTS: "5"
+      WORKER_JOB_TIMEOUT_SECONDS: "30"
+      WORKER_HEARTBEAT_INTERVAL_SECONDS: "15"
+      WORKER_STALE_AFTER_SECONDS: "60"
+      PROCESS_WEBHOOK_SYNCHRONOUSLY: "false"
 
     steps:
       - uses: actions/checkout@v4
@@ -54,14 +64,23 @@ jobs:
           ruff format --check
           alembic/env.py
           alembic/versions/20260730_02_add_message_timeline_index.py
+          alembic/versions/20260730_03_add_persistent_channel_queues.py
           backend/app/core/config.py
           backend/app/core/database.py
           backend/app/core/migration_state.py
           backend/app/models/registry.py
+          backend/app/models/channel_queue.py
+          backend/app/services/queue_error_service.py
+          backend/app/services/inbox_queue_service.py
+          backend/app/services/outbox_queue_service.py
+          backend/app/services/worker_heartbeat_service.py
+          backend/app/services/instagram_inbox_processor.py
+          backend/app/workers/channel_worker.py
           backend/tests/test_database_infrastructure.py
           scripts/check_database_migration_state.py
           scripts/manage_migrations.py
           scripts/test_migration_on_copy.py
+          scripts/cleanup_queue_history.py
 
       - name: Incremental mypy
         run: mypy
@@ -88,3 +107,6 @@ jobs:
           alembic current
           alembic heads
           python scripts/manage_migrations.py validate
+
+      - name: Confirm persistent queue tables
+        run: python -c "from sqlalchemy import create_engine,inspect; from app.core.config import get_database_url; assert {'webhook_inbox_events','channel_outbox_messages','worker_heartbeats'} <= set(inspect(create_engine(get_database_url())).get_table_names())"

@@ -1,5 +1,10 @@
 # Checklist de seguridad predeploy
 
+- [ ] Webhook limitado, firmado y sin procesamiento síncrono.
+- [ ] Outbox no almacena tokens; logs/incidencias no contienen payload ni texto.
+- [ ] `PROCESS_WEBHOOK_SYNCHRONOUSLY=false` en staging/producción.
+- [ ] Unidad worker usa usuario no root y hardening compatible.
+
 ## Entorno y transporte
 
 - [ ] `APP_ENV=production`.

@@ -5,6 +5,36 @@ de producción. Los detalles operativos de IG-S1 están en `pending_final_valida
 
 | Test ID | Área | Descripción | Entorno | Datos necesarios | Riesgo | Automatizada | Manual | Estado | Evidencia | Bloqueante para producción | Sprint de origen |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| Q-S2-01 | Colas persistentes | Latencia real del webhook | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-02 | Colas persistentes | Webhook real desde Meta | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-03 | Colas persistentes | Inbound real procesado por worker | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-04 | Colas persistentes | Echo real procesado por worker | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-05 | Colas persistentes | Envío real desde outbox | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-06 | Colas persistentes | Reconciliación real de echo | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-07 | Colas persistentes | Consumo real de crédito | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-08 | Colas persistentes | Meta reenvía el mismo webhook | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-09 | Colas persistentes | Worker detenido durante evento | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-10 | Colas persistentes | Reinicio con inbox pending | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-11 | Colas persistentes | Reinicio con outbox pending | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-12 | Colas persistentes | Recuperación de lock caducado | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-13 | Colas persistentes | Timeout real del proveedor | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-14 | Colas persistentes | HTTP 429 real o simulación controlada | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-15 | Colas persistentes | Reintento real | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-16 | Colas persistentes | Dead letter | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-17 | Colas persistentes | Reintento owner de dead letter | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-18 | Colas persistentes | Cancelación owner | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-19 | Colas persistentes | Detección de worker detenido | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-20 | Colas persistentes | Dos negocios con dos cuentas reales | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-21 | Colas persistentes | Aislamiento de tokens | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-22 | Colas persistentes | Ausencia de mensajes cruzados | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-23 | Colas persistentes | Ausencia de consumo duplicado | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-24 | Colas persistentes | Eliminación de variables globales antiguas | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-25 | Colas persistentes | Backend y worker como servicios separados | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-26 | Colas persistentes | Parada limpia del servidor | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-27 | Colas persistentes | Backup con trabajos pendientes | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-28 | Colas persistentes | Restauración con trabajos pendientes | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-29 | Colas persistentes | Limpieza de históricos | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
+| Q-S2-30 | Colas persistentes | Observación de carga básica | Staging/Meta | Despliegue futuro | Alto | No | Sí | Pendiente | — | Sí | Sprint 2 |
 | AUTH-01 | Autenticación | Login/logout y cookies seguras por rol | Staging | Usuarios owner/admin/customer | Alto | Parcial | Sí | Pendiente | — | Sí | Base |
 | AUTHZ-01 | Autorización | IDOR y permisos entre roles | Staging | Usuarios con roles distintos | Crítico | Parcial | Sí | Pendiente | — | Sí | Base |
 | MULTI-01 | Multiempresa | Recursos de A nunca aparecen en B | Staging | Dos negocios completos | Crítico | Parcial | Sí | Pendiente | — | Sí | Base |

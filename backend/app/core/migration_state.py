@@ -16,6 +16,11 @@ from app.models.registry import register_models
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_CONFIG_PATH = REPO_ROOT / "alembic.ini"
 BASELINE_REVISION = "20260730_01"
+POST_BASELINE_TABLES = {
+    "webhook_inbox_events",
+    "channel_outbox_messages",
+    "worker_heartbeats",
+}
 
 CRITICAL_COLUMNS: dict[str, set[str]] = {
     "businesses": {"id", "slug", "name"},
@@ -39,6 +44,15 @@ CRITICAL_COLUMNS: dict[str, set[str]] = {
     },
     "system_incidents": {"id", "incident_key", "integration_id"},
     "audit_logs": {"id", "created_at", "action"},
+    "webhook_inbox_events": {"id", "idempotency_key", "payload_hash", "status", "lock_expires_at"},
+    "channel_outbox_messages": {
+        "id",
+        "business_id",
+        "conversation_message_id",
+        "status",
+        "lock_expires_at",
+    },
+    "worker_heartbeats": {"id", "worker_id", "status", "last_seen_at"},
 }
 
 
@@ -60,6 +74,11 @@ class DatabaseMigrationState:
         return bool(self.current_revisions) and set(self.current_revisions) == set(
             self.head_revisions
         )
+
+    @property
+    def is_baseline_compatible_legacy(self) -> bool:
+        missing_baseline_tables = set(self.missing_tables) - POST_BASELINE_TABLES
+        return self.is_legacy and not missing_baseline_tables and not self.missing_critical_columns
 
 
 def alembic_config() -> Config:
@@ -109,7 +128,7 @@ def inspect_database_migration_state(engine: Engine) -> DatabaseMigrationState:
         recommendation = "revisión manual: el repositorio no tiene una única head"
     elif is_empty:
         recommendation = "upgrade"
-    elif is_legacy and not missing_tables and not missing_columns:
+    elif is_legacy and not (missing_tables - POST_BASELINE_TABLES) and not missing_columns:
         recommendation = "stamp baseline"
     elif is_legacy:
         recommendation = "revisión manual: la base heredada está incompleta"

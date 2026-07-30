@@ -17,19 +17,12 @@ from app.models import (
 from app.services.conversation_automation_state_service import (
     serialize_conversation_automation_state,
 )
-from app.services.incident_service import (
-    INSTAGRAM_AUTH_CLIENT_MESSAGE,
-    classify_provider_error,
-    client_message_for_incident,
-    incident_reference,
-    report_incident,
-    resolve_related_incidents,
-)
+from app.services.incident_service import INSTAGRAM_AUTH_CLIENT_MESSAGE
 from app.services.instagram_integration_service import (
     get_instagram_integration,
     integration_expiration_state,
-    send_business_instagram_message,
 )
+from app.services.outbox_queue_service import create_channel_outbox
 
 
 @dataclass(frozen=True)
@@ -43,7 +36,7 @@ class OutboundMessageResult:
 
     @property
     def ok(self) -> bool:
-        return self.message.delivery_status != "failed"
+        return self.message.delivery_status not in {"failed", "blocked", "cancelled"}
 
 
 DEFAULT_TEMPLATES = (
@@ -83,6 +76,16 @@ DEFAULT_TEMPLATES = (
 
 
 def serialize_message(message: ConversationMessage) -> dict[str, Any]:
+    labels = {
+        "queued": "En cola",
+        "processing": "Enviando",
+        "sent": "Enviado",
+        "delivered": "Enviado",
+        "retry": "Error temporal",
+        "blocked": "No enviado por conexión",
+        "failed": "Error definitivo",
+        "cancelled": "Error definitivo",
+    }
     return {
         "id": message.id,
         "conversation_id": message.conversation_id,
@@ -91,6 +94,7 @@ def serialize_message(message: ConversationMessage) -> dict[str, Any]:
         "body": message.body,
         "provider_message_id": message.provider_message_id,
         "delivery_status": message.delivery_status,
+        "delivery_status_label": labels.get(message.delivery_status or "", message.delivery_status),
         "created_at": message.created_at.isoformat() if message.created_at else None,
     }
 
@@ -101,9 +105,7 @@ def unread_count(db: Session, conversation: Conversation) -> int:
         ConversationMessage.direction == "inbound",
     )
     if conversation.last_outbound_at is not None:
-        query = query.filter(
-            ConversationMessage.created_at > conversation.last_outbound_at
-        )
+        query = query.filter(ConversationMessage.created_at > conversation.last_outbound_at)
     return query.count()
 
 
@@ -126,19 +128,13 @@ def serialize_conversation(
         "status": conversation.status,
         "last_message_text": conversation.last_message_text,
         "last_message_at": (
-            conversation.last_message_at.isoformat()
-            if conversation.last_message_at
-            else None
+            conversation.last_message_at.isoformat() if conversation.last_message_at else None
         ),
         "last_inbound_at": (
-            conversation.last_inbound_at.isoformat()
-            if conversation.last_inbound_at
-            else None
+            conversation.last_inbound_at.isoformat() if conversation.last_inbound_at else None
         ),
         "last_outbound_at": (
-            conversation.last_outbound_at.isoformat()
-            if conversation.last_outbound_at
-            else None
+            conversation.last_outbound_at.isoformat() if conversation.last_outbound_at else None
         ),
         "assigned_business_user_id": conversation.assigned_business_user_id,
         "detected_intent": conversation.detected_intent,
@@ -148,9 +144,11 @@ def serialize_conversation(
         "instagram_provider_configured": (
             bool(
                 getattr(get_settings(), "instagram_provider_enabled", False)
-                and (integration := get_instagram_integration(
-                    db, business_id=conversation.business_id
-                ))
+                and (
+                    integration := get_instagram_integration(
+                        db, business_id=conversation.business_id
+                    )
+                )
                 and integration.integration_status in {"connected", "degraded"}
                 and integration.encrypted_access_token
                 and not integration_expiration_state(integration)[0]
@@ -219,9 +217,7 @@ def list_conversations(
     return rows, total
 
 
-def get_conversation(
-    db: Session, *, business_id: int, conversation_id: int
-) -> Conversation | None:
+def get_conversation(db: Session, *, business_id: int, conversation_id: int) -> Conversation | None:
     return (
         db.query(Conversation)
         .filter(
@@ -339,12 +335,11 @@ def send_outbound_message(
         and integration.integration_status in {"connected", "degraded"}
         and not integration_expiration_state(integration)[0]
     )
+    legacy_simulation = not hasattr(settings, "worker_max_attempts")
     provider_attempted = False
-    provider_message_id = None
     error_message = None
     client_error_message = None
     incident_id = None
-    provider_result = None
     policy_blocked = False
     delivery_status = "sent"
     commercial_settings = (
@@ -359,33 +354,25 @@ def send_outbound_message(
         }.get(conversation.channel, True)
         if not channel_enabled:
             policy_blocked = True
-            delivery_status = "failed"
+            delivery_status = "blocked"
             client_error_message = (
                 f"El canal {conversation.channel.title()} no está habilitado para este negocio. "
                 "Contacta con el equipo de AutonoGrow."
             )
     if conversation.channel == "instagram" and not policy_blocked:
-        if getattr(settings, "instagram_provider_enabled", False):
-            provider_result, integration = send_business_instagram_message(
-                db,
-                business_id=conversation.business_id,
-                recipient_id=conversation.external_user_id or "",
-                text=body,
-                settings=settings,
-            )
-            provider_attempted = provider_result.error_code not in {
-                "integration_not_configured",
-                "integration_expired",
-                "integration_disconnected",
-                "integration_revoked",
-                "integration_unavailable",
-                "integration_decryption_failed",
-            }
-            delivery_status = provider_result.delivery_status
-            provider_message_id = provider_result.provider_message_id
-            error_message = provider_result.error_message
-        else:
-            delivery_status = "simulated"
+        integration_ready = bool(
+            integration
+            and integration.encrypted_access_token
+            and integration.encryption_key_version
+            and integration.integration_status in {"connected", "degraded"}
+            and not integration_expiration_state(integration)[0]
+            and conversation.external_user_id
+        )
+        delivery_status = (
+            "simulated" if legacy_simulation else ("queued" if integration_ready else "blocked")
+        )
+        if not integration_ready and not legacy_simulation:
+            client_error_message = INSTAGRAM_AUTH_CLIENT_MESSAGE
     previous_last_outbound_at = conversation.last_outbound_at
     message = add_message(
         db,
@@ -393,89 +380,26 @@ def send_outbound_message(
         direction="outbound",
         sender_type=sender_type,
         body=body,
-        provider_message_id=provider_message_id,
+        provider_message_id=None,
         delivery_status=delivery_status,
     )
-    if delivery_status == "failed":
+    if delivery_status in {"failed", "blocked"}:
         conversation.status = "pending"
         conversation.last_outbound_at = previous_last_outbound_at
-        if policy_blocked:
-            return OutboundMessageResult(
-                message=message,
-                provider_configured=provider_configured,
-                provider_attempted=False,
-                client_error_message=client_error_message,
-            )
-        if provider_result and provider_result.error_code in {
-            "integration_not_configured",
-            "integration_expired",
-            "integration_disconnected",
-            "integration_revoked",
-            "integration_unavailable",
-            "integration_decryption_failed",
-        }:
-            client_error_message = INSTAGRAM_AUTH_CLIENT_MESSAGE
-            return OutboundMessageResult(
-                message=message,
-                provider_configured=provider_configured,
-                provider_attempted=False,
-                error_message=error_message,
-                client_error_message=client_error_message,
-            )
-        category, severity = classify_provider_error(
-            provider="instagram",
-            error_code=provider_result.error_code if provider_result else None,
-            error_type=provider_result.error_type if provider_result else None,
-            timed_out=provider_result.timed_out if provider_result else False,
+        return OutboundMessageResult(
+            message=message,
+            provider_configured=provider_configured,
+            provider_attempted=False,
+            client_error_message=client_error_message,
         )
-        if provider_result and provider_result.error_code == "190" and integration:
-            category = (
-                "instagram_token_expired"
-                if integration.integration_status == "expired"
-                else "instagram_token_revoked"
-            )
-        incident = report_incident(
+    if conversation.channel == "instagram" and integration and delivery_status == "queued":
+        create_channel_outbox(
             db,
-            category=category,
-            severity=severity,
-            business_id=conversation.business_id,
-            integration_id=integration.id if integration else None,
-            channel=conversation.channel,
-            provider="instagram",
-            provider_error_code=provider_result.error_code if provider_result else None,
-            operation="send_message",
-            conversation_id=conversation.id,
-            message_id=message.id,
-            safe_details={
-                "http_status": provider_result.http_status if provider_result else None,
-                "error_subcode": provider_result.error_subcode if provider_result else None,
-                "error_type": provider_result.error_type if provider_result else None,
-                "intent": intent,
-                "retryable": category != "provider_authentication",
-                "impact": (
-                    "Canal Instagram desconectado para envíos salientes."
-                    if category == "provider_authentication"
-                    else "Un mensaje saliente no se ha entregado."
-                ),
-                "recommended_action": (
-                    "Revisar de forma interna la conexión del proveedor."
-                    if category == "provider_authentication"
-                    else "Comprobar el estado del proveedor y el formato del mensaje."
-                ),
-            },
-            settings=settings,
-        )
-        incident_id = incident_reference(incident)
-        client_error_message = client_message_for_incident(incident)
-    elif provider_attempted and delivery_status == "sent":
-        resolve_related_incidents(
-            db,
-            business_id=conversation.business_id,
-            integration_id=integration.id if integration else None,
-            channel=conversation.channel,
-            provider="instagram",
-            operation="send_message",
-            settings=settings,
+            conversation=conversation,
+            message=message,
+            integration_id=integration.id,
+            recipient_external_id=conversation.external_user_id or "",
+            max_attempts=settings.worker_max_attempts,
         )
     return OutboundMessageResult(
         message=message,
@@ -515,13 +439,9 @@ def list_messages(conversation: Conversation) -> list[ConversationMessage]:
     return list(conversation.messages)
 
 
-def ensure_default_templates(
-    db: Session, business: Business
-) -> list[ConversationTemplate]:
+def ensure_default_templates(db: Session, business: Business) -> list[ConversationTemplate]:
     existing = (
-        db.query(ConversationTemplate)
-        .filter(ConversationTemplate.business_id == business.id)
-        .all()
+        db.query(ConversationTemplate).filter(ConversationTemplate.business_id == business.id).all()
     )
     existing_by_name = {item.name: item for item in existing}
     for name, body in DEFAULT_TEMPLATES:
@@ -544,9 +464,7 @@ def render_template(body: str, business: Business) -> str:
     booking_path = f"/autonogrow-landing/?b={business.slug}"
     frontend_origins = get_settings().frontend_origin_list
     public_booking_url = (
-        f"{frontend_origins[0].rstrip('/')}{booking_path}"
-        if frontend_origins
-        else booking_path
+        f"{frontend_origins[0].rstrip('/')}{booking_path}" if frontend_origins else booking_path
     )
     if not business.address and body == "Estamos en {business_address}":
         return f"Puedes ver la información del negocio aquí: {public_booking_url}"

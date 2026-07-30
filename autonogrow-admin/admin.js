@@ -1589,8 +1589,14 @@ function conversationIntentBadge(item) {
 
 function conversationDeliveryLabel(status) {
   return {
+    queued: "En cola",
+    processing: "Enviando",
     sent: "Enviado",
-    failed: "Fallido",
+    delivered: "Enviado",
+    retry: "Error temporal",
+    blocked: "No enviado por conexión",
+    failed: "Error definitivo",
+    cancelled: "Error definitivo",
     simulated: "Modo interno",
     pending: "Pendiente"
   }[status] || status;

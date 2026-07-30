@@ -1,4 +1,4 @@
-﻿from app.models.audit_log import AuditLog
+from app.models.audit_log import AuditLog
 from app.models.automation_credit import AutomationCreditTransaction
 from app.models.availability import (
     AvailabilityException,
@@ -15,6 +15,7 @@ from app.models.business_channel_integration import BusinessChannelIntegration
 from app.models.business_media import BusinessGalleryImage
 from app.models.business_user import BusinessUser
 from app.models.business_user_service import BusinessUserService
+from app.models.channel_queue import ChannelOutboxMessage, WebhookInboxEvent, WorkerHeartbeat
 from app.models.conversation import (
     Conversation,
     ConversationAutomationRule,
@@ -52,6 +53,9 @@ __all__ = [
     "User",
     "BusinessUser",
     "BusinessUserService",
+    "WebhookInboxEvent",
+    "ChannelOutboxMessage",
+    "WorkerHeartbeat",
     "AuditLog",
     "AutomationCreditTransaction",
     "BusinessChannelIntegration",

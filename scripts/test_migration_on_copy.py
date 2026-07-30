@@ -81,7 +81,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        if before.missing_tables or before.missing_critical_columns:
+        if not before.is_baseline_compatible_legacy:
             print(
                 "La copia heredada está incompleta; se requiere revisión manual.", file=sys.stderr
             )

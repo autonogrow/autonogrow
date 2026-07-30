@@ -1,5 +1,7 @@
 # Migraciones de base de datos
 
+La revisión de colas es `20260730_03` y depende de `20260730_02`. Crea inbox, outbox y heartbeat. El despliegue futuro ejecutará `alembic upgrade head` con backend y worker detenidos; el rollback es `alembic downgrade 20260730_02`.
+
 Alembic es la fuente oficial del esquema. La metadata se registra de forma explícita en
 `backend/app/models/registry.py`; `alembic/env.py` carga ese registro y obtiene la URL mediante
 `Settings`. Nunca se imprime la URL completa.

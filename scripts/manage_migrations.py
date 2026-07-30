@@ -83,7 +83,7 @@ def main() -> int:
     if not state.is_legacy:
         print("Rechazado: la base ya tiene historial Alembic.", file=sys.stderr)
         return 2
-    if state.missing_tables or state.missing_critical_columns:
+    if not state.is_baseline_compatible_legacy:
         print("Rechazado: la base heredada está incompleta.", file=sys.stderr)
         return 2
     command.stamp(config, BASELINE_REVISION)

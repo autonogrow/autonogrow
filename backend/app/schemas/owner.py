@@ -14,6 +14,17 @@ from pydantic import (
 from app.schemas.branding import COLOR_PALETTES, TEMPLATE_KEYS, resolve_branding, validate_color
 
 
+class QueueJobActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_reason(cls, value: str) -> str:
+        return value.strip()
+
+
 class OwnerServiceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
@@ -64,7 +75,20 @@ class OwnerBusinessCreate(BaseModel):
     @field_validator("schedule_template")
     @classmethod
     def validate_schedule_template(cls, value: str) -> str:
-        allowed = {"default_business_hours", "barberia", "manicura", "taller", "peluqueria", "estetica", "fisioterapia", "entrenamiento_personal", "psicologia", "clinica_dental", "masajes", "custom"}
+        allowed = {
+            "default_business_hours",
+            "barberia",
+            "manicura",
+            "taller",
+            "peluqueria",
+            "estetica",
+            "fisioterapia",
+            "entrenamiento_personal",
+            "psicologia",
+            "clinica_dental",
+            "masajes",
+            "custom",
+        }
         if value not in allowed:
             raise ValueError(f"Schedule template must be one of: {', '.join(sorted(allowed))}")
         return value
@@ -72,13 +96,21 @@ class OwnerBusinessCreate(BaseModel):
     @model_validator(mode="after")
     def apply_brand_defaults(self):
         values = resolve_branding(self.model_dump(), fill_defaults=True)
-        for field in ("theme_key", "primary_color", "secondary_color", "accent_color", "background_color"):
+        for field in (
+            "theme_key",
+            "primary_color",
+            "secondary_color",
+            "accent_color",
+            "background_color",
+        ):
             setattr(self, field, values[field])
         if self.template_key not in TEMPLATE_KEYS:
             raise ValueError("Plantilla no válida")
         return self
 
-    @field_validator("primary_color", "secondary_color", "accent_color", "background_color", mode="before")
+    @field_validator(
+        "primary_color", "secondary_color", "accent_color", "background_color", mode="before"
+    )
     @classmethod
     def valid_create_color(cls, value, info: ValidationInfo):
         return validate_color(value, info.field_name)
@@ -115,7 +147,9 @@ class OwnerBusinessUpdate(BaseModel):
             raise ValueError("Name is required")
         return value
 
-    @field_validator("primary_color", "secondary_color", "accent_color", "background_color", mode="before")
+    @field_validator(
+        "primary_color", "secondary_color", "accent_color", "background_color", mode="before"
+    )
     @classmethod
     def valid_update_color(cls, value, info: ValidationInfo):
         return validate_color(value, info.field_name)
@@ -195,9 +229,7 @@ class OwnerBusinessAutomationSettingsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plan: str | None = Field(default=None, max_length=60, pattern=r"^[a-z0-9_-]+$")
-    auto_limit_per_period: int | None = Field(
-        default=None, ge=0, le=OWNER_AUTOMATION_LIMIT_MAX
-    )
+    auto_limit_per_period: int | None = Field(default=None, ge=0, le=OWNER_AUTOMATION_LIMIT_MAX)
     on_limit_reached: str | None = None
     allowed_limit_behaviors: list[str] | None = Field(default=None, min_length=1, max_length=2)
     automation_feature_enabled: bool | None = None
@@ -217,7 +249,9 @@ class OwnerBusinessAutomationSettingsUpdate(BaseModel):
     def valid_allowed_behaviors(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return None
-        if len(set(value)) != len(value) or any(item not in OWNER_LIMIT_BEHAVIORS for item in value):
+        if len(set(value)) != len(value) or any(
+            item not in OWNER_LIMIT_BEHAVIORS for item in value
+        ):
             raise ValueError("Invalid or duplicated limit behavior")
         return value
 
@@ -247,9 +281,7 @@ class OwnerAutomationPeriodRenewal(BaseModel):
 
     reason: str = Field(min_length=3, max_length=500)
     amount: float | None = Field(default=None, ge=0, le=10_000_000)
-    payment_method: str | None = Field(
-        default=None, max_length=60, pattern=r"^[a-z0-9_-]+$"
-    )
+    payment_method: str | None = Field(default=None, max_length=60, pattern=r"^[a-z0-9_-]+$")
     external_reference: str | None = Field(default=None, max_length=120)
     confirm_active_period: bool = False
 
@@ -323,14 +355,10 @@ class AutomationCreditPurchaseRequest(BaseModel):
 
     credits: int = Field(gt=0, le=10_000_000)
     payment_amount: float | None = Field(default=None, gt=0, le=10_000_000)
-    payment_method: str | None = Field(
-        default=None, max_length=60, pattern=r"^[a-z0-9_-]+$"
-    )
+    payment_method: str | None = Field(default=None, max_length=60, pattern=r"^[a-z0-9_-]+$")
     reason: str = Field(min_length=3, max_length=500)
     external_reference: str | None = Field(default=None, max_length=120)
-    idempotency_key: str = Field(
-        min_length=8, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$"
-    )
+    idempotency_key: str = Field(min_length=8, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$")
 
     @field_validator("reason", "idempotency_key")
     @classmethod
@@ -357,9 +385,7 @@ class AutomationCreditAdjustmentRequest(BaseModel):
     included_delta: int = Field(default=0, ge=-10_000_000, le=10_000_000)
     additional_delta: int = Field(default=0, ge=-10_000_000, le=10_000_000)
     reason: str = Field(min_length=3, max_length=500)
-    idempotency_key: str = Field(
-        min_length=8, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$"
-    )
+    idempotency_key: str = Field(min_length=8, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$")
 
     @field_validator("reason", "idempotency_key")
     @classmethod
@@ -418,9 +444,7 @@ class AutomationCreditTransactionResponse(BaseModel):
 class InstagramIntegrationCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    external_account_id: str = Field(
-        min_length=1, max_length=255, pattern=r"^[A-Za-z0-9_-]+$"
-    )
+    external_account_id: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9_-]+$")
     access_token: SecretStr = Field(min_length=8, max_length=4096)
     token_expires_at: datetime | None = None
     external_account_name: str | None = Field(default=None, max_length=255)
@@ -449,9 +473,7 @@ class InstagramIntegrationCreateRequest(BaseModel):
 class InstagramIntegrationReconnectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    external_account_id: str = Field(
-        min_length=1, max_length=255, pattern=r"^[A-Za-z0-9_-]+$"
-    )
+    external_account_id: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9_-]+$")
     access_token: SecretStr = Field(min_length=8, max_length=4096)
     token_expires_at: datetime | None = None
     reason: str = Field(min_length=3, max_length=500)

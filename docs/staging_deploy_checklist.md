@@ -1,5 +1,10 @@
 # Checklist de despliegue staging
 
+- [ ] Ejecutar `alembic upgrade head` y confirmar head `20260730_03`.
+- [ ] Confirmar `PROCESS_WEBHOOK_SYNCHRONOUSLY=false`.
+- [ ] Instalar backend y worker como servicios separados; un solo worker activo.
+- [ ] Verificar heartbeat y colas desde owner sin exponer payloads.
+
 Registrar fecha, responsable, dominio, versión desplegada y resultado de cada punto. No marcar producción como lista basándose únicamente en este staging.
 
 ## Dominio, red y proxy

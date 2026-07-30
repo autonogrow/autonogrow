@@ -7,11 +7,12 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import require_owner
 from app.models import (
@@ -24,11 +25,15 @@ from app.models import (
     BusinessGalleryImage,
     BusinessService,
     BusinessUser,
+    ChannelOutboxMessage,
     ConversationAutomationSettings,
+    ConversationMessage,
     MessageOutbox,
     ReviewRequest,
     SystemIncident,
     User,
+    WebhookInboxEvent,
+    WorkerHeartbeat,
 )
 from app.schemas.branding import resolve_branding
 from app.schemas.owner import (
@@ -50,6 +55,7 @@ from app.schemas.owner import (
     OwnerBusinessUserCreate,
     OwnerBusinessUserUpdate,
     OwnerIncidentUpdate,
+    QueueJobActionRequest,
 )
 from app.services.automation_credit_service import (
     adjust_credit_balances,
@@ -91,6 +97,7 @@ from app.services.instagram_integration_service import (
 )
 from app.services.instagram_provider import verify_instagram_access_token
 from app.services.integration_crypto_service import IntegrationCryptoError
+from app.services.worker_heartbeat_service import heartbeat_is_stale
 
 router = APIRouter(prefix="/api/owner", tags=["owner"], dependencies=[Depends(require_owner)])
 
@@ -172,7 +179,9 @@ def owner_automation_payload(
     recent_credit_transactions = (
         db.query(AutomationCreditTransaction)
         .filter(AutomationCreditTransaction.business_id == business.id)
-        .order_by(AutomationCreditTransaction.created_at.desc(), AutomationCreditTransaction.id.desc())
+        .order_by(
+            AutomationCreditTransaction.created_at.desc(), AutomationCreditTransaction.id.desc()
+        )
         .limit(8)
         .all()
     )
@@ -318,7 +327,9 @@ def build_metrics(db: Session, business: Business) -> dict:
     booking_query = db.query(Booking).filter(Booking.business_id == business.id)
     return {
         "total_bookings": booking_query.count(),
-        "pending_bookings": booking_query.filter(Booking.status.in_(PENDING_BOOKING_STATUSES)).count(),
+        "pending_bookings": booking_query.filter(
+            Booking.status.in_(PENDING_BOOKING_STATUSES)
+        ).count(),
         "today_bookings": booking_query.filter(
             or_(
                 and_(Booking.start_datetime >= today_start, Booking.start_datetime < tomorrow),
@@ -335,20 +346,24 @@ def build_metrics(db: Session, business: Business) -> dict:
                 ),
             ),
         ).count(),
-        "active_services": db.query(BusinessService).filter(
-            BusinessService.business_id == business.id, BusinessService.active.is_(True)
-        ).count(),
-        "message_outbox_pending": db.query(MessageOutbox).filter(
-            MessageOutbox.business_id == business.id, MessageOutbox.status == "pending"
-        ).count(),
-        "review_requests_pending": db.query(ReviewRequest).filter(
-            ReviewRequest.business_id == business.id, ReviewRequest.status == "pending"
-        ).count(),
+        "active_services": db.query(BusinessService)
+        .filter(BusinessService.business_id == business.id, BusinessService.active.is_(True))
+        .count(),
+        "message_outbox_pending": db.query(MessageOutbox)
+        .filter(MessageOutbox.business_id == business.id, MessageOutbox.status == "pending")
+        .count(),
+        "review_requests_pending": db.query(ReviewRequest)
+        .filter(ReviewRequest.business_id == business.id, ReviewRequest.status == "pending")
+        .count(),
     }
 
 
 def build_health(db: Session, business: Business, metrics: dict) -> dict:
-    settings = db.query(AvailabilitySettings).filter(AvailabilitySettings.business_id == business.id).first()
+    settings = (
+        db.query(AvailabilitySettings)
+        .filter(AvailabilitySettings.business_id == business.id)
+        .first()
+    )
     has_schedule = False
     if settings:
         try:
@@ -363,8 +378,18 @@ def build_health(db: Session, business: Business, metrics: dict) -> dict:
         "has_schedule": has_schedule,
         "has_reviews_url": bool(business.reviews_url and business.reviews_url.strip()),
         "has_logo": bool(business.logo_url),
-        "has_gallery": db.query(BusinessGalleryImage).filter(BusinessGalleryImage.business_id == business.id, BusinessGalleryImage.active.is_(True)).count() > 0,
-        "has_colors": bool(business.primary_color and business.secondary_color and business.accent_color and business.background_color),
+        "has_gallery": db.query(BusinessGalleryImage)
+        .filter(
+            BusinessGalleryImage.business_id == business.id, BusinessGalleryImage.active.is_(True)
+        )
+        .count()
+        > 0,
+        "has_colors": bool(
+            business.primary_color
+            and business.secondary_color
+            and business.accent_color
+            and business.background_color
+        ),
     }
     health["is_public_ready"] = bool(
         business.status == "active"
@@ -378,7 +403,11 @@ def build_health(db: Session, business: Business, metrics: dict) -> dict:
 
 def serialize_owner_summary(db: Session, business: Business) -> dict:
     metrics = build_metrics(db, business)
-    return {**serialize_business(business), "metrics": metrics, "health": build_health(db, business, metrics)}
+    return {
+        **serialize_business(business),
+        "metrics": metrics,
+        "health": build_health(db, business, metrics),
+    }
 
 
 @router.get("/businesses")
@@ -414,12 +443,14 @@ def list_owner_incidents(
         query = query.filter(SystemIncident.business_id == business_id)
     if channel:
         query = query.filter(SystemIncident.channel == channel.strip().lower())
-    rows = query.order_by(
-        SystemIncident.last_occurred_at.desc(), SystemIncident.id.desc()
-    ).limit(limit).all()
-    open_count = db.query(SystemIncident).filter(
-        SystemIncident.status.in_(("open", "acknowledged"))
-    ).count()
+    rows = (
+        query.order_by(SystemIncident.last_occurred_at.desc(), SystemIncident.id.desc())
+        .limit(limit)
+        .all()
+    )
+    open_count = (
+        db.query(SystemIncident).filter(SystemIncident.status.in_(("open", "acknowledged"))).count()
+    )
     return {
         "incidents": [serialize_incident(item) for item in rows],
         "open_count": open_count,
@@ -453,9 +484,7 @@ def update_owner_business_automation_settings(
     settings, _ = ensure_automation_configuration(db, business)
     updates = payload.model_dump(exclude_unset=True, exclude={"reason"})
     reason = payload.reason
-    effective_allowed = updates.get(
-        "allowed_limit_behaviors", allowed_limit_behaviors(settings)
-    )
+    effective_allowed = updates.get("allowed_limit_behaviors", allowed_limit_behaviors(settings))
     effective_behavior = updates.get("on_limit_reached", settings.on_limit_reached)
     if effective_behavior not in effective_allowed:
         raise HTTPException(
@@ -503,11 +532,7 @@ def update_owner_business_automation_settings(
                 )
         action = audit_actions.get(api_field)
         if action is None:
-            action = (
-                "automation_feature_enabled"
-                if new_value
-                else "automation_feature_disabled"
-            )
+            action = "automation_feature_enabled" if new_value else "automation_feature_disabled"
         record_audit(
             db,
             action=action,
@@ -684,9 +709,7 @@ def renew_owner_business_automation_period(
         if isinstance(idempotency_key, str) and idempotency_key.strip()
         else None
     )
-    if _renewal_was_already_processed(
-        db, business_id=business.id, idempotency_key=normalized_key
-    ):
+    if _renewal_was_already_processed(db, business_id=business.id, idempotency_key=normalized_key):
         db.commit()
         db.refresh(settings)
         return {
@@ -715,10 +738,7 @@ def renew_owner_business_automation_period(
 
     confirmed_at = utc_now()
     last_confirmation = as_utc(settings.payment_confirmed_at)
-    if (
-        last_confirmation is not None
-        and confirmed_at - last_confirmation < timedelta(seconds=10)
-    ):
+    if last_confirmation is not None and confirmed_at - last_confirmation < timedelta(seconds=10):
         db.commit()
         db.refresh(settings)
         return {
@@ -834,9 +854,7 @@ def adjust_owner_business_automation_period(
     settings.period_started_at = as_utc(payload.period_started_at)
     settings.period_ends_at = as_utc(payload.period_ends_at)
     settings.period_status = (
-        "suspended"
-        if not settings.automation_feature_enabled
-        else payload.period_status
+        "suspended" if not settings.automation_feature_enabled else payload.period_status
     )
     settings.updated_at = utc_now()
     sync_automation_period_status(settings, db=db)
@@ -939,7 +957,9 @@ def create_owner_business_instagram_integration(
         .first()
     )
     if conflict is not None:
-        raise HTTPException(status_code=409, detail="Instagram account already belongs to another business")
+        raise HTTPException(
+            status_code=409, detail="Instagram account already belongs to another business"
+        )
     access_token = payload.access_token.get_secret_value()
     verification = verify_instagram_access_token(payload.external_account_id, access_token)
     if not verification.ok:
@@ -1007,7 +1027,9 @@ def create_owner_business_instagram_integration(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="Instagram account already belongs to another business") from exc
+        raise HTTPException(
+            status_code=409, detail="Instagram account already belongs to another business"
+        ) from exc
     except IntegrationCryptoError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1096,8 +1118,12 @@ def reconnect_owner_business_instagram_integration(
             .first()
         )
         if conflict is not None:
-            raise HTTPException(status_code=409, detail="Instagram account already belongs to another business")
-        raise HTTPException(status_code=409, detail="Reconnect cannot move an integration to another account")
+            raise HTTPException(
+                status_code=409, detail="Instagram account already belongs to another business"
+            )
+        raise HTTPException(
+            status_code=409, detail="Reconnect cannot move an integration to another account"
+        )
     access_token = payload.access_token.get_secret_value()
     verification = verify_instagram_access_token(payload.external_account_id, access_token)
     if not verification.ok:
@@ -1133,7 +1159,9 @@ def reconnect_owner_business_instagram_integration(
     now = utc_now()
     integration.integration_status = "connected"
     integration.provider_status = verification.provider_status or "available"
-    integration.external_account_name = verification.account_name or integration.external_account_name
+    integration.external_account_name = (
+        verification.account_name or integration.external_account_name
+    )
     integration.granted_scopes_json = json.dumps(list(verification.scopes))
     integration.connected_at = integration.connected_at or now
     integration.last_verified_at = now
@@ -1143,7 +1171,12 @@ def reconnect_owner_business_instagram_integration(
     integration.last_error_subcode = None
     integration.last_error_type = None
     integration.safe_error_message = None
-    for operation in ("verify_integration", "send_message", "decrypt_credentials", "token_expiration"):
+    for operation in (
+        "verify_integration",
+        "send_message",
+        "decrypt_credentials",
+        "token_expiration",
+    ):
         resolve_related_incidents(
             db,
             business_id=business_id,
@@ -1469,7 +1502,9 @@ def list_owner_business_automation_credit_transactions(
     rows = (
         db.query(AutomationCreditTransaction)
         .filter(AutomationCreditTransaction.business_id == business_id)
-        .order_by(AutomationCreditTransaction.created_at.desc(), AutomationCreditTransaction.id.desc())
+        .order_by(
+            AutomationCreditTransaction.created_at.desc(), AutomationCreditTransaction.id.desc()
+        )
         .limit(limit)
         .all()
     )
@@ -1516,8 +1551,17 @@ def update_owner_incident(
 def get_owner_business(business_slug: str, db: Session = Depends(get_db)):
     business = get_business_or_404(db, business_slug)
     summary = serialize_owner_summary(db, business)
-    services = db.query(BusinessService).filter(BusinessService.business_id == business.id).order_by(BusinessService.id).all()
-    settings = db.query(AvailabilitySettings).filter(AvailabilitySettings.business_id == business.id).first()
+    services = (
+        db.query(BusinessService)
+        .filter(BusinessService.business_id == business.id)
+        .order_by(BusinessService.id)
+        .all()
+    )
+    settings = (
+        db.query(AvailabilitySettings)
+        .filter(AvailabilitySettings.business_id == business.id)
+        .first()
+    )
     return {
         **summary,
         "settings": serialize_business(business),
@@ -1537,8 +1581,12 @@ def create_owner_business(
     if db.query(Business).filter(Business.slug == slug).first():
         raise HTTPException(status_code=409, detail="Ya existe un negocio con ese slug")
 
-    business_fields = payload.model_dump(exclude={"slug", "active", "services", "schedule_template"})
-    business = Business(slug=slug, status="active" if payload.active else "inactive", **business_fields)
+    business_fields = payload.model_dump(
+        exclude={"slug", "active", "services", "schedule_template"}
+    )
+    business = Business(
+        slug=slug, status="active" if payload.active else "inactive", **business_fields
+    )
     db.add(business)
     try:
         db.flush()
@@ -1569,7 +1617,15 @@ def create_owner_business(
         raise HTTPException(status_code=409, detail="Slug o nombre de servicio duplicado") from exc
 
     db.refresh(business)
-    record_audit(db, action="business_created", request=request, actor=actor, business_id=business.id, resource_type="business", resource_id=business.id)
+    record_audit(
+        db,
+        action="business_created",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business",
+        resource_id=business.id,
+    )
     return {"ok": True, "business": serialize_owner_summary(db, business)}
 
 
@@ -1592,16 +1648,38 @@ def update_owner_business(
         business.status = "active" if active else "inactive"
     db.commit()
     db.refresh(business)
-    action = "business_enabled" if active is True else "business_disabled" if active is False else "settings_changed"
-    record_audit(db, action=action, request=request, actor=actor, business_id=business.id, resource_type="business", resource_id=business.id)
+    action = (
+        "business_enabled"
+        if active is True
+        else "business_disabled"
+        if active is False
+        else "settings_changed"
+    )
+    record_audit(
+        db,
+        action=action,
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business",
+        resource_id=business.id,
+    )
     return {"ok": True, "business": serialize_owner_summary(db, business)}
 
 
 @router.get("/businesses/{business_slug}/users")
 def list_business_users(business_slug: str, db: Session = Depends(get_db)):
     business = get_business_or_404(db, business_slug)
-    items = db.query(BusinessUser).filter(BusinessUser.business_id == business.id).order_by(BusinessUser.id).all()
-    return {"business_slug": business.slug, "users": [serialize_business_user(item) for item in items]}
+    items = (
+        db.query(BusinessUser)
+        .filter(BusinessUser.business_id == business.id)
+        .order_by(BusinessUser.id)
+        .all()
+    )
+    return {
+        "business_slug": business.slug,
+        "users": [serialize_business_user(item) for item in items],
+    }
 
 
 @router.post("/businesses/{business_slug}/users", status_code=201)
@@ -1618,10 +1696,14 @@ def add_business_user(
         user = User(email=payload.email, email_verified=False, is_active=True)
         db.add(user)
         db.flush()
-    membership = db.query(BusinessUser).filter(
-        BusinessUser.business_id == business.id,
-        BusinessUser.user_id == user.id,
-    ).first()
+    membership = (
+        db.query(BusinessUser)
+        .filter(
+            BusinessUser.business_id == business.id,
+            BusinessUser.user_id == user.id,
+        )
+        .first()
+    )
     if membership and membership.active:
         raise HTTPException(status_code=409, detail="El usuario ya está asignado a este negocio")
     if membership is None:
@@ -1646,7 +1728,16 @@ def add_business_user(
         membership.bio = payload.bio
     db.commit()
     db.refresh(membership)
-    record_audit(db, action="user_assigned_to_business", request=request, actor=actor, business_id=business.id, resource_type="business_user", resource_id=membership.id, metadata={"role": membership.role})
+    record_audit(
+        db,
+        action="user_assigned_to_business",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_user",
+        resource_id=membership.id,
+        metadata={"role": membership.role},
+    )
     return {"ok": True, "business_user": serialize_business_user(membership)}
 
 
@@ -1660,7 +1751,11 @@ def update_business_user(
     db: Session = Depends(get_db),
 ):
     business = get_business_or_404(db, business_slug)
-    item = db.query(BusinessUser).filter(BusinessUser.id == business_user_id, BusinessUser.business_id == business.id).first()
+    item = (
+        db.query(BusinessUser)
+        .filter(BusinessUser.id == business_user_id, BusinessUser.business_id == business.id)
+        .first()
+    )
     if item is None:
         raise HTTPException(status_code=404, detail="Business user not found")
     updates = payload.model_dump(exclude_unset=True)
@@ -1671,7 +1766,16 @@ def update_business_user(
     db.commit()
     db.refresh(item)
     action = "user_deactivated" if updates.get("active") is False else "user_role_changed"
-    record_audit(db, action=action, request=request, actor=actor, business_id=business.id, resource_type="business_user", resource_id=item.id, metadata={"role": item.role, "active": item.active})
+    record_audit(
+        db,
+        action=action,
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_user",
+        resource_id=item.id,
+        metadata={"role": item.role, "active": item.active},
+    )
     return {"ok": True, "business_user": serialize_business_user(item)}
 
 
@@ -1684,10 +1788,256 @@ def deactivate_business_user(
     db: Session = Depends(get_db),
 ):
     business = get_business_or_404(db, business_slug)
-    item = db.query(BusinessUser).filter(BusinessUser.id == business_user_id, BusinessUser.business_id == business.id).first()
+    item = (
+        db.query(BusinessUser)
+        .filter(BusinessUser.id == business_user_id, BusinessUser.business_id == business.id)
+        .first()
+    )
     if item is None:
         raise HTTPException(status_code=404, detail="Business user not found")
     item.active = False
     db.commit()
-    record_audit(db, action="user_deactivated", request=request, actor=actor, business_id=business.id, resource_type="business_user", resource_id=item.id)
+    record_audit(
+        db,
+        action="user_deactivated",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_user",
+        resource_id=item.id,
+    )
     return {"ok": True}
+
+
+QUEUE_INCIDENT_CATEGORIES = {
+    "webhook_processing_failed",
+    "webhook_dead_letter",
+    "instagram_unmapped_account",
+    "outbox_send_failed",
+    "outbox_dead_letter",
+    "worker_stalled_job",
+    "worker_database_locked",
+    "integration_unavailable",
+    "provider_rate_limited",
+}
+
+
+def _status_counts(
+    db: Session, model: type[WebhookInboxEvent] | type[ChannelOutboxMessage]
+) -> dict[str, int]:
+    return {
+        status: count
+        for status, count in db.query(model.status, func.count(model.id))
+        .group_by(model.status)
+        .all()
+    }
+
+
+def _safe_queue_job(job_type: str, row: WebhookInboxEvent | ChannelOutboxMessage) -> dict:
+    return {
+        "job_type": job_type,
+        "id": row.id,
+        "business_id": row.business_id,
+        "integration_id": row.integration_id,
+        "status": row.status,
+        "attempt_count": row.attempt_count,
+        "max_attempts": row.max_attempts,
+        "last_error_code": row.last_error_code,
+        "created_at": row.created_at.isoformat(),
+        "next_retry_at": row.next_retry_at.isoformat() if row.next_retry_at else None,
+    }
+
+
+@router.get("/system/queue-status")
+def get_queue_status(db: Session = Depends(get_db)):
+    settings = get_settings()
+    heartbeat = db.query(WorkerHeartbeat).order_by(WorkerHeartbeat.last_seen_at.desc()).first()
+    inbox_counts = _status_counts(db, WebhookInboxEvent)
+    outbox_counts = _status_counts(db, ChannelOutboxMessage)
+    oldest_values = [
+        db.query(func.min(WebhookInboxEvent.available_at))
+        .filter(WebhookInboxEvent.status.in_({"pending", "retry"}))
+        .scalar(),
+        db.query(func.min(ChannelOutboxMessage.available_at))
+        .filter(ChannelOutboxMessage.status.in_({"pending", "retry"}))
+        .scalar(),
+    ]
+    oldest = min((value for value in oldest_values if value is not None), default=None)
+    last_success_values = [
+        db.query(func.max(WebhookInboxEvent.processed_at))
+        .filter(WebhookInboxEvent.status == "processed")
+        .scalar(),
+        db.query(func.max(ChannelOutboxMessage.sent_at))
+        .filter(ChannelOutboxMessage.status == "sent")
+        .scalar(),
+    ]
+    last_success = max((value for value in last_success_values if value is not None), default=None)
+    incidents = (
+        db.query(SystemIncident)
+        .filter(SystemIncident.category.in_(QUEUE_INCIDENT_CATEGORIES))
+        .order_by(SystemIncident.last_occurred_at.desc())
+        .limit(10)
+        .all()
+    )
+    jobs: list[dict] = []
+    for row in (
+        db.query(WebhookInboxEvent)
+        .filter(WebhookInboxEvent.status.in_({"retry", "failed", "dead_letter"}))
+        .order_by(WebhookInboxEvent.updated_at.desc())
+        .limit(20)
+    ):
+        jobs.append(_safe_queue_job("inbox", row))
+    for row in (
+        db.query(ChannelOutboxMessage)
+        .filter(ChannelOutboxMessage.status.in_({"retry", "blocked", "failed", "dead_letter"}))
+        .order_by(ChannelOutboxMessage.updated_at.desc())
+        .limit(20)
+    ):
+        jobs.append(_safe_queue_job("outbox", row))
+    return {
+        "worker_active": not heartbeat_is_stale(
+            heartbeat, stale_after_seconds=settings.worker_stale_after_seconds
+        ),
+        "last_heartbeat": heartbeat.last_seen_at.isoformat() if heartbeat else None,
+        "worker_status": heartbeat.status if heartbeat else "unavailable",
+        "pending_inbox": inbox_counts.get("pending", 0),
+        "retry_inbox": inbox_counts.get("retry", 0),
+        "dead_letter_inbox": inbox_counts.get("dead_letter", 0),
+        "pending_outbox": outbox_counts.get("pending", 0),
+        "retry_outbox": outbox_counts.get("retry", 0),
+        "blocked_outbox": outbox_counts.get("blocked", 0),
+        "dead_letter_outbox": outbox_counts.get("dead_letter", 0),
+        "oldest_pending_at": oldest.isoformat() if oldest else None,
+        "last_successful_processing_at": last_success.isoformat() if last_success else None,
+        "incidents": [serialize_incident(row) for row in incidents],
+        "jobs": sorted(jobs, key=lambda item: item["created_at"], reverse=True)[:30],
+    }
+
+
+def _owner_queue_action(
+    db: Session,
+    *,
+    model: type[WebhookInboxEvent] | type[ChannelOutboxMessage],
+    job_type: str,
+    job_id: int,
+    action: str,
+    reason: str,
+    request: Request,
+    actor: User,
+) -> dict:
+    row = db.get(model, job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Queue job not found")
+    allowed = (
+        {"failed", "dead_letter", "blocked"}
+        if action == "retry"
+        else {"pending", "retry", "failed", "dead_letter", "blocked"}
+    )
+    if row.status not in allowed:
+        raise HTTPException(status_code=409, detail="Invalid queue job transition")
+    previous_status = row.status
+    now = datetime.utcnow()
+    row.status = "pending" if action == "retry" else "cancelled"
+    row.available_at = now
+    row.next_retry_at = None
+    row.locked_by = None
+    row.lock_expires_at = None
+    row.failed_at = now if action == "cancel" else None
+    row.updated_at = now
+    if isinstance(row, ChannelOutboxMessage) and row.conversation_message_id:
+        message = db.get(ConversationMessage, row.conversation_message_id)
+        if message is not None:
+            message.delivery_status = "queued" if action == "retry" else "cancelled"
+    record_audit(
+        db,
+        action=f"queue_{job_type}_{action}",
+        request=request,
+        actor=actor,
+        business_id=row.business_id,
+        resource_type=f"{job_type}_queue_job",
+        resource_id=row.id,
+        metadata={"reason": reason, "previous_status": previous_status, "new_status": row.status},
+        commit=False,
+    )
+    db.commit()
+    return {"ok": True, "job": _safe_queue_job(job_type, row)}
+
+
+@router.post("/queue/inbox/{job_id}/retry")
+def retry_inbox_job(
+    job_id: int,
+    payload: QueueJobActionRequest,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    return _owner_queue_action(
+        db,
+        model=WebhookInboxEvent,
+        job_type="inbox",
+        job_id=job_id,
+        action="retry",
+        reason=payload.reason,
+        request=request,
+        actor=actor,
+    )
+
+
+@router.post("/queue/inbox/{job_id}/cancel")
+def cancel_inbox_job(
+    job_id: int,
+    payload: QueueJobActionRequest,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    return _owner_queue_action(
+        db,
+        model=WebhookInboxEvent,
+        job_type="inbox",
+        job_id=job_id,
+        action="cancel",
+        reason=payload.reason,
+        request=request,
+        actor=actor,
+    )
+
+
+@router.post("/queue/outbox/{job_id}/retry")
+def retry_outbox_job(
+    job_id: int,
+    payload: QueueJobActionRequest,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    return _owner_queue_action(
+        db,
+        model=ChannelOutboxMessage,
+        job_type="outbox",
+        job_id=job_id,
+        action="retry",
+        reason=payload.reason,
+        request=request,
+        actor=actor,
+    )
+
+
+@router.post("/queue/outbox/{job_id}/cancel")
+def cancel_outbox_job(
+    job_id: int,
+    payload: QueueJobActionRequest,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    return _owner_queue_action(
+        db,
+        model=ChannelOutboxMessage,
+        job_type="outbox",
+        job_id=job_id,
+        action="cancel",
+        reason=payload.reason,
+        request=request,
+        actor=actor,
+    )

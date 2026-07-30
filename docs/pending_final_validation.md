@@ -1,5 +1,40 @@
 # Validación funcional final pendiente
 
+## Sprint 2 — colas persistentes (todas pendientes)
+
+Estas pruebas requieren staging o Meta real y no se han ejecutado:
+
+- [ ] Q-S2-01 — Latencia real del webhook — **Pendiente**, no ejecutada.
+- [ ] Q-S2-02 — Webhook real desde Meta — **Pendiente**, no ejecutada.
+- [ ] Q-S2-03 — Inbound real procesado por worker — **Pendiente**, no ejecutada.
+- [ ] Q-S2-04 — Echo real procesado por worker — **Pendiente**, no ejecutada.
+- [ ] Q-S2-05 — Envío real desde outbox — **Pendiente**, no ejecutada.
+- [ ] Q-S2-06 — Reconciliación real de echo — **Pendiente**, no ejecutada.
+- [ ] Q-S2-07 — Consumo real de crédito — **Pendiente**, no ejecutada.
+- [ ] Q-S2-08 — Meta reenvía el mismo webhook — **Pendiente**, no ejecutada.
+- [ ] Q-S2-09 — Worker detenido durante evento — **Pendiente**, no ejecutada.
+- [ ] Q-S2-10 — Reinicio con inbox pending — **Pendiente**, no ejecutada.
+- [ ] Q-S2-11 — Reinicio con outbox pending — **Pendiente**, no ejecutada.
+- [ ] Q-S2-12 — Recuperación de lock caducado — **Pendiente**, no ejecutada.
+- [ ] Q-S2-13 — Timeout real del proveedor — **Pendiente**, no ejecutada.
+- [ ] Q-S2-14 — HTTP 429 real o simulación controlada — **Pendiente**, no ejecutada.
+- [ ] Q-S2-15 — Reintento real — **Pendiente**, no ejecutada.
+- [ ] Q-S2-16 — Dead letter — **Pendiente**, no ejecutada.
+- [ ] Q-S2-17 — Reintento owner de dead letter — **Pendiente**, no ejecutada.
+- [ ] Q-S2-18 — Cancelación owner — **Pendiente**, no ejecutada.
+- [ ] Q-S2-19 — Detección de worker detenido — **Pendiente**, no ejecutada.
+- [ ] Q-S2-20 — Dos negocios con dos cuentas reales — **Pendiente**, no ejecutada.
+- [ ] Q-S2-21 — Aislamiento de tokens — **Pendiente**, no ejecutada.
+- [ ] Q-S2-22 — Ausencia de mensajes cruzados — **Pendiente**, no ejecutada.
+- [ ] Q-S2-23 — Ausencia de consumo duplicado — **Pendiente**, no ejecutada.
+- [ ] Q-S2-24 — Eliminación de variables globales antiguas — **Pendiente**, no ejecutada.
+- [ ] Q-S2-25 — Backend y worker como servicios separados — **Pendiente**, no ejecutada.
+- [ ] Q-S2-26 — Parada limpia del servidor — **Pendiente**, no ejecutada.
+- [ ] Q-S2-27 — Backup con trabajos pendientes — **Pendiente**, no ejecutada.
+- [ ] Q-S2-28 — Restauración con trabajos pendientes — **Pendiente**, no ejecutada.
+- [ ] Q-S2-29 — Limpieza de históricos — **Pendiente**, no ejecutada.
+- [ ] Q-S2-30 — Observación de carga básica — **Pendiente**, no ejecutada.
+
 Estas pruebas proceden del Sprint 1 de integraciones Instagram multiempresa. La implementación y
 verificación técnica ya existen, pero ninguna prueba de esta lista se ha ejecutado. Estados válidos:
 Pendiente, Correcta, Fallida o Bloqueada. No cambiar un estado sin adjuntar evidencia.
