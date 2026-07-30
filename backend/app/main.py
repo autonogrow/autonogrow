@@ -30,6 +30,7 @@ from app.routers.health import router as health_router
 from app.routers.instagram_webhook import router as instagram_webhook_router
 from app.routers.media import router as media_router
 from app.routers.owner import router as owner_router
+from app.routers.owner_onboarding import router as owner_onboarding_router
 from app.routers.services import router as services_router
 from app.routers.staff import (
     admin_router as admin_staff_router,
@@ -93,6 +94,7 @@ app.include_router(customers_router)
 app.include_router(admin_availability_router)
 app.include_router(admin_router)
 app.include_router(owner_router)
+app.include_router(owner_onboarding_router)
 app.include_router(media_router)
 app.include_router(customer_router)
 app.include_router(public_staff_router)

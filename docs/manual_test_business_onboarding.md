@@ -1,0 +1,44 @@
+# Pruebas manuales pendientes — onboarding
+
+Todas siguen **pendientes** para validación final; no se han ejecutado en este sprint.
+
+- [ ] Crear negocio desde cero.
+- [ ] Abandonar y retomar onboarding.
+- [ ] Aplicar cada plantilla.
+- [ ] Cambiar de plantilla con datos editados.
+- [ ] Clonar configuración real.
+- [ ] Confirmar que no se copian datos personales.
+- [ ] Crear servicios en bloque.
+- [ ] Asignar personal.
+- [ ] Configurar horarios complejos.
+- [ ] Configurar excepciones.
+- [ ] Previsualizar disponibilidad.
+- [ ] Configurar reglas de reserva.
+- [ ] Subir logo.
+- [ ] Subir galería.
+- [ ] Probar preview.
+- [ ] Confirmar noindex.
+- [ ] Confirmar preview sin reservas.
+- [ ] Configurar automatizaciones.
+- [ ] Validar placeholders.
+- [ ] Configurar plan y créditos.
+- [ ] Revisar readiness.
+- [ ] Resolver bloqueantes.
+- [ ] Activar negocio.
+- [ ] Ver landing pública.
+- [ ] Crear reserva real.
+- [ ] Suspender negocio.
+- [ ] Confirmar bloqueo público.
+- [ ] Reactivar.
+- [ ] Comprobar auditoría.
+- [ ] Medir tiempo total de alta.
+- [ ] Alta objetivo menor de 15 minutos.
+- [ ] Probar desde móvil.
+- [ ] Probar errores de red durante guardado.
+- [ ] Probar doble clic.
+- [ ] Probar sesión caducada.
+- [ ] Probar dos owners concurrentes.
+- [ ] Probar business admin limitado.
+- [ ] Probar plantilla personalizada.
+- [ ] Probar media copiada.
+- [ ] Validar aislamiento con dos negocios.

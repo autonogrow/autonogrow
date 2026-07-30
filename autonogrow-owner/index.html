@@ -79,7 +79,29 @@
         <div><h2>Nuevo negocio</h2><p>Crea la base del cliente; después podrás afinarla desde su admin.</p></div>
       </div>
 
-      <form id="business-form" class="business-form">
+      <section id="onboarding-wizard" class="onboarding-wizard" aria-live="polite">
+        <div id="onboarding-start" class="onboarding-start">
+          <label>Nombre comercial<input id="onboarding-name" maxlength="200" placeholder="Estudio Aurora" /></label>
+          <label>Slug opcional<input id="onboarding-slug" maxlength="120" placeholder="Se genera automÃ¡ticamente" /></label>
+          <label>Plantilla<select id="onboarding-template"><option value="">Cargando plantillas...</option></select></label>
+          <button id="onboarding-create" class="button button-primary" type="button">Empezar onboarding</button>
+        </div>
+        <div id="onboarding-workspace" class="onboarding-workspace" hidden>
+          <aside><div class="onboarding-progress"><span id="onboarding-progress-bar"></span></div><ol id="onboarding-steps"></ol></aside>
+          <div class="onboarding-step-panel">
+            <header><div><p class="eyebrow">Configuracion guiada</p><h3 id="onboarding-step-title"></h3></div><span id="onboarding-save-state" class="save-state">Guardado</span></header>
+            <div id="onboarding-step-content"></div>
+            <footer>
+              <button id="onboarding-back" class="button button-secondary" type="button">Atras</button>
+              <button id="onboarding-save" class="button button-primary" type="button">Guardar y continuar</button>
+              <button id="onboarding-later" class="button button-ghost" type="button">Continuar despues</button>
+            </footer>
+            <p id="onboarding-feedback" class="status-text"></p>
+          </div>
+        </div>
+      </section>
+
+      <form id="business-form" class="business-form" hidden>
         <fieldset>
           <legend>Datos básicos</legend>
           <div class="form-grid">

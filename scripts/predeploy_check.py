@@ -113,7 +113,15 @@ def check_required_files(reporter: Reporter) -> None:
         "scripts/smoke_test_staging.py",
         "scripts/cleanup_queue_history.py",
         "scripts/migrate_sqlite_to_postgresql.py",
+        "scripts/seed_onboarding_templates.py",
         "deploy/docker-compose.postgresql.yml",
+        "docs/business_onboarding_architecture.md",
+        "docs/business_onboarding_operations.md",
+        "docs/onboarding_templates.md",
+        "docs/business_readiness.md",
+        "docs/business_activation.md",
+        "docs/configuration_cloning.md",
+        "docs/manual_test_business_onboarding.md",
     ]
     for relative in required:
         if (ROOT / relative).is_file():
@@ -304,8 +312,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260730_04":
-            reporter.fail("La head esperada para PostgreSQL es 20260730_04")
+        if heads[0] != "20260730_05":
+            reporter.fail("La head esperada para onboarding es 20260730_05")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 
@@ -587,6 +595,55 @@ def check_postgresql_contract(reporter: Reporter) -> None:
         reporter.fail("La matriz PostgreSQL debe contener 30 pruebas pendientes")
 
 
+def check_onboarding_contract(reporter: Reporter) -> None:
+    from app.core.database import Base
+    from app.models.registry import register_models
+    from app.services.onboarding_template_catalog import (
+        SYSTEM_ONBOARDING_TEMPLATES,
+        template_has_forbidden_data,
+    )
+
+    register_models()
+    required_tables = {
+        "business_onboarding_sessions",
+        "business_onboarding_templates",
+        "business_staff_profiles",
+        "business_staff_profile_services",
+    }
+    if required_tables <= set(Base.metadata.tables):
+        reporter.passed("Modelos de onboarding registrados")
+    else:
+        reporter.fail("Faltan modelos de onboarding en metadata")
+    if not any(template_has_forbidden_data(item) for item in SYSTEM_ONBOARDING_TEMPLATES):
+        reporter.passed("Plantillas iniciales sin claves de secretos")
+    else:
+        reporter.fail("Una plantilla contiene campos sensibles")
+    owner_router = (ROOT / "backend/app/routers/owner_onboarding.py").read_text(
+        encoding="utf-8-sig"
+    )
+    owner_legacy = (ROOT / "backend/app/routers/owner.py").read_text(encoding="utf-8-sig")
+    required_markers = (
+        "/businesses/{business_id}/activate",
+        "/businesses/{business_id}/suspend",
+        "/businesses/{business_id}/preview",
+        "evaluate_business_readiness",
+        "lock_business",
+    )
+    if all(marker in owner_router for marker in required_markers):
+        reporter.passed("Endpoints owner, preview y readiness registrados")
+    else:
+        reporter.fail("Contrato de endpoints onboarding incompleto")
+    if 'business.status = "active" if active' not in owner_legacy:
+        reporter.passed("No existe activación mediante PATCH owner genérico")
+    else:
+        reporter.fail("PATCH owner genérico todavía modifica el estado")
+    manual = (ROOT / "docs/manual_test_business_onboarding.md").read_text(encoding="utf-8-sig")
+    if manual.count("- [ ]") == 40:
+        reporter.passed("Las 40 pruebas manuales de onboarding siguen pendientes")
+    else:
+        reporter.fail("La matriz manual de onboarding debe tener 40 pendientes")
+
+
 def main() -> int:
     reporter = Reporter()
     check_required_files(reporter)
@@ -597,6 +654,7 @@ def main() -> int:
     check_alembic(reporter)
     check_persistent_queue_contract(reporter)
     check_postgresql_contract(reporter)
+    check_onboarding_contract(reporter)
     check_tracked_secrets(reporter)
     Settings = check_application(reporter)
     if Settings is not None:

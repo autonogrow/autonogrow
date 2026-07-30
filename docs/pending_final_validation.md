@@ -118,3 +118,6 @@ Ninguna se ha ejecutado en este sprint.
 | PG-S3-28 | Observación durante varias horas | Pendiente |
 | PG-S3-29 | Eliminación del SQLite operativo | Pendiente |
 | PG-S3-30 | Conservación del SQLite como backup histórico | Pendiente |
+# Onboarding multiempresa pendiente
+
+Las 40 comprobaciones reales están enumeradas y sin marcar en [manual_test_business_onboarding.md](manual_test_business_onboarding.md). Incluyen alta, reanudación, todas las plantillas, clonación, media, readiness, activación, suspensión, concurrencia, móvil y aislamiento.

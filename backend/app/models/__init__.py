@@ -13,6 +13,12 @@ from app.models.booking_attachment import BookingAttachment
 from app.models.business import Business
 from app.models.business_channel_integration import BusinessChannelIntegration
 from app.models.business_media import BusinessGalleryImage
+from app.models.business_onboarding import (
+    BusinessOnboardingSession,
+    BusinessOnboardingTemplate,
+    BusinessStaffProfile,
+    BusinessStaffProfileService,
+)
 from app.models.business_user import BusinessUser
 from app.models.business_user_service import BusinessUserService
 from app.models.channel_queue import ChannelOutboxMessage, WebhookInboxEvent, WorkerHeartbeat
@@ -50,6 +56,10 @@ __all__ = [
     "ReviewRequest",
     "MessageOutbox",
     "BusinessGalleryImage",
+    "BusinessOnboardingSession",
+    "BusinessOnboardingTemplate",
+    "BusinessStaffProfile",
+    "BusinessStaffProfileService",
     "User",
     "BusinessUser",
     "BusinessUserService",

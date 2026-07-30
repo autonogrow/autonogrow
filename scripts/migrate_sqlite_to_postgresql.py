@@ -27,11 +27,15 @@ from app.core.migration_state import alembic_config, head_revisions  # noqa: E40
 from app.models.registry import register_models  # noqa: E402
 
 COPY_ORDER = (
-    "businesses",
     "users",
+    "businesses",
+    "business_onboarding_templates",
     "business_users",
     "services",
     "business_user_services",
+    "business_staff_profiles",
+    "business_staff_profile_services",
+    "business_onboarding_sessions",
     "availability_settings",
     "weekly_availability",
     "blocked_dates",

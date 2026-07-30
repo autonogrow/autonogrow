@@ -266,3 +266,6 @@ Antes de tocar producción, completar `docs/staging_deploy_checklist.md` en un V
 11. Documentar incidencias, WARN, cambios manuales y tiempos de rollback. Resolverlos o aceptarlos explícitamente antes de programar producción.
 
 Un smoke test con 0 FAIL no sustituye login, CSRF autenticado, IDOR, backup/restore ni revisión de logs, que requieren validación manual.
+# Revisión de onboarding
+
+Tras desplegar código y migrar a `20260730_05`, ejecutar el seed versionado con `--apply` una sola vez (es idempotente). No reiniciar para aplicar plantillas: se leen desde base de datos. Para rollback, seguir `docs/business_onboarding_operations.md` y suspender primero cualquier alta nueva.

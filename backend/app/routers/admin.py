@@ -168,8 +168,6 @@ def update_business_settings(
     db: Session = Depends(get_db),
 ):
     business = get_admin_business_or_404(db, business_slug)
-    previous_status = business.status
-
     if payload.phone:
         try:
             normalize_whatsapp_phone(payload.phone)
@@ -184,16 +182,11 @@ def update_business_settings(
         updates = resolve_branding(updates)
     for field, value in updates.items():
         setattr(business, field, value)
-    business.status = "active" if payload.active else "inactive"
-
     db.commit()
     db.refresh(business)
-    action = "settings_changed"
-    if previous_status != business.status:
-        action = "business_enabled" if business.status == "active" else "business_disabled"
     record_audit(
         db,
-        action=action,
+        action="settings_changed",
         request=request,
         actor=actor,
         business_id=business.id,

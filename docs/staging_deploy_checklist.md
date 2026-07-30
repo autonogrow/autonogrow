@@ -71,3 +71,10 @@ Registrar fecha, responsable, dominio, versión desplegada y resultado de cada p
   tiene estado, fecha, responsable y evidencia.
 - [ ] La matriz `docs/final_release_validation_matrix.md` no contiene bloqueantes pendientes al
   autorizar producción.
+# Onboarding multiempresa
+
+- [ ] Backup verificado antes de `alembic upgrade head`.
+- [ ] Head única `20260730_05` y PostgreSQL configurado.
+- [ ] Dry-run y aplicación explícita de `seed_onboarding_templates.py`.
+- [ ] Predeploy sin escrituras ejecutado.
+- [ ] Matriz manual de onboarding permanece pendiente hasta validación real.

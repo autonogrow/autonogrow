@@ -30,3 +30,6 @@ Documentación operativa:
 En staging/producción, el servicio solo arranca si la base está en head. No ejecuta upgrade, stamp,
 `create_all` ni ALTER manuales. Mantener `DATABASE_MIGRATION_CHECK=true` y
 `ENABLE_LEGACY_STARTUP_MIGRATIONS=false`.
+# Onboarding de negocios
+
+La API owner dispone de un asistente persistente de 15 pasos, plantillas versionadas, clonación segura, readiness, preview y activación explícita. Aplicar primero Alembic `20260730_05`; después ejecutar `python scripts/seed_onboarding_templates.py` para dry-run y repetir con `--apply`. No hay nuevas variables de entorno ni tareas de startup.

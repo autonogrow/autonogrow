@@ -37,7 +37,7 @@ def create_business(
     if existing:
         raise HTTPException(status_code=409, detail="Business slug already exists")
 
-    business = Business(**payload.model_dump())
+    business = Business(status="configuration_pending", **payload.model_dump())
     db.add(business)
     db.commit()
     db.refresh(business)

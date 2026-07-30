@@ -127,3 +127,4 @@ de producción. Los detalles operativos de IG-S1 están en `pending_final_valida
 | PG-S3-28 | Observación | Varias horas sin bloqueantes | Staging | Pendiente |
 | PG-S3-29 | Corte | SQLite deja de ser operativo | Staging | Pendiente |
 | PG-S3-30 | Retención | SQLite histórico conservado | Staging | Pendiente |
+| Onboarding multiempresa owner | Pendiente | `docs/manual_test_business_onboarding.md` | Ejecutar las 40 pruebas reales después de migrar y sembrar staging. |

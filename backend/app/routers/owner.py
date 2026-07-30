@@ -284,6 +284,7 @@ def serialize_business(business: Business) -> dict:
         "logo_url": business.logo_url,
         "logo_alt": business.logo_alt,
         "active": business.status == "active",
+        "status": business.status,
         "created_at": business.created_at.isoformat() if business.created_at else None,
     }
 
@@ -1590,9 +1591,9 @@ def create_owner_business(
     business_fields = payload.model_dump(
         exclude={"slug", "active", "services", "schedule_template"}
     )
-    business = Business(
-        slug=slug, status="active" if payload.active else "inactive", **business_fields
-    )
+    # Legacy creation remains available for compatibility, but publication is only
+    # possible through the explicit readiness-gated activation endpoint.
+    business = Business(slug=slug, status="configuration_pending", **business_fields)
     db.add(business)
     try:
         db.flush()
@@ -1646,24 +1647,20 @@ def update_owner_business(
     business = get_business_or_404(db, business_slug)
     updates = payload.model_dump(exclude_unset=True)
     active = updates.pop("active", None)
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Use the explicit activate, suspend or reactivate owner endpoint",
+        )
     if updates.get("theme_key"):
         updates = resolve_branding(updates)
     for field, value in updates.items():
         setattr(business, field, value.strip() or None if isinstance(value, str) else value)
-    if active is not None:
-        business.status = "active" if active else "inactive"
     db.commit()
     db.refresh(business)
-    action = (
-        "business_enabled"
-        if active is True
-        else "business_disabled"
-        if active is False
-        else "settings_changed"
-    )
     record_audit(
         db,
-        action=action,
+        action="settings_changed",
         request=request,
         actor=actor,
         business_id=business.id,

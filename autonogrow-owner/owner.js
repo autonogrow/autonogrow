@@ -209,7 +209,7 @@ function businessCard(business) {
         <a class="button button-secondary button-small" href="../autonogrow-landing/index.html?b=${slug}" target="_blank" rel="noopener">Abrir landing</a>
         <a class="button button-secondary button-small" href="../autonogrow-admin/index.html?b=${slug}" target="_blank" rel="noopener">Abrir admin</a>
         <a class="button button-ghost button-small" href="../autonogrow-admin/index.html?b=${slug}#business" target="_blank" rel="noopener">Editar rápido</a>
-        <button class="button ${business.active ? "button-danger" : "button-primary"} button-small" type="button" data-toggle-slug="${escapeHtml(business.slug)}" data-next-active="${!business.active}">${business.active ? "Desactivar" : "Activar"}</button>
+        <button class="button ${business.active ? "button-danger" : "button-primary"} button-small" type="button" data-business-state-id="${business.id}" data-business-status="${escapeHtml(business.status || (business.active ? "active" : "configuration_pending"))}">${business.active ? "Suspender" : business.status === "suspended" ? "Reactivar" : "Continuar onboarding"}</button>
       </div>
       <details class="owner-brand-editor" data-owner-editor="${escapeHtml(business.slug)}"><summary>Marca y apariencia · ${escapeHtml(business.theme_key === "custom" ? "Personalizado" : (business.theme_key || "Sin paleta"))} · ${escapeHtml(business.template_key || "classic")}</summary>
         <div class="owner-brand-grid"><label>Paleta<select data-owner-theme>${paletteOptions(business.theme_key)}</select></label><label>Plantilla<select data-owner-template>${templateOptions(business.template_key)}</select></label><p class="wide helper" data-owner-template-description>${escapeHtml(templateDescription(business.template_key))}</p>${["primary","secondary","accent","background"].map((name, index) => `<label>${name}<span class="owner-color"><input type="color" data-owner-color="${name}" value="${escapeHtml(business[`${name}_color`] || PALETTES.slate_gold[index])}"><input data-owner-hex="${name}" value="${escapeHtml(business[`${name}_color`] || PALETTES.slate_gold[index])}"></span></label>`).join("")}<label>Alt logo<input data-owner-logo-alt value="${escapeHtml(business.logo_alt || "")}"></label></div>
@@ -507,16 +507,18 @@ async function loadBusinesses() {
   }
 }
 
-async function toggleBusiness(slug, active, button) {
+async function changeBusinessState(businessId, status, button) {
   button.disabled = true;
   try {
-    const response = await fetch(`${API_BASE_URL}/api/owner/businesses/${encodeURIComponent(slug)}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active })
-    });
-    if (!response.ok) throw new Error("No se pudo cambiar el estado");
+    if (!["active", "suspended"].includes(status)) { await resumeOnboarding(businessId); return; }
+    const reason = window.prompt(`Motivo obligatorio para ${status === "active" ? "suspender" : "reactivar"}:`);
+    if (!reason?.trim()) return;
+    const action = status === "active" ? "suspend" : "reactivate";
+    await onboardingRequest(`/businesses/${businessId}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: reason.trim() }) });
     await loadBusinesses();
   } catch (error) {
     window.alert(error.message);
+  } finally {
     button.disabled = false;
   }
 }
@@ -745,6 +747,117 @@ function applyBusinessTemplate(key) {
   item[7].forEach(([name, duration]) => addServiceRow({ name, duration }));
 }
 
+const ONBOARDING_STEPS = [
+  ["template", "Plantilla"], ["business_identity", "Identidad"], ["contact_and_location", "Contacto"],
+  ["services", "Servicios"], ["staff", "Personal"], ["schedules", "Horarios"],
+  ["booking_rules", "Reservas"], ["branding", "Branding"], ["landing_content", "Landing"],
+  ["automations", "Automatizaciones"], ["integrations", "Integraciones"],
+  ["credits_and_plan", "Plan y creditos"], ["readiness_review", "Readiness"],
+  ["preview", "Previsualizacion"], ["activation", "Activacion"]
+];
+let onboardingData = null;
+let onboardingStepIndex = 0;
+let onboardingReadiness = null;
+
+async function onboardingRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}/api/owner${path}`, options);
+  const body = await readResponseBody(response);
+  if (!response.ok) {
+    const detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body);
+    throw new Error(detail || `Error ${response.status}`);
+  }
+  return body;
+}
+
+async function loadOnboardingTemplates() {
+  const body = await onboardingRequest("/onboarding/templates");
+  byId("onboarding-template").innerHTML = `<option value="">Generica / desde cero</option>${body.templates.map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.name)} · v${item.version}</option>`).join("")}`;
+}
+
+function onboardingFields(step, business) {
+  const value = (name) => escapeHtml(business?.[name] || "");
+  const forms = {
+    template: `<p>La plantilla crea copias editables e independientes. Puedes cambiarla con confirmacion sin borrar silenciosamente tus cambios.</p>`,
+    business_identity: `<div class="form-grid"><label>Nombre<input data-ob="name" required value="${value("name")}"></label><label>Slug<input data-ob="slug" required value="${value("slug")}"></label><label>Categoria<input data-ob="category" value="${value("category")}"></label><label>Idioma<input data-ob="language_code" value="${value("language_code") || "es"}"></label><label>Zona horaria<input data-ob="timezone" value="${value("timezone") || "Europe/Madrid"}"></label><label>Moneda<input data-ob="currency" value="${value("currency") || "EUR"}"></label><label class="wide">Descripcion<textarea data-ob="description">${value("description")}</textarea></label></div>`,
+    contact_and_location: `<div class="form-grid"><label>Telefono<input data-ob="phone" value="${value("phone")}"></label><label>WhatsApp<input data-ob="whatsapp_phone" value="${value("whatsapp_phone")}"></label><label>Email publico<input data-ob="public_email" type="email" value="${value("public_email")}"></label><label>Ciudad<input data-ob="city" value="${value("city")}"></label><label class="wide">Direccion<input data-ob="address" value="${value("address")}"></label><label>Maps URL<input data-ob="maps_url" type="url" value="${value("maps_url")}"></label><label>Instagram URL<input data-ob="instagram_url" type="url" value="${value("instagram_url")}"></label></div>`,
+    services: `<div class="form-grid"><label>Servicio inicial<input data-ob="service_name" value="Consulta"></label><label>Duracion (min)<input data-ob="duration_minutes" type="number" min="1" value="30"></label><label>Precio opcional<input data-ob="price_amount" type="number" min="0" step="0.01"></label></div><p class="helper">Puedes guardar varias veces; los servicios existentes se conservan y no se duplican al reaplicar la plantilla.</p>`,
+    staff: `<div class="form-grid"><label>Nombre visible<input data-ob="public_name" value="Profesional"></label><label>Rol<input data-ob="role_label" value="professional"></label><label>Capacidad<input data-ob="capacity" type="number" min="1" value="1"></label></div><p class="helper">Crear un perfil no concede acceso ni crea una cuenta autenticada.</p>`,
+    schedules: `<p>Horario general semanal. La disponibilidad se calcula dinamicamente.</p><div class="form-grid"><label>Apertura<input data-ob="schedule_start" type="time" value="09:00"></label><label>Cierre<input data-ob="schedule_end" type="time" value="18:00"></label></div>`,
+    booking_rules: `<div class="form-grid"><label>Antelacion minima (min)<input data-ob="min_notice_minutes" type="number" min="0" value="120"></label><label>Horizonte (dias)<input data-ob="max_days_ahead" type="number" min="1" value="30"></label><label>Intervalo (min)<input data-ob="slot_interval_minutes" type="number" min="1" value="15"></label><label>Capacidad simultanea<input data-ob="max_simultaneous_bookings" type="number" min="1" value="1"></label></div>`,
+    branding: `<div class="form-grid"><label>Color principal<input data-ob="primary_color" type="color" value="${value("primary_color") || "#176b48"}"></label><label>Color secundario<input data-ob="secondary_color" type="color" value="${value("secondary_color") || "#17211b"}"></label></div><p class="helper">Logo, portada y galeria usan los controles seguros de media de la tarjeta del negocio.</p>`,
+    landing_content: `<div class="form-grid"><label class="wide">Titular<input data-ob="headline" value="${value("headline")}"></label><label class="wide">Descripcion<textarea data-ob="description">${value("description")}</textarea></label><label>CTA<input data-ob="landing_cta" value="Reservar"></label><label>SEO title<input data-ob="seo_title" value="${value("seo_title")}"></label></div>`,
+    automations: `<label class="checkbox-row"><input data-ob="automation_enabled" type="checkbox"> Activar automatizaciones</label><label>Mensaje de bienvenida<textarea data-ob="welcome">Hola {{customer_name}}, gracias por contactar con {{business_name}}.</textarea></label><p class="helper">Variables permitidas; no se evalua codigo.</p>`,
+    integrations: `<p>Instagram y Google Calendar son opcionales para el alta basica. Las credenciales se conectan desde sus flujos seguros y nunca se guardan en esta sesion.</p>`,
+    credits_and_plan: `<div class="form-grid"><label>Plan<input data-ob="plan_key" value="starter"></label><label>Creditos incluidos<input data-ob="included_credits" type="number" min="0" value="100"></label><label>Saldo adicional<input data-ob="additional_credits" type="number" min="0" value="0"></label><label>Periodo (dias)<input data-ob="period_days" type="number" min="1" value="30"></label></div>`,
+    readiness_review: `<p>Pulsa comprobar para obtener bloqueantes, advertencias y remediaciones.</p><div id="onboarding-readiness" class="readiness-list"></div>`,
+    preview: `<p>La vista previa es privada para owner, lleva noindex y no acepta reservas ni consume creditos.</p><div id="onboarding-preview"></div>`,
+    activation: `<p>La activacion requiere un readiness vigente y sin bloqueantes.</p><label>Motivo obligatorio<textarea data-ob="reason" placeholder="Alta revisada y aprobada"></textarea></label>`
+  };
+  return forms[step];
+}
+
+function renderOnboarding() {
+  const session = onboardingData.onboarding;
+  const currentKey = ONBOARDING_STEPS[onboardingStepIndex][0];
+  const statuses = Object.fromEntries(session.steps.map((item) => [item.key, item.status]));
+  byId("onboarding-start").hidden = true;
+  byId("onboarding-workspace").hidden = false;
+  byId("onboarding-steps").innerHTML = ONBOARDING_STEPS.map(([key, label], index) => `<li><button type="button" data-ob-step="${index}" class="${index === onboardingStepIndex ? "active" : ""} ${statuses[key] === "completed" ? "completed" : ""}">${index + 1}. ${label}</button></li>`).join("");
+  const completed = session.steps.filter((item) => ["completed", "skipped"].includes(item.status)).length;
+  byId("onboarding-progress-bar").style.width = `${Math.round(completed * 100 / ONBOARDING_STEPS.length)}%`;
+  byId("onboarding-step-title").textContent = ONBOARDING_STEPS[onboardingStepIndex][1];
+  byId("onboarding-step-content").innerHTML = onboardingFields(currentKey, onboardingData.business);
+  byId("onboarding-save").textContent = currentKey === "readiness_review" ? "Comprobar readiness" : currentKey === "preview" ? "Cargar preview" : currentKey === "activation" ? "Activar negocio" : "Guardar y continuar";
+  byId("onboarding-back").disabled = onboardingStepIndex === 0;
+  byId("onboarding-save-state").textContent = `Guardado · ${new Date(session.last_activity_at).toLocaleString("es-ES")}`;
+}
+
+async function startOnboarding() {
+  const name = byId("onboarding-name").value.trim();
+  if (!name) throw new Error("El nombre es obligatorio");
+  const payload = { name, slug: byId("onboarding-slug").value.trim() || null, template_key: byId("onboarding-template").value || null };
+  onboardingData = await onboardingRequest("/businesses/onboarding", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  onboardingStepIndex = Math.max(1, ONBOARDING_STEPS.findIndex(([key]) => key === onboardingData.onboarding.current_step));
+  renderOnboarding();
+  await loadBusinesses();
+}
+
+async function resumeOnboarding(businessId) {
+  onboardingData = await onboardingRequest(`/businesses/${businessId}/onboarding`);
+  onboardingStepIndex = Math.max(0, ONBOARDING_STEPS.findIndex(([key]) => key === onboardingData.onboarding.current_step));
+  setActiveTab("new-business");
+  renderOnboarding();
+}
+
+function field(name) { return byId("onboarding-step-content").querySelector(`[data-ob="${name}"]`); }
+function numberField(name) { return Number(field(name).value); }
+
+async function saveOnboardingStep() {
+  const businessId = onboardingData.business.id;
+  const step = ONBOARDING_STEPS[onboardingStepIndex][0];
+  let path; let payload;
+  if (step === "template") { onboardingStepIndex += 1; renderOnboarding(); return; }
+  if (step === "business_identity") { path = "identity"; payload = { name: field("name").value, slug: field("slug").value, category: field("category").value || null, description: field("description").value || null, language_code: field("language_code").value, timezone: field("timezone").value, currency: field("currency").value }; }
+  else if (step === "contact_and_location") { path = "contact"; payload = Object.fromEntries(["phone","whatsapp_phone","public_email","city","address","maps_url","instagram_url"].map((key) => [key, field(key).value || null])); }
+  else if (step === "services") { path = "services"; payload = { services: [{ name: field("service_name").value, duration_minutes: numberField("duration_minutes"), price_amount: field("price_amount").value || null }] }; }
+  else if (step === "staff") { path = "staff"; payload = { staff: [{ public_name: field("public_name").value, role_label: field("role_label").value, capacity: numberField("capacity"), service_ids: [] }] }; }
+  else if (step === "schedules") { path = "schedules"; const windows = [{ start: field("schedule_start").value, end: field("schedule_end").value }]; payload = { timezone: onboardingData.business.timezone || "Europe/Madrid", weekly_schedule: { "0": windows, "1": windows, "2": windows, "3": windows, "4": windows, "5": [], "6": [] } }; }
+  else if (step === "booking_rules") { path = "booking"; payload = { min_notice_minutes: numberField("min_notice_minutes"), max_days_ahead: numberField("max_days_ahead"), slot_interval_minutes: numberField("slot_interval_minutes"), buffer_between_bookings_minutes: 0, auto_confirm_bookings: true, cancellation_allowed: true, cancellation_notice_minutes: 120, reschedule_allowed: true, max_simultaneous_bookings: numberField("max_simultaneous_bookings") }; }
+  else if (step === "branding") { path = "branding"; payload = { primary_color: field("primary_color").value, secondary_color: field("secondary_color").value }; }
+  else if (step === "landing_content") { path = "landing"; payload = { headline: field("headline").value || null, description: field("description").value || null, landing_cta: field("landing_cta").value || null, seo_title: field("seo_title").value || null }; }
+  else if (step === "automations") { path = "automations"; payload = { automation_enabled: field("automation_enabled").checked, messages: { welcome: field("welcome").value } }; }
+  else if (step === "integrations") { await onboardingRequest(`/businesses/${businessId}/onboarding/steps/integrations/skip`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "Integraciones opcionales revisadas" }) }); onboardingStepIndex += 1; onboardingData = await onboardingRequest(`/businesses/${businessId}/onboarding`); renderOnboarding(); return; }
+  else if (step === "credits_and_plan") { path = "credits"; payload = { plan_key: field("plan_key").value, included_credits: numberField("included_credits"), additional_credits: numberField("additional_credits"), period_days: numberField("period_days") }; }
+  else if (step === "readiness_review") { onboardingReadiness = await onboardingRequest(`/businesses/${businessId}/readiness`); byId("onboarding-readiness").innerHTML = onboardingReadiness.checks.map((item) => `<div class="readiness-item ${item.status}"><strong>${escapeHtml(item.label)}</strong><p>${escapeHtml(item.message)}</p><small>${escapeHtml(item.remediation || "")}</small></div>`).join(""); byId("onboarding-feedback").textContent = onboardingReadiness.ready ? "Listo para activar" : `Bloqueado por ${onboardingReadiness.blocking_count} comprobaciones`; return; }
+  else if (step === "preview") { const preview = await onboardingRequest(`/businesses/${businessId}/preview`); byId("onboarding-preview").innerHTML = `<div class="creation-result"><strong>Vista previa · ${escapeHtml(preview.business.name)}</strong><p>${escapeHtml(preview.business.headline || "Sin titular")}</p><p>Reservas deshabilitadas · noindex · sin consumo de creditos</p></div>`; return; }
+  else if (step === "activation") { if (!onboardingReadiness) onboardingReadiness = await onboardingRequest(`/businesses/${businessId}/readiness`); await onboardingRequest(`/businesses/${businessId}/activate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: field("reason").value, expected_readiness_version: onboardingReadiness.version }) }); byId("onboarding-feedback").textContent = "Negocio activado"; await loadBusinesses(); return; }
+  byId("onboarding-save-state").textContent = "Guardando...";
+  onboardingData = await onboardingRequest(`/businesses/${businessId}/onboarding/${path}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  onboardingData = await onboardingRequest(`/businesses/${businessId}/onboarding`);
+  onboardingStepIndex = Math.min(onboardingStepIndex + 1, ONBOARDING_STEPS.length - 1);
+  renderOnboarding();
+}
+
 document.querySelectorAll("[data-tab]").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
 byId("refresh-button").addEventListener("click", async () => { await loadBusinesses(); await loadIncidents(); if (queueStatus) await loadQueueStatus(); });
 byId("queue-refresh").addEventListener("click", loadQueueStatus);
@@ -752,11 +865,17 @@ byId("queue-business-filter").addEventListener("change", renderQueueStatus);
 byId("queue-jobs").addEventListener("click", (event) => { const button = event.target.closest("[data-queue-action]"); if (button) updateQueueJob(button.dataset.jobType, button.dataset.jobId, button.dataset.queueAction).catch((error) => window.alert(error.message)); });
 byId("incident-filters").addEventListener("submit", (event) => { event.preventDefault(); loadIncidents(); });
 byId("incident-list").addEventListener("click", (event) => { const button = event.target.closest("[data-incident-action]"); if (button) updateIncident(button.dataset.incidentId, button.dataset.incidentAction, button).catch((error) => { byId("incidents-status").textContent = error.message; }); });
+byId("onboarding-create").addEventListener("click", () => startOnboarding().catch((error) => { byId("form-status").textContent = error.message; }));
+byId("onboarding-save").addEventListener("click", () => saveOnboardingStep().catch((error) => { byId("onboarding-feedback").textContent = error.message; byId("onboarding-save-state").textContent = "Cambios sin guardar"; }));
+byId("onboarding-back").addEventListener("click", () => { onboardingStepIndex = Math.max(0, onboardingStepIndex - 1); renderOnboarding(); });
+byId("onboarding-later").addEventListener("click", () => { setActiveTab("businesses"); byId("list-status").textContent = "Onboarding guardado. Puedes retomarlo desde la tarjeta."; });
+byId("onboarding-steps").addEventListener("click", (event) => { const button = event.target.closest("[data-ob-step]"); if (button) { onboardingStepIndex = Number(button.dataset.obStep); renderOnboarding(); } });
+byId("onboarding-step-content").addEventListener("input", () => { byId("onboarding-save-state").textContent = "Cambios sin guardar"; });
 byId("add-service").addEventListener("click", addServiceRow);
 byId("business-form").addEventListener("submit", createBusiness);
 byId("business-list").addEventListener("click", (event) => {
-  const button = event.target.closest("[data-toggle-slug]");
-  if (button) toggleBusiness(button.dataset.toggleSlug, button.dataset.nextActive === "true", button);
+  const button = event.target.closest("[data-business-state-id]");
+  if (button) changeBusinessState(button.dataset.businessStateId, button.dataset.businessStatus, button);
   else if (event.target.closest("[data-owner-user-action]")) handleOwnerUserAction(event.target.closest("[data-owner-user-action]")).catch((error) => console.error("Business user action failed", error));
   else if (event.target.closest("[data-owner-integration-action]")) handleOwnerIntegrationAction(event.target.closest("[data-owner-integration-action]")).catch((error) => { const feedback = event.target.closest("[data-owner-integration-id]")?.querySelector("[data-owner-integration-feedback]"); if (feedback) feedback.textContent = error.message; });
   else if (event.target.closest("[data-owner-automation-action]")) handleOwnerAutomationAction(event.target.closest("[data-owner-automation-action]")).catch((error) => { const feedback = event.target.closest("[data-owner-automation-id]")?.querySelector("[data-owner-automation-feedback]"); if (feedback) feedback.textContent = error.message; });
@@ -815,6 +934,7 @@ async function bootstrapOwnerAuth() {
     byId("owner-auth-user").textContent = ownerAuthUser.name || ownerAuthUser.email;
     await loadBusinesses();
     await loadIncidents();
+    await loadOnboardingTemplates();
   } catch (error) {
     console.error("Owner authentication failed", error);
     await showOwnerLogin(error.message);

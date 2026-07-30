@@ -102,3 +102,6 @@ falla deliberadamente. Para volver atrás desde la baseline, restaurar un backup
 
 `run_lightweight_migrations()` queda deprecado y solo se ejecuta local/test si
 `ENABLE_LEGACY_STARTUP_MIGRATIONS=true`. Nunca se mezcla en el mismo arranque con Alembic.
+# Onboarding 20260730_05
+
+La revisión `20260730_05` sucede a `20260730_04`, conserva negocios activos, transforma `inactive` en `suspended` y crea sesiones, plantillas y perfiles/asignaciones de personal. Debe aplicarse con Alembic antes del seed; FastAPI no ejecuta upgrade, stamp ni DDL al arrancar. Véase [business_onboarding_operations.md](business_onboarding_operations.md).

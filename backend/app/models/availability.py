@@ -1,6 +1,15 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -37,6 +46,13 @@ class BlockedDate(Base):
 
 class AvailabilitySettings(Base):
     __tablename__ = "availability_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "slot_interval_minutes > 0 AND min_notice_minutes >= 0 AND max_days_ahead > 0 "
+            "AND cancellation_notice_minutes >= 0 AND max_simultaneous_bookings >= 1",
+            name="ck_availability_booking_rules",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     business_id: Mapped[int] = mapped_column(
@@ -48,6 +64,21 @@ class AvailabilitySettings(Base):
     buffer_between_bookings_minutes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     min_notice_minutes: Mapped[int] = mapped_column(Integer, default=120, nullable=False)
     max_days_ahead: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    auto_confirm_bookings: Mapped[bool] = mapped_column(
+        default=True, server_default=text("true"), nullable=False
+    )
+    cancellation_allowed: Mapped[bool] = mapped_column(
+        default=True, server_default=text("true"), nullable=False
+    )
+    cancellation_notice_minutes: Mapped[int] = mapped_column(
+        Integer, default=120, server_default="120", nullable=False
+    )
+    reschedule_allowed: Mapped[bool] = mapped_column(
+        default=True, server_default=text("true"), nullable=False
+    )
+    max_simultaneous_bookings: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
     weekly_schedule_json: Mapped[str] = mapped_column(Text, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

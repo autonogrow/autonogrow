@@ -19,16 +19,19 @@ from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.requests import Request
 
 from app.core.config import Settings
 from app.core.database import create_database_engine
 from app.core.migration_state import alembic_config
 from app.models import (
+    AuditLog,
     AutomationCreditTransaction,
     AvailabilitySettings,
     Booking,
     Business,
     BusinessChannelIntegration,
+    BusinessOnboardingSession,
     BusinessService,
     BusinessUser,
     ChannelOutboxMessage,
@@ -41,8 +44,11 @@ from app.models import (
     WebhookInboxEvent,
     WorkerHeartbeat,
 )
+from app.routers.owner_onboarding import activate_business
+from app.schemas.onboarding import ActivationRequest
 from app.services.automation_credit_service import consume_automation_credit, lock_credit_wallet
 from app.services.booking_service import ensure_no_booking_overlap, lock_business_schedule
+from app.services.business_readiness_service import evaluate_business_readiness
 from app.services.database_error_service import classify_database_error
 from app.services.inbox_queue_service import claim_inbox_jobs
 from app.services.instagram_integration_service import (
@@ -78,6 +84,88 @@ def postgresql_engine() -> Engine:
         with engine.begin() as connection:
             connection.execute(text(f"TRUNCATE TABLE {tables} RESTART IDENTITY CASCADE"))
         engine.dispose()
+
+
+def test_concurrent_business_activation_is_locked_and_idempotent(
+    postgresql_engine: Engine,
+) -> None:
+    factory = sessionmaker(postgresql_engine, expire_on_commit=False)
+    with factory.begin() as db:
+        owner = User(email="postgres-onboarding-owner@test.local", is_owner=True)
+        business = Business(
+            name="Concurrent activation",
+            slug="concurrent-activation",
+            status="onboarding",
+        )
+        db.add_all([owner, business])
+        db.flush()
+        db.add_all(
+            [
+                BusinessOnboardingSession(
+                    business_id=business.id,
+                    started_by_user_id=owner.id,
+                    last_updated_by_user_id=owner.id,
+                ),
+                BusinessService(
+                    business_id=business.id,
+                    name="Bookable",
+                    duration_minutes=30,
+                ),
+                AvailabilitySettings(
+                    business_id=business.id,
+                    weekly_schedule_json='{"1":[{"start":"09:00","end":"17:00"}]}',
+                ),
+            ]
+        )
+    with factory() as db:
+        business_id = db.query(Business.id).filter_by(slug="concurrent-activation").scalar()
+        owner_id = (
+            db.query(User.id).filter_by(email="postgres-onboarding-owner@test.local").scalar()
+        )
+        version = evaluate_business_readiness(db, db.get(Business, business_id))["version"]
+
+    start = Barrier(2)
+
+    def activate_once() -> bool:
+        with factory() as db:
+            start.wait(timeout=5)
+            result = activate_business(
+                business_id,
+                ActivationRequest(
+                    reason="Concurrent owner approval",
+                    expected_readiness_version=version,
+                ),
+                Request(
+                    {
+                        "type": "http",
+                        "method": "POST",
+                        "path": f"/api/owner/businesses/{business_id}/activate",
+                        "headers": [(b"x-request-id", b"postgres-onboarding-test")],
+                        "query_string": b"",
+                        "scheme": "http",
+                        "server": ("test", 80),
+                        "client": ("test", 123),
+                    }
+                ),
+                db.get(User, owner_id),
+                db,
+            )
+            return result["already_active"]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: activate_once(), range(2)))
+    assert sorted(results) == [False, True]
+    with factory() as db:
+        assert db.get(Business, business_id).status == "active"
+        assert (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.business_id == business_id,
+                AuditLog.action == "business_activated",
+            )
+            .count()
+            == 1
+        )
 
 
 def test_two_workers_claim_distinct_inbox_rows_with_skip_locked(

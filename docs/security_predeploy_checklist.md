@@ -74,3 +74,10 @@
 - [ ] El backup local fue ejecutado y verificado.
 - [ ] El backup externo cifrado está completado o marcado explícitamente como bloqueo preproducción.
 - [ ] Se realizó una restauración en una ruta aislada.
+# Controles de onboarding
+
+- [ ] Preview protegida por owner y sin reservas/automatización/créditos.
+- [ ] Activación solo por endpoint explícito con readiness vigente.
+- [ ] Schemas con `extra="forbid"`; URLs peligrosas y slugs reservados rechazados.
+- [ ] Plantillas y clonación sin secretos ni datos de otro tenant.
+- [ ] Business admin, staff y cliente no acceden a plan, clonación o activación.

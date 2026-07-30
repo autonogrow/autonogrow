@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -8,6 +8,13 @@ from app.core.database import Base
 
 class Business(Base):
     __tablename__ = "businesses"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft','onboarding','configuration_pending','ready','active',"
+            "'suspended','archived')",
+            name="ck_businesses_operational_status",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     slug: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)
@@ -18,13 +25,39 @@ class Business(Base):
     description: Mapped[str | None] = mapped_column(Text)
 
     phone: Mapped[str | None] = mapped_column(String(40))
+    whatsapp_phone: Mapped[str | None] = mapped_column(String(40))
+    public_email: Mapped[str | None] = mapped_column(String(320))
     city: Mapped[str | None] = mapped_column(String(120))
     address: Mapped[str | None] = mapped_column(Text)
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    region: Mapped[str | None] = mapped_column(String(120))
+    country_code: Mapped[str] = mapped_column(
+        String(2), default="ES", server_default="ES", nullable=False
+    )
+    language_code: Mapped[str] = mapped_column(
+        String(10), default="es", server_default="es", nullable=False
+    )
+    timezone: Mapped[str] = mapped_column(
+        String(80), default="Europe/Madrid", server_default="Europe/Madrid", nullable=False
+    )
+    currency: Mapped[str] = mapped_column(
+        String(3), default="EUR", server_default="EUR", nullable=False
+    )
+    legal_name: Mapped[str | None] = mapped_column(String(240))
+    tax_identifier: Mapped[str | None] = mapped_column(String(80))
     schedule: Mapped[str | None] = mapped_column(Text)
 
     maps_url: Mapped[str | None] = mapped_column(Text)
     instagram_url: Mapped[str | None] = mapped_column(Text)
+    tiktok_url: Mapped[str | None] = mapped_column(Text)
+    external_website_url: Mapped[str | None] = mapped_column(Text)
     reviews_url: Mapped[str | None] = mapped_column(Text)
+    landing_cta: Mapped[str | None] = mapped_column(String(120))
+    seo_title: Mapped[str | None] = mapped_column(String(160))
+    seo_description: Mapped[str | None] = mapped_column(String(320))
+    seo_noindex: Mapped[bool] = mapped_column(
+        default=True, server_default=text("true"), nullable=False
+    )
 
     primary_color: Mapped[str | None] = mapped_column(String(20))
     secondary_color: Mapped[str | None] = mapped_column(String(20))
@@ -35,6 +68,17 @@ class Business(Base):
     logo_url: Mapped[str | None] = mapped_column(Text)
     logo_alt: Mapped[str | None] = mapped_column(String(240))
     status: Mapped[str] = mapped_column(String(40), default="active", nullable=False)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    activated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "users.id",
+            name="fk_businesses_activated_by_user_id_users",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
+    status_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -83,4 +127,7 @@ class Business(Base):
         "ConversationAutomationRule",
         back_populates="business",
         cascade="all, delete-orphan",
+    )
+    onboarding_sessions = relationship(
+        "BusinessOnboardingSession", back_populates="business", cascade="all, delete-orphan"
     )
