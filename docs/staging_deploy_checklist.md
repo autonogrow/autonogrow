@@ -1,6 +1,11 @@
 # Checklist de despliegue staging
 
-- [ ] Ejecutar `alembic upgrade head` y confirmar head `20260730_03`.
+- [ ] PostgreSQL 16 creado con usuario de mínimo privilegio y acceso no público.
+- [ ] `DATABASE_URL=postgresql+psycopg://...` y `ALLOW_SQLITE_IN_PRODUCTION=false`.
+- [ ] Pool y timeouts revisados; `WORKER_CONCURRENCY_MODE=single` para el primer corte.
+- [ ] Ejecutar `alembic upgrade head` y confirmar head `20260730_04`.
+- [ ] Dry-run y migración real SQLite→PostgreSQL solo dentro de la ventana aprobada.
+- [ ] Checklist GO/NO-GO/ROLLBACK de `postgresql_rollback.md` firmado.
 - [ ] Confirmar `PROCESS_WEBHOOK_SYNCHRONOUSLY=false`.
 - [ ] Instalar backend y worker como servicios separados; un solo worker activo.
 - [ ] Verificar heartbeat y colas desde owner sin exponer payloads.
@@ -22,11 +27,11 @@ Registrar fecha, responsable, dominio, versión desplegada y resultado de cada p
 
 - [ ] `APP_ENV=production`.
 - [ ] `DATABASE_MIGRATION_CHECK=true` y `ENABLE_LEGACY_STARTUP_MIGRATIONS=false`.
-- [ ] Política SQLite validada: timeout 5000, WAL y synchronous NORMAL.
+- [ ] PostgreSQL validado; SQLite conservado únicamente como snapshot pre-migración.
 - [ ] `COOKIE_SECURE=true`.
 - [ ] `CSRF_ENABLED=true`, `RATE_LIMIT_ENABLED=true` y `SECURITY_HEADERS_ENABLED=true`.
 - [ ] `FRONTEND_ORIGINS` contiene únicamente el dominio HTTPS real de staging.
-- [ ] `DATABASE_URL` y `UPLOADS_DIR` apuntan a `/var/lib/autonogrow-staging`, fuera del repo/frontend.
+- [ ] `DATABASE_URL` no se registra y `UPLOADS_DIR` queda fuera del repo/frontend.
 - [ ] Google OAuth permite el dominio HTTPS real de staging.
 - [ ] Login owner real funciona y solo muestra recursos autorizados.
 - [ ] Login business admin real funciona para su negocio y rechaza otro negocio.
@@ -53,7 +58,7 @@ Registrar fecha, responsable, dominio, versión desplegada y resultado de cada p
 - [ ] `python scripts/check_database_migration_state.py` no informa ausencias.
 - [ ] Una base heredada completa se marcó con baseline solo mediante confirmación explícita.
 - [ ] `alembic upgrade head` terminó y `python scripts/manage_migrations.py validate` devuelve 0.
-- [ ] `alembic heads` devuelve únicamente `20260730_02`.
+- [ ] `alembic heads` devuelve únicamente `20260730_04`.
 - [ ] `python scripts/smoke_test_staging.py --base-url https://DOMINIO-STAGING` termina con 0 FAIL.
 - [ ] Backup local SQLite + uploads creado y verificado.
 - [ ] Backup copiado a almacenamiento externo cifrado.

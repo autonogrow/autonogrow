@@ -49,7 +49,11 @@ from app.services.review_request_service import (
     serialize_review_request,
 )
 
-router = APIRouter(prefix="/api/admin/businesses/{business_slug}", tags=["admin"], dependencies=[Depends(require_business_access)])
+router = APIRouter(
+    prefix="/api/admin/businesses/{business_slug}",
+    tags=["admin"],
+    dependencies=[Depends(require_business_access)],
+)
 
 
 class BookingStatusUpdate(BaseModel):
@@ -111,9 +115,7 @@ def update_booking_internal_notes(
     )
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
-    ensure_can_manage_booking(
-        db, business_slug=business_slug, booking=booking, user=actor
-    )
+    ensure_can_manage_booking(db, business_slug=business_slug, booking=booking, user=actor)
     notes = payload.internal_notes.strip() if payload.internal_notes else None
     if notes and len(notes) > 4000:
         raise HTTPException(status_code=422, detail="Internal notes are too long")
@@ -121,8 +123,13 @@ def update_booking_internal_notes(
     db.commit()
     db.refresh(booking)
     record_audit(
-        db, action="booking_internal_notes_changed", request=request, actor=actor,
-        business_id=business.id, resource_type="booking", resource_id=booking.id,
+        db,
+        action="booking_internal_notes_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="booking",
+        resource_id=booking.id,
     )
     return {"ok": True, "booking": serialize_booking(booking)}
 
@@ -184,7 +191,15 @@ def update_business_settings(
     action = "settings_changed"
     if previous_status != business.status:
         action = "business_enabled" if business.status == "active" else "business_disabled"
-    record_audit(db, action=action, request=request, actor=actor, business_id=business.id, resource_type="business", resource_id=business.id)
+    record_audit(
+        db,
+        action=action,
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business",
+        resource_id=business.id,
+    )
     return {"ok": True, "settings": serialize_business_settings(business)}
 
 
@@ -289,8 +304,10 @@ def admin_list_bookings(
     actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
 ):
-    membership = None if actor.is_owner else get_business_membership(
-        db, business_slug=business_slug, user_id=actor.id
+    membership = (
+        None
+        if actor.is_owner
+        else get_business_membership(db, business_slug=business_slug, user_id=actor.id)
     )
     staff_id = membership.id if membership and membership.role == "business_staff" else None
     try:
@@ -319,8 +336,10 @@ def admin_panel(
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
 
-    membership = None if actor.is_owner else get_business_membership(
-        db, business_slug=business_slug, user_id=actor.id
+    membership = (
+        None
+        if actor.is_owner
+        else get_business_membership(db, business_slug=business_slug, user_id=actor.id)
     )
     is_staff = bool(membership and membership.role == "business_staff")
     booking_query = db.query(Booking).filter(Booking.business_id == business.id)
@@ -328,22 +347,14 @@ def admin_panel(
         booking_query = booking_query.filter(Booking.staff_business_user_id == membership.id)
     total_bookings = booking_query.count()
 
-    pending_bookings = (
-        booking_query
-        .filter(
-            Booking.status.in_(["requested", "pending"]),
-        )
-        .count()
-    )
+    pending_bookings = booking_query.filter(
+        Booking.status.in_(["requested", "pending"]),
+    ).count()
 
-    upcoming_bookings = (
-        booking_query
-        .filter(
-            Booking.status.in_(["requested", "pending", "confirmed"]),
-            Booking.start_datetime >= datetime.utcnow(),
-        )
-        .count()
-    )
+    upcoming_bookings = booking_query.filter(
+        Booking.status.in_(["requested", "pending", "confirmed"]),
+        Booking.start_datetime >= datetime.utcnow(),
+    ).count()
 
     active_services = (
         db.query(BusinessService)
@@ -476,22 +487,16 @@ def update_booking_status(
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    ensure_can_manage_booking(
-        db, business_slug=business_slug, booking=booking, user=actor
-    )
+    ensure_can_manage_booking(db, business_slug=business_slug, booking=booking, user=actor)
 
     booking.status = payload.status
     review_request = None
     outbox_message = None
 
     if payload.status == "confirmed":
-        outbox_message = create_booking_confirmed_message(
-            db, business=business, booking=booking
-        )
+        outbox_message = create_booking_confirmed_message(db, business=business, booking=booking)
     elif payload.status == "rejected":
-        outbox_message = create_booking_rejected_message(
-            db, business=business, booking=booking
-        )
+        outbox_message = create_booking_rejected_message(db, business=business, booking=booking)
 
     if payload.status == "completed":
         review_request = get_or_create_review_request(
@@ -514,7 +519,16 @@ def update_booking_status(
         "cancelled": "booking_cancelled",
         "completed": "booking_completed",
     }.get(payload.status, "booking_status_changed")
-    record_audit(db, action=action, request=request, actor=actor, business_id=business.id, resource_type="booking", resource_id=booking.id, metadata={"status": payload.status})
+    record_audit(
+        db,
+        action=action,
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="booking",
+        resource_id=booking.id,
+        metadata={"status": payload.status},
+    )
 
     return {
         "ok": True,
@@ -573,9 +587,7 @@ def list_message_outbox(
     }
 
 
-def _get_outbox_message(
-    db: Session, *, business_id: int, message_id: int
-) -> MessageOutbox | None:
+def _get_outbox_message(db: Session, *, business_id: int, message_id: int) -> MessageOutbox | None:
     return (
         db.query(MessageOutbox)
         .filter(
@@ -606,7 +618,10 @@ def open_outbox_message(
         mark_opened(message)
     except ValueError as exc:
         errors = {
-            "invalid_whatsapp_phone": (400, "Este cliente no tiene un tel\u00e9fono v\u00e1lido para WhatsApp."),
+            "invalid_whatsapp_phone": (
+                400,
+                "Este cliente no tiene un tel\u00e9fono v\u00e1lido para WhatsApp.",
+            ),
             "message_closed": (409, "This outbox message is already closed"),
         }
         status_code, detail = errors.get(str(exc), (400, str(exc)))
@@ -670,7 +685,9 @@ def list_review_requests(business_slug: str, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/bookings/{booking_id}/review-request", dependencies=[Depends(require_business_admin)])
+@router.post(
+    "/bookings/{booking_id}/review-request", dependencies=[Depends(require_business_admin)]
+)
 def create_review_request_for_booking(
     business_slug: str,
     booking_id: int,
@@ -717,7 +734,9 @@ def create_review_request_for_booking(
     }
 
 
-@router.patch("/review-requests/{review_request_id}/status", dependencies=[Depends(require_business_admin)])
+@router.patch(
+    "/review-requests/{review_request_id}/status", dependencies=[Depends(require_business_admin)]
+)
 def update_review_request_status(
     business_slug: str,
     review_request_id: int,
@@ -783,9 +802,7 @@ def reschedule_booking(
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    ensure_can_manage_booking(
-        db, business_slug=business_slug, booking=booking, user=actor
-    )
+    ensure_can_manage_booking(db, business_slug=business_slug, booking=booking, user=actor)
 
     try:
         booking = reschedule_existing_booking(
@@ -806,7 +823,15 @@ def reschedule_booking(
         status_code, detail = errors.get(str(exc), (400, str(exc)))
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
-    record_audit(db, action="booking_rescheduled", request=request, actor=actor, business_id=business.id, resource_type="booking", resource_id=booking.id)
+    record_audit(
+        db,
+        action="booking_rescheduled",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="booking",
+        resource_id=booking.id,
+    )
 
     return {
         "ok": True,

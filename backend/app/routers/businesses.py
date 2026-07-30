@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -12,21 +12,12 @@ router = APIRouter(prefix="/api/businesses", tags=["businesses"])
 
 @router.get("", response_model=list[BusinessOut])
 def list_businesses(db: Session = Depends(get_db)):
-    return (
-        db.query(Business)
-        .filter(Business.status == "active")
-        .order_by(Business.id.asc())
-        .all()
-    )
+    return db.query(Business).filter(Business.status == "active").order_by(Business.id.asc()).all()
 
 
 @router.get("/{slug}", response_model=BusinessOut)
 def get_business(slug: str, db: Session = Depends(get_db)):
-    business = (
-        db.query(Business)
-        .filter(Business.slug == slug, Business.status == "active")
-        .first()
-    )
+    business = db.query(Business).filter(Business.slug == slug, Business.status == "active").first()
 
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
@@ -50,6 +41,14 @@ def create_business(
     db.add(business)
     db.commit()
     db.refresh(business)
-    record_audit(db, action="business_created", request=request, actor=actor, business_id=business.id, resource_type="business", resource_id=business.id)
+    record_audit(
+        db,
+        action="business_created",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business",
+        resource_id=business.id,
+    )
 
     return business

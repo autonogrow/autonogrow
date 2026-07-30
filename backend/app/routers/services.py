@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -48,7 +48,9 @@ def list_services(business_slug: str, db: Session = Depends(get_db)):
     ]
 
 
-@router.post("", response_model=ServiceOut, status_code=201, dependencies=[Depends(require_business_admin)])
+@router.post(
+    "", response_model=ServiceOut, status_code=201, dependencies=[Depends(require_business_admin)]
+)
 def create_service(
     business_slug: str,
     payload: ServiceCreate,

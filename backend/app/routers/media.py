@@ -37,19 +37,32 @@ async def read_image(file: UploadFile, max_bytes: int) -> tuple[bytes, str]:
     if not content:
         raise HTTPException(status_code=400, detail="El archivo está vacío")
     if len(content) > max_bytes:
-        raise HTTPException(status_code=400, detail=f"La imagen supera el límite de {max_bytes // 1024 // 1024} MB")
+        raise HTTPException(
+            status_code=400, detail=f"La imagen supera el límite de {max_bytes // 1024 // 1024} MB"
+        )
     signatures = {
         "image/jpeg": content.startswith(b"\xff\xd8\xff"),
         "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
-        "image/webp": len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP",
+        "image/webp": len(content) >= 12
+        and content.startswith(b"RIFF")
+        and content[8:12] == b"WEBP",
     }
     if not signatures[file.content_type]:
-        raise HTTPException(status_code=400, detail="El contenido del archivo no coincide con una imagen válida")
+        raise HTTPException(
+            status_code=400, detail="El contenido del archivo no coincide con una imagen válida"
+        )
     return content, ALLOWED_TYPES[file.content_type]
 
 
 def serialize_image(image: BusinessGalleryImage) -> dict:
-    return {"id": image.id, "url": image.url, "alt_text": image.alt_text, "position": image.position, "active": image.active, "created_at": image.created_at.isoformat()}
+    return {
+        "id": image.id,
+        "url": image.url,
+        "alt_text": image.alt_text,
+        "position": image.position,
+        "active": image.active,
+        "created_at": image.created_at.isoformat(),
+    }
 
 
 async def upload_logo_impl(slug: str, file: UploadFile, db: Session) -> dict:
@@ -82,13 +95,23 @@ def list_gallery_impl(slug: str, db: Session, *, public: bool = False) -> dict:
     query = db.query(BusinessGalleryImage).filter(BusinessGalleryImage.business_id == business.id)
     if public:
         query = query.filter(BusinessGalleryImage.active.is_(True))
-    images = query.order_by(BusinessGalleryImage.position.asc(), BusinessGalleryImage.id.asc()).all()
+    images = query.order_by(
+        BusinessGalleryImage.position.asc(), BusinessGalleryImage.id.asc()
+    ).all()
     return {"business_slug": business.slug, "images": [serialize_image(image) for image in images]}
 
 
-async def upload_gallery_impl(slug: str, file: UploadFile, alt_text: str | None, db: Session) -> dict:
+async def upload_gallery_impl(
+    slug: str, file: UploadFile, alt_text: str | None, db: Session
+) -> dict:
     business = business_or_404(db, slug)
-    active_count = db.query(BusinessGalleryImage).filter(BusinessGalleryImage.business_id == business.id, BusinessGalleryImage.active.is_(True)).count()
+    active_count = (
+        db.query(BusinessGalleryImage)
+        .filter(
+            BusinessGalleryImage.business_id == business.id, BusinessGalleryImage.active.is_(True)
+        )
+        .count()
+    )
     if active_count >= MAX_ACTIVE_GALLERY:
         raise HTTPException(status_code=400, detail="Máximo 10 imágenes activas por negocio")
     content, extension = await read_image(file, MAX_GALLERY_BYTES)
@@ -111,12 +134,25 @@ async def upload_gallery_impl(slug: str, file: UploadFile, alt_text: str | None,
 
 def patch_gallery_impl(slug: str, image_id: int, payload: GalleryImageUpdate, db: Session) -> dict:
     business = business_or_404(db, slug)
-    image = db.query(BusinessGalleryImage).filter(BusinessGalleryImage.id == image_id, BusinessGalleryImage.business_id == business.id).first()
+    image = (
+        db.query(BusinessGalleryImage)
+        .filter(
+            BusinessGalleryImage.id == image_id, BusinessGalleryImage.business_id == business.id
+        )
+        .first()
+    )
     if image is None:
         raise HTTPException(status_code=404, detail="Image not found")
     updates = payload.model_dump(exclude_unset=True)
     if updates.get("active") is True and not image.active:
-        active_count = db.query(BusinessGalleryImage).filter(BusinessGalleryImage.business_id == business.id, BusinessGalleryImage.active.is_(True)).count()
+        active_count = (
+            db.query(BusinessGalleryImage)
+            .filter(
+                BusinessGalleryImage.business_id == business.id,
+                BusinessGalleryImage.active.is_(True),
+            )
+            .count()
+        )
         if active_count >= MAX_ACTIVE_GALLERY:
             raise HTTPException(status_code=400, detail="Máximo 10 imágenes activas por negocio")
     for field, value in updates.items():
@@ -128,7 +164,13 @@ def patch_gallery_impl(slug: str, image_id: int, payload: GalleryImageUpdate, db
 
 def delete_gallery_impl(slug: str, image_id: int, db: Session) -> dict:
     business = business_or_404(db, slug)
-    image = db.query(BusinessGalleryImage).filter(BusinessGalleryImage.id == image_id, BusinessGalleryImage.business_id == business.id).first()
+    image = (
+        db.query(BusinessGalleryImage)
+        .filter(
+            BusinessGalleryImage.id == image_id, BusinessGalleryImage.business_id == business.id
+        )
+        .first()
+    )
     if image is None:
         raise HTTPException(status_code=404, detail="Image not found")
     relative = image.url.removeprefix("/uploads/")
@@ -145,32 +187,79 @@ def public_gallery(business_slug: str, db: Session = Depends(get_db)):
     return list_gallery_impl(business_slug, db, public=True)
 
 
-@router.post("/api/admin/businesses/{business_slug}/media/logo", dependencies=[Depends(require_business_admin)])
-@router.post("/api/owner/businesses/{business_slug}/media/logo", dependencies=[Depends(require_owner)])
-async def upload_logo(business_slug: str, request: Request, file: UploadFile = File(...), actor: User = Depends(get_current_user), db: Session = Depends(get_db)):
+@router.post(
+    "/api/admin/businesses/{business_slug}/media/logo",
+    dependencies=[Depends(require_business_admin)],
+)
+@router.post(
+    "/api/owner/businesses/{business_slug}/media/logo", dependencies=[Depends(require_owner)]
+)
+async def upload_logo(
+    business_slug: str,
+    request: Request,
+    file: UploadFile = File(...),
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     result = await upload_logo_impl(business_slug, file, db)
     business = business_or_404(db, business_slug)
-    record_audit(db, action="media_uploaded", request=request, actor=actor, business_id=business.id, resource_type="business_logo", resource_id=business.id)
+    record_audit(
+        db,
+        action="media_uploaded",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_logo",
+        resource_id=business.id,
+    )
     return result
 
 
-@router.delete("/api/admin/businesses/{business_slug}/media/logo", dependencies=[Depends(require_business_admin)])
-@router.delete("/api/owner/businesses/{business_slug}/media/logo", dependencies=[Depends(require_owner)])
-def delete_logo(business_slug: str, request: Request, actor: User = Depends(get_current_user), db: Session = Depends(get_db)):
+@router.delete(
+    "/api/admin/businesses/{business_slug}/media/logo",
+    dependencies=[Depends(require_business_admin)],
+)
+@router.delete(
+    "/api/owner/businesses/{business_slug}/media/logo", dependencies=[Depends(require_owner)]
+)
+def delete_logo(
+    business_slug: str,
+    request: Request,
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     business = business_or_404(db, business_slug)
     result = delete_logo_impl(business_slug, db)
-    record_audit(db, action="media_deleted", request=request, actor=actor, business_id=business.id, resource_type="business_logo", resource_id=business.id)
+    record_audit(
+        db,
+        action="media_deleted",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_logo",
+        resource_id=business.id,
+    )
     return result
 
 
-@router.get("/api/admin/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_business_admin)])
-@router.get("/api/owner/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_owner)])
+@router.get(
+    "/api/admin/businesses/{business_slug}/media/gallery",
+    dependencies=[Depends(require_business_admin)],
+)
+@router.get(
+    "/api/owner/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_owner)]
+)
 def list_gallery(business_slug: str, db: Session = Depends(get_db)):
     return list_gallery_impl(business_slug, db)
 
 
-@router.post("/api/admin/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_business_admin)])
-@router.post("/api/owner/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_owner)])
+@router.post(
+    "/api/admin/businesses/{business_slug}/media/gallery",
+    dependencies=[Depends(require_business_admin)],
+)
+@router.post(
+    "/api/owner/businesses/{business_slug}/media/gallery", dependencies=[Depends(require_owner)]
+)
 async def upload_gallery(
     business_slug: str,
     request: Request,
@@ -181,20 +270,56 @@ async def upload_gallery(
 ):
     result = await upload_gallery_impl(business_slug, file, alt_text, db)
     business = business_or_404(db, business_slug)
-    record_audit(db, action="media_uploaded", request=request, actor=actor, business_id=business.id, resource_type="gallery_image", resource_id=result["image"]["id"])
+    record_audit(
+        db,
+        action="media_uploaded",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="gallery_image",
+        resource_id=result["image"]["id"],
+    )
     return result
 
 
-@router.patch("/api/admin/businesses/{business_slug}/media/gallery/{image_id}", dependencies=[Depends(require_business_admin)])
-@router.patch("/api/owner/businesses/{business_slug}/media/gallery/{image_id}", dependencies=[Depends(require_owner)])
-def patch_gallery(business_slug: str, image_id: int, payload: GalleryImageUpdate, db: Session = Depends(get_db)):
+@router.patch(
+    "/api/admin/businesses/{business_slug}/media/gallery/{image_id}",
+    dependencies=[Depends(require_business_admin)],
+)
+@router.patch(
+    "/api/owner/businesses/{business_slug}/media/gallery/{image_id}",
+    dependencies=[Depends(require_owner)],
+)
+def patch_gallery(
+    business_slug: str, image_id: int, payload: GalleryImageUpdate, db: Session = Depends(get_db)
+):
     return patch_gallery_impl(business_slug, image_id, payload, db)
 
 
-@router.delete("/api/admin/businesses/{business_slug}/media/gallery/{image_id}", dependencies=[Depends(require_business_admin)])
-@router.delete("/api/owner/businesses/{business_slug}/media/gallery/{image_id}", dependencies=[Depends(require_owner)])
-def delete_gallery(business_slug: str, image_id: int, request: Request, actor: User = Depends(get_current_user), db: Session = Depends(get_db)):
+@router.delete(
+    "/api/admin/businesses/{business_slug}/media/gallery/{image_id}",
+    dependencies=[Depends(require_business_admin)],
+)
+@router.delete(
+    "/api/owner/businesses/{business_slug}/media/gallery/{image_id}",
+    dependencies=[Depends(require_owner)],
+)
+def delete_gallery(
+    business_slug: str,
+    image_id: int,
+    request: Request,
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     business = business_or_404(db, business_slug)
     result = delete_gallery_impl(business_slug, image_id, db)
-    record_audit(db, action="media_deleted", request=request, actor=actor, business_id=business.id, resource_type="gallery_image", resource_id=image_id)
+    record_audit(
+        db,
+        action="media_deleted",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="gallery_image",
+        resource_id=image_id,
+    )
     return result

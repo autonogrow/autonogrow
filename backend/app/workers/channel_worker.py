@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, cast
 
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
@@ -18,6 +20,7 @@ from app.models import (
     ConversationMessage,
     WebhookInboxEvent,
 )
+from app.services.database_error_service import classify_database_error, report_database_incident
 from app.services.inbox_queue_service import claim_inbox_jobs, fail_inbox_job
 from app.services.incident_service import report_incident, resolve_related_incidents
 from app.services.instagram_inbox_processor import (
@@ -332,9 +335,40 @@ class ChannelWorker:
         while not self._stop_requested:
             try:
                 jobs = self.run_once()
-            except Exception:
-                logger.exception("channel_worker_cycle_failed worker_id=%s", self.worker_id)
-                self._heartbeat("error")
+            except Exception as exc:
+                if isinstance(exc, (DBAPIError, SQLAlchemyTimeoutError)):
+                    classification = classify_database_error(exc)
+                    try:
+                        with self.session_factory() as db:
+                            report_database_incident(
+                                db,
+                                exc,
+                                operation="channel_worker_cycle",
+                            )
+                            db.commit()
+                    except Exception as incident_error:
+                        logger.error(
+                            "channel_worker_database_failure worker_id=%s "
+                            "incident_persistence=failed error_type=%s",
+                            self.worker_id,
+                            type(incident_error).__name__,
+                        )
+                    logger.error(
+                        "channel_worker_database_failure worker_id=%s category=%s retryable=%s",
+                        self.worker_id,
+                        classification.code,
+                        classification.retryable,
+                    )
+                else:
+                    logger.exception("channel_worker_cycle_failed worker_id=%s", self.worker_id)
+                try:
+                    self._heartbeat("error")
+                except Exception as heartbeat_error:
+                    logger.error(
+                        "channel_worker_error_heartbeat_failed worker_id=%s error_type=%s",
+                        self.worker_id,
+                        type(heartbeat_error).__name__,
+                    )
                 jobs = 0
             if not jobs and not self._stop_requested:
                 self.sleep(self.settings.worker_poll_interval_seconds)

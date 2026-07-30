@@ -17,9 +17,7 @@ router = APIRouter(prefix="/api/businesses/{business_slug}", tags=["availability
 
 def staff_service_error_response(code: str) -> JSONResponse:
     messages = {
-        "no_staff_available_for_service": (
-            "No hay profesionales disponibles para este servicio."
-        ),
+        "no_staff_available_for_service": ("No hay profesionales disponibles para este servicio."),
         "staff_not_available_for_service": (
             "El profesional seleccionado no está disponible para este servicio."
         ),
@@ -35,10 +33,14 @@ def public_availability_settings(
     business_slug: str,
     db: Session = Depends(get_db),
 ):
-    business = db.query(Business).filter(
-        Business.slug == business_slug,
-        Business.status == "active",
-    ).first()
+    business = (
+        db.query(Business)
+        .filter(
+            Business.slug == business_slug,
+            Business.status == "active",
+        )
+        .first()
+    )
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
     settings = get_or_create_availability_settings(db, business)

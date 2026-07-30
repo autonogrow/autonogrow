@@ -284,7 +284,10 @@ def get_public_bookable_staff(
 def serialize_public_staff(member: BusinessUser) -> dict[str, Any]:
     return {
         "id": member.id,
-        "public_name": member.public_name or member.user.preferred_name or member.user.name or "Profesional",
+        "public_name": member.public_name
+        or member.user.preferred_name
+        or member.user.name
+        or "Profesional",
         "bio": member.bio,
         "avatar_url": member.avatar_url or member.user.picture_url,
     }
@@ -477,9 +480,7 @@ def get_staff_windows_for_date(
     )
     if row is not None:
         return parse_windows_from_json(row.windows_json)
-    return get_windows_for_date(
-        db, business=business, settings=settings, target_date=target_date
-    )
+    return get_windows_for_date(db, business=business, settings=settings, target_date=target_date)
 
 
 def get_available_slots(
@@ -570,7 +571,11 @@ def get_available_slots(
     service_duration = service.duration_minutes or 30
     slot_interval = settings.slot_interval_minutes if settings else DEFAULT_SLOT_INTERVAL_MINUTES
     min_notice = settings.min_notice_minutes if settings else DEFAULT_MIN_NOTICE_MINUTES
-    buffer_minutes = settings.buffer_between_bookings_minutes if settings else DEFAULT_BUFFER_BETWEEN_BOOKINGS_MINUTES
+    buffer_minutes = (
+        settings.buffer_between_bookings_minutes
+        if settings
+        else DEFAULT_BUFFER_BETWEEN_BOOKINGS_MINUTES
+    )
     if selected_staff is not None:
         windows = get_staff_windows_for_date(
             db,
@@ -665,12 +670,16 @@ def build_calendar_days(
             raise ValueError("service_not_found")
         if not get_public_bookable_staff(db, business.id, service_id):
             raise ValueError("no_staff_available_for_service")
-    if staff_business_user_id is not None and get_public_staff_or_none(
-        db,
-        business_id=business.id,
-        business_user_id=staff_business_user_id,
-        service_id=service_id,
-    ) is None:
+    if (
+        staff_business_user_id is not None
+        and get_public_staff_or_none(
+            db,
+            business_id=business.id,
+            business_user_id=staff_business_user_id,
+            service_id=service_id,
+        )
+        is None
+    ):
         raise ValueError("staff_not_available_for_service")
 
     settings = (
@@ -788,24 +797,24 @@ def build_availability(
         raise ValueError("business_not_found")
 
     if service_id is not None:
-        service = get_service_or_none(
-            db, business_id=business.id, service_id=service_id
-        )
+        service = get_service_or_none(db, business_id=business.id, service_id=service_id)
         if service is None:
             raise ValueError("service_not_found")
         if not get_public_bookable_staff(db, business.id, service_id):
             raise ValueError("no_staff_available_for_service")
-    if staff_business_user_id is not None and get_public_staff_or_none(
-        db,
-        business_id=business.id,
-        business_user_id=staff_business_user_id,
-        service_id=service_id,
-    ) is None:
+    if (
+        staff_business_user_id is not None
+        and get_public_staff_or_none(
+            db,
+            business_id=business.id,
+            business_user_id=staff_business_user_id,
+            service_id=service_id,
+        )
+        is None
+    ):
         raise ValueError("staff_not_available_for_service")
 
-    has_bookable_staff = bool(
-        get_public_bookable_staff(db, business.id, service_id)
-    )
+    has_bookable_staff = bool(get_public_bookable_staff(db, business.id, service_id))
 
     settings = (
         db.query(AvailabilitySettings)

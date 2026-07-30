@@ -27,6 +27,44 @@ def begin_serialized_booking_write(db: Session) -> None:
         db.execute(text("BEGIN IMMEDIATE"))
 
 
+def lock_business_schedule(db: Session, business: Business) -> Business:
+    """Serialize scheduling mutations per business on PostgreSQL."""
+
+    if db.get_bind().dialect.name != "postgresql":
+        return business
+    return (
+        db.query(Business)
+        .filter(Business.id == business.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
+
+
+def ensure_no_booking_overlap(
+    db: Session,
+    *,
+    business_id: int,
+    staff_business_user_id: int | None,
+    start_datetime: datetime,
+    end_datetime: datetime,
+    exclude_booking_id: int | None = None,
+) -> None:
+    query = db.query(Booking).filter(
+        Booking.business_id == business_id,
+        Booking.staff_business_user_id == staff_business_user_id,
+        Booking.status.in_(("requested", "pending", "confirmed")),
+        Booking.start_datetime < end_datetime,
+        Booking.end_datetime > start_datetime,
+    )
+    if exclude_booking_id is not None:
+        query = query.filter(Booking.id != exclude_booking_id)
+    if db.get_bind().dialect.name == "postgresql":
+        query = query.with_for_update()
+    if query.first() is not None:
+        raise ValueError("slot_unavailable")
+
+
 def get_or_create_customer(
     db: Session,
     *,
@@ -225,6 +263,7 @@ def create_booking_request(
 
     if business is None:
         raise ValueError("business_not_found")
+    business = lock_business_schedule(db, business)
 
     service = resolve_service(db, business_id=business.id, payload=payload)
 
@@ -244,6 +283,13 @@ def create_booking_request(
         service_id=service.id,
         start_datetime=start_datetime,
         staff_business_user_id=payload.staff_business_user_id,
+    )
+    ensure_no_booking_overlap(
+        db,
+        business_id=business.id,
+        staff_business_user_id=selected_staff_id,
+        start_datetime=start_datetime,
+        end_datetime=end_datetime,
     )
 
     customer = get_or_create_customer(
@@ -320,6 +366,15 @@ def reschedule_existing_booking(
     preferred_day_label: str | None = None,
 ) -> Booking:
     begin_serialized_booking_write(db)
+    locked_business = lock_business_schedule(db, booking.business)
+    if db.get_bind().dialect.name == "postgresql":
+        booking = (
+            db.query(Booking)
+            .filter(Booking.id == booking.id)
+            .populate_existing()
+            .with_for_update()
+            .one()
+        )
     if booking.status in {"completed", "rejected", "cancelled", "no_show"}:
         raise ValueError("booking_closed")
 
@@ -344,9 +399,19 @@ def reschedule_existing_booking(
     if duration_minutes is None:
         duration_minutes = 30
 
+    new_end_datetime = new_start_datetime + timedelta(minutes=duration_minutes)
+    ensure_no_booking_overlap(
+        db,
+        business_id=locked_business.id,
+        staff_business_user_id=selected_staff_id,
+        start_datetime=new_start_datetime,
+        end_datetime=new_end_datetime,
+        exclude_booking_id=booking.id,
+    )
+
     booking.duration_minutes = duration_minutes
     booking.start_datetime = new_start_datetime
-    booking.end_datetime = new_start_datetime + timedelta(minutes=duration_minutes)
+    booking.end_datetime = new_end_datetime
     booking.staff_business_user_id = selected_staff_id
     booking.preferred_date = new_start_datetime.date().isoformat()
     booking.preferred_day_label = preferred_day_label

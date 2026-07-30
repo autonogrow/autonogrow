@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -10,7 +10,9 @@ class GoogleIntegration(Base):
     __tablename__ = "google_integrations"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), index=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True
+    )
 
     cluster_name: Mapped[str | None] = mapped_column(String(120))
     gcp_project_id: Mapped[str | None] = mapped_column(String(200))
@@ -24,6 +26,8 @@ class GoogleIntegration(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
 
     business = relationship("Business", back_populates="google_integrations")

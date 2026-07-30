@@ -57,13 +57,15 @@ def claim_outbox_jobs(
             ChannelOutboxMessage.lock_expires_at < current,
         ),
     )
-    rows = (
+    query = (
         db.query(ChannelOutboxMessage)
         .filter(eligible)
         .order_by(ChannelOutboxMessage.available_at, ChannelOutboxMessage.id)
         .limit(limit)
-        .all()
     )
+    if db.get_bind().dialect.name == "postgresql":
+        query = query.with_for_update(skip_locked=True)
+    rows = query.all()
     expires = current + timedelta(seconds=lock_timeout_seconds)
     for row in rows:
         if row.status == "processing":

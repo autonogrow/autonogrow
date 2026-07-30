@@ -104,9 +104,7 @@ def require_business_admin(
 ) -> User:
     if user.is_owner:
         return user
-    membership = get_business_membership(
-        db, business_slug=business_slug, user_id=user.id
-    )
+    membership = get_business_membership(db, business_slug=business_slug, user_id=user.id)
     if membership is None:
         raise HTTPException(status_code=403, detail="You do not have access to this business")
     if membership.role != "business_admin":
@@ -128,9 +126,7 @@ def ensure_can_manage_booking(
 ) -> BusinessUser | None:
     if user.is_owner:
         return None
-    membership = get_business_membership(
-        db, business_slug=business_slug, user_id=user.id
-    )
+    membership = get_business_membership(db, business_slug=business_slug, user_id=user.id)
     if membership is None:
         raise HTTPException(status_code=403, detail="You do not have access to this booking")
     if membership.role == "business_staff" and booking.staff_business_user_id != membership.id:
@@ -149,7 +145,5 @@ def require_booking_business_access(
     business = db.query(Business).filter(Business.id == booking.business_id).first()
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
-    ensure_can_manage_booking(
-        db, business_slug=business.slug, booking=booking, user=user
-    )
+    ensure_can_manage_booking(db, business_slug=business.slug, booking=booking, user=user)
     return user

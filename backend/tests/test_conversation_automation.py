@@ -55,9 +55,7 @@ class ConversationAutomationTest(unittest.TestCase):
     def setUp(self):
         self.public_origin_patcher = patch(
             "app.services.conversation_service.get_settings",
-            return_value=SimpleNamespace(
-                frontend_origin_list=["http://127.0.0.1:5500"]
-            ),
+            return_value=SimpleNamespace(frontend_origin_list=["http://127.0.0.1:5500"]),
         )
         self.public_origin_patcher.start()
         self.engine = create_engine("sqlite:///:memory:")
@@ -208,17 +206,20 @@ class ConversationAutomationTest(unittest.TestCase):
             connection.execute(text("ALTER TABLE conversations DROP COLUMN intent_confidence"))
             connection.execute(text("ALTER TABLE conversations DROP COLUMN matched_patterns_json"))
             connection.execute(text("ALTER TABLE conversations DROP COLUMN automation_mode"))
-            connection.execute(text("ALTER TABLE conversations DROP COLUMN automation_paused_until"))
-            connection.execute(text("ALTER TABLE conversations DROP COLUMN automation_pause_reason"))
-            connection.execute(text("ALTER TABLE conversations DROP COLUMN automation_pause_updated_by"))
-            connection.execute(text("ALTER TABLE conversations DROP COLUMN automation_pause_updated_at"))
             connection.execute(
-                text(
-                    "ALTER TABLE conversation_automation_settings "
-                    "DROP COLUMN human_reply_pause_minutes"
-                )
+                text("ALTER TABLE conversations DROP COLUMN automation_paused_until")
             )
-            for column_name in (
+            connection.execute(
+                text("ALTER TABLE conversations DROP COLUMN automation_pause_reason")
+            )
+            connection.execute(
+                text("ALTER TABLE conversations DROP COLUMN automation_pause_updated_by")
+            )
+            connection.execute(
+                text("ALTER TABLE conversations DROP COLUMN automation_pause_updated_at")
+            )
+            removed_settings_columns = {
+                "human_reply_pause_minutes",
                 "plan_key",
                 "automation_feature_enabled",
                 "instagram_channel_enabled",
@@ -231,20 +232,35 @@ class ConversationAutomationTest(unittest.TestCase):
                 "included_credits_per_period",
                 "included_credits_used",
                 "additional_credits_balance",
-            ):
-                connection.execute(
-                    text(
-                        "ALTER TABLE conversation_automation_settings "
-                        f"DROP COLUMN {column_name}"
-                    )
+            }
+            # Rebuild the simulated legacy table without modern CHECK constraints.
+            # SQLite cannot drop a column while a table-level constraint still
+            # references it, even though that constraint did not exist in the
+            # historical schema represented by this test.
+            legacy_columns = [
+                column["name"]
+                for column in inspect(connection).get_columns("conversation_automation_settings")
+                if column["name"] not in removed_settings_columns
+            ]
+            selected_columns = ", ".join(f'"{name}"' for name in legacy_columns)
+            connection.execute(
+                text(
+                    "CREATE TABLE conversation_automation_settings_legacy AS "
+                    f"SELECT {selected_columns} FROM conversation_automation_settings"
                 )
+            )
+            connection.execute(text("DROP TABLE conversation_automation_settings"))
+            connection.execute(
+                text(
+                    "ALTER TABLE conversation_automation_settings_legacy "
+                    "RENAME TO conversation_automation_settings"
+                )
+            )
 
         run_lightweight_migrations(self.engine)
         run_lightweight_migrations(self.engine)
 
-        columns = {
-            column["name"] for column in inspect(self.engine).get_columns("conversations")
-        }
+        columns = {column["name"] for column in inspect(self.engine).get_columns("conversations")}
         self.assertTrue(
             {
                 "detected_intent",
@@ -260,9 +276,7 @@ class ConversationAutomationTest(unittest.TestCase):
         )
         settings_columns = {
             column["name"]
-            for column in inspect(self.engine).get_columns(
-                "conversation_automation_settings"
-            )
+            for column in inspect(self.engine).get_columns("conversation_automation_settings")
         }
         self.assertIn("human_reply_pause_minutes", settings_columns)
         self.assertTrue(
@@ -279,7 +293,8 @@ class ConversationAutomationTest(unittest.TestCase):
                 "included_credits_per_period",
                 "included_credits_used",
                 "additional_credits_balance",
-            } <= settings_columns
+            }
+            <= settings_columns
         )
         with self.engine.connect() as connection:
             preserved = connection.execute(
@@ -758,9 +773,7 @@ class ConversationAutomationTest(unittest.TestCase):
             actor=self.admin_user,
             db=self.db,
         )
-        booking_rule = next(
-            rule for rule in config["rules"] if rule["intent"] == "booking_intent"
-        )
+        booking_rule = next(rule for rule in config["rules"] if rule["intent"] == "booking_intent")
         updated_rule = admin_update_conversation_automation_rule(
             self.business_a.slug,
             "booking_intent",
@@ -778,9 +791,7 @@ class ConversationAutomationTest(unittest.TestCase):
             db=self.db,
         )
         reloaded_booking_rule = next(
-            rule
-            for rule in reloaded_config["rules"]
-            if rule["intent"] == "booking_intent"
+            rule for rule in reloaded_config["rules"] if rule["intent"] == "booking_intent"
         )
         owner_result = admin_update_conversation_automation_settings(
             self.business_a.slug,
@@ -796,9 +807,7 @@ class ConversationAutomationTest(unittest.TestCase):
 
     def test_frontend_uses_consistent_automatic_mode_value(self):
         admin_js = (
-            Path(__file__).resolve().parents[2]
-            / "autonogrow-admin"
-            / "admin.js"
+            Path(__file__).resolve().parents[2] / "autonogrow-admin" / "admin.js"
         ).read_text(encoding="utf-8")
 
         self.assertIn('<option value="automatic"', admin_js)
@@ -806,7 +815,7 @@ class ConversationAutomationTest(unittest.TestCase):
             'mode: row.querySelector(".conversation-automation-rule-mode").value',
             admin_js,
         )
-        self.assertIn('body.rule?.mode !== payload.mode', admin_js)
+        self.assertIn("body.rule?.mode !== payload.mode", admin_js)
         self.assertIn("conversationAutomationLabel", admin_js)
         self.assertIn("conversation-automation-duration", admin_js)
         self.assertIn("conversation-human-reply-pause", admin_js)
@@ -817,7 +826,9 @@ class ConversationAutomationTest(unittest.TestCase):
         first = self.inbound("reservar", external_user_id="suggestion-use")
         second = self.inbound("quiero una cita", external_user_id="suggestion-dismiss")
         third = self.inbound("tenéis hueco", external_user_id="suggestion-patch-use")
-        suggestions = self.db.query(ConversationSuggestion).order_by(ConversationSuggestion.id).all()
+        suggestions = (
+            self.db.query(ConversationSuggestion).order_by(ConversationSuggestion.id).all()
+        )
         self.assertIs(
             require_business_access(self.business_a.slug, self.staff_user, self.db),
             self.staff_user,

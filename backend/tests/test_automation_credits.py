@@ -54,14 +54,37 @@ class AutomationCreditsTest(unittest.TestCase):
         self.staff = User(email="staff@credits.test")
         self.customer = User(email="customer@credits.test")
         self.db.add_all(
-            [self.business, self.other_business, self.owner, self.admin, self.other_admin, self.staff, self.customer]
+            [
+                self.business,
+                self.other_business,
+                self.owner,
+                self.admin,
+                self.other_admin,
+                self.staff,
+                self.customer,
+            ]
         )
         self.db.flush()
         self.db.add_all(
             [
-                BusinessUser(business_id=self.business.id, user_id=self.admin.id, role="business_admin", active=True),
-                BusinessUser(business_id=self.other_business.id, user_id=self.other_admin.id, role="business_admin", active=True),
-                BusinessUser(business_id=self.business.id, user_id=self.staff.id, role="business_staff", active=True),
+                BusinessUser(
+                    business_id=self.business.id,
+                    user_id=self.admin.id,
+                    role="business_admin",
+                    active=True,
+                ),
+                BusinessUser(
+                    business_id=self.other_business.id,
+                    user_id=self.other_admin.id,
+                    role="business_admin",
+                    active=True,
+                ),
+                BusinessUser(
+                    business_id=self.business.id,
+                    user_id=self.staff.id,
+                    role="business_staff",
+                    active=True,
+                ),
             ]
         )
         self.db.commit()
@@ -160,7 +183,9 @@ class AutomationCreditsTest(unittest.TestCase):
         rule = next(item for item in self.rules if item.intent == "booking_intent")
         rule.mode = "automatic"
         self.db.flush()
-        with patch("app.services.conversation_automation_service.send_outbound_message") as provider:
+        with patch(
+            "app.services.conversation_automation_service.send_outbound_message"
+        ) as provider:
             result = process_inbound_automation(
                 self.db,
                 business=self.business,
@@ -204,7 +229,9 @@ class AutomationCreditsTest(unittest.TestCase):
         rule = next(item for item in self.rules if item.intent == "booking_intent")
         rule.mode = "automatic"
         self.db.flush()
-        with patch("app.services.conversation_automation_service.send_outbound_message") as provider:
+        with patch(
+            "app.services.conversation_automation_service.send_outbound_message"
+        ) as provider:
             result = process_inbound_automation(
                 self.db,
                 business=self.business,
@@ -234,18 +261,18 @@ class AutomationCreditsTest(unittest.TestCase):
         self.assertEqual(result["credits"]["included_credits_used"], 0)
         self.assertEqual(result["credits"]["additional_credits_balance"], 150)
         self.assertEqual(result["credits"]["total_available"], 250)
-        transaction = self.db.query(AutomationCreditTransaction).filter(
-            AutomationCreditTransaction.transaction_type == "period_allowance_granted"
-        ).one()
+        transaction = (
+            self.db.query(AutomationCreditTransaction)
+            .filter(AutomationCreditTransaction.transaction_type == "period_allowance_granted")
+            .one()
+        )
         self.assertEqual(transaction.amount, 100)
         self.assertEqual(transaction.additional_balance_after, 150)
         self.settings.payment_confirmed_at = datetime.now(timezone.utc) - timedelta(minutes=5)
         self.db.commit()
         second = renew_owner_business_automation_period(
             self.business.id,
-            OwnerAutomationPeriodRenewal(
-                reason="Segundo periodo", confirm_active_period=True
-            ),
+            OwnerAutomationPeriodRenewal(reason="Segundo periodo", confirm_active_period=True),
             self.request("/automation-period-renewal"),
             idempotency_key="renew-credits-002",
             actor=self.owner,

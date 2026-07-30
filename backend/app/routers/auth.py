@@ -63,7 +63,9 @@ def serialize_user(db: Session, user: User) -> dict:
 
 
 @router.post("/google")
-def google_login(payload: GoogleLoginRequest, response: Response, request: Request, db: Session = Depends(get_db)):
+def google_login(
+    payload: GoogleLoginRequest, response: Response, request: Request, db: Session = Depends(get_db)
+):
     settings = get_settings()
     if not settings.google_client_id:
         raise HTTPException(status_code=503, detail="GOOGLE_CLIENT_ID no está configurado")
@@ -101,7 +103,9 @@ def google_login(payload: GoogleLoginRequest, response: Response, request: Reque
     elif not user.is_active:
         raise HTTPException(status_code=403, detail="El usuario está desactivado")
     if user.google_sub and user.google_sub != google_sub:
-        raise HTTPException(status_code=409, detail="El usuario ya está vinculado a otra cuenta Google")
+        raise HTTPException(
+            status_code=409, detail="El usuario ya está vinculado a otra cuenta Google"
+        )
 
     user.email = email
     user.google_sub = google_sub
@@ -122,7 +126,14 @@ def google_login(payload: GoogleLoginRequest, response: Response, request: Reque
         samesite="lax",
         path="/",
     )
-    record_audit(db, action="login_success", request=request, actor=user, resource_type="user", resource_id=user.id)
+    record_audit(
+        db,
+        action="login_success",
+        request=request,
+        actor=user,
+        resource_type="user",
+        resource_id=user.id,
+    )
     return {"ok": True, "user": serialize_user(db, user)}
 
 
@@ -157,7 +168,9 @@ def logout(
     db: Session = Depends(get_db),
 ):
     settings = get_settings()
-    record_audit(db, action="logout", request=request, actor=user, resource_type="user", resource_id=user.id)
+    record_audit(
+        db, action="logout", request=request, actor=user, resource_type="user", resource_id=user.id
+    )
     response.delete_cookie(
         SESSION_COOKIE,
         path="/",

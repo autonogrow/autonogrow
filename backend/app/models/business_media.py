@@ -10,7 +10,9 @@ class BusinessGalleryImage(Base):
     __tablename__ = "business_gallery_images"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), index=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True
+    )
     url: Mapped[str] = mapped_column(Text, nullable=False)
     alt_text: Mapped[str | None] = mapped_column(String(240))
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

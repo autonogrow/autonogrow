@@ -1,4 +1,4 @@
-﻿from secrets import compare_digest
+from secrets import compare_digest
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
@@ -34,7 +34,9 @@ def image_signature_matches(content: bytes, content_type: str) -> bool:
     signatures = {
         "image/jpeg": content.startswith(b"\xff\xd8\xff"),
         "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
-        "image/webp": len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP",
+        "image/webp": len(content) >= 12
+        and content.startswith(b"RIFF")
+        and content[8:12] == b"WEBP",
     }
     return signatures.get(content_type, False)
 
@@ -49,11 +51,15 @@ def can_upload_booking_attachments(
     if user is not None and user.is_active:
         if user.is_owner or booking.customer_user_id == user.id:
             return True
-        membership = db.query(BusinessUser).filter(
-            BusinessUser.business_id == booking.business_id,
-            BusinessUser.user_id == user.id,
-            BusinessUser.active.is_(True),
-        ).first()
+        membership = (
+            db.query(BusinessUser)
+            .filter(
+                BusinessUser.business_id == booking.business_id,
+                BusinessUser.user_id == user.id,
+                BusinessUser.active.is_(True),
+            )
+            .first()
+        )
         if membership is not None:
             return membership.role == "business_admin" or (
                 membership.role == "business_staff"
@@ -92,7 +98,9 @@ def get_booking_or_404(db: Session, business_id: int, booking_id: int) -> Bookin
 
 
 def private_attachment_url(business_slug: str, booking_id: int, attachment_id: int) -> str:
-    return f"/api/businesses/{business_slug}/bookings/{booking_id}/attachments/{attachment_id}/content"
+    return (
+        f"/api/businesses/{business_slug}/bookings/{booking_id}/attachments/{attachment_id}/content"
+    )
 
 
 @router.post("")
@@ -149,7 +157,9 @@ async def upload_booking_attachments(
         size_bytes = len(content)
 
         if not image_signature_matches(content, content_type):
-            raise HTTPException(status_code=400, detail=f"Contenido de imagen inválido: {file.filename}")
+            raise HTTPException(
+                status_code=400, detail=f"Contenido de imagen inválido: {file.filename}"
+            )
 
         if size_bytes > MAX_FILE_SIZE_BYTES:
             raise HTTPException(
@@ -215,9 +225,7 @@ def list_booking_attachments(
 ):
     business = get_business_or_404(db, business_slug)
     booking = get_booking_or_404(db, business.id, booking_id)
-    ensure_can_manage_booking(
-        db, business_slug=business_slug, booking=booking, user=actor
-    )
+    ensure_can_manage_booking(db, business_slug=business_slug, booking=booking, user=actor)
 
     attachments = (
         db.query(BookingAttachment)
@@ -257,16 +265,22 @@ def get_booking_attachment_content(
 ):
     business = get_business_or_404(db, business_slug)
     booking = get_booking_or_404(db, business.id, booking_id)
-    if not can_upload_booking_attachments(db, booking=booking, user=current_user, booking_token=booking_token):
+    if not can_upload_booking_attachments(
+        db, booking=booking, user=current_user, booking_token=booking_token
+    ):
         if current_user is None and not booking_token:
             raise HTTPException(status_code=401, detail="Booking attachment authorization required")
         raise HTTPException(status_code=403, detail="You cannot access files for this booking")
 
-    attachment = db.query(BookingAttachment).filter(
-        BookingAttachment.id == attachment_id,
-        BookingAttachment.business_id == business.id,
-        BookingAttachment.booking_id == booking.id,
-    ).first()
+    attachment = (
+        db.query(BookingAttachment)
+        .filter(
+            BookingAttachment.id == attachment_id,
+            BookingAttachment.business_id == business.id,
+            BookingAttachment.booking_id == booking.id,
+        )
+        .first()
+    )
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
 

@@ -118,12 +118,8 @@ def admin_list_business_incidents(
     }
 
 
-def get_conversation_or_404(
-    db: Session, *, business_id: int, conversation_id: int
-):
-    conversation = get_conversation(
-        db, business_id=business_id, conversation_id=conversation_id
-    )
+def get_conversation_or_404(db: Session, *, business_id: int, conversation_id: int):
+    conversation = get_conversation(db, business_id=business_id, conversation_id=conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation
@@ -174,9 +170,7 @@ def admin_get_conversation(
     )
     return {
         "business_slug": business.slug,
-        "conversation": serialize_conversation(
-            db, conversation, include_messages=True
-        ),
+        "conversation": serialize_conversation(db, conversation, include_messages=True),
     }
 
 
@@ -221,9 +215,7 @@ def admin_create_conversation(
     return {
         "ok": True,
         "created": created,
-        "conversation": serialize_conversation(
-            db, conversation, include_messages=True
-        ),
+        "conversation": serialize_conversation(db, conversation, include_messages=True),
     }
 
 
@@ -275,11 +267,7 @@ def admin_send_conversation_message(
     db.refresh(message)
     record_audit(
         db,
-        action=(
-            "conversation_message_sent"
-            if delivery.ok
-            else "conversation_message_failed"
-        ),
+        action=("conversation_message_sent" if delivery.ok else "conversation_message_failed"),
         request=request,
         actor=actor,
         business_id=business.id,
@@ -584,8 +572,7 @@ def admin_get_conversation_automation(
             "limit_reached": serialized_settings["limit_reached"],
         },
         "available_intents": [
-            {"key": intent, "label": INTENT_LABELS[intent]}
-            for intent in AVAILABLE_INTENTS
+            {"key": intent, "label": INTENT_LABELS[intent]} for intent in AVAILABLE_INTENTS
         ],
         "templates": [serialize_template(template, business) for template in templates],
     }
@@ -657,10 +644,9 @@ def admin_update_conversation_automation_settings(
             status_code=403,
             detail="El periodo de automatización está pendiente de renovación",
         )
-    if (
-        updates.get("on_limit_reached") is not None
-        and updates["on_limit_reached"] not in allowed_limit_behaviors(settings)
-    ):
+    if updates.get("on_limit_reached") is not None and updates[
+        "on_limit_reached"
+    ] not in allowed_limit_behaviors(settings):
         raise HTTPException(
             status_code=403,
             detail="Esta opción no está habilitada en el plan del negocio",
@@ -859,9 +845,7 @@ def admin_send_conversation_suggestion(
     record_audit(
         db,
         action=(
-            "conversation_suggestion_sent"
-            if delivery.ok
-            else "conversation_suggestion_failed"
+            "conversation_suggestion_sent" if delivery.ok else "conversation_suggestion_failed"
         ),
         request=request,
         actor=actor,

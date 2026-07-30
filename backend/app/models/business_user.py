@@ -11,7 +11,9 @@ class BusinessUser(Base):
     __table_args__ = (UniqueConstraint("business_id", "user_id", name="uq_business_user"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), index=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     role: Mapped[str] = mapped_column(String(40), default="business_staff", nullable=False)
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
@@ -22,7 +24,9 @@ class BusinessUser(Base):
     avatar_url: Mapped[str | None] = mapped_column(Text)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
 
     business = relationship("Business", back_populates="user_memberships")
     user = relationship("User", back_populates="business_memberships")
@@ -30,7 +34,9 @@ class BusinessUser(Base):
         "BusinessUserAvailability", back_populates="business_user", cascade="all, delete-orphan"
     )
     availability_exceptions = relationship(
-        "BusinessUserAvailabilityException", back_populates="business_user", cascade="all, delete-orphan"
+        "BusinessUserAvailabilityException",
+        back_populates="business_user",
+        cascade="all, delete-orphan",
     )
     assigned_bookings = relationship("Booking", back_populates="staff_business_user")
     services = relationship(

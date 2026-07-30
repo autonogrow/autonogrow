@@ -1,12 +1,15 @@
 import logging
 import sqlite3
 import warnings
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy import Engine, create_engine, event, inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import Settings, get_database_url, get_settings
 
@@ -31,13 +34,57 @@ def create_database_engine(
     settings: Settings | None = None,
     echo: bool = False,
 ) -> Engine:
-    """Create an engine with the SQLite safety policy applied per connection."""
+    """Create exactly one engine using the safety policy for its SQL dialect."""
 
     active_settings = settings or get_settings()
-    if not database_url.startswith("sqlite"):
-        return create_engine(database_url, echo=echo)
+    backend = make_url(database_url).get_backend_name()
+    if backend == "sqlite":
+        return configure_sqlite_engine(database_url, active_settings, echo=echo)
+    if backend == "postgresql":
+        return configure_postgresql_engine(database_url, active_settings, echo=echo)
+    raise ValueError("Only SQLite and PostgreSQL database URLs are supported")
 
-    timeout_seconds = active_settings.sqlite_busy_timeout_ms / 1000
+
+def configure_postgresql_engine(
+    database_url: str,
+    settings: Settings,
+    *,
+    echo: bool = False,
+) -> Engine:
+    session_options = " ".join(
+        (
+            f"-c statement_timeout={settings.database_statement_timeout_ms}",
+            f"-c lock_timeout={settings.database_lock_timeout_ms}",
+            "-c idle_in_transaction_session_timeout="
+            f"{settings.database_idle_transaction_timeout_ms}",
+        )
+    )
+    return create_engine(
+        database_url,
+        echo=echo,
+        isolation_level="READ COMMITTED",
+        pool_pre_ping=True,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=settings.database_pool_timeout_seconds,
+        pool_recycle=settings.database_pool_recycle_seconds,
+        connect_args={
+            "connect_timeout": settings.database_connect_timeout_seconds,
+            "application_name": settings.database_application_name,
+            "options": session_options,
+        },
+    )
+
+
+def configure_sqlite_engine(
+    database_url: str,
+    settings: Settings,
+    *,
+    echo: bool = False,
+) -> Engine:
+    """Create a SQLite engine and install its per-connection PRAGMA policy."""
+
+    timeout_seconds = settings.sqlite_busy_timeout_ms / 1000
     database_engine = create_engine(
         database_url,
         connect_args={
@@ -56,13 +103,13 @@ def create_database_engine(
         cursor = dbapi_connection.cursor()
         try:
             cursor.execute("PRAGMA foreign_keys = ON")
-            cursor.execute(f"PRAGMA busy_timeout = {active_settings.sqlite_busy_timeout_ms}")
+            cursor.execute(f"PRAGMA busy_timeout = {settings.sqlite_busy_timeout_ms}")
             if not memory_database:
-                cursor.execute(f"PRAGMA journal_mode = {active_settings.sqlite_journal_mode}")
+                cursor.execute(f"PRAGMA journal_mode = {settings.sqlite_journal_mode}")
                 actual_mode = str(cursor.fetchone()[0]).upper()
-                if actual_mode != active_settings.sqlite_journal_mode:
+                if actual_mode != settings.sqlite_journal_mode:
                     raise RuntimeError("SQLite no pudo activar el journal_mode configurado")
-            cursor.execute(f"PRAGMA synchronous = {active_settings.sqlite_synchronous}")
+            cursor.execute(f"PRAGMA synchronous = {settings.sqlite_synchronous}")
         finally:
             cursor.close()
 
@@ -78,13 +125,54 @@ SessionLocal = sessionmaker(
 )
 
 
-def get_db():
+def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
 
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
+
+
+@contextmanager
+def session_scope() -> Generator[Session, None, None]:
+    """Own a short transaction and always rollback failures and close the session."""
+
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+transactional_session = session_scope
+
+
+def safe_database_pool_status(database_engine: Engine | None = None) -> dict[str, Any]:
+    """Return non-sensitive, best-effort pool telemetry for the owner status page."""
+
+    active_engine = database_engine or engine
+    result: dict[str, Any] = {"dialect": active_engine.dialect.name}
+    pool = active_engine.pool
+    for public_name, attribute_name in (
+        ("size", "size"),
+        ("checked_out", "checkedout"),
+        ("overflow", "overflow"),
+    ):
+        method = getattr(pool, attribute_name, None)
+        if callable(method):
+            try:
+                result[public_name] = int(method())
+            except (TypeError, ValueError, RuntimeError):
+                result[public_name] = None
+    return result
 
 
 def initialize_database() -> None:

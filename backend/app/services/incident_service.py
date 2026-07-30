@@ -41,6 +41,12 @@ SAFE_DETAIL_KEYS = {
 }
 DEFAULT_CATEGORY_SEVERITIES = {
     "database_unavailable": "critical",
+    "connection_timeout": "high",
+    "deadlock_detected": "medium",
+    "lock_timeout": "medium",
+    "pool_timeout": "high",
+    "serialization_failure": "medium",
+    "database_statement_timeout": "high",
     "tenant_isolation_failure": "critical",
     "security_incident": "critical",
     "backend_unavailable": "critical",
@@ -132,7 +138,9 @@ def classify_provider_error(
         return "instagram_token_revoked", "high"
     if any(marker in normalized_type for marker in ("oauth", "authentication", "invalid_token")):
         return (
-            "instagram_authentication" if normalized_provider == "instagram" else "provider_authentication",
+            "instagram_authentication"
+            if normalized_provider == "instagram"
+            else "provider_authentication",
             "high",
         )
     if timed_out:
@@ -140,9 +148,7 @@ def classify_provider_error(
     return "provider_send_failure", "medium"
 
 
-def enforce_incident_severity(
-    category: str, severity: str, provider_error_code: str | None
-) -> str:
+def enforce_incident_severity(category: str, severity: str, provider_error_code: str | None) -> str:
     minimum = DEFAULT_CATEGORY_SEVERITIES.get(category)
     if provider_error_code == "190":
         minimum = "high"
@@ -154,7 +160,8 @@ def enforce_incident_severity(
 def client_message_for_incident(incident: SystemIncident) -> str:
     message = (
         INSTAGRAM_AUTH_CLIENT_MESSAGE
-        if incident.category in {
+        if incident.category
+        in {
             "provider_authentication",
             "instagram_authentication",
             "instagram_token_expired",
@@ -175,7 +182,9 @@ def _safe_details(incident: SystemIncident) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def serialize_incident(incident: SystemIncident, *, include_safe_details: bool = True) -> dict[str, Any]:
+def serialize_incident(
+    incident: SystemIncident, *, include_safe_details: bool = True
+) -> dict[str, Any]:
     payload = {
         "id": incident.id,
         "incident_id": incident_reference(incident),
@@ -211,21 +220,24 @@ def _incident_email(incident: SystemIncident, *, recovery: bool = False) -> tupl
     business_name = incident.business.name if incident.business else "Sin negocio asociado"
     utc_time = incident.last_occurred_at.replace(tzinfo=timezone.utc)
     local_time = utc_time.astimezone(ZoneInfo("Europe/Madrid"))
-    prefix = "Recuperación" if recovery else (
-        "Fallo de conexión con Instagram"
-        if incident.category in {
-            "provider_authentication",
-            "instagram_authentication",
-            "instagram_token_expired",
-            "instagram_token_revoked",
-            "integration_decryption_failed",
-        }
-        and incident.channel == "instagram"
-        else incident.category.replace("_", " ").capitalize()
+    prefix = (
+        "Recuperación"
+        if recovery
+        else (
+            "Fallo de conexión con Instagram"
+            if incident.category
+            in {
+                "provider_authentication",
+                "instagram_authentication",
+                "instagram_token_expired",
+                "instagram_token_revoked",
+                "integration_decryption_failed",
+            }
+            and incident.channel == "instagram"
+            else incident.category.replace("_", " ").capitalize()
+        )
     )
-    subject = (
-        f"[AutonoGrow][{SEVERITY_LABELS[incident.severity]}] {prefix} — {business_slug}"
-    )
+    subject = f"[AutonoGrow][{SEVERITY_LABELS[incident.severity]}] {prefix} — {business_slug}"
     body = "\n".join(
         (
             f"Incidencia: {incident_reference(incident)}",
@@ -305,9 +317,7 @@ def report_incident(
         raise ValueError("Incident category and operation are required")
     now = occurred_at or datetime.utcnow()
     code = str(provider_error_code)[:80] if provider_error_code is not None else None
-    normalized_severity = enforce_incident_severity(
-        normalized_category, normalized_severity, code
-    )
+    normalized_severity = enforce_incident_severity(normalized_category, normalized_severity, code)
     key = build_incident_key(
         business_id=business_id,
         provider=provider,
@@ -396,12 +406,12 @@ def resolve_related_incidents(
 ) -> list[SystemIncident]:
     now = resolved_at or datetime.utcnow()
     query = db.query(SystemIncident).filter(
-            SystemIncident.business_id == business_id,
-            SystemIncident.channel == channel,
-            SystemIncident.provider == provider,
-            SystemIncident.operation == operation,
-            SystemIncident.status.in_(ACTIVE_STATUSES),
-        )
+        SystemIncident.business_id == business_id,
+        SystemIncident.channel == channel,
+        SystemIncident.provider == provider,
+        SystemIncident.operation == operation,
+        SystemIncident.status.in_(ACTIVE_STATUSES),
+    )
     if integration_id is not None:
         query = query.filter(SystemIncident.integration_id == integration_id)
     rows = query.all()

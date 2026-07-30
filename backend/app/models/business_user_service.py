@@ -9,9 +9,7 @@ from app.core.database import Base
 class BusinessUserService(Base):
     __tablename__ = "business_user_services"
     __table_args__ = (
-        UniqueConstraint(
-            "business_user_id", "service_id", name="uq_business_user_service"
-        ),
+        UniqueConstraint("business_user_id", "service_id", name="uq_business_user_service"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -21,6 +19,4 @@ class BusinessUserService(Base):
     service_id: Mapped[int] = mapped_column(
         ForeignKey("services.id", ondelete="CASCADE"), index=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

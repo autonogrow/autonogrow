@@ -26,7 +26,11 @@ def utc_now() -> datetime:
 def _iso_utc(value: datetime | None) -> str | None:
     if value is None:
         return None
-    normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    normalized = (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
     return normalized.isoformat().replace("+00:00", "Z")
 
 
@@ -38,9 +42,7 @@ def included_credits_remaining(settings: ConversationAutomationSettings) -> int:
 
 
 def total_credits_available(settings: ConversationAutomationSettings) -> int:
-    return included_credits_remaining(settings) + max(
-        int(settings.additional_credits_balance), 0
-    )
+    return included_credits_remaining(settings) + max(int(settings.additional_credits_balance), 0)
 
 
 def validate_credit_balances(settings: ConversationAutomationSettings) -> None:
@@ -111,6 +113,22 @@ def get_credit_transaction_by_idempotency(
     )
 
 
+def lock_credit_wallet(
+    db: Session,
+    settings: ConversationAutomationSettings,
+) -> ConversationAutomationSettings:
+    """Lock one business wallet until the caller commits or rolls back."""
+
+    if settings.id is None:
+        db.flush()
+    query = db.query(ConversationAutomationSettings).filter(
+        ConversationAutomationSettings.id == settings.id
+    )
+    if db.get_bind().dialect.name == "postgresql":
+        query = query.populate_existing().with_for_update()
+    return query.one()
+
+
 def record_credit_transaction(
     db: Session,
     *,
@@ -149,9 +167,7 @@ def record_credit_transaction(
         owner_user_id=owner_user_id,
         idempotency_key=idempotency_key,
         safe_metadata_json=(
-            json.dumps(safe_metadata, ensure_ascii=False, sort_keys=True)
-            if safe_metadata
-            else None
+            json.dumps(safe_metadata, ensure_ascii=False, sort_keys=True) if safe_metadata else None
         ),
         created_at=utc_now(),
     )
@@ -168,6 +184,7 @@ def grant_period_allowance(
     reason: str,
     idempotency_key: str | None,
 ) -> AutomationCreditTransaction:
+    settings = lock_credit_wallet(db, settings)
     old_remaining = included_credits_remaining(settings)
     settings.included_credits_used = 0
     settings.auto_used_current_period = 0
@@ -198,6 +215,7 @@ def purchase_additional_credits(
     owner_user_id: int,
     idempotency_key: str,
 ) -> AutomationCreditTransaction:
+    settings = lock_credit_wallet(db, settings)
     if credits <= 0:
         raise ValueError("Purchased credits must be positive")
     if total_credits_available(settings) + credits > MAX_CREDIT_BALANCE:
@@ -229,6 +247,7 @@ def adjust_credit_balances(
     owner_user_id: int,
     idempotency_key: str,
 ) -> AutomationCreditTransaction:
+    settings = lock_credit_wallet(db, settings)
     old_included_remaining = included_credits_remaining(settings)
     new_included_remaining = old_included_remaining + included_delta
     new_additional = settings.additional_credits_balance + additional_delta
@@ -238,9 +257,7 @@ def adjust_credit_balances(
         raise ValueError("Additional balance adjustment would make it negative")
     if new_included_remaining + new_additional > MAX_CREDIT_BALANCE:
         raise ValueError("Credit balance exceeds the supported maximum")
-    settings.included_credits_used = (
-        settings.included_credits_per_period - new_included_remaining
-    )
+    settings.included_credits_used = settings.included_credits_per_period - new_included_remaining
     settings.additional_credits_balance = new_additional
     settings.updated_at = utc_now()
     return record_credit_transaction(
@@ -269,6 +286,14 @@ def consume_automation_credit(
     )
     if existing is not None:
         return False, existing
+    settings = lock_credit_wallet(db, settings)
+    existing = (
+        db.query(AutomationCreditTransaction)
+        .filter(AutomationCreditTransaction.related_message_id == related_message_id)
+        .first()
+    )
+    if existing is not None:
+        return False, existing
     included_delta = 0
     additional_delta = 0
     if included_credits_remaining(settings) > 0:
@@ -290,5 +315,6 @@ def consume_automation_credit(
         additional_delta=additional_delta,
         reason="Mensaje automático entregado",
         related_message_id=related_message_id,
+        idempotency_key=f"automatic-message:{related_message_id}",
     )
     return True, item

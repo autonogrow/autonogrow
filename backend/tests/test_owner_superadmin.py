@@ -48,7 +48,9 @@ class OwnerSuperadminTest(unittest.TestCase):
         self.staff_user = User(email="staff@superadmin.test", name="Staff")
         self.customer_user = User(email="customer@superadmin.test", name="Customer")
         self.business = Business(slug="owner-business", name="Owner business", status="active")
-        self.other_business = Business(slug="other-business", name="Other business", status="active")
+        self.other_business = Business(
+            slug="other-business", name="Other business", status="active"
+        )
         self.admin = BusinessUser(
             business=self.business,
             user=self.admin_user,
@@ -135,12 +137,8 @@ class OwnerSuperadminTest(unittest.TestCase):
         auth_payload = serialize_user(self.db, self.owner)
         self.assertTrue(auth_payload["is_owner"])
         self.assertEqual(auth_payload["businesses"], [])
-        self.assertIs(
-            require_business_access(self.business.slug, self.owner, self.db), self.owner
-        )
-        self.assertIs(
-            require_business_admin(self.business.slug, self.owner, self.db), self.owner
-        )
+        self.assertIs(require_business_access(self.business.slug, self.owner, self.db), self.owner)
+        self.assertIs(require_business_admin(self.business.slug, self.owner, self.db), self.owner)
 
         settings = get_business_settings(self.business.slug, db=self.db)
         self.assertEqual(settings["name"], "Owner business")
@@ -188,9 +186,7 @@ class OwnerSuperadminTest(unittest.TestCase):
         )
         self.assertEqual(assigned["staff_member"]["service_ids"], [self.service.id])
 
-        bookings = admin_list_bookings(
-            self.business.slug, actor=self.owner, db=self.db
-        )["bookings"]
+        bookings = admin_list_bookings(self.business.slug, actor=self.owner, db=self.db)["bookings"]
         self.assertEqual([item["id"] for item in bookings], [self.booking.id])
         notes = update_booking_internal_notes(
             self.business.slug,
@@ -231,9 +227,7 @@ class OwnerSuperadminTest(unittest.TestCase):
             self.admin_user,
         )
         with self.assertRaises(HTTPException) as wrong_business:
-            require_business_admin(
-                self.other_business.slug, self.admin_user, self.db
-            )
+            require_business_admin(self.other_business.slug, self.admin_user, self.db)
         self.assertEqual(wrong_business.exception.status_code, 403)
 
         self.assertIs(

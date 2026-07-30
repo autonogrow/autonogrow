@@ -193,9 +193,7 @@ class AutomationMovingPeriodTest(unittest.TestCase):
         self.assertEqual(self.settings.period_started_at, old_start.replace(tzinfo=None))
         self.assertEqual(self.settings.period_ends_at, old_end.replace(tzinfo=None))
         self.assertEqual(
-            self.db.query(AuditLog)
-            .filter(AuditLog.action == "automation_period_expired")
-            .count(),
+            self.db.query(AuditLog).filter(AuditLog.action == "automation_period_expired").count(),
             1,
         )
 
@@ -287,9 +285,7 @@ class AutomationMovingPeriodTest(unittest.TestCase):
         self.assertEqual(result["settings"]["auto_used_current_period"], 9)
         self.assertEqual(self.settings.payment_confirmed_at, payment_at)
         self.assertEqual(
-            self.db.query(AuditLog)
-            .filter(AuditLog.action == "automation_period_adjusted")
-            .count(),
+            self.db.query(AuditLog).filter(AuditLog.action == "automation_period_adjusted").count(),
             1,
         )
         with self.assertRaises(ValidationError):
@@ -322,7 +318,9 @@ class AutomationMovingPeriodTest(unittest.TestCase):
         }
         run_lightweight_migrations(self.engine)
         self.db.expire_all()
-        first_start = self.db.get(ConversationAutomationSettings, self.settings.id).period_started_at
+        first_start = self.db.get(
+            ConversationAutomationSettings, self.settings.id
+        ).period_started_at
         run_lightweight_migrations(self.engine)
         self.db.expire_all()
         migrated = self.db.get(ConversationAutomationSettings, self.settings.id)
@@ -335,9 +333,11 @@ class AutomationMovingPeriodTest(unittest.TestCase):
         self.assertEqual(migrated.period_started_at, first_start)
         self.assertIsNone(migrated.payment_confirmed_at)
         self.assertEqual(migrated.additional_credits_balance, 0)
-        opening = self.db.query(AutomationCreditTransaction).filter(
-            AutomationCreditTransaction.transaction_type == "migration_opening_balance"
-        ).one()
+        opening = (
+            self.db.query(AutomationCreditTransaction)
+            .filter(AutomationCreditTransaction.transaction_type == "migration_opening_balance")
+            .one()
+        )
         self.assertEqual(opening.additional_balance_after, 0)
 
     def test_frontends_separate_payment_from_admin_period_view(self):

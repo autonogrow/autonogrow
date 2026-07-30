@@ -59,11 +59,17 @@ def apply_retention(output_dir: Path, keep: int) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Backup consistente de SQLite y uploads de AutonoGrow")
-    parser.add_argument("--database", type=Path, help="Ruta SQLite; por defecto usa DATABASE_URL/config")
+    parser = argparse.ArgumentParser(
+        description="Backup consistente de SQLite y uploads de AutonoGrow"
+    )
+    parser.add_argument(
+        "--database", type=Path, help="Ruta SQLite; por defecto usa DATABASE_URL/config"
+    )
     parser.add_argument("--uploads", type=Path, help="Ruta de uploads; por defecto usa config")
     parser.add_argument("--output-dir", type=Path, default=REPO_ROOT / "backups")
-    parser.add_argument("--keep", type=int, default=14, help="Número de juegos recientes que conservar")
+    parser.add_argument(
+        "--keep", type=int, default=14, help="Número de juegos recientes que conservar"
+    )
     args = parser.parse_args()
     if args.keep < 1:
         parser.error("--keep debe ser al menos 1")

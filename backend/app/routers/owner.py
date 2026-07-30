@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.config import get_settings
-from app.core.database import get_db
+from app.core.database import get_db, safe_database_pool_status
 from app.core.security import require_owner
 from app.models import (
     AuditLog,
@@ -89,6 +89,7 @@ from app.services.instagram_integration_service import (
     INSTAGRAM_PROVIDER,
     evaluate_integration_expiration,
     get_instagram_integration,
+    lock_instagram_integration,
     mask_external_account_id,
     replace_integration_credentials,
     report_integration_incident,
@@ -1125,7 +1126,10 @@ def reconnect_owner_business_instagram_integration(
             status_code=409, detail="Reconnect cannot move an integration to another account"
         )
     access_token = payload.access_token.get_secret_value()
+    # Meta verification is deliberately outside the database transaction.
+    db.commit()
     verification = verify_instagram_access_token(payload.external_account_id, access_token)
+    integration = lock_instagram_integration(db, integration)
     if not verification.ok:
         report_integration_incident(
             db,
@@ -1227,6 +1231,7 @@ def disconnect_owner_business_instagram_integration(
     integration = get_instagram_integration(db, business_id=business_id)
     if integration is None:
         raise HTTPException(status_code=404, detail="Instagram integration not found")
+    integration = lock_instagram_integration(db, integration)
     old_status = integration.integration_status
     now = utc_now()
     integration.integration_status = "disconnected"
@@ -1274,6 +1279,7 @@ def delete_owner_business_instagram_credentials(
     integration = get_instagram_integration(db, business_id=business_id)
     if integration is None:
         raise HTTPException(status_code=404, detail="Instagram integration not found")
+    integration = lock_instagram_integration(db, integration)
     old_status = integration.integration_status
     now = utc_now()
     integration.encrypted_access_token = None
@@ -1819,6 +1825,23 @@ QUEUE_INCIDENT_CATEGORIES = {
     "worker_database_locked",
     "integration_unavailable",
     "provider_rate_limited",
+    "database_unavailable",
+    "deadlock_detected",
+    "lock_timeout",
+    "pool_timeout",
+    "serialization_failure",
+    "database_statement_timeout",
+}
+
+DATABASE_INCIDENT_CATEGORIES = {
+    "connection_timeout",
+    "deadlock_detected",
+    "lock_timeout",
+    "pool_timeout",
+    "serialization_failure",
+    "database_statement_timeout",
+    "database_unavailable",
+    "worker_database_locked",
 }
 
 
@@ -1848,10 +1871,33 @@ def _safe_queue_job(job_type: str, row: WebhookInboxEvent | ChannelOutboxMessage
     }
 
 
+def _safe_worker(row: WorkerHeartbeat, *, stale_after_seconds: int) -> dict:
+    return {
+        "worker": f"worker-{row.id}",
+        "worker_type": row.worker_type,
+        "status": row.status,
+        "stale": heartbeat_is_stale(row, stale_after_seconds=stale_after_seconds),
+        "current_job_type": row.current_job_type,
+        "current_job_id": row.current_job_id,
+        "last_heartbeat": row.last_seen_at.isoformat(),
+        "started_at": row.started_at.isoformat(),
+        "version": row.version,
+    }
+
+
 @router.get("/system/queue-status")
 def get_queue_status(db: Session = Depends(get_db)):
     settings = get_settings()
-    heartbeat = db.query(WorkerHeartbeat).order_by(WorkerHeartbeat.last_seen_at.desc()).first()
+    heartbeats = (
+        db.query(WorkerHeartbeat).order_by(WorkerHeartbeat.last_seen_at.desc()).limit(100).all()
+    )
+    heartbeat = heartbeats[0] if heartbeats else None
+    safe_workers = [
+        _safe_worker(row, stale_after_seconds=settings.worker_stale_after_seconds)
+        for row in heartbeats
+    ]
+    active_worker_count = sum(not item["stale"] for item in safe_workers)
+    stale_worker_count = sum(item["stale"] for item in safe_workers)
     inbox_counts = _status_counts(db, WebhookInboxEvent)
     outbox_counts = _status_counts(db, ChannelOutboxMessage)
     oldest_values = [
@@ -1879,6 +1925,13 @@ def get_queue_status(db: Session = Depends(get_db)):
         .limit(10)
         .all()
     )
+    database_incident_counts = {
+        category: count
+        for category, count in db.query(SystemIncident.category, func.count(SystemIncident.id))
+        .filter(SystemIncident.category.in_(DATABASE_INCIDENT_CATEGORIES))
+        .group_by(SystemIncident.category)
+        .all()
+    }
     jobs: list[dict] = []
     for row in (
         db.query(WebhookInboxEvent)
@@ -1900,6 +1953,13 @@ def get_queue_status(db: Session = Depends(get_db)):
         ),
         "last_heartbeat": heartbeat.last_seen_at.isoformat() if heartbeat else None,
         "worker_status": heartbeat.status if heartbeat else "unavailable",
+        "active_worker_count": active_worker_count,
+        "stale_worker_count": stale_worker_count,
+        "workers": safe_workers,
+        "database": {
+            **safe_database_pool_status(db.get_bind()),
+            "recent_incident_counts": database_incident_counts,
+        },
         "pending_inbox": inbox_counts.get("pending", 0),
         "retry_inbox": inbox_counts.get("retry", 0),
         "dead_letter_inbox": inbox_counts.get("dead_letter", 0),

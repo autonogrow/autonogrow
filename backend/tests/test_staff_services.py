@@ -93,12 +93,8 @@ class StaffServicesTest(unittest.TestCase):
         )
         self.assertEqual(response["staff_member"]["service_ids"], [self.service_2.id])
 
-        first = list_public_staff(
-            self.business.slug, service_id=self.service_1.id, db=self.db
-        )
-        second = list_public_staff(
-            self.business.slug, service_id=self.service_2.id, db=self.db
-        )
+        first = list_public_staff(self.business.slug, service_id=self.service_1.id, db=self.db)
+        second = list_public_staff(self.business.slug, service_id=self.service_2.id, db=self.db)
         self.assertEqual(first["staff"], [])
         self.assertEqual([item["id"] for item in second["staff"]], [self.staff.id])
 

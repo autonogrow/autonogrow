@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  backend:
+  sqlite:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -110,3 +110,53 @@ jobs:
 
       - name: Confirm persistent queue tables
         run: python -c "from sqlalchemy import create_engine,inspect; from app.core.config import get_database_url; assert {'webhook_inbox_events','channel_outbox_messages','worker_heartbeats'} <= set(inspect(create_engine(get_database_url())).get_table_names())"
+
+  postgresql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.10-alpine
+        env:
+          POSTGRES_DB: autonogrow_test
+          POSTGRES_USER: autonogrow
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U autonogrow -d autonogrow_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      APP_ENV: test
+      PYTHONPATH: backend
+      DATABASE_URL: postgresql+psycopg://autonogrow:ci-only-password@127.0.0.1:5432/autonogrow_test
+      POSTGRES_TEST_DATABASE_URL: postgresql+psycopg://autonogrow:ci-only-password@127.0.0.1:5432/autonogrow_test
+      DATABASE_APPLICATION_NAME: autonogrow-ci
+      WORKER_CONCURRENCY_MODE: multi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install locked development dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Migrate PostgreSQL to head
+        run: alembic upgrade head
+
+      - name: Validate PostgreSQL downgrade and upgrade
+        run: |
+          alembic current
+          alembic downgrade 20260730_03
+          alembic upgrade head
+          python scripts/manage_migrations.py validate
+
+      - name: PostgreSQL concurrency and migration tests
+        run: pytest -m postgresql

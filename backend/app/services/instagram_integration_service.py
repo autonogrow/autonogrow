@@ -41,7 +41,11 @@ def utc_now() -> datetime:
 def as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
 
 
 def mask_external_account_id(value: str | None) -> str | None:
@@ -67,6 +71,19 @@ def get_instagram_integration(
         )
         .first()
     )
+
+
+def lock_instagram_integration(
+    db: Session,
+    integration: BusinessChannelIntegration,
+) -> BusinessChannelIntegration:
+    query = db.query(BusinessChannelIntegration).filter(
+        BusinessChannelIntegration.id == integration.id,
+        BusinessChannelIntegration.business_id == integration.business_id,
+    )
+    if db.get_bind().dialect.name == "postgresql":
+        query = query.populate_existing().with_for_update()
+    return query.one()
 
 
 def integration_expiration_state(
@@ -98,9 +115,7 @@ def serialize_instagram_integration(
         "business_id": integration.business_id,
         "channel": integration.channel,
         "provider": integration.provider,
-        "external_account_id_masked": mask_external_account_id(
-            integration.external_account_id
-        ),
+        "external_account_id_masked": mask_external_account_id(integration.external_account_id),
         "external_account_name": integration.external_account_name,
         "integration_status": "expired" if expired else integration.integration_status,
         "connected_at": integration.connected_at,
@@ -133,7 +148,10 @@ def serialize_admin_integration_status(
     if integration is None or integration.integration_status == "disconnected":
         state = "disconnected"
         message = "Instagram no está conectado."
-    elif integration.integration_status == "connected" and not integration_expiration_state(integration)[0]:
+    elif (
+        integration.integration_status == "connected"
+        and not integration_expiration_state(integration)[0]
+    ):
         state = "connected"
         message = "Instagram conectado."
     else:
@@ -207,9 +225,7 @@ def evaluate_integration_expiration(
             metadata={
                 "business_id": integration.business_id,
                 "integration_id": integration.id,
-                "external_account_id": mask_external_account_id(
-                    integration.external_account_id
-                ),
+                "external_account_id": mask_external_account_id(integration.external_account_id),
                 "old_status": old_status,
                 "new_status": "expired",
                 "safe_code": "integration_expired",
@@ -265,11 +281,21 @@ def send_business_instagram_message(
             "disconnected": "integration_disconnected",
             "revoked": "integration_revoked",
         }.get(integration.integration_status, "integration_unavailable")
-        return ProviderSendResult("failed", error_message="Instagram integration is unavailable", error_code=code), integration
+        return ProviderSendResult(
+            "failed", error_message="Instagram integration is unavailable", error_code=code
+        ), integration
     if evaluate_integration_expiration(db, integration):
-        return ProviderSendResult("failed", error_message="Instagram integration has expired", error_code="integration_expired"), integration
+        return ProviderSendResult(
+            "failed",
+            error_message="Instagram integration has expired",
+            error_code="integration_expired",
+        ), integration
     if not integration.encrypted_access_token or not integration.encryption_key_version:
-        return ProviderSendResult("failed", error_message="Instagram integration has no credentials", error_code="integration_not_configured"), integration
+        return ProviderSendResult(
+            "failed",
+            error_message="Instagram integration has no credentials",
+            error_code="integration_not_configured",
+        ), integration
     try:
         access_token = decrypt_secret(
             integration.encrypted_access_token,
@@ -290,14 +316,35 @@ def send_business_instagram_message(
             error_code="integration_decryption_failed",
             safe_details={"integration_status": "error"},
         )
-        return ProviderSendResult("failed", error_message="Instagram integration credentials are unavailable", error_code="integration_decryption_failed"), integration
+        return ProviderSendResult(
+            "failed",
+            error_message="Instagram integration credentials are unavailable",
+            error_code="integration_decryption_failed",
+        ), integration
+    credential_snapshot = (
+        integration.encrypted_access_token,
+        integration.encryption_key_version,
+        integration.token_last_refreshed_at,
+    )
+    external_account_id = integration.external_account_id
+    if db.in_transaction():
+        db.commit()
     result = send_instagram_text_message(
         recipient_id,
         text,
         access_token=access_token,
-        external_account_id=integration.external_account_id,
+        external_account_id=external_account_id,
         settings=settings,
     )
+    integration = lock_instagram_integration(db, integration)
+    current_credentials = (
+        integration.encrypted_access_token,
+        integration.encryption_key_version,
+        integration.token_last_refreshed_at,
+    )
+    if current_credentials != credential_snapshot:
+        logger.info("stale_integration_send_result_ignored integration_id=%s", integration.id)
+        return result, integration
     now = utc_now()
     if result.ok:
         integration.integration_status = "connected"
@@ -352,6 +399,11 @@ def verify_instagram_integration(
     settings: Settings | None = None,
 ) -> InstagramVerificationResult:
     settings = settings or get_settings()
+    credential_snapshot = (
+        integration.encrypted_access_token,
+        integration.encryption_key_version,
+        integration.token_last_refreshed_at,
+    )
     if evaluate_integration_expiration(db, integration):
         return InstagramVerificationResult(
             ok=False,
@@ -362,7 +414,11 @@ def verify_instagram_integration(
     token = access_token
     if token is None:
         if not integration.encrypted_access_token or not integration.encryption_key_version:
-            return InstagramVerificationResult(ok=False, error_message="Integration credentials are unavailable", error_code="integration_not_configured")
+            return InstagramVerificationResult(
+                ok=False,
+                error_message="Integration credentials are unavailable",
+                error_code="integration_not_configured",
+            )
         try:
             token = decrypt_secret(
                 integration.encrypted_access_token,
@@ -382,12 +438,28 @@ def verify_instagram_integration(
                 operation="verify_integration",
                 error_code="integration_decryption_failed",
             )
-            return InstagramVerificationResult(ok=False, error_message="Integration credentials are unavailable", error_code="integration_decryption_failed")
-    result = verify_instagram_access_token(
-        integration.external_account_id,
-        token,
-        settings=settings,
+            return InstagramVerificationResult(
+                ok=False,
+                error_message="Integration credentials are unavailable",
+                error_code="integration_decryption_failed",
+            )
+    external_account_id = integration.external_account_id
+    # Provider I/O must not hold a database transaction or a PostgreSQL row lock.
+    if db.in_transaction():
+        db.commit()
+    result = verify_instagram_access_token(external_account_id, token, settings=settings)
+    integration = lock_instagram_integration(db, integration)
+    current_credentials = (
+        integration.encrypted_access_token,
+        integration.encryption_key_version,
+        integration.token_last_refreshed_at,
     )
+    if current_credentials != credential_snapshot:
+        logger.info(
+            "stale_integration_verification_ignored integration_id=%s",
+            integration.id,
+        )
+        return result
     now = utc_now()
     old_status = integration.integration_status
     integration.last_verified_at = now
@@ -420,7 +492,9 @@ def verify_instagram_integration(
         integration.last_error_subcode = result.error_subcode
         integration.last_error_type = result.error_type
         integration.safe_error_message = result.error_message
-        category = f"instagram_token_{oauth_status}" if oauth_status else "instagram_verification_failed"
+        category = (
+            f"instagram_token_{oauth_status}" if oauth_status else "instagram_verification_failed"
+        )
         report_integration_incident(
             db,
             integration=integration,
@@ -490,7 +564,9 @@ def validate_persisted_integration_secrets(
     for integration in rows:
         version = integration.encryption_key_version
         if not version or version not in configuration.keys:
-            raise IntegrationCryptoError("A stored integration uses an unavailable encryption key version")
+            raise IntegrationCryptoError(
+                "A stored integration uses an unavailable encryption key version"
+            )
         decrypt_secret(
             integration.encrypted_access_token or "",
             version,
@@ -524,7 +600,9 @@ def migrate_global_instagram_integration(
     )
     if existing is not None:
         if existing.business_id != business.id:
-            raise IntegrationCryptoError("Legacy Instagram account already belongs to another business")
+            raise IntegrationCryptoError(
+                "Legacy Instagram account already belongs to another business"
+            )
         logger.warning(
             "Deprecated global Instagram configuration detected; database integration already exists"
         )

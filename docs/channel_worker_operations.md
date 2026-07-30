@@ -1,5 +1,10 @@
 # Operación del channel worker
 
+PostgreSQL admite `WORKER_CONCURRENCY_MODE=multi`: cada proceso reclama filas con `FOR UPDATE SKIP
+LOCKED`, confirma la reclamación y procesa después. SQLite exige `single`. El panel owner muestra
+workers activos/stale y trabajo actual sin hostname. Dimensionar el pool sumando todos los procesos;
+empezar con un worker en staging.
+
 Arranque local: `cd backend && python -m app.workers.channel_worker`.
 
 En un despliegue futuro:

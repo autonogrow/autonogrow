@@ -92,3 +92,38 @@ de producción. Los detalles operativos de IG-S1 están en `pending_final_valida
 | IG-S1-38 | Conversaciones | Historial sobrevive desconexión | Staging | Conversaciones históricas | Crítico | No | Sí | Pendiente | — | Sí | Sprint 1 |
 | IG-S1-39 | Multiempresa | Dos negocios y cuentas distintas | Staging | Dos cuentas reales | Crítico | No | Sí | Pendiente | — | Sí | Sprint 1 |
 | IG-S1-40 | Multiempresa | Aislamiento completo de cuentas, datos y créditos | Staging | Resultado IG-S1-39 | Crítico | No | Sí | Pendiente | — | Sí | Sprint 1 |
+
+## PostgreSQL — matriz de aceptación manual
+
+| ID | Área | Validación | Entorno | Estado |
+|---|---|---|---|---|
+| PG-S3-01 | Instalación | PostgreSQL instalado | Staging | Pendiente |
+| PG-S3-02 | Instalación | Usuario y base creados | Staging | Pendiente |
+| PG-S3-03 | Seguridad | Permisos mínimos | Staging | Pendiente |
+| PG-S3-04 | Transporte | TLS o socket validado | Staging | Pendiente |
+| PG-S3-05 | Backup | Snapshot SQLite real | Staging | Pendiente |
+| PG-S3-06 | Integridad | SQLite íntegro | Staging | Pendiente |
+| PG-S3-07 | Migración | Alembic PostgreSQL en head | Staging | Pendiente |
+| PG-S3-08 | Migración | Datos reales migrados | Staging | Pendiente |
+| PG-S3-09 | Datos | Recuentos iguales | Staging | Pendiente |
+| PG-S3-10 | Cifrado | Ciphertext conservado | Staging | Pendiente |
+| PG-S3-11 | Créditos | Saldos y ledger válidos | Staging | Pendiente |
+| PG-S3-12 | Reservas | Reservas conservadas | Staging | Pendiente |
+| PG-S3-13 | Mensajes | Mensajes conservados | Staging | Pendiente |
+| PG-S3-14 | Secuencias | Próximos IDs válidos | Staging | Pendiente |
+| PG-S3-15 | Backend | FastAPI arranca | Staging | Pendiente |
+| PG-S3-16 | Worker | Worker arranca | Staging | Pendiente |
+| PG-S3-17 | Webhook | Inbound real | Staging | Pendiente |
+| PG-S3-18 | Envío | Outbound real | Staging | Pendiente |
+| PG-S3-19 | Concurrencia | Reserva simultánea | Staging | Pendiente |
+| PG-S3-20 | Worker | Reinicio y recuperación | Staging | Pendiente |
+| PG-S3-21 | Pool | Carga prevista | Staging | Pendiente |
+| PG-S3-22 | Errores | Lock timeout controlado | Staging | Pendiente |
+| PG-S3-23 | Backup | pg_dump verificado | Staging | Pendiente |
+| PG-S3-24 | Restore | pg_restore aislado | Aislado | Pendiente |
+| PG-S3-25 | Rollback | Retorno pretráfico | Aislado | Pendiente |
+| PG-S3-26 | Decisión | Punto de no retorno firmado | Staging | Pendiente |
+| PG-S3-27 | Multiempresa | Dos negocios aislados | Staging | Pendiente |
+| PG-S3-28 | Observación | Varias horas sin bloqueantes | Staging | Pendiente |
+| PG-S3-29 | Corte | SQLite deja de ser operativo | Staging | Pendiente |
+| PG-S3-30 | Retención | SQLite histórico conservado | Staging | Pendiente |

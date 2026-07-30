@@ -101,13 +101,15 @@ def claim_inbox_jobs(
         and_(WebhookInboxEvent.status == "retry", WebhookInboxEvent.next_retry_at <= current),
         and_(WebhookInboxEvent.status == "processing", WebhookInboxEvent.lock_expires_at < current),
     )
-    rows = (
+    query = (
         db.query(WebhookInboxEvent)
         .filter(eligible)
         .order_by(WebhookInboxEvent.available_at, WebhookInboxEvent.id)
         .limit(limit)
-        .all()
     )
+    if db.get_bind().dialect.name == "postgresql":
+        query = query.with_for_update(skip_locked=True)
+    rows = query.all()
     expires = current + timedelta(seconds=lock_timeout_seconds)
     for row in rows:
         if row.status == "processing":

@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 from app.core.database import SessionLocal, create_db_and_tables
 from app.models import (
@@ -208,9 +208,30 @@ BUSINESSES = [
 ]
 
 DEMO_BRANDING_DEFAULTS = {
-    "demo-manicura": {"theme_key": "rose_beauty", "template_key": "beauty", "primary_color": "#be123c", "secondary_color": "#831843", "accent_color": "#f9a8d4", "background_color": "#fff1f2"},
-    "demo-barberia": {"theme_key": "amber_barber", "template_key": "urban", "primary_color": "#92400e", "secondary_color": "#451a03", "accent_color": "#fbbf24", "background_color": "#fffbeb"},
-    "demo-taller": {"theme_key": "slate_gold", "template_key": "minimal", "primary_color": "#334155", "secondary_color": "#0f172a", "accent_color": "#f59e0b", "background_color": "#f8fafc"},
+    "demo-manicura": {
+        "theme_key": "rose_beauty",
+        "template_key": "beauty",
+        "primary_color": "#be123c",
+        "secondary_color": "#831843",
+        "accent_color": "#f9a8d4",
+        "background_color": "#fff1f2",
+    },
+    "demo-barberia": {
+        "theme_key": "amber_barber",
+        "template_key": "urban",
+        "primary_color": "#92400e",
+        "secondary_color": "#451a03",
+        "accent_color": "#fbbf24",
+        "background_color": "#fffbeb",
+    },
+    "demo-taller": {
+        "theme_key": "slate_gold",
+        "template_key": "minimal",
+        "primary_color": "#334155",
+        "secondary_color": "#0f172a",
+        "accent_color": "#f59e0b",
+        "background_color": "#f8fafc",
+    },
 }
 
 
@@ -231,7 +252,9 @@ def upsert_business(db, data: dict) -> Business:
             if key == "slug":
                 continue
             current_value = getattr(business, key)
-            if current_value is None or (isinstance(current_value, str) and not current_value.strip()):
+            if current_value is None or (
+                isinstance(current_value, str) and not current_value.strip()
+            ):
                 setattr(business, key, value)
         db.flush()
 
@@ -240,9 +263,7 @@ def upsert_business(db, data: dict) -> Business:
 
 def upsert_services(db, business: Business, services: list[dict]) -> None:
     existing_services = (
-        db.query(BusinessService)
-        .filter(BusinessService.business_id == business.id)
-        .all()
+        db.query(BusinessService).filter(BusinessService.business_id == business.id).all()
     )
 
     if existing_services:
@@ -278,8 +299,7 @@ def upsert_weekly_availability(db, business: Business, weekly_schedule: dict) ->
 
 def upsert_availability_settings(db, business: Business, settings_data: dict) -> None:
     weekly_schedule = {
-        str(weekday): windows
-        for weekday, windows in settings_data["weekly_schedule"].items()
+        str(weekday): windows for weekday, windows in settings_data["weekly_schedule"].items()
     }
     existing_settings = (
         db.query(AvailabilitySettings)
@@ -301,16 +321,14 @@ def upsert_availability_settings(db, business: Business, settings_data: dict) ->
     else:
         for key, value in values.items():
             current_value = getattr(existing_settings, key)
-            if current_value is None or (isinstance(current_value, str) and not current_value.strip()):
+            if current_value is None or (
+                isinstance(current_value, str) and not current_value.strip()
+            ):
                 setattr(existing_settings, key, value)
 
 
 def cleanup_demo_test_data(db) -> None:
-    test_customers = (
-        db.query(Customer)
-        .filter(Customer.name.in_(TEST_CUSTOMER_NAMES))
-        .all()
-    )
+    test_customers = db.query(Customer).filter(Customer.name.in_(TEST_CUSTOMER_NAMES)).all()
     test_customer_ids = [customer.id for customer in test_customers]
 
     test_bookings_query = db.query(Booking).filter(Booking.source == "manual-test")
@@ -328,18 +346,16 @@ def cleanup_demo_test_data(db) -> None:
     }
 
     if test_booking_ids:
-        db.query(MessageOutbox).filter(
-            MessageOutbox.booking_id.in_(test_booking_ids)
-        ).delete(synchronize_session=False)
+        db.query(MessageOutbox).filter(MessageOutbox.booking_id.in_(test_booking_ids)).delete(
+            synchronize_session=False
+        )
         db.query(ReviewRequest).filter(ReviewRequest.booking_id.in_(test_booking_ids)).delete(
             synchronize_session=False
         )
         db.query(SyncJob).filter(SyncJob.booking_id.in_(test_booking_ids)).delete(
             synchronize_session=False
         )
-        db.query(Booking).filter(Booking.id.in_(test_booking_ids)).delete(
-            synchronize_session=False
-        )
+        db.query(Booking).filter(Booking.id.in_(test_booking_ids)).delete(synchronize_session=False)
 
     if candidate_customer_ids:
         customers_with_bookings = {
@@ -357,13 +373,13 @@ def cleanup_demo_test_data(db) -> None:
             synchronize_session=False
         )
 
-    db.query(MessageOutbox).filter(
-        MessageOutbox.customer_name.in_(TEST_CUSTOMER_NAMES)
-    ).delete(synchronize_session=False)
+    db.query(MessageOutbox).filter(MessageOutbox.customer_name.in_(TEST_CUSTOMER_NAMES)).delete(
+        synchronize_session=False
+    )
 
-    db.query(AvailabilityException).filter(
-        AvailabilityException.reason.like("Prueba%")
-    ).delete(synchronize_session=False)
+    db.query(AvailabilityException).filter(AvailabilityException.reason.like("Prueba%")).delete(
+        synchronize_session=False
+    )
 
 
 def seed() -> None:

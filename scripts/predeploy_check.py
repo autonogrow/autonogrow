@@ -90,6 +90,12 @@ def check_required_files(reporter: Reporter) -> None:
         "docs/webhook_inbox.md",
         "docs/channel_outbox.md",
         "docs/queue_incident_recovery.md",
+        "docs/postgresql_architecture.md",
+        "docs/sqlite_to_postgresql_migration.md",
+        "docs/postgresql_operations.md",
+        "docs/postgresql_backup_restore.md",
+        "docs/database_concurrency.md",
+        "docs/postgresql_rollback.md",
         "alembic.ini",
         "alembic/env.py",
         "alembic/script.py.mako",
@@ -106,6 +112,8 @@ def check_required_files(reporter: Reporter) -> None:
         "scripts/rotate_integration_encryption.py",
         "scripts/smoke_test_staging.py",
         "scripts/cleanup_queue_history.py",
+        "scripts/migrate_sqlite_to_postgresql.py",
+        "deploy/docker-compose.postgresql.yml",
     ]
     for relative in required:
         if (ROOT / relative).is_file():
@@ -119,7 +127,11 @@ def check_deploy_templates(reporter: Reporter) -> None:
         "deploy/backend.env.example": (
             "APP_ENV=production",
             "COOKIE_SECURE=true",
-            "DATABASE_URL=sqlite:////var/lib/autonogrow/data/autonogrow.db",
+            "DATABASE_URL=postgresql+psycopg://",
+            "ALLOW_SQLITE_IN_PRODUCTION=false",
+            "DATABASE_POOL_SIZE=5",
+            "DATABASE_STATEMENT_TIMEOUT_MS=30000",
+            "WORKER_CONCURRENCY_MODE=single",
             "DATABASE_MIGRATION_CHECK=true",
             "ENABLE_LEGACY_STARTUP_MIGRATIONS=false",
             "SQLITE_BUSY_TIMEOUT_MS=5000",
@@ -138,7 +150,11 @@ def check_deploy_templates(reporter: Reporter) -> None:
         "deploy/staging.backend.env.example": (
             "APP_ENV=production",
             "FRONTEND_ORIGINS=https://staging.example.com",
-            "DATABASE_URL=sqlite:////var/lib/autonogrow-staging/data/autonogrow.db",
+            "DATABASE_URL=postgresql+psycopg://",
+            "ALLOW_SQLITE_IN_PRODUCTION=false",
+            "DATABASE_POOL_SIZE=5",
+            "DATABASE_STATEMENT_TIMEOUT_MS=30000",
+            "WORKER_CONCURRENCY_MODE=single",
             "DATABASE_MIGRATION_CHECK=true",
             "ENABLE_LEGACY_STARTUP_MIGRATIONS=false",
             "SQLITE_BUSY_TIMEOUT_MS=5000",
@@ -269,6 +285,12 @@ def check_dependency_locks(reporter: Reporter) -> None:
         else:
             reporter.passed(f"{relative} contiene solo versiones exactas")
 
+    production_lock = (ROOT / "backend/requirements.txt").read_text(encoding="utf-8-sig")
+    if "psycopg==3.3.4" in production_lock and "psycopg-binary==3.3.4" in production_lock:
+        reporter.passed("psycopg 3 y su distribución binary están fijados")
+    else:
+        reporter.fail("El lock de producción no contiene psycopg 3 binary fijado")
+
 
 def check_alembic(reporter: Reporter) -> None:
     try:
@@ -282,8 +304,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260730_03":
-            reporter.fail("La head esperada para colas es 20260730_03")
+        if heads[0] != "20260730_04":
+            reporter.fail("La head esperada para PostgreSQL es 20260730_04")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 
@@ -312,7 +334,7 @@ def check_database_revision(reporter: Reporter, config_module) -> None:
 
 def check_tracked_secrets(reporter: Reporter) -> None:
     assignment = re.compile(
-        r"(?im)^[ \t]*(session_secret|smtp_password|meta_app_secret|"
+        r"(?im)^[ \t]*(session_secret|smtp_password|meta_app_secret|database_url|"
         r"integration_encryption_keys_json)[ \t]*=[ \t]*([^\s#]+)"
     )
     allowed_markers = (
@@ -325,6 +347,7 @@ def check_tracked_secrets(reporter: Reporter) -> None:
         "clave_",
         "aleatorio",
         "server-vault",
+        "redacted",
         "<",
     )
     findings: list[str] = []
@@ -340,6 +363,8 @@ def check_tracked_secrets(reporter: Reporter) -> None:
             if path.suffix.lower() == ".py" and not raw_value.startswith(('"', "'")):
                 continue
             value = raw_value.strip("\"'").lower()
+            if match.group(1).lower() == "database_url" and value.startswith("sqlite:"):
+                continue
             if value and not any(marker in value for marker in allowed_markers):
                 findings.append(str(path.relative_to(ROOT)))
     if findings:
@@ -359,7 +384,7 @@ def production_baseline() -> dict[str, object]:
         "session_secret": "9f2d1e7a4c6b8a0d3e5f7a9c1b2d4e6f",
         "google_client_id": "1234567890-abcdef.apps.googleusercontent.com",
         "owner_allowed_emails": "owner@autonogrow.test",
-        "database_url": "sqlite:////var/lib/autonogrow/data/autonogrow.db",
+        "database_url": "postgresql+psycopg://autonogrow:test-only@localhost/autonogrow",
         "uploads_dir": "/var/lib/autonogrow/uploads",
         "upload_max_size_mb": 5,
         "instagram_provider_enabled": False,
@@ -521,6 +546,47 @@ def check_persistent_queue_contract(reporter: Reporter) -> None:
         reporter.fail("Faltan pruebas manuales pendientes de colas")
 
 
+def check_postgresql_contract(reporter: Reporter) -> None:
+    required_settings = {
+        "ALLOW_SQLITE_IN_PRODUCTION",
+        "DATABASE_POOL_SIZE",
+        "DATABASE_MAX_OVERFLOW",
+        "DATABASE_POOL_TIMEOUT_SECONDS",
+        "DATABASE_POOL_RECYCLE_SECONDS",
+        "DATABASE_CONNECT_TIMEOUT_SECONDS",
+        "DATABASE_STATEMENT_TIMEOUT_MS",
+        "DATABASE_LOCK_TIMEOUT_MS",
+        "DATABASE_IDLE_TRANSACTION_TIMEOUT_MS",
+        "DATABASE_APPLICATION_NAME",
+        "WORKER_CONCURRENCY_MODE",
+    }
+    examples = "\n".join(
+        (ROOT / relative).read_text(encoding="utf-8-sig")
+        for relative in (
+            "backend/.env.example",
+            "deploy/backend.env.example",
+            "deploy/staging.backend.env.example",
+        )
+    )
+    if all(name in examples for name in required_settings):
+        reporter.passed("Pool, timeouts y concurrencia PostgreSQL están documentados")
+    else:
+        reporter.fail("Faltan variables PostgreSQL en las plantillas")
+
+    workflow = (ROOT / ".github/workflows/backend-ci.yml").read_text(encoding="utf-8-sig")
+    if "postgres:16.10-alpine" in workflow and "pytest -m postgresql" in workflow:
+        reporter.passed("CI contiene servicio y tests PostgreSQL reales")
+    else:
+        reporter.fail("CI PostgreSQL está incompleta")
+
+    pending = (ROOT / "docs/pending_final_validation.md").read_text(encoding="utf-8-sig")
+    rows = [line for line in pending.splitlines() if line.startswith("| PG-S3-")]
+    if len(rows) == 30 and all("Pendiente" in row for row in rows):
+        reporter.passed("Las 30 validaciones manuales PostgreSQL siguen pendientes")
+    else:
+        reporter.fail("La matriz PostgreSQL debe contener 30 pruebas pendientes")
+
+
 def main() -> int:
     reporter = Reporter()
     check_required_files(reporter)
@@ -530,6 +596,7 @@ def main() -> int:
     check_dependency_locks(reporter)
     check_alembic(reporter)
     check_persistent_queue_contract(reporter)
+    check_postgresql_contract(reporter)
     check_tracked_secrets(reporter)
     Settings = check_application(reporter)
     if Settings is not None:

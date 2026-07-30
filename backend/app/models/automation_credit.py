@@ -1,7 +1,17 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -27,6 +37,27 @@ class AutomationCreditTransaction(Base):
             "ix_automation_credit_business_created",
             "business_id",
             "created_at",
+        ),
+        CheckConstraint(
+            "amount >= 0 OR transaction_type IN ('manual_adjustment','correction')",
+            name="ck_automation_credit_amount_nonnegative",
+        ),
+        CheckConstraint(
+            "included_balance_after >= 0",
+            name="ck_automation_credit_included_balance_nonnegative",
+        ),
+        CheckConstraint(
+            "additional_balance_after >= 0",
+            name="ck_automation_credit_additional_balance_nonnegative",
+        ),
+        CheckConstraint(
+            "total_balance_after >= 0 AND "
+            "total_balance_after = included_balance_after + additional_balance_after",
+            name="ck_automation_credit_total_balance",
+        ),
+        CheckConstraint(
+            "payment_amount IS NULL OR payment_amount >= 0",
+            name="ck_automation_credit_payment_nonnegative",
         ),
     )
 

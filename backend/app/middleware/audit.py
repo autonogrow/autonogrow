@@ -16,7 +16,12 @@ class FailedAccessAuditMiddleware(BaseHTTPMiddleware):
                 action="failed_access_403",
                 request=request,
                 actor=getattr(request.state, "current_user", None),
-                metadata={"method": request.method, "scope": request.url.path.split("/")[2] if len(request.url.path.split("/")) > 2 else "api"},
+                metadata={
+                    "method": request.method,
+                    "scope": request.url.path.split("/")[2]
+                    if len(request.url.path.split("/")) > 2
+                    else "api",
+                },
             )
         except Exception:
             db.rollback()

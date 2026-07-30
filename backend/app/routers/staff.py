@@ -32,6 +32,7 @@ from app.services.availability_service import (
     parse_windows_from_json,
     serialize_public_staff,
 )
+from app.services.booking_service import lock_business_schedule
 
 public_router = APIRouter(prefix="/api/businesses/{business_slug}/staff", tags=["staff"])
 admin_router = APIRouter(
@@ -125,9 +126,7 @@ def get_business_or_404(db: Session, business_slug: str, *, public: bool = False
     return business
 
 
-def get_member_or_404(
-    db: Session, *, business_id: int, business_user_id: int
-) -> BusinessUser:
+def get_member_or_404(db: Session, *, business_id: int, business_user_id: int) -> BusinessUser:
     member = (
         db.query(BusinessUser)
         .filter(
@@ -181,9 +180,7 @@ def get_booking_start(booking: Booking) -> datetime | None:
     if not booking.preferred_date or not booking.preferred_time:
         return None
     try:
-        return datetime.fromisoformat(
-            f"{booking.preferred_date}T{booking.preferred_time}"
-        )
+        return datetime.fromisoformat(f"{booking.preferred_date}T{booking.preferred_time}")
     except ValueError:
         return None
 
@@ -204,9 +201,7 @@ def get_staff_removal_blockers(
     blockers = []
     for booking in candidates:
         starts_at = get_booking_start(booking)
-        if booking.status in BLOCKING_BOOKING_STATUSES or bool(
-            starts_at and starts_at > now
-        ):
+        if booking.status in BLOCKING_BOOKING_STATUSES or bool(starts_at and starts_at > now):
             blockers.append(booking)
     return sorted(
         blockers,
@@ -247,7 +242,9 @@ def validate_windows(windows: list[dict[str, str]]) -> list[dict[str, str]]:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Hours must use HH:MM") from exc
         if start >= end:
-            raise HTTPException(status_code=422, detail="Each availability window must end after it starts")
+            raise HTTPException(
+                status_code=422, detail="Each availability window must end after it starts"
+            )
         parsed.append((start, end, window))
     parsed.sort(key=lambda item: item[0])
     for previous, current in zip(parsed, parsed[1:]):
@@ -337,9 +334,7 @@ def get_my_staff_availability(
     if actor.is_owner:
         raise HTTPException(status_code=400, detail="Owner does not have a staff schedule")
     business = get_business_or_404(db, business_slug)
-    member = get_business_membership(
-        db, business_slug=business_slug, user_id=actor.id
-    )
+    member = get_business_membership(db, business_slug=business_slug, user_id=actor.id)
     if member is None:
         raise HTTPException(status_code=403, detail="You do not have access to this business")
     return member_schedule(db, business, member)
@@ -392,8 +387,13 @@ def create_staff(
     db.commit()
     db.refresh(member)
     record_audit(
-        db, action="user_reactivated" if is_reactivation else "user_assigned_to_business", request=request, actor=actor,
-        business_id=business.id, resource_type="business_user", resource_id=member.id,
+        db,
+        action="user_reactivated" if is_reactivation else "user_assigned_to_business",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_user",
+        resource_id=member.id,
         metadata={"role": member.role, "bookable": member.bookable},
     )
     return {"ok": True, "staff_member": serialize_member(member)}
@@ -409,9 +409,7 @@ def update_staff(
     db: Session = Depends(get_db),
 ):
     business = get_business_or_404(db, business_slug)
-    member = get_member_or_404(
-        db, business_id=business.id, business_user_id=business_user_id
-    )
+    member = get_member_or_404(db, business_id=business.id, business_user_id=business_user_id)
     updates = payload.model_dump(exclude_unset=True)
     is_reactivation = not member.active and updates.get("active") is True
     if member.removed_at is not None and updates.get("active") is not True:
@@ -451,8 +449,13 @@ def update_staff(
     db.commit()
     db.refresh(member)
     record_audit(
-        db, action="user_reactivated" if is_reactivation else "user_role_changed", request=request, actor=actor,
-        business_id=business.id, resource_type="business_user", resource_id=member.id,
+        db,
+        action="user_reactivated" if is_reactivation else "user_role_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_user",
+        resource_id=member.id,
         metadata={"role": member.role, "active": member.active, "bookable": member.bookable},
     )
     return {"ok": True, "staff_member": serialize_member(member)}
@@ -468,18 +471,12 @@ def update_staff_services(
     db: Session = Depends(get_db),
 ):
     business = get_business_or_404(db, business_slug)
-    actor_membership = get_business_membership(
-        db, business_slug=business_slug, user_id=actor.id
-    )
+    actor_membership = get_business_membership(db, business_slug=business_slug, user_id=actor.id)
     if not actor.is_owner and (
         actor_membership is None or actor_membership.role != "business_admin"
     ):
-        raise HTTPException(
-            status_code=403, detail="Business administrator access required"
-        )
-    member = get_member_or_404(
-        db, business_id=business.id, business_user_id=business_user_id
-    )
+        raise HTTPException(status_code=403, detail="Business administrator access required")
+    member = get_member_or_404(db, business_id=business.id, business_user_id=business_user_id)
     if not member.active or member.removed_at is not None:
         raise HTTPException(status_code=409, detail="Staff member is inactive")
     if not member.bookable:
@@ -532,19 +529,13 @@ def remove_staff(
     db: Session = Depends(get_db),
 ):
     business = get_business_or_404(db, business_slug)
-    actor_membership = get_business_membership(
-        db, business_slug=business_slug, user_id=actor.id
-    )
+    actor_membership = get_business_membership(db, business_slug=business_slug, user_id=actor.id)
     if not actor.is_owner and (
         actor_membership is None or actor_membership.role != "business_admin"
     ):
-        raise HTTPException(
-            status_code=403, detail="Business administrator access required"
-        )
+        raise HTTPException(status_code=403, detail="Business administrator access required")
 
-    member = get_member_or_404(
-        db, business_id=business.id, business_user_id=business_user_id
-    )
+    member = get_member_or_404(db, business_id=business.id, business_user_id=business_user_id)
 
     if member.role == "business_admin" and member.active:
         active_admin_count = (
@@ -565,9 +556,7 @@ def remove_staff(
                 },
             )
 
-    blockers = get_staff_removal_blockers(
-        db, business_id=business.id, business_user_id=member.id
-    )
+    blockers = get_staff_removal_blockers(db, business_id=business.id, business_user_id=member.id)
     if blockers:
         return JSONResponse(
             status_code=409,
@@ -606,9 +595,7 @@ def get_staff_availability(
     business_slug: str, business_user_id: int, db: Session = Depends(get_db)
 ):
     business = get_business_or_404(db, business_slug)
-    member = get_member_or_404(
-        db, business_id=business.id, business_user_id=business_user_id
-    )
+    member = get_member_or_404(db, business_id=business.id, business_user_id=business_user_id)
     return member_schedule(db, business, member)
 
 
@@ -621,14 +608,10 @@ def update_staff_availability(
     actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
-    business = get_business_or_404(db, business_slug)
-    member = get_member_or_404(
-        db, business_id=business.id, business_user_id=business_user_id
-    )
+    business = lock_business_schedule(db, get_business_or_404(db, business_slug))
+    member = get_member_or_404(db, business_id=business.id, business_user_id=business_user_id)
     schedule = normalize_weekly_schedule(payload.weekly_schedule)
-    schedule = {
-        str(weekday): validate_windows(schedule[str(weekday)]) for weekday in range(7)
-    }
+    schedule = {str(weekday): validate_windows(schedule[str(weekday)]) for weekday in range(7)}
     for weekday in range(7):
         row = (
             db.query(BusinessUserAvailability)
@@ -647,8 +630,13 @@ def update_staff_availability(
         row.active = True
     db.commit()
     record_audit(
-        db, action="settings_changed", request=request, actor=actor,
-        business_id=business.id, resource_type="business_user_availability", resource_id=member.id,
+        db,
+        action="settings_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_user_availability",
+        resource_id=member.id,
     )
     return {"ok": True, "availability": member_schedule(db, business, member)}
 
@@ -662,10 +650,8 @@ def create_staff_exception(
     actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
-    business = get_business_or_404(db, business_slug)
-    member = get_member_or_404(
-        db, business_id=business.id, business_user_id=business_user_id
-    )
+    business = lock_business_schedule(db, get_business_or_404(db, business_slug))
+    member = get_member_or_404(db, business_id=business.id, business_user_id=business_user_id)
     if payload.type == "custom_hours" and not payload.windows:
         raise HTTPException(status_code=400, detail="Custom hours require windows")
     windows_json = (
@@ -683,8 +669,11 @@ def create_staff_exception(
     )
     if item is None:
         item = BusinessUserAvailabilityException(
-            business_user_id=member.id, date=payload.date, type=payload.type,
-            windows_json=windows_json, reason=payload.reason,
+            business_user_id=member.id,
+            date=payload.date,
+            type=payload.type,
+            windows_json=windows_json,
+            reason=payload.reason,
         )
         db.add(item)
     else:
@@ -694,8 +683,13 @@ def create_staff_exception(
     db.commit()
     db.refresh(item)
     record_audit(
-        db, action="settings_changed", request=request, actor=actor,
-        business_id=business.id, resource_type="business_user_availability_exception", resource_id=item.id,
+        db,
+        action="settings_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_user_availability_exception",
+        resource_id=item.id,
     )
     return {"ok": True, "exception": serialize_staff_exception(item)}
 
@@ -709,10 +703,8 @@ def delete_staff_exception(
     actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
-    business = get_business_or_404(db, business_slug)
-    member = get_member_or_404(
-        db, business_id=business.id, business_user_id=business_user_id
-    )
+    business = lock_business_schedule(db, get_business_or_404(db, business_slug))
+    member = get_member_or_404(db, business_id=business.id, business_user_id=business_user_id)
     item = (
         db.query(BusinessUserAvailabilityException)
         .filter(
@@ -726,7 +718,12 @@ def delete_staff_exception(
     db.delete(item)
     db.commit()
     record_audit(
-        db, action="settings_changed", request=request, actor=actor,
-        business_id=business.id, resource_type="business_user_availability_exception", resource_id=exception_id,
+        db,
+        action="settings_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business_user_availability_exception",
+        resource_id=exception_id,
     )
     return {"ok": True}

@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -6,7 +6,11 @@ from app.core.security import require_business_admin
 from app.models import Business, Customer
 from app.schemas.customer import CustomerOut
 
-router = APIRouter(prefix="/api/admin/businesses/{business_slug}/customers", tags=["customers"], dependencies=[Depends(require_business_admin)])
+router = APIRouter(
+    prefix="/api/admin/businesses/{business_slug}/customers",
+    tags=["customers"],
+    dependencies=[Depends(require_business_admin)],
+)
 
 
 @router.get("", response_model=list[CustomerOut])

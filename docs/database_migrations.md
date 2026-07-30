@@ -1,6 +1,8 @@
 # Migraciones de base de datos
 
-La revisión de colas es `20260730_03` y depende de `20260730_02`. Crea inbox, outbox y heartbeat. El despliegue futuro ejecutará `alembic upgrade head` con backend y worker detenidos; el rollback es `alembic downgrade 20260730_02`.
+La head actual es `20260730_04` y depende de `20260730_03`. Añade checks de créditos y reservas e
+índices para comprobar solapamientos. Funciona en SQLite y PostgreSQL. Su ciclo técnico es `upgrade
+head`, `downgrade 20260730_03`, `upgrade head`, siempre con backend y worker detenidos.
 
 Alembic es la fuente oficial del esquema. La metadata se registra de forma explícita en
 `backend/app/models/registry.py`; `alembic/env.py` carga ese registro y obtiene la URL mediante
@@ -12,6 +14,8 @@ Alembic es la fuente oficial del esquema. La metadata se registra de forma expl�
   sobre una base heredada. Su downgrade aborta porque eliminar el esquema completo perdería datos.
 - `20260730_02`: añade el índice técnico reversible
   `ix_conversation_messages_timeline`. Es la head inicial del sistema oficial.
+- `20260730_03`: crea inbox, outbox y heartbeat persistentes.
+- `20260730_04`: añade constraints e índices para concurrencia PostgreSQL.
 
 Solo debe existir una head. Comprobar con `alembic heads` y `alembic history`.
 
@@ -74,10 +78,10 @@ staging real.
 
 ## Rollback técnico
 
-`20260730_02` puede revertirse, con servicio detenido y backup:
+`20260730_04` puede revertirse hasta `20260730_03`, con servicio detenido y backup:
 
 ```bash
-alembic downgrade -1
+alembic downgrade 20260730_03
 alembic current
 ```
 

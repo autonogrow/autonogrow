@@ -107,9 +107,7 @@ class AutomationPermissionsTest(unittest.TestCase):
         )
 
     def test_business_admin_can_read_limit_and_usage(self):
-        result = admin_get_conversation_automation(
-            self.business.slug, actor=self.admin, db=self.db
-        )
+        result = admin_get_conversation_automation(self.business.slug, actor=self.admin, db=self.db)
         self.assertEqual(result["settings"]["auto_limit_per_period"], 250)
         self.assertEqual(result["settings"]["auto_used_current_period"], 25)
         self.assertEqual(result["usage"]["used"], 25)
@@ -173,9 +171,7 @@ class AutomationPermissionsTest(unittest.TestCase):
         self.assertEqual(denied.exception.status_code, 403)
 
     def test_admin_staff_customer_and_cross_tenant_permissions(self):
-        self.assertIs(
-            require_business_admin(self.business.slug, self.admin, self.db), self.admin
-        )
+        self.assertIs(require_business_admin(self.business.slug, self.admin, self.db), self.admin)
         for user, slug in (
             (self.admin, self.other_business.slug),
             (self.staff, self.business.slug),
@@ -185,9 +181,7 @@ class AutomationPermissionsTest(unittest.TestCase):
                 require_business_admin(slug, user, self.db)
             self.assertEqual(denied.exception.status_code, 403)
         with self.assertRaises(HTTPException):
-            admin_get_conversation_automation(
-                self.business.slug, actor=self.staff, db=self.db
-            )
+            admin_get_conversation_automation(self.business.slug, actor=self.staff, db=self.db)
 
     def test_owner_changes_limit_plan_and_entitlements_with_audit(self):
         result = update_owner_business_automation_settings(
@@ -215,9 +209,7 @@ class AutomationPermissionsTest(unittest.TestCase):
         }
         self.assertIn("business_plan_changed", actions)
         self.assertIn("automation_limit_changed", actions)
-        audit = self.db.query(AuditLog).filter(
-            AuditLog.action == "automation_limit_changed"
-        ).one()
+        audit = self.db.query(AuditLog).filter(AuditLog.action == "automation_limit_changed").one()
         metadata = json.loads(audit.metadata_json)
         self.assertEqual(metadata["old_value"], 250)
         self.assertEqual(metadata["new_value"], 500)
@@ -226,9 +218,7 @@ class AutomationPermissionsTest(unittest.TestCase):
     def test_owner_adjusts_usage_and_renews_period_with_required_reason(self):
         adjusted = adjust_owner_business_automation_usage(
             self.business.id,
-            OwnerAutomationUsageAdjustment(
-                new_usage=40, reason="Corrección de conciliación"
-            ),
+            OwnerAutomationUsageAdjustment(new_usage=40, reason="Corrección de conciliación"),
             self.request("POST"),
             actor=self.owner,
             db=self.db,
@@ -236,9 +226,7 @@ class AutomationPermissionsTest(unittest.TestCase):
         self.assertEqual(adjusted["settings"]["auto_used_current_period"], 40)
         renewed = renew_owner_business_automation_period(
             self.business.id,
-            OwnerAutomationPeriodRenewal(
-                reason="Pago conciliado", confirm_active_period=True
-            ),
+            OwnerAutomationPeriodRenewal(reason="Pago conciliado", confirm_active_period=True),
             self.request("POST"),
             idempotency_key="permissions-renewal-1",
             actor=self.owner,
@@ -323,7 +311,7 @@ class AutomationPermissionsTest(unittest.TestCase):
         self.assertNotIn('id="conversation-automation-limit"', admin_js)
         self.assertNotIn("monthly_auto_limit: Number", admin_js)
         self.assertIn("El límite de mensajes forma parte de tu plan", admin_js)
-        self.assertIn('data-owner-automation-limit', owner_js)
+        self.assertIn("data-owner-automation-limit", owner_js)
         self.assertIn('data-owner-automation-action="adjust-credits"', owner_js)
         self.assertNotIn("Reinicio previsto", admin_js)
         self.assertNotIn("contacta con soporte", admin_js)

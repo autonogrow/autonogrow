@@ -93,6 +93,7 @@ class BusinessAutomationSettingsUpdate(BaseModel):
         if value is not None and value not in {"semi_automatic", "disabled"}:
             raise ValueError("Invalid limit mode")
         return value
+
     @field_validator("human_reply_pause_minutes")
     @classmethod
     def validate_human_pause(cls, value: int | None) -> int | None:

@@ -1,8 +1,10 @@
 # Runbook de despliegue VPS
 
-El worker se instala en el futuro desde `deploy/autonogrow-worker.service`. Tras migrar, arrancar primero backend y luego `sudo systemctl start autonogrow-worker`; para rollback detener worker antes de bajar a `20260730_02`.
+El worker se instala desde `deploy/autonogrow-worker.service`. Tras migrar, arrancar primero backend y
+luego worker. Para rollback detener primero el worker y seguir `docs/postgresql_rollback.md`.
 
-Este runbook prepara un despliegue inicial de un solo worker con SQLite. Sustituir `app.example.com`, IPs y rutas indicadas antes de ejecutar. Probar primero en un VPS de staging o snapshot recuperable.
+Este runbook prepara un despliegue inicial de un solo worker con PostgreSQL. Sustituir dominios, IPs
+y rutas antes de ejecutar. La migración, backup y retorno se detallan en la documentación PostgreSQL.
 
 ## 1. Preparación local
 
@@ -96,7 +98,9 @@ sudoedit /etc/autonogrow/backend.env
 Reemplazar dominio, secret, Google client id y owners. Generar `SESSION_SECRET` con un generador criptográfico y no pegarlo en tickets/logs. Mantener:
 
 ```env
-DATABASE_URL=sqlite:////var/lib/autonogrow/data/autonogrow.db
+DATABASE_URL=postgresql+psycopg://autonogrow:REDACTED@127.0.0.1:5432/autonogrow
+ALLOW_SQLITE_IN_PRODUCTION=false
+WORKER_CONCURRENCY_MODE=single
 UPLOADS_DIR=/var/lib/autonogrow/uploads
 ```
 

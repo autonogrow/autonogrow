@@ -39,7 +39,9 @@ def record_audit(
         resource_id=str(resource_id) if resource_id is not None else None,
         ip_hash=_hash(request.client.host if request and request.client else None),
         user_agent_hash=_hash(request.headers.get("user-agent") if request else None),
-        metadata_json=json.dumps(safe_metadata, ensure_ascii=False, sort_keys=True) if safe_metadata else None,
+        metadata_json=json.dumps(safe_metadata, ensure_ascii=False, sort_keys=True)
+        if safe_metadata
+        else None,
     )
     db.add(item)
     if commit:

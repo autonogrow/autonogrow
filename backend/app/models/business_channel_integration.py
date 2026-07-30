@@ -80,9 +80,7 @@ class BusinessChannelIntegration(Base):
     last_error_type: Mapped[str | None] = mapped_column(String(120))
     safe_error_message: Mapped[str | None] = mapped_column(String(500))
     metadata_json: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )

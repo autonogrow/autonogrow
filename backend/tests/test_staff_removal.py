@@ -79,9 +79,7 @@ class StaffRemovalTest(unittest.TestCase):
         return booking
 
     def test_future_booking_returns_structured_conflict(self):
-        booking = self.add_booking(
-            status="confirmed", starts_at=datetime.now() + timedelta(days=2)
-        )
+        booking = self.add_booking(status="confirmed", starts_at=datetime.now() + timedelta(days=2))
 
         response = remove_staff(
             self.business.slug,
@@ -112,9 +110,7 @@ class StaffRemovalTest(unittest.TestCase):
         self.assertTrue(self.staff.active)
 
     def test_terminal_history_is_preserved_after_soft_delete(self):
-        booking = self.add_booking(
-            status="completed", starts_at=datetime.now() - timedelta(days=2)
-        )
+        booking = self.add_booking(status="completed", starts_at=datetime.now() - timedelta(days=2))
 
         response = remove_staff(
             self.business.slug,
@@ -131,9 +127,7 @@ class StaffRemovalTest(unittest.TestCase):
         self.assertFalse(self.staff.show_schedule)
         self.assertIsNotNone(self.staff.removed_at)
         self.assertEqual(get_public_bookable_staff(self.db, self.business.id), [])
-        self.assertEqual(
-            serialize_booking(booking)["staff_display_name"], "Profesional historico"
-        )
+        self.assertEqual(serialize_booking(booking)["staff_display_name"], "Profesional historico")
         with self.assertRaises(HTTPException) as denied:
             require_business_access(self.business.slug, self.staff_user, self.db)
         self.assertEqual(denied.exception.status_code, 403)

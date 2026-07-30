@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 REPO_DIR = BACKEND_DIR.parent
@@ -44,11 +45,41 @@ def uploads_path_looks_public(value: str) -> bool:
     return any(part.startswith("autonogrow-") for part in parts)
 
 
+def sanitize_database_url(database_url: str) -> str:
+    """Return a log-safe database label without credentials or query parameters."""
+
+    value = database_url.strip()
+    if not value:
+        return "<not-configured>"
+    try:
+        url = make_url(value)
+    except (TypeError, ValueError):
+        return "<invalid-database-url>"
+    if url.get_backend_name() == "sqlite":
+        return "sqlite:///:memory:" if url.database == ":memory:" else "sqlite:///<local-file>"
+    safe_url = url.set(
+        username="***" if url.username else None, password="***" if url.password else None
+    )
+    return safe_url.difference_update_query(tuple(safe_url.query)).render_as_string(
+        hide_password=False
+    )
+
+
 class Settings(BaseSettings):
     app_name: str = "AutonoGrow Backend"
     app_version: str = "0.1.0"
     environment: str = "development"
     database_url: str = ""
+    allow_sqlite_in_production: bool = False
+    database_pool_size: int = 5
+    database_max_overflow: int = 5
+    database_pool_timeout_seconds: int = 30
+    database_pool_recycle_seconds: int = 1800
+    database_connect_timeout_seconds: int = 10
+    database_statement_timeout_ms: int = 30000
+    database_lock_timeout_ms: int = 5000
+    database_idle_transaction_timeout_ms: int = 30000
+    database_application_name: str = "autonogrow"
     google_client_id: str = ""
     session_secret: str = ""
     owner_allowed_emails: str = ""
@@ -90,6 +121,7 @@ class Settings(BaseSettings):
     sqlite_synchronous: str = "NORMAL"
     webhook_max_payload_bytes: int = 1_048_576
     worker_enabled: bool = True
+    worker_concurrency_mode: str = "single"
     worker_id: str = ""
     worker_poll_interval_seconds: float = 1.0
     worker_batch_size: int = 10
@@ -116,12 +148,47 @@ class Settings(BaseSettings):
             raise ValueError("APP_ENV debe ser local, test, staging o production")
         self.sqlite_journal_mode = self.sqlite_journal_mode.strip().upper()
         self.sqlite_synchronous = self.sqlite_synchronous.strip().upper()
+        self.worker_concurrency_mode = self.worker_concurrency_mode.strip().lower()
+        self.database_application_name = self.database_application_name.strip()
         if self.sqlite_busy_timeout_ms < 1 or self.sqlite_busy_timeout_ms > 60000:
             raise ValueError("SQLITE_BUSY_TIMEOUT_MS debe estar entre 1 y 60000")
         if self.sqlite_journal_mode not in {"DELETE", "TRUNCATE", "PERSIST", "WAL"}:
             raise ValueError("SQLITE_JOURNAL_MODE debe ser DELETE, TRUNCATE, PERSIST o WAL")
         if self.sqlite_synchronous not in {"OFF", "NORMAL", "FULL", "EXTRA"}:
             raise ValueError("SQLITE_SYNCHRONOUS debe ser OFF, NORMAL, FULL o EXTRA")
+        database_ranges = (
+            ("DATABASE_POOL_SIZE", self.database_pool_size, 1, 50),
+            ("DATABASE_MAX_OVERFLOW", self.database_max_overflow, 0, 100),
+            ("DATABASE_POOL_TIMEOUT_SECONDS", self.database_pool_timeout_seconds, 1, 300),
+            ("DATABASE_POOL_RECYCLE_SECONDS", self.database_pool_recycle_seconds, 30, 86400),
+            ("DATABASE_CONNECT_TIMEOUT_SECONDS", self.database_connect_timeout_seconds, 1, 60),
+            ("DATABASE_STATEMENT_TIMEOUT_MS", self.database_statement_timeout_ms, 100, 600000),
+            ("DATABASE_LOCK_TIMEOUT_MS", self.database_lock_timeout_ms, 100, 600000),
+            (
+                "DATABASE_IDLE_TRANSACTION_TIMEOUT_MS",
+                self.database_idle_transaction_timeout_ms,
+                100,
+                600000,
+            ),
+        )
+        for name, value, minimum, maximum in database_ranges:
+            if not minimum <= value <= maximum:
+                raise ValueError(f"{name} debe estar entre {minimum} y {maximum}")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", self.database_application_name):
+            raise ValueError("DATABASE_APPLICATION_NAME no es válido")
+        if self.worker_concurrency_mode not in {"single", "multi"}:
+            raise ValueError("WORKER_CONCURRENCY_MODE debe ser single o multi")
+        configured_url = self.database_url.strip()
+        try:
+            database_backend = (
+                make_url(configured_url).get_backend_name() if configured_url else "sqlite"
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("DATABASE_URL debe ser una URL de conexión válida") from exc
+        if database_backend not in {"sqlite", "postgresql"}:
+            raise ValueError("DATABASE_URL debe utilizar SQLite o PostgreSQL")
+        if database_backend == "sqlite" and self.worker_concurrency_mode == "multi":
+            raise ValueError("SQLite solo permite WORKER_CONCURRENCY_MODE=single")
         if not 1024 <= self.webhook_max_payload_bytes <= 10_485_760:
             raise ValueError("WEBHOOK_MAX_PAYLOAD_BYTES debe estar entre 1024 y 10485760")
         if not 0.1 <= self.worker_poll_interval_seconds <= 60:
@@ -211,12 +278,16 @@ class Settings(BaseSettings):
             ):
                 errors.append("FRONTEND_ORIGINS debe contener orígenes HTTPS exactos")
                 break
-        database_url = self.database_url.strip()
+        database_url = configured_url
         database_path = sqlite_file_path(database_url)
         if not database_url:
             errors.append("DATABASE_URL debe estar configurado")
-        elif database_url.startswith("sqlite"):
-            if database_path is None or not is_absolute_path_text(database_path):
+        elif database_backend == "sqlite":
+            if not self.allow_sqlite_in_production:
+                errors.append(
+                    "PostgreSQL es obligatorio; ALLOW_SQLITE_IN_PRODUCTION solo sirve para emergencias"
+                )
+            elif database_path is None or not is_absolute_path_text(database_path):
                 errors.append("DATABASE_URL SQLite debe usar una ruta absoluta fuera del repo")
             elif path_is_inside_repo(database_path):
                 errors.append("DATABASE_URL no puede guardar producción dentro del repo")

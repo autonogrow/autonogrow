@@ -119,10 +119,7 @@ def serialize_conversation_automation_state(
     if conversation.automation_paused_until is not None:
         remaining_seconds = max(
             0,
-            math.ceil(
-                (conversation.automation_paused_until - now).total_seconds() / 60
-            )
-            * 60,
+            math.ceil((conversation.automation_paused_until - now).total_seconds() / 60) * 60,
         )
     return {
         "mode": conversation.automation_mode,

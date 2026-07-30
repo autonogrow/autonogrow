@@ -21,8 +21,13 @@ from app.services.availability_service import (
     serialize_exception,
     serialize_settings,
 )
+from app.services.booking_service import lock_business_schedule
 
-router = APIRouter(prefix="/api/admin/{business_slug}", tags=["admin-availability"], dependencies=[Depends(require_business_admin)])
+router = APIRouter(
+    prefix="/api/admin/{business_slug}",
+    tags=["admin-availability"],
+    dependencies=[Depends(require_business_admin)],
+)
 
 
 class AvailabilitySettingsUpdate(BaseModel):
@@ -82,7 +87,7 @@ def update_availability_settings(
     actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
-    business = get_business_or_404(db, business_slug)
+    business = lock_business_schedule(db, get_business_or_404(db, business_slug))
     settings = get_or_create_availability_settings(db, business)
 
     settings.timezone = payload.timezone or DEFAULT_TIMEZONE
@@ -97,7 +102,15 @@ def update_availability_settings(
 
     db.commit()
     db.refresh(settings)
-    record_audit(db, action="settings_changed", request=request, actor=actor, business_id=business.id, resource_type="availability_settings", resource_id=settings.id)
+    record_audit(
+        db,
+        action="settings_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="availability_settings",
+        resource_id=settings.id,
+    )
 
     return {
         "ok": True,
@@ -121,10 +134,7 @@ def list_availability_exceptions(
 
     return {
         "business_slug": business.slug,
-        "exceptions": [
-            serialize_exception(exception, business)
-            for exception in exceptions
-        ],
+        "exceptions": [serialize_exception(exception, business) for exception in exceptions],
     }
 
 
@@ -136,7 +146,7 @@ def create_availability_exception(
     actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
-    business = get_business_or_404(db, business_slug)
+    business = lock_business_schedule(db, get_business_or_404(db, business_slug))
 
     if payload.type == "custom_hours" and not payload.windows:
         raise HTTPException(status_code=400, detail="Custom hours require windows")
@@ -144,7 +154,9 @@ def create_availability_exception(
     windows_json = None
 
     if payload.type == "custom_hours":
-        windows_json = json.dumps(parse_windows_from_json(json.dumps(payload.windows)), ensure_ascii=False)
+        windows_json = json.dumps(
+            parse_windows_from_json(json.dumps(payload.windows)), ensure_ascii=False
+        )
 
     existing = (
         db.query(AvailabilityException)
@@ -172,7 +184,15 @@ def create_availability_exception(
 
     db.commit()
     db.refresh(exception)
-    record_audit(db, action="settings_changed", request=request, actor=actor, business_id=business.id, resource_type="availability_exception", resource_id=exception.id)
+    record_audit(
+        db,
+        action="settings_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="availability_exception",
+        resource_id=exception.id,
+    )
 
     return {
         "ok": True,
@@ -189,7 +209,7 @@ def delete_availability_exception(
     actor: User = Depends(require_business_admin),
     db: Session = Depends(get_db),
 ):
-    business = get_business_or_404(db, business_slug)
+    business = lock_business_schedule(db, get_business_or_404(db, business_slug))
     exception = (
         db.query(AvailabilityException)
         .filter(
@@ -204,7 +224,15 @@ def delete_availability_exception(
 
     db.delete(exception)
     db.commit()
-    record_audit(db, action="settings_changed", request=request, actor=actor, business_id=business.id, resource_type="availability_exception", resource_id=exception_id)
+    record_audit(
+        db,
+        action="settings_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="availability_exception",
+        resource_id=exception_id,
+    )
 
     return {
         "ok": True,

@@ -1,5 +1,9 @@
 # Arquitectura de colas persistentes
 
+En PostgreSQL la reclamación común añade `FOR UPDATE SKIP LOCKED`; dos workers no esperan por la
+misma fila ni pueden reclamarla simultáneamente. El lock lógico con expiración recupera procesos
+caídos. En SQLite no se simula esta cláusula y solo se permite un worker.
+
 El POST de Instagram valida tamaño, firma y JSON, separa cada evento y lo inserta en `webhook_inbox_events`. Tras el commit responde 200. No resuelve negocios, ejecuta automatizaciones, consume créditos ni llama a Meta.
 
 `python -m app.workers.channel_worker` es un proceso independiente. Reclama inbox en transacciones cortas, procesa conversación y automatización en una transacción, y crea `ConversationMessage`, `channel_outbox_messages` y el movimiento idempotente de crédito juntos. Después reclama outbox, carga y descifra la integración, cierra la transacción, llama a Meta y persiste el resultado en una sesión nueva.

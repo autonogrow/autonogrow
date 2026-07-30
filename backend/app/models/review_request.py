@@ -8,9 +8,7 @@ from app.core.database import Base
 
 class ReviewRequest(Base):
     __tablename__ = "review_requests"
-    __table_args__ = (
-        UniqueConstraint("booking_id", name="uq_review_requests_booking_id"),
-    )
+    __table_args__ = (UniqueConstraint("booking_id", name="uq_review_requests_booking_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     business_id: Mapped[int] = mapped_column(

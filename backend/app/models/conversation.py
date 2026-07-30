@@ -1,6 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -27,9 +35,7 @@ class Conversation(Base):
     customer_name: Mapped[str | None] = mapped_column(String(200))
     customer_phone: Mapped[str | None] = mapped_column(String(40))
     customer_username: Mapped[str | None] = mapped_column(String(200))
-    status: Mapped[str] = mapped_column(
-        String(30), default="pending", index=True, nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True, nullable=False)
     last_message_text: Mapped[str | None] = mapped_column(Text)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -40,16 +46,12 @@ class Conversation(Base):
     detected_intent: Mapped[str | None] = mapped_column(String(60), index=True)
     intent_confidence: Mapped[int | None] = mapped_column(Integer)
     matched_patterns_json: Mapped[str | None] = mapped_column(Text)
-    automation_mode: Mapped[str] = mapped_column(
-        String(20), default="automatic", nullable=False
-    )
+    automation_mode: Mapped[str] = mapped_column(String(20), default="automatic", nullable=False)
     automation_paused_until: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     automation_pause_reason: Mapped[str | None] = mapped_column(String(60))
     automation_pause_updated_by: Mapped[int | None] = mapped_column(Integer)
     automation_pause_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
@@ -103,9 +105,7 @@ class ConversationTemplate(Base):
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
@@ -115,6 +115,24 @@ class ConversationTemplate(Base):
 
 class ConversationAutomationSettings(Base):
     __tablename__ = "conversation_automation_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "included_credits_per_period >= 0",
+            name="ck_conversation_automation_included_allowance_nonnegative",
+        ),
+        CheckConstraint(
+            "included_credits_used >= 0 AND included_credits_used <= included_credits_per_period",
+            name="ck_conversation_automation_included_usage",
+        ),
+        CheckConstraint(
+            "additional_credits_balance >= 0",
+            name="ck_conversation_automation_additional_balance_nonnegative",
+        ),
+        CheckConstraint(
+            "auto_used_current_period >= 0",
+            name="ck_conversation_automation_auto_usage_nonnegative",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     business_id: Mapped[int] = mapped_column(
@@ -123,13 +141,9 @@ class ConversationAutomationSettings(Base):
     automation_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
     monthly_auto_limit: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
     auto_used_current_period: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    included_credits_per_period: Mapped[int] = mapped_column(
-        Integer, default=1000, nullable=False
-    )
+    included_credits_per_period: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
     included_credits_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    additional_credits_balance: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
+    additional_credits_balance: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # Deprecated compatibility field. Moving 30-day periods below are the source
     # of truth and this value must never trigger an automatic usage reset.
     period_yyyymm: Mapped[str] = mapped_column(String(7), nullable=False)
@@ -143,9 +157,7 @@ class ConversationAutomationSettings(Base):
         String(30), default="semi_automatic", nullable=False
     )
     auto_threshold: Mapped[int] = mapped_column(Integer, default=80, nullable=False)
-    human_reply_pause_minutes: Mapped[int] = mapped_column(
-        Integer, default=60, nullable=False
-    )
+    human_reply_pause_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
     plan_key: Mapped[str | None] = mapped_column(String(60))
     automation_feature_enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
     instagram_channel_enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
@@ -153,9 +165,7 @@ class ConversationAutomationSettings(Base):
     allowed_limit_behaviors_json: Mapped[str] = mapped_column(
         Text, default='["semi_automatic", "disabled"]', nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
@@ -174,16 +184,12 @@ class ConversationAutomationRule(Base):
         ForeignKey("businesses.id", ondelete="CASCADE"), index=True
     )
     intent: Mapped[str] = mapped_column(String(60), nullable=False)
-    mode: Mapped[str] = mapped_column(
-        String(30), default="disabled", nullable=False
-    )
+    mode: Mapped[str] = mapped_column(String(30), default="disabled", nullable=False)
     template_id: Mapped[int | None] = mapped_column(
         ForeignKey("conversation_templates.id", ondelete="SET NULL"), index=True
     )
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
@@ -205,12 +211,8 @@ class ConversationSuggestion(Base):
     intent: Mapped[str] = mapped_column(String(60), nullable=False)
     confidence: Mapped[int] = mapped_column(Integer, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(30), default="pending", index=True, nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )

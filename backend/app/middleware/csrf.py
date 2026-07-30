@@ -30,5 +30,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             or not compare_digest(cookie_token, header_token)
             or not is_valid_csrf_token(cookie_token)
         ):
-            return JSONResponse(status_code=403, content={"detail": "CSRF token missing or invalid"})
+            return JSONResponse(
+                status_code=403, content={"detail": "CSRF token missing or invalid"}
+            )
         return await call_next(request)

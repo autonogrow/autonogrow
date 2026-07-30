@@ -41,9 +41,7 @@ class ConversationsTest(unittest.TestCase):
     def setUp(self):
         self.public_origin_patcher = patch(
             "app.services.conversation_service.get_settings",
-            return_value=SimpleNamespace(
-                frontend_origin_list=["http://127.0.0.1:5500"]
-            ),
+            return_value=SimpleNamespace(frontend_origin_list=["http://127.0.0.1:5500"]),
         )
         self.public_origin_patcher.start()
         self.engine = create_engine("sqlite:///:memory:")
@@ -56,9 +54,7 @@ class ConversationsTest(unittest.TestCase):
             phone="600000001",
             status="active",
         )
-        self.business_b = Business(
-            slug="conversation-b", name="Business B", status="active"
-        )
+        self.business_b = Business(slug="conversation-b", name="Business B", status="active")
         self.owner = User(email="owner@conversation.test", is_owner=True)
         self.admin_user = User(email="admin@conversation.test")
         self.other_admin_user = User(email="other@conversation.test")
@@ -118,9 +114,7 @@ class ConversationsTest(unittest.TestCase):
         require_business_admin(self.business_a.slug, self.admin_user, self.db)
         return admin_create_conversation(
             self.business_a.slug,
-            ConversationCreate(
-                channel="manual", customer_name=name, initial_message=message
-            ),
+            ConversationCreate(channel="manual", customer_name=name, initial_message=message),
             self.request(),
             actor=self.admin_user,
             db=self.db,
@@ -172,15 +166,11 @@ class ConversationsTest(unittest.TestCase):
         )
         self.assertNotIn(other.id, {item["id"] for item in all_a["conversations"]})
         with self.assertRaises(HTTPException) as hidden:
-            admin_get_conversation(
-                self.business_a.slug, other.id, db=self.db
-            )
+            admin_get_conversation(self.business_a.slug, other.id, db=self.db)
         self.assertEqual(hidden.exception.status_code, 404)
 
         with self.assertRaises(HTTPException) as cross_tenant:
-            require_business_access(
-                self.business_b.slug, self.admin_user, self.db
-            )
+            require_business_access(self.business_b.slug, self.admin_user, self.db)
         self.assertEqual(cross_tenant.exception.status_code, 403)
         self.assertIs(
             require_business_access(self.business_b.slug, self.owner, self.db),
@@ -203,9 +193,9 @@ class ConversationsTest(unittest.TestCase):
             require_business_access(self.business_a.slug, self.staff_user, self.db),
             self.staff_user,
         )
-        detail = admin_get_conversation(
-            self.business_a.slug, conversation["id"], db=self.db
-        )["conversation"]
+        detail = admin_get_conversation(self.business_a.slug, conversation["id"], db=self.db)[
+            "conversation"
+        ]
         self.assertEqual(len(detail["messages"]), 1)
         listed = admin_list_conversations(
             self.business_a.slug,
@@ -252,9 +242,7 @@ class ConversationsTest(unittest.TestCase):
             require_business_admin(self.business_a.slug, self.staff_user, self.db)
         self.assertEqual(denied.exception.status_code, 403)
         with self.assertRaises(HTTPException):
-            require_business_access(
-                self.business_a.slug, self.customer_user, self.db
-            )
+            require_business_access(self.business_a.slug, self.customer_user, self.db)
         with self.assertRaises(HTTPException) as anonymous:
             get_current_user(None)
         self.assertEqual(anonymous.exception.status_code, 401)
@@ -302,9 +290,7 @@ class ConversationsTest(unittest.TestCase):
         self.assertEqual(conversation.last_message_text, "Quería una cita")
 
     def test_templates_seed_render_and_admin_creation(self):
-        listed = admin_list_conversation_templates(
-            self.business_a.slug, db=self.db
-        )["templates"]
+        listed = admin_list_conversation_templates(self.business_a.slug, db=self.db)["templates"]
         self.assertEqual(len(listed), 8)
         welcome = next(item for item in listed if item["name"] == "Mensaje de bienvenida")
         self.assertIn("Business A", welcome["rendered_body"])
@@ -323,9 +309,7 @@ class ConversationsTest(unittest.TestCase):
             actor=self.admin_user,
             db=self.db,
         )["template"]
-        self.assertEqual(
-            created["rendered_body"], "Hola Business A: 600000001 Calle A 1"
-        )
+        self.assertEqual(created["rendered_body"], "Hola Business A: 600000001 Calle A 1")
         updated = admin_update_conversation_template(
             self.business_a.slug,
             created["id"],

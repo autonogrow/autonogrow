@@ -73,31 +73,54 @@ class StaffSchedulingTest(unittest.TestCase):
             business=self.business, user=self.admin_user, role="business_admin", active=True
         )
         self.staff_1 = BusinessUser(
-            business=self.business, user=self.staff_user_1, role="business_staff",
-            active=True, bookable=True, show_schedule=True, public_name="One",
+            business=self.business,
+            user=self.staff_user_1,
+            role="business_staff",
+            active=True,
+            bookable=True,
+            show_schedule=True,
+            public_name="One",
         )
         self.staff_2 = BusinessUser(
-            business=self.business, user=self.staff_user_2, role="business_staff",
-            active=True, bookable=True, show_schedule=True, public_name="Two",
+            business=self.business,
+            user=self.staff_user_2,
+            role="business_staff",
+            active=True,
+            bookable=True,
+            show_schedule=True,
+            public_name="Two",
         )
-        self.db.add_all([
-            self.business, self.service, self.other_service, self.settings, self.admin,
-            self.staff_1, self.staff_2,
-        ])
+        self.db.add_all(
+            [
+                self.business,
+                self.service,
+                self.other_service,
+                self.settings,
+                self.admin,
+                self.staff_1,
+                self.staff_2,
+            ]
+        )
         self.db.flush()
         self.staff_1.services.append(self.service)
         self.staff_2.services.extend([self.service, self.other_service])
         weekday = business_weekday(self.target_date)
-        self.db.add_all([
-            BusinessUserAvailability(
-                business_user_id=self.staff_1.id, weekday=weekday,
-                windows_json=json.dumps([{"start": "10:00", "end": "12:00"}]), active=True,
-            ),
-            BusinessUserAvailability(
-                business_user_id=self.staff_2.id, weekday=weekday,
-                windows_json=json.dumps([{"start": "11:00", "end": "13:00"}]), active=True,
-            ),
-        ])
+        self.db.add_all(
+            [
+                BusinessUserAvailability(
+                    business_user_id=self.staff_1.id,
+                    weekday=weekday,
+                    windows_json=json.dumps([{"start": "10:00", "end": "12:00"}]),
+                    active=True,
+                ),
+                BusinessUserAvailability(
+                    business_user_id=self.staff_2.id,
+                    weekday=weekday,
+                    windows_json=json.dumps([{"start": "11:00", "end": "13:00"}]),
+                    active=True,
+                ),
+            ]
+        )
         self.db.commit()
 
     def tearDown(self):
@@ -115,12 +138,18 @@ class StaffSchedulingTest(unittest.TestCase):
 
     def test_staff_hours_aggregation_and_deterministic_assignment(self):
         first_slots = get_available_slots(
-            self.db, business_slug=self.business.slug, service_id=self.service.id,
-            date=self.target_date.isoformat(), staff_business_user_id=self.staff_1.id,
+            self.db,
+            business_slug=self.business.slug,
+            service_id=self.service.id,
+            date=self.target_date.isoformat(),
+            staff_business_user_id=self.staff_1.id,
         )
         second_slots = get_available_slots(
-            self.db, business_slug=self.business.slug, service_id=self.service.id,
-            date=self.target_date.isoformat(), staff_business_user_id=self.staff_2.id,
+            self.db,
+            business_slug=self.business.slug,
+            service_id=self.service.id,
+            date=self.target_date.isoformat(),
+            staff_business_user_id=self.staff_2.id,
         )
         self.assertIn("10:00", {slot["label"] for slot in first_slots})
         self.assertNotIn("10:00", {slot["label"] for slot in second_slots})
@@ -147,7 +176,9 @@ class StaffSchedulingTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as denied:
             require_business_admin(self.business.slug, self.staff_user_1, self.db)
         self.assertEqual(denied.exception.status_code, 403)
-        self.assertIs(require_business_admin(self.business.slug, self.admin_user, self.db), self.admin_user)
+        self.assertIs(
+            require_business_admin(self.business.slug, self.admin_user, self.db), self.admin_user
+        )
 
         booking = create_booking_request(
             self.db,
@@ -156,13 +187,17 @@ class StaffSchedulingTest(unittest.TestCase):
         )
         with self.assertRaises(HTTPException) as denied_booking:
             ensure_can_manage_booking(
-                self.db, business_slug=self.business.slug,
-                booking=booking, user=self.staff_user_2,
+                self.db,
+                business_slug=self.business.slug,
+                booking=booking,
+                user=self.staff_user_2,
             )
         self.assertEqual(denied_booking.exception.status_code, 403)
         ensure_can_manage_booking(
-            self.db, business_slug=self.business.slug,
-            booking=booking, user=self.staff_user_1,
+            self.db,
+            business_slug=self.business.slug,
+            booking=booking,
+            user=self.staff_user_1,
         )
 
     def test_public_booking_requires_a_bookable_professional(self):
@@ -178,11 +213,11 @@ class StaffSchedulingTest(unittest.TestCase):
                 service_id=self.service.id,
                 date=self.target_date.isoformat(),
             )
-        availability = build_availability(
-            self.db, business_slug=self.business.slug, days_ahead=3
-        )
+        availability = build_availability(self.db, business_slug=self.business.slug, days_ahead=3)
         self.assertTrue(
-            all(not day["slots"] and not day["is_available"] for day in availability["availability"])
+            all(
+                not day["slots"] and not day["is_available"] for day in availability["availability"]
+            )
         )
         with self.assertRaisesRegex(ValueError, "no_staff_available_for_service"):
             create_booking_request(
@@ -258,9 +293,7 @@ class StaffSchedulingTest(unittest.TestCase):
     def test_staff_is_filtered_and_validated_by_service(self):
         main_ids = {
             member.id
-            for member in get_public_bookable_staff(
-                self.db, self.business.id, self.service.id
-            )
+            for member in get_public_bookable_staff(self.db, self.business.id, self.service.id)
         }
         other_ids = {
             member.id
@@ -271,9 +304,7 @@ class StaffSchedulingTest(unittest.TestCase):
         self.assertEqual(main_ids, {self.staff_1.id, self.staff_2.id})
         self.assertEqual(other_ids, {self.staff_2.id})
 
-        with self.assertRaisesRegex(
-            ValueError, "staff_not_available_for_service"
-        ):
+        with self.assertRaisesRegex(ValueError, "staff_not_available_for_service"):
             get_available_slots(
                 self.db,
                 business_slug=self.business.slug,
@@ -289,9 +320,7 @@ class StaffSchedulingTest(unittest.TestCase):
             staff_business_user_id=self.staff_1.id,
             start_datetime=f"{self.target_date.isoformat()}T11:00:00",
         )
-        with self.assertRaisesRegex(
-            ValueError, "staff_not_available_for_service"
-        ):
+        with self.assertRaisesRegex(ValueError, "staff_not_available_for_service"):
             create_booking_request(
                 self.db,
                 business_slug=self.business.slug,
@@ -305,9 +334,7 @@ class StaffSchedulingTest(unittest.TestCase):
             service_id=self.other_service.id,
             start_datetime=f"{self.target_date.isoformat()}T11:00:00",
         )
-        booking = create_booking_request(
-            self.db, business_slug=self.business.slug, payload=payload
-        )
+        booking = create_booking_request(self.db, business_slug=self.business.slug, payload=payload)
         self.assertEqual(booking.staff_business_user_id, self.staff_2.id)
 
 

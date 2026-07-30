@@ -53,6 +53,9 @@ show_error_codes = true
 testpaths = ["backend/tests"]
 pythonpath = ["backend"]
 addopts = ["--strict-markers"]
+markers = [
+  "postgresql: tests that require an isolated PostgreSQL database at head",
+]
 
 [tool.coverage.run]
 source = ["backend/app"]

@@ -20,11 +20,7 @@ def get_or_create_review_request(
     business: Business,
     booking: Booking,
 ) -> ReviewRequest | None:
-    existing = (
-        db.query(ReviewRequest)
-        .filter(ReviewRequest.booking_id == booking.id)
-        .first()
-    )
+    existing = db.query(ReviewRequest).filter(ReviewRequest.booking_id == booking.id).first()
 
     if existing is not None:
         return existing

@@ -1,4 +1,4 @@
-﻿from typing import Any
+from typing import Any
 
 
 def build_admin_booking_message(booking: dict[str, Any]) -> str:

@@ -127,6 +127,10 @@ pluggy==1.6.0
     # via
     #   pytest
     #   pytest-cov
+psycopg==3.3.4
+    # via -r backend/requirements.in
+psycopg-binary==3.3.4
+    # via psycopg
 py-serializable==2.1.0
     # via cyclonedx-python-lib
 pyasn1==0.6.4
@@ -207,6 +211,7 @@ typing-extensions==4.16.0
     #   cyclonedx-python-lib
     #   fastapi
     #   mypy
+    #   psycopg
     #   pydantic
     #   pydantic-core
     #   sqlalchemy
@@ -218,7 +223,9 @@ typing-inspection==0.4.2
     #   pydantic
     #   pydantic-settings
 tzdata==2026.2
-    # via -r backend/requirements.in
+    # via
+    #   -r backend/requirements.in
+    #   psycopg
 urllib3==2.7.0
     # via
     #   requests

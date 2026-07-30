@@ -28,7 +28,13 @@ class BusinessCreate(BaseModel):
     @model_validator(mode="after")
     def apply_brand_defaults(self):
         values = resolve_branding(self.model_dump(), fill_defaults=True)
-        for field in ("theme_key", "primary_color", "secondary_color", "accent_color", "background_color"):
+        for field in (
+            "theme_key",
+            "primary_color",
+            "secondary_color",
+            "accent_color",
+            "background_color",
+        ):
             setattr(self, field, values[field])
         self.template_key = self.template_key if self.template_key in TEMPLATE_KEYS else "classic"
         return self
@@ -90,7 +96,9 @@ class BusinessSettingsUpdate(BaseModel):
             return value or None
         return value
 
-    @field_validator("primary_color", "secondary_color", "accent_color", "background_color", mode="before")
+    @field_validator(
+        "primary_color", "secondary_color", "accent_color", "background_color", mode="before"
+    )
     @classmethod
     def valid_hex_color(cls, value, info: ValidationInfo):
         return validate_color(value, info.field_name)

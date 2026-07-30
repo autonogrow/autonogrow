@@ -207,18 +207,12 @@ def serialize_settings(settings: ConversationAutomationSettings) -> dict[str, An
         if settings.included_credits_per_period == 0
         else min(
             100,
-            round(
-                settings.included_credits_used
-                * 100
-                / settings.included_credits_per_period
-            ),
+            round(settings.included_credits_used * 100 / settings.included_credits_per_period),
         )
     )
     period_ends_at = as_utc(settings.period_ends_at)
     remaining_seconds = (
-        max(0, (period_ends_at - utc_now()).total_seconds())
-        if period_ends_at is not None
-        else 0
+        max(0, (period_ends_at - utc_now()).total_seconds()) if period_ends_at is not None else 0
     )
     days_remaining = ceil(remaining_seconds / 86400)
     if settings.period_status == "suspended":
@@ -312,9 +306,7 @@ def resolve_template(
         if template is not None:
             return template
     if detection.recommended_template_key:
-        return query.filter(
-            ConversationTemplate.name == detection.recommended_template_key
-        ).first()
+        return query.filter(ConversationTemplate.name == detection.recommended_template_key).first()
     return None
 
 
@@ -435,9 +427,7 @@ def _has_recent_identical_inbound(
     normalized_body = normalize_text(message.body)
     if not normalized_body:
         return False
-    cutoff = message.created_at - timedelta(
-        seconds=IDENTICAL_MESSAGE_DEBOUNCE_SECONDS
-    )
+    cutoff = message.created_at - timedelta(seconds=IDENTICAL_MESSAGE_DEBOUNCE_SECONDS)
     recent_inbounds = (
         db.query(ConversationMessage)
         .filter(
@@ -454,9 +444,7 @@ def _has_recent_identical_inbound(
         .all()
     )
     identical_inbound_ids = {
-        item.id
-        for item in recent_inbounds
-        if normalize_text(item.body) == normalized_body
+        item.id for item in recent_inbounds if normalize_text(item.body) == normalized_body
     }
     if not identical_inbound_ids:
         return False
@@ -487,9 +475,7 @@ def _has_recent_identical_inbound(
             payload = None
         automation = payload.get("automation") if isinstance(payload, dict) else None
         source_message_id = (
-            automation.get("inbound_message_id")
-            if isinstance(automation, dict)
-            else None
+            automation.get("inbound_message_id") if isinstance(automation, dict) else None
         )
         if source_message_id in identical_inbound_ids:
             return True
@@ -510,8 +496,7 @@ def _skip_automatic_response(
     reason: str,
 ) -> dict[str, Any]:
     logger.info(
-        "Automation skipped: reason=%s business_id=%s conversation_id=%s "
-        "message_id=%s intent=%s",
+        "Automation skipped: reason=%s business_id=%s conversation_id=%s message_id=%s intent=%s",
         reason,
         business.id,
         conversation.id,
@@ -645,10 +630,7 @@ def process_inbound_automation(
     can_send_automatically = (
         rule.mode == "automatic"
         and detection.safe_for_auto
-        and (
-            detection.confidence >= settings.auto_threshold
-            or detection.intent == "unknown"
-        )
+        and (detection.confidence >= settings.auto_threshold or detection.intent == "unknown")
         and not limit_reached
     )
     if can_send_automatically:

@@ -124,8 +124,12 @@ def create_booking_response(
     }
 
 
-@router.patch("/api/bookings/{booking_id}/reschedule", dependencies=[Depends(require_booking_business_access)])
-@router.post("/api/bookings/{booking_id}/reschedule", dependencies=[Depends(require_booking_business_access)])
+@router.patch(
+    "/api/bookings/{booking_id}/reschedule", dependencies=[Depends(require_booking_business_access)]
+)
+@router.post(
+    "/api/bookings/{booking_id}/reschedule", dependencies=[Depends(require_booking_business_access)]
+)
 def reschedule_booking(
     booking_id: int,
     payload: BookingRescheduleRequest,
@@ -149,7 +153,15 @@ def reschedule_booking(
     except ValueError as exc:
         raise map_booking_error(exc) from exc
 
-    record_audit(db, action="booking_rescheduled", request=request, actor=actor, business_id=booking.business_id, resource_type="booking", resource_id=booking.id)
+    record_audit(
+        db,
+        action="booking_rescheduled",
+        request=request,
+        actor=actor,
+        business_id=booking.business_id,
+        resource_type="booking",
+        resource_id=booking.id,
+    )
 
     return {
         "ok": True,

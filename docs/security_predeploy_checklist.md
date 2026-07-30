@@ -13,6 +13,9 @@
 - [ ] HTTP redirige a HTTPS.
 - [ ] El backend no está expuesto directamente; solo el proxy permitido llega a él.
 - [ ] `FRONTEND_ORIGINS` contiene únicamente orígenes HTTPS exactos y no contiene `*`.
+- [ ] `DATABASE_URL` usa PostgreSQL/psycopg en staging/producción y nunca aparece en logs.
+- [ ] `ALLOW_SQLITE_IN_PRODUCTION=false`; cualquier emergencia está aprobada y fechada.
+- [ ] Usuario PostgreSQL con mínimo privilegio, red restringida y credenciales fuera del repo.
 - [ ] `DATABASE_URL` usa una ruta absoluta fuera del repositorio.
 - [ ] `UPLOADS_DIR` usa una ruta absoluta fuera del repositorio y del frontend público.
 

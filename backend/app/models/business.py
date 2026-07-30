@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 
 from sqlalchemy import DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -37,24 +37,42 @@ class Business(Base):
     status: Mapped[str] = mapped_column(String(40), default="active", nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
 
-    services = relationship("BusinessService", back_populates="business", cascade="all, delete-orphan")
+    services = relationship(
+        "BusinessService", back_populates="business", cascade="all, delete-orphan"
+    )
     customers = relationship("Customer", back_populates="business", cascade="all, delete-orphan")
     bookings = relationship("Booking", back_populates="business", cascade="all, delete-orphan")
-    review_requests = relationship("ReviewRequest", back_populates="business", cascade="all, delete-orphan")
-    message_outbox = relationship("MessageOutbox", back_populates="business", cascade="all, delete-orphan")
+    review_requests = relationship(
+        "ReviewRequest", back_populates="business", cascade="all, delete-orphan"
+    )
+    message_outbox = relationship(
+        "MessageOutbox", back_populates="business", cascade="all, delete-orphan"
+    )
     system_incidents = relationship("SystemIncident", back_populates="business")
-    google_integrations = relationship("GoogleIntegration", back_populates="business", cascade="all, delete-orphan")
+    google_integrations = relationship(
+        "GoogleIntegration", back_populates="business", cascade="all, delete-orphan"
+    )
     channel_integrations = relationship(
         "BusinessChannelIntegration",
         back_populates="business",
         cascade="all, delete-orphan",
     )
-    gallery_images = relationship("BusinessGalleryImage", back_populates="business", cascade="all, delete-orphan")
-    user_memberships = relationship("BusinessUser", back_populates="business", cascade="all, delete-orphan")
-    conversations = relationship("Conversation", back_populates="business", cascade="all, delete-orphan")
-    conversation_templates = relationship("ConversationTemplate", back_populates="business", cascade="all, delete-orphan")
+    gallery_images = relationship(
+        "BusinessGalleryImage", back_populates="business", cascade="all, delete-orphan"
+    )
+    user_memberships = relationship(
+        "BusinessUser", back_populates="business", cascade="all, delete-orphan"
+    )
+    conversations = relationship(
+        "Conversation", back_populates="business", cascade="all, delete-orphan"
+    )
+    conversation_templates = relationship(
+        "ConversationTemplate", back_populates="business", cascade="all, delete-orphan"
+    )
     conversation_automation_settings = relationship(
         "ConversationAutomationSettings",
         back_populates="business",

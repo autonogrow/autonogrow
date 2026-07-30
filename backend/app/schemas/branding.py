@@ -3,12 +3,42 @@ import re
 from pydantic import BaseModel, Field, field_validator
 
 COLOR_PALETTES = {
-    "slate_gold": {"primary_color": "#334155", "secondary_color": "#0f172a", "accent_color": "#f59e0b", "background_color": "#f8fafc"},
-    "rose_beauty": {"primary_color": "#be123c", "secondary_color": "#831843", "accent_color": "#f9a8d4", "background_color": "#fff1f2"},
-    "emerald_clean": {"primary_color": "#047857", "secondary_color": "#064e3b", "accent_color": "#6ee7b7", "background_color": "#ecfdf5"},
-    "blue_clinic": {"primary_color": "#2563eb", "secondary_color": "#1e3a8a", "accent_color": "#93c5fd", "background_color": "#eff6ff"},
-    "amber_barber": {"primary_color": "#92400e", "secondary_color": "#451a03", "accent_color": "#fbbf24", "background_color": "#fffbeb"},
-    "violet_modern": {"primary_color": "#7c3aed", "secondary_color": "#4c1d95", "accent_color": "#c4b5fd", "background_color": "#f5f3ff"},
+    "slate_gold": {
+        "primary_color": "#334155",
+        "secondary_color": "#0f172a",
+        "accent_color": "#f59e0b",
+        "background_color": "#f8fafc",
+    },
+    "rose_beauty": {
+        "primary_color": "#be123c",
+        "secondary_color": "#831843",
+        "accent_color": "#f9a8d4",
+        "background_color": "#fff1f2",
+    },
+    "emerald_clean": {
+        "primary_color": "#047857",
+        "secondary_color": "#064e3b",
+        "accent_color": "#6ee7b7",
+        "background_color": "#ecfdf5",
+    },
+    "blue_clinic": {
+        "primary_color": "#2563eb",
+        "secondary_color": "#1e3a8a",
+        "accent_color": "#93c5fd",
+        "background_color": "#eff6ff",
+    },
+    "amber_barber": {
+        "primary_color": "#92400e",
+        "secondary_color": "#451a03",
+        "accent_color": "#fbbf24",
+        "background_color": "#fffbeb",
+    },
+    "violet_modern": {
+        "primary_color": "#7c3aed",
+        "secondary_color": "#4c1d95",
+        "accent_color": "#c4b5fd",
+        "background_color": "#f5f3ff",
+    },
 }
 SAFE_COLORS = {
     "primary_color": "#334155",

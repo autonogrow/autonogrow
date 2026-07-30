@@ -64,7 +64,8 @@ def _matches_echo(candidate: ConversationMessage, event: InstagramInboundMessage
     event_signature = _attachment_signature(event.attachments)
     return bool(
         event_signature
-        and event_signature == _attachment_signature(_attachments_from_raw(candidate.raw_payload_json))
+        and event_signature
+        == _attachment_signature(_attachments_from_raw(candidate.raw_payload_json))
     )
 
 

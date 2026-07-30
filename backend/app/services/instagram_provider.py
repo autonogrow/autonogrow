@@ -70,11 +70,14 @@ def verify_meta_signature(
         return False
     if not signature_header.startswith("sha256="):
         return False
-    expected = "sha256=" + hmac.new(
-        app_secret.encode("utf-8"),
-        raw_body,
-        hashlib.sha256,
-    ).hexdigest()
+    expected = (
+        "sha256="
+        + hmac.new(
+            app_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+    )
     return hmac.compare_digest(expected, signature_header)
 
 
@@ -105,9 +108,7 @@ def parse_instagram_webhook(
             recipient = event.get("recipient")
             sender_id = str(sender.get("id", "")).strip() if isinstance(sender, dict) else ""
             recipient_id = (
-                str(recipient.get("id", "")).strip()
-                if isinstance(recipient, dict)
-                else ""
+                str(recipient.get("id", "")).strip() if isinstance(recipient, dict) else ""
             )
             if not sender_id or not recipient_id:
                 continue
@@ -129,9 +130,7 @@ def parse_instagram_webhook(
                     sender_id=sender_id,
                     recipient_id=recipient_id,
                     message_id=(
-                        str(message["mid"]).strip()
-                        if message.get("mid") is not None
-                        else None
+                        str(message["mid"]).strip() if message.get("mid") is not None else None
                     ),
                     text=body,
                     timestamp=timestamp if isinstance(timestamp, int) else None,
@@ -254,9 +253,8 @@ def verify_instagram_access_token(
     timeout_seconds: float = 10.0,
 ) -> InstagramVerificationResult:
     settings = settings or get_settings()
-    if (
-        not access_token.strip()
-        or not _has_safe_graph_api_configuration(settings, external_account_id)
+    if not access_token.strip() or not _has_safe_graph_api_configuration(
+        settings, external_account_id
     ):
         return InstagramVerificationResult(
             ok=False,

@@ -81,3 +81,40 @@ Pendiente, Correcta, Fallida o Bloqueada. No cambiar un estado sin adjuntar evid
 | IG-S1-38 | Sprint 1 | P0 | Historial previo; IG-S1-36 | Abrir/listar conversaciones antiguas | Historial se conserva íntegro | Recuentos y captura panel | Pendiente | — | — | Sin asignar |
 | IG-S1-39 | Sprint 1 | P0 | Dos negocios con cuentas Instagram distintas | Ejecutar inbound, echo y outbound en ambos | Cada cuenta usa su integración | Matriz de IDs y capturas de ambos | Pendiente | — | — | Sin asignar |
 | IG-S1-40 | Sprint 1 | P0 | IG-S1-39 | Comparar conversaciones, créditos e incidencias | Aislamiento multiempresa completo | Consultas por business_id y ledger | Pendiente | — | — | Sin asignar |
+
+## PostgreSQL — pruebas manuales pospuestas
+
+Ninguna se ha ejecutado en este sprint.
+
+| ID | Prueba | Estado |
+|---|---|---|
+| PG-S3-01 | Instalación PostgreSQL en staging | Pendiente |
+| PG-S3-02 | Creación de usuario y base | Pendiente |
+| PG-S3-03 | Configuración de permisos | Pendiente |
+| PG-S3-04 | Conexión TLS o socket según arquitectura | Pendiente |
+| PG-S3-05 | Backup SQLite real | Pendiente |
+| PG-S3-06 | Integridad SQLite | Pendiente |
+| PG-S3-07 | Aplicación Alembic PostgreSQL | Pendiente |
+| PG-S3-08 | Migración de datos real | Pendiente |
+| PG-S3-09 | Comparación de recuentos | Pendiente |
+| PG-S3-10 | Validación de ciphertext | Pendiente |
+| PG-S3-11 | Validación de saldos | Pendiente |
+| PG-S3-12 | Validación de reservas | Pendiente |
+| PG-S3-13 | Validación de mensajes | Pendiente |
+| PG-S3-14 | Validación de secuencias | Pendiente |
+| PG-S3-15 | Arranque FastAPI con PostgreSQL | Pendiente |
+| PG-S3-16 | Arranque worker con PostgreSQL | Pendiente |
+| PG-S3-17 | Webhook real | Pendiente |
+| PG-S3-18 | Envío real | Pendiente |
+| PG-S3-19 | Reserva concurrente real | Pendiente |
+| PG-S3-20 | Worker reiniciado | Pendiente |
+| PG-S3-21 | Pool bajo carga | Pendiente |
+| PG-S3-22 | Lock timeout controlado | Pendiente |
+| PG-S3-23 | Backup pg_dump | Pendiente |
+| PG-S3-24 | Restore pg_restore | Pendiente |
+| PG-S3-25 | Rollback antes de tráfico | Pendiente |
+| PG-S3-26 | Definición del punto de no retorno | Pendiente |
+| PG-S3-27 | Validación con dos negocios | Pendiente |
+| PG-S3-28 | Observación durante varias horas | Pendiente |
+| PG-S3-29 | Eliminación del SQLite operativo | Pendiente |
+| PG-S3-30 | Conservación del SQLite como backup histórico | Pendiente |
