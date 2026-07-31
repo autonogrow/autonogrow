@@ -585,28 +585,61 @@ def structural_checksum(
     table: Table,
     excluded_columns: frozenset[str] = frozenset(),
 ) -> str:
-    primary_keys = list(table.primary_key.columns)
-    critical_names = CRITICAL_CHECKSUM_COLUMNS.get(table.name, frozenset())
-    columns = [
-        column
-        for column in table.columns
-        if column.name not in SENSITIVE_COLUMNS
-        and column.name not in excluded_columns
-        and (column.primary_key or column.foreign_keys or column.name in critical_names)
-    ]
+    column_names = structural_checksum_column_names(table, excluded_columns)
+    columns = [table.c[column_name] for column_name in column_names]
     if not columns:
         return hashlib.sha256(b"").hexdigest()
-    rows = connection.execute(select(*columns).order_by(*primary_keys)).all()
-    payload = [
-        [
-            safe_json_value(normalize_copy_value(table.name, column.name, value))
-            for column, value in zip(columns, row, strict=True)
-        ]
-        for row in rows
-    ]
+    canonical_table = Base.metadata.tables[table.name]
+    primary_key_names = sorted(
+        column.name
+        for column in canonical_table.primary_key.columns
+        if column.name in table.c and column.name not in excluded_columns
+    )
+    order_columns = [table.c[column_name] for column_name in primary_key_names]
+    statement = select(*columns)
+    if order_columns:
+        statement = statement.order_by(*order_columns)
+    rows = connection.execute(statement).all()
+    payload = {
+        "columns": list(column_names),
+        "rows": [
+            [
+                [
+                    column_name,
+                    safe_json_value(normalize_copy_value(table.name, column_name, value)),
+                ]
+                for column_name, value in zip(column_names, row, strict=True)
+            ]
+            for row in rows
+        ],
+    }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def structural_checksum_column_names(
+    table: Table,
+    excluded_columns: frozenset[str] = frozenset(),
+) -> tuple[str, ...]:
+    """Select semantic checksum columns from canonical application metadata."""
+
+    register_models()
+    if table.name not in Base.metadata.tables:
+        raise RuntimeError(f"No canonical metadata exists for table {table.name}")
+    canonical_table = Base.metadata.tables[table.name]
+    critical_names = CRITICAL_CHECKSUM_COLUMNS.get(table.name, frozenset())
+    physical_names = set(table.columns.keys())
+    return tuple(
+        sorted(
+            column.name
+            for column in canonical_table.columns
+            if column.name in physical_names
+            and column.name not in SENSITIVE_COLUMNS
+            and column.name not in excluded_columns
+            and (column.primary_key or column.foreign_keys or column.name in critical_names)
+        )
+    )
 
 
 def inspect_table(

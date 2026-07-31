@@ -8,6 +8,7 @@ from threading import Barrier, Event
 
 import pytest
 from alembic import command
+from scripts import migrate_sqlite_to_postgresql as migration_script
 from scripts.migrate_sqlite_to_postgresql import (
     COPY_ORDER,
     OPTIONAL_SOURCE_TABLES,
@@ -549,6 +550,39 @@ def test_sqlite_to_postgresql_copy_preserves_ids_ciphertext_and_sequences(
         ).scalar_one()
         assert next_business_id > 43
         transaction.rollback()
+    source.dispose()
+
+
+def test_migration_checksum_failure_rolls_back_entire_destination(
+    postgresql_engine: Engine,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = tmp_path / "checksum-rollback-source.db"
+    source_url = f"sqlite:///{source_path.as_posix()}"
+    config = alembic_config()
+    config.attributes["database_url"] = source_url
+    command.upgrade(config, "head")
+    source = create_engine(source_url)
+    with Session(source) as db:
+        db.add(Business(id=42, slug="rollback-source", name="Rollback source"))
+        db.commit()
+
+    original_prepared_row = migration_script.prepared_row
+
+    def change_business_slug(table_name: str, row):
+        prepared = original_prepared_row(table_name, row)
+        if table_name == "businesses":
+            prepared["slug"] = "different-destination-value"
+        return prepared
+
+    monkeypatch.setattr(migration_script, "prepared_row", change_business_slug)
+    require_complete_source(source)
+    require_empty_destination(postgresql_engine)
+    with pytest.raises(RuntimeError, match="businesses.structural_checksum"):
+        copy_and_validate_atomic(source, postgresql_engine)
+    assert not any(table_counts(postgresql_engine).values())
+    require_empty_destination(postgresql_engine)
     source.dispose()
 
 

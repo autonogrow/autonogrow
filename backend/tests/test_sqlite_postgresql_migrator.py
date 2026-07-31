@@ -17,12 +17,14 @@ from scripts.migrate_sqlite_to_postgresql import (
     require_destination_column_policies,
     require_empty_destination,
     safe_source_database_report,
+    structural_checksum,
+    structural_checksum_column_names,
     validate_copy_order,
 )
 from scripts.migrate_sqlite_to_postgresql import (
     main as migration_main,
 )
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import MetaData, Table, create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
 from app.core.database import Base
@@ -52,6 +54,20 @@ def staging_baseline_source(tmp_path: Path) -> Engine:
     return source
 
 
+def reflected_test_table(
+    tmp_path: Path,
+    database_name: str,
+    table_name: str,
+    statements: list[str],
+) -> tuple[Engine, Table]:
+    path = tmp_path / f"{database_name}.db"
+    engine = create_engine(f"sqlite:///{path.as_posix()}")
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.exec_driver_sql(statement)
+    return engine, Table(table_name, MetaData(), autoload_with=engine)
+
+
 def test_copy_order_matches_current_metadata_and_foreign_keys() -> None:
     register_models()
     validate_copy_order()
@@ -59,6 +75,187 @@ def test_copy_order_matches_current_metadata_and_foreign_keys() -> None:
     assert "operational_states" in COPY_ORDER
     assert "backup_records" in COPY_ORDER
     assert COPY_ORDER.index("users") < COPY_ORDER.index("operational_states")
+
+
+def test_checksum_is_identical_with_different_physical_column_order(
+    tmp_path: Path,
+) -> None:
+    source, source_table = reflected_test_table(
+        tmp_path,
+        "checksum-order-source",
+        "conversation_automation_settings",
+        [
+            "CREATE TABLE conversation_automation_settings ("
+            "id INTEGER PRIMARY KEY, business_id INTEGER NOT NULL, "
+            "period_yyyymm TEXT NOT NULL, period_status TEXT NOT NULL, "
+            "included_credits_per_period INTEGER NOT NULL, "
+            "included_credits_used INTEGER NOT NULL, "
+            "additional_credits_balance INTEGER NOT NULL)",
+            "INSERT INTO conversation_automation_settings VALUES "
+            "(4, 1, '2026-07', 'open', 10, 2, 3)",
+        ],
+    )
+    destination, destination_table = reflected_test_table(
+        tmp_path,
+        "checksum-order-destination",
+        "conversation_automation_settings",
+        [
+            "CREATE TABLE conversation_automation_settings ("
+            "id INTEGER PRIMARY KEY, business_id INTEGER NOT NULL, "
+            "included_credits_per_period INTEGER NOT NULL, "
+            "included_credits_used INTEGER NOT NULL, "
+            "additional_credits_balance INTEGER NOT NULL, "
+            "period_yyyymm TEXT NOT NULL, period_status TEXT NOT NULL)",
+            "INSERT INTO conversation_automation_settings VALUES "
+            "(4, 1, 10, 2, 3, '2026-07', 'open')",
+        ],
+    )
+    expected_columns = (
+        "additional_credits_balance",
+        "business_id",
+        "id",
+        "included_credits_per_period",
+        "included_credits_used",
+        "period_status",
+        "period_yyyymm",
+    )
+    assert structural_checksum_column_names(source_table) == expected_columns
+    assert structural_checksum_column_names(destination_table) == expected_columns
+    with source.connect() as source_connection, destination.connect() as destination_connection:
+        assert structural_checksum(source_connection, source_table) == structural_checksum(
+            destination_connection, destination_table
+        )
+    source.dispose()
+    destination.dispose()
+
+
+@pytest.mark.parametrize(
+    ("table_name", "source_columns", "destination_columns", "row", "fk_column"),
+    [
+        (
+            "bookings",
+            "id INTEGER PRIMARY KEY, business_id INTEGER, customer_id INTEGER, "
+            "customer_user_id INTEGER, service_id INTEGER, staff_business_user_id INTEGER",
+            "id INTEGER PRIMARY KEY, business_id INTEGER REFERENCES businesses(id), "
+            "customer_id INTEGER REFERENCES customers(id), "
+            "customer_user_id INTEGER REFERENCES users(id), "
+            "service_id INTEGER REFERENCES services(id), "
+            "staff_business_user_id INTEGER REFERENCES business_users(id)",
+            "(80, 42, 40, 10, 30, 20)",
+            "staff_business_user_id",
+        ),
+        (
+            "system_incidents",
+            "id INTEGER PRIMARY KEY, business_id INTEGER, integration_id INTEGER",
+            "id INTEGER PRIMARY KEY, business_id INTEGER REFERENCES businesses(id), "
+            "integration_id INTEGER REFERENCES business_channel_integrations(id)",
+            "(120, 42, 77)",
+            "integration_id",
+        ),
+    ],
+)
+def test_checksum_uses_canonical_fk_when_sqlite_does_not_reflect_constraint(
+    tmp_path: Path,
+    table_name: str,
+    source_columns: str,
+    destination_columns: str,
+    row: str,
+    fk_column: str,
+) -> None:
+    parent_tables = [
+        "CREATE TABLE businesses (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE customers (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE users (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE services (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE business_users (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE business_channel_integrations (id INTEGER PRIMARY KEY)",
+    ]
+    source, source_table = reflected_test_table(
+        tmp_path,
+        f"{table_name}-source",
+        table_name,
+        [
+            f"CREATE TABLE {table_name} ({source_columns})",
+            f"INSERT INTO {table_name} VALUES {row}",
+        ],
+    )
+    destination, destination_table = reflected_test_table(
+        tmp_path,
+        f"{table_name}-destination",
+        table_name,
+        parent_tables
+        + [
+            f"CREATE TABLE {table_name} ({destination_columns})",
+            f"INSERT INTO {table_name} VALUES {row}",
+        ],
+    )
+    assert not source_table.c[fk_column].foreign_keys
+    assert destination_table.c[fk_column].foreign_keys
+    assert fk_column in structural_checksum_column_names(source_table)
+    with source.connect() as source_connection, destination.connect() as destination_connection:
+        assert structural_checksum(source_connection, source_table) == structural_checksum(
+            destination_connection, destination_table
+        )
+    source.dispose()
+    destination.dispose()
+
+
+def test_checksum_changes_for_real_structural_value_difference(tmp_path: Path) -> None:
+    first, first_table = reflected_test_table(
+        tmp_path,
+        "checksum-value-first",
+        "system_incidents",
+        [
+            "CREATE TABLE system_incidents ("
+            "id INTEGER PRIMARY KEY, business_id INTEGER, integration_id INTEGER)",
+            "INSERT INTO system_incidents VALUES (120, 42, 77)",
+        ],
+    )
+    second, second_table = reflected_test_table(
+        tmp_path,
+        "checksum-value-second",
+        "system_incidents",
+        [
+            "CREATE TABLE system_incidents ("
+            "id INTEGER PRIMARY KEY, business_id INTEGER, integration_id INTEGER)",
+            "INSERT INTO system_incidents VALUES (120, 42, 78)",
+        ],
+    )
+    with first.connect() as first_connection, second.connect() as second_connection:
+        assert structural_checksum(first_connection, first_table) != structural_checksum(
+            second_connection, second_table
+        )
+    first.dispose()
+    second.dispose()
+
+
+def test_allowed_missing_column_is_excluded_symmetrically(tmp_path: Path) -> None:
+    source, source_table = reflected_test_table(
+        tmp_path,
+        "checksum-missing-source",
+        "businesses",
+        [
+            "CREATE TABLE businesses (id INTEGER PRIMARY KEY, slug TEXT, status TEXT)",
+            "INSERT INTO businesses VALUES (42, 'legacy-business', 'active')",
+        ],
+    )
+    destination, destination_table = reflected_test_table(
+        tmp_path,
+        "checksum-missing-destination",
+        "businesses",
+        [
+            "CREATE TABLE businesses ("
+            "id INTEGER PRIMARY KEY, slug TEXT, status TEXT, activated_by_user_id INTEGER)",
+            "INSERT INTO businesses VALUES (42, 'legacy-business', 'active', NULL)",
+        ],
+    )
+    excluded = frozenset({"activated_by_user_id"})
+    with source.connect() as source_connection, destination.connect() as destination_connection:
+        assert structural_checksum(
+            source_connection, source_table, excluded
+        ) == structural_checksum(destination_connection, destination_table, excluded)
+    source.dispose()
+    destination.dispose()
 
 
 def test_source_table_classifications_are_explicit_and_complete() -> None:

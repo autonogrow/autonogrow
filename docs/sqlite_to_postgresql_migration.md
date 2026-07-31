@@ -53,5 +53,11 @@ copia en un orden versionado y validado contra las FK, preserva IDs, timestamps,
 idempotencia y ciphertext, resetea secuencias reales, y compara recuentos, PK, nulos y checksums
 estructurales. El informe no contiene tokens, ciphertext completo, emails ni mensajes.
 
+El checksum estructural selecciona PK y FK desde `Base.metadata`, añade las columnas críticas y las
+ordena por nombre. Intersecta ese contrato con las columnas físicas de la fuente, excluyendo de forma
+simétrica únicamente las ausencias legacy permitidas. Cada fila se serializa como pares
+`[nombre_columna, valor_normalizado]`; por ello no depende del orden físico ni de que SQLite refleje
+las mismas constraints FK que PostgreSQL.
+
 Tras aplicar: guardar el informe, ejecutar tests de humo, comprobar la siguiente inserción y mantener
 el SQLite original inmutable. Cualquier diferencia es NO-GO y obliga a limpiar/recrear el destino.
