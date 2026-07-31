@@ -14,6 +14,10 @@ from scripts.migrate_sqlite_to_postgresql import (
     require_complete_source,
     require_destination_at_head,
     require_empty_destination,
+    table_counts,
+)
+from scripts.migrate_sqlite_to_postgresql import (
+    main as migration_main,
 )
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.engine import Engine, make_url
@@ -28,6 +32,7 @@ from app.models import (
     AuditLog,
     AutomationCreditTransaction,
     AvailabilitySettings,
+    BackupRecord,
     Booking,
     Business,
     BusinessChannelIntegration,
@@ -39,6 +44,7 @@ from app.models import (
     ConversationAutomationSettings,
     ConversationMessage,
     Customer,
+    OperationalState,
     SystemIncident,
     User,
     WebhookInboxEvent,
@@ -354,6 +360,29 @@ def test_sqlite_to_postgresql_copy_preserves_ids_ciphertext_and_sequences(
         second_user = User(id=11, email="staff@migration.test", email_verified=True)
         db.add_all([business, second_business, first_user, second_user])
         db.flush()
+        db.add_all(
+            [
+                OperationalState(
+                    id=12,
+                    key="migration-safe-mode",
+                    enabled=True,
+                    safe_reason="migration test",
+                    updated_by_user_id=first_user.id,
+                ),
+                BackupRecord(
+                    id=13,
+                    backup_set_id="migration-backup-set",
+                    backup_type="postgresql",
+                    environment="test",
+                    release_id="migration-test",
+                    artifact_name="migration.dump",
+                    checksum_sha256="a" * 64,
+                    size_bytes=123,
+                    status="valid",
+                    safe_details_json="{}",
+                ),
+            ]
+        )
         member = BusinessUser(
             id=20,
             business_id=business.id,
@@ -496,6 +525,8 @@ def test_sqlite_to_postgresql_copy_preserves_ids_ciphertext_and_sequences(
     assert report["source"]["businesses"]["rows"] == 2
     assert report["source"]["bookings"]["rows"] == 1
     assert report["source"]["automation_credit_transactions"]["rows"] == 1
+    assert report["source"]["operational_states"]["rows"] == 1
+    assert report["source"]["backup_records"]["rows"] == 1
     with postgresql_engine.connect() as connection:
         assert (
             connection.execute(select(func.count()).select_from(Business.__table__)).scalar_one()
@@ -518,6 +549,57 @@ def test_sqlite_to_postgresql_copy_preserves_ids_ciphertext_and_sequences(
         assert next_business_id > 43
         transaction.rollback()
     source.dispose()
+
+
+def test_legacy_source_apply_leaves_new_destination_tables_empty(
+    postgresql_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "legacy-20260730-05.db"
+    source_url = f"sqlite:///{source_path.as_posix()}"
+    config = alembic_config()
+    config.attributes["database_url"] = source_url
+    command.upgrade(config, "20260730_05")
+    source = create_engine(source_url)
+
+    require_complete_source(source)
+    require_empty_destination(postgresql_engine)
+    report = copy_and_validate_atomic(source, postgresql_engine)
+    assert report["source"]["operational_states"] == {"present": False, "rows": 0}
+    assert report["source"]["backup_records"] == {"present": False, "rows": 0}
+    assert report["destination"]["operational_states"]["rows"] == 0
+    assert report["destination"]["backup_records"]["rows"] == 0
+    source.dispose()
+
+
+def test_migration_dry_run_does_not_modify_destination(
+    postgresql_engine: Engine,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = tmp_path / "dry-run-20260730-05.db"
+    source_url = f"sqlite:///{source_path.as_posix()}"
+    config = alembic_config()
+    config.attributes["database_url"] = source_url
+    command.upgrade(config, "20260730_05")
+    before = table_counts(postgresql_engine)
+    report_path = tmp_path / "dry-run-report.json"
+    destination_url = postgresql_engine.url.render_as_string(hide_password=False)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "migrate_sqlite_to_postgresql.py",
+            "--source",
+            str(source_path),
+            "--destination-url",
+            destination_url,
+            "--report",
+            str(report_path),
+        ],
+    )
+
+    assert migration_main() == 0
+    assert table_counts(postgresql_engine) == before
 
 
 def test_live_logical_lock_is_not_stolen(postgresql_engine: Engine) -> None:

@@ -28,6 +28,7 @@ from app.models.registry import register_models  # noqa: E402
 
 COPY_ORDER = (
     "users",
+    "operational_states",
     "businesses",
     "business_onboarding_templates",
     "business_users",
@@ -63,7 +64,27 @@ COPY_ORDER = (
     "webhook_inbox_events",
     "channel_outbox_messages",
     "worker_heartbeats",
+    "backup_records",
 )
+
+# These tables were introduced at 20260730_06 and have no legacy rows to synthesize.
+# If they exist in a modern source they are copied normally; an older source may omit them.
+OPTIONAL_SOURCE_TABLES = (
+    "operational_states",
+    "backup_records",
+)
+REQUIRED_SOURCE_TABLES = tuple(
+    table_name for table_name in COPY_ORDER if table_name not in OPTIONAL_SOURCE_TABLES
+)
+
+# Alembic owns this destination control table. It is validated, but never copied.
+DESTINATION_ONLY_TABLES = ("alembic_version",)
+
+# 20260730_06 added these nullable columns to existing queue tables.
+OPTIONAL_SOURCE_COLUMNS = {
+    "webhook_inbox_events": frozenset({"request_id"}),
+    "channel_outbox_messages": frozenset({"request_id"}),
+}
 
 SENSITIVE_COLUMNS = {
     "encrypted_access_token",
@@ -74,6 +95,39 @@ SENSITIVE_COLUMNS = {
     "email",
     "phone",
     "customer_email",
+}
+
+CRITICAL_CHECKSUM_COLUMNS = {
+    "automation_credit_transactions": frozenset(
+        {
+            "transaction_type",
+            "amount",
+            "included_delta",
+            "additional_delta",
+            "included_balance_after",
+            "additional_balance_after",
+            "total_balance_after",
+            "payment_amount",
+            "idempotency_key",
+        }
+    ),
+    "conversation_automation_settings": frozenset(
+        {
+            "included_credits_per_period",
+            "included_credits_used",
+            "additional_credits_balance",
+            "period_yyyymm",
+            "period_status",
+        }
+    ),
+    "business_channel_integrations": frozenset(
+        {"integration_status", "encryption_key_version", "external_account_id"}
+    ),
+    "webhook_inbox_events": frozenset({"idempotency_key", "payload_hash", "status"}),
+    "channel_outbox_messages": frozenset({"idempotency_key", "status"}),
+    "backup_records": frozenset(
+        {"backup_set_id", "checksum_sha256", "size_bytes", "status", "protected"}
+    ),
 }
 
 
@@ -124,6 +178,11 @@ def validate_copy_order() -> None:
         missing = sorted(expected - declared)
         extra = sorted(declared - expected)
         raise RuntimeError(f"COPY_ORDER mismatch; missing={missing}, extra={extra}")
+    classified = set(REQUIRED_SOURCE_TABLES) | set(OPTIONAL_SOURCE_TABLES)
+    if classified != declared or set(REQUIRED_SOURCE_TABLES) & set(OPTIONAL_SOURCE_TABLES):
+        raise RuntimeError("Source table classifications do not match COPY_ORDER")
+    if set(DESTINATION_ONLY_TABLES) & declared:
+        raise RuntimeError("Destination-only tables cannot be present in COPY_ORDER")
     positions = {name: index for index, name in enumerate(COPY_ORDER)}
     for table in Base.metadata.tables.values():
         for foreign_key in table.foreign_keys:
@@ -146,11 +205,43 @@ def require_destination_at_head(engine: Engine) -> None:
         )
 
 
-def require_complete_source(engine: Engine) -> None:
-    tables = set(inspect(engine).get_table_names())
-    missing = sorted(set(COPY_ORDER) - tables)
+def source_copy_order(engine_or_connection: Engine | Connection) -> tuple[str, ...]:
+    """Return present copyable tables after strict legacy schema validation."""
+
+    register_models()
+    inspector = inspect(engine_or_connection)
+    tables = set(inspector.get_table_names())
+    missing = sorted(set(REQUIRED_SOURCE_TABLES) - tables)
     if missing:
         raise RuntimeError(f"Source schema is incomplete; missing tables: {missing}")
+
+    column_mismatches: dict[str, dict[str, list[str]]] = {}
+    for table_name in COPY_ORDER:
+        if table_name not in tables:
+            continue
+        expected_columns = set(Base.metadata.tables[table_name].columns.keys())
+        source_columns = {column["name"] for column in inspector.get_columns(table_name)}
+        missing_columns = sorted(
+            expected_columns
+            - source_columns
+            - set(OPTIONAL_SOURCE_COLUMNS.get(table_name, frozenset()))
+        )
+        extra_columns = sorted(source_columns - expected_columns)
+        if missing_columns or extra_columns:
+            column_mismatches[table_name] = {
+                "missing": missing_columns,
+                "extra": extra_columns,
+            }
+    if column_mismatches:
+        raise RuntimeError(
+            "Source schema has incompatible columns: "
+            + json.dumps(column_mismatches, sort_keys=True)
+        )
+    return tuple(table_name for table_name in COPY_ORDER if table_name in tables)
+
+
+def require_complete_source(engine: Engine) -> tuple[str, ...]:
+    copy_order = source_copy_order(engine)
     with engine.connect() as connection:
         violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchmany(20)
         metadata = MetaData()
@@ -170,13 +261,14 @@ def require_complete_source(engine: Engine) -> None:
         raise RuntimeError("Source SQLite foreign-key validation failed")
     if missing_ciphertext:
         raise RuntimeError("Source has active integrations without complete ciphertext metadata")
+    return copy_order
 
 
-def table_counts(engine: Engine) -> dict[str, int]:
+def table_counts(engine: Engine, table_names: tuple[str, ...] = COPY_ORDER) -> dict[str, int]:
     metadata = MetaData()
     result: dict[str, int] = {}
     with engine.connect() as connection:
-        for table_name in COPY_ORDER:
+        for table_name in table_names:
             table = Table(table_name, metadata, autoload_with=connection)
             result[table_name] = int(
                 connection.execute(select(func.count()).select_from(table)).scalar_one()
@@ -189,6 +281,9 @@ def require_empty_destination(engine: Engine) -> None:
     missing = sorted(set(COPY_ORDER) - present)
     if missing:
         raise RuntimeError(f"Destination schema is incomplete despite Alembic head: {missing}")
+    unexpected = sorted(present - set(COPY_ORDER) - set(DESTINATION_ONLY_TABLES))
+    if unexpected:
+        raise RuntimeError(f"Destination schema contains unexpected tables: {unexpected}")
     populated = {name: count for name, count in table_counts(engine).items() if count}
     if populated:
         raise RuntimeError(
@@ -207,10 +302,12 @@ def safe_json_value(value: Any) -> Any:
 
 def structural_checksum(connection: Connection, table: Table) -> str:
     primary_keys = list(table.primary_key.columns)
-    columns = primary_keys + [
+    critical_names = CRITICAL_CHECKSUM_COLUMNS.get(table.name, frozenset())
+    columns = [
         column
         for column in table.columns
-        if column.foreign_keys and column.name not in SENSITIVE_COLUMNS
+        if column.name not in SENSITIVE_COLUMNS
+        and (column.primary_key or column.foreign_keys or column.name in critical_names)
     ]
     if not columns:
         return hashlib.sha256(b"").hexdigest()
@@ -225,6 +322,7 @@ def inspect_table(connection: Connection, table: Table) -> dict[str, Any]:
     primary_keys = list(table.primary_key.columns)
     primary_key = primary_keys[0] if len(primary_keys) == 1 else None
     result: dict[str, Any] = {
+        "present": True,
         "rows": int(connection.execute(select(func.count()).select_from(table)).scalar_one()),
         "structural_checksum": structural_checksum(connection, table),
         "critical_nulls": {},
@@ -270,25 +368,47 @@ def inspect_table(connection: Connection, table: Table) -> dict[str, Any]:
     return result
 
 
-def safe_database_report(engine: Engine) -> dict[str, Any]:
+def safe_database_report(
+    engine: Engine, table_names: tuple[str, ...] = COPY_ORDER
+) -> dict[str, Any]:
     with engine.connect() as connection:
-        return safe_connection_report(connection)
+        return safe_connection_report(connection, table_names)
 
 
-def safe_connection_report(connection: Connection) -> dict[str, Any]:
+def safe_connection_report(
+    connection: Connection, table_names: tuple[str, ...] = COPY_ORDER
+) -> dict[str, Any]:
     metadata = MetaData()
     result: dict[str, Any] = {}
-    for table_name in COPY_ORDER:
+    for table_name in table_names:
         table = Table(table_name, metadata, autoload_with=connection)
         result[table_name] = inspect_table(connection, table)
     return result
+
+
+def safe_source_connection_report(
+    connection: Connection, source_tables: tuple[str, ...]
+) -> dict[str, Any]:
+    present_report = safe_connection_report(connection, source_tables)
+    return {
+        table_name: present_report.get(table_name, {"present": False, "rows": 0})
+        for table_name in COPY_ORDER
+    }
+
+
+def safe_source_database_report(
+    engine: Engine, source_tables: tuple[str, ...] | None = None
+) -> dict[str, Any]:
+    validated_tables = source_tables or source_copy_order(engine)
+    with engine.connect() as connection:
+        return safe_source_connection_report(connection, validated_tables)
 
 
 def copy_rows(source: Engine, destination: Engine) -> None:
     source_metadata = MetaData()
     destination_metadata = MetaData()
     with source.connect() as source_connection, destination.begin() as destination_connection:
-        for table_name in COPY_ORDER:
+        for table_name in source_copy_order(source_connection):
             source_table = Table(table_name, source_metadata, autoload_with=source_connection)
             destination_table = Table(
                 table_name, destination_metadata, autoload_with=destination_connection
@@ -352,12 +472,17 @@ def reset_sequences_on_connection(connection: Connection) -> dict[str, dict[str,
 
 
 def verify_migration(source: Engine, destination: Engine) -> dict[str, Any]:
-    source_report = safe_database_report(source)
+    source_tables = source_copy_order(source)
+    source_report = safe_source_database_report(source, source_tables)
     destination_report = safe_database_report(destination)
     differences: list[str] = []
     for table_name in COPY_ORDER:
         source_table = source_report[table_name]
         destination_table = destination_report[table_name]
+        if not source_table["present"]:
+            if destination_table["rows"]:
+                differences.append(f"{table_name}.unexpected_destination_rows")
+            continue
         for key in ("rows", "pk_min", "pk_max", "structural_checksum", "critical_nulls"):
             if source_table.get(key) != destination_table.get(key):
                 differences.append(f"{table_name}.{key}")
@@ -397,9 +522,10 @@ def copy_and_validate_atomic(source: Engine, destination: Engine) -> dict[str, A
     source_metadata = MetaData()
     destination_metadata = MetaData()
     with source.connect() as source_connection, destination.connect() as destination_connection:
+        source_tables = source_copy_order(source_connection)
         transaction = destination_connection.begin()
         try:
-            for table_name in COPY_ORDER:
+            for table_name in source_tables:
                 source_table = Table(table_name, source_metadata, autoload_with=source_connection)
                 destination_table = Table(
                     table_name,
@@ -413,10 +539,14 @@ def copy_and_validate_atomic(source: Engine, destination: Engine) -> dict[str, A
                     )
 
             sequence_report = reset_sequences_on_connection(destination_connection)
-            source_report = safe_connection_report(source_connection)
+            source_report = safe_source_connection_report(source_connection, source_tables)
             destination_report = safe_connection_report(destination_connection)
             differences: list[str] = []
             for table_name in COPY_ORDER:
+                if not source_report[table_name]["present"]:
+                    if destination_report[table_name]["rows"]:
+                        differences.append(f"{table_name}.unexpected_destination_rows")
+                    continue
                 for key in (
                     "rows",
                     "pk_min",
@@ -483,12 +613,14 @@ def main() -> int:
     destination_url = args.destination_url.strip()
     if not destination_url:
         raise ValueError("DATABASE_URL or --destination-url is required")
+    if args.upgrade_destination and not args.apply:
+        raise ValueError("--upgrade-destination cannot be used during a read-only dry-run")
     validate_urls(sqlite_url, destination_url)
     validate_copy_order()
     source = create_engine(sqlite_url)
     destination = create_engine(destination_url, isolation_level="READ COMMITTED")
     try:
-        require_complete_source(source)
+        source_tables = require_complete_source(source)
         if args.upgrade_destination:
             config = alembic_config()
             config.attributes["database_url"] = destination_url
@@ -500,8 +632,16 @@ def main() -> int:
             "source": "sqlite:///<local-file>",
             "destination": sanitize_database_url(destination_url),
             "alembic_head": list(head_revisions()),
-            "source_preflight": safe_database_report(source),
+            "source_preflight": safe_source_database_report(source, source_tables),
             "copy_order": list(COPY_ORDER),
+            "required_source_tables": list(REQUIRED_SOURCE_TABLES),
+            "optional_source_tables": list(OPTIONAL_SOURCE_TABLES),
+            "absent_optional_source_tables": [
+                table_name
+                for table_name in OPTIONAL_SOURCE_TABLES
+                if table_name not in source_tables
+            ],
+            "destination_only_tables": list(DESTINATION_ONLY_TABLES),
         }
         if args.apply:
             report["validation"] = copy_and_validate_atomic(source, destination)
