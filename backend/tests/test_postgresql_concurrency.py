@@ -10,6 +10,7 @@ import pytest
 from alembic import command
 from scripts.migrate_sqlite_to_postgresql import (
     COPY_ORDER,
+    OPTIONAL_SOURCE_TABLES,
     copy_and_validate_atomic,
     require_complete_source,
     require_destination_at_head,
@@ -555,20 +556,19 @@ def test_legacy_source_apply_leaves_new_destination_tables_empty(
     postgresql_engine: Engine,
     tmp_path: Path,
 ) -> None:
-    source_path = tmp_path / "legacy-20260730-05.db"
+    source_path = tmp_path / "legacy-20260730-01.db"
     source_url = f"sqlite:///{source_path.as_posix()}"
     config = alembic_config()
     config.attributes["database_url"] = source_url
-    command.upgrade(config, "20260730_05")
+    command.upgrade(config, "20260730_01")
     source = create_engine(source_url)
 
     require_complete_source(source)
     require_empty_destination(postgresql_engine)
     report = copy_and_validate_atomic(source, postgresql_engine)
-    assert report["source"]["operational_states"] == {"present": False, "rows": 0}
-    assert report["source"]["backup_records"] == {"present": False, "rows": 0}
-    assert report["destination"]["operational_states"]["rows"] == 0
-    assert report["destination"]["backup_records"]["rows"] == 0
+    for table_name in OPTIONAL_SOURCE_TABLES:
+        assert report["source"][table_name] == {"present": False, "rows": 0}
+        assert report["destination"][table_name]["rows"] == 0
     source.dispose()
 
 
@@ -577,11 +577,11 @@ def test_migration_dry_run_does_not_modify_destination(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    source_path = tmp_path / "dry-run-20260730-05.db"
+    source_path = tmp_path / "dry-run-20260730-01.db"
     source_url = f"sqlite:///{source_path.as_posix()}"
     config = alembic_config()
     config.attributes["database_url"] = source_url
-    command.upgrade(config, "20260730_05")
+    command.upgrade(config, "20260730_01")
     before = table_counts(postgresql_engine)
     report_path = tmp_path / "dry-run-report.json"
     destination_url = postgresql_engine.url.render_as_string(hide_password=False)

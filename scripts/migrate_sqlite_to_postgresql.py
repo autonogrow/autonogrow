@@ -12,7 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import MetaData, Table, create_engine, func, inspect, select, text
+from sqlalchemy import MetaData, Table, and_, create_engine, func, inspect, or_, select, text
 from sqlalchemy.engine import Connection, Engine, make_url
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,9 +67,16 @@ COPY_ORDER = (
     "backup_records",
 )
 
-# These tables were introduced at 20260730_06 and have no legacy rows to synthesize.
-# If they exist in a modern source they are copied normally; an older source may omit them.
+# Tables introduced after the 20260730_01 staging baseline. If present they are
+# copied normally; older sources may omit them without synthesizing rows.
 OPTIONAL_SOURCE_TABLES = (
+    "webhook_inbox_events",
+    "channel_outbox_messages",
+    "worker_heartbeats",
+    "business_onboarding_sessions",
+    "business_onboarding_templates",
+    "business_staff_profiles",
+    "business_staff_profile_services",
     "operational_states",
     "backup_records",
 )
@@ -80,10 +87,88 @@ REQUIRED_SOURCE_TABLES = tuple(
 # Alembic owns this destination control table. It is validated, but never copied.
 DESTINATION_ONLY_TABLES = ("alembic_version",)
 
-# 20260730_06 added these nullable columns to existing queue tables.
-OPTIONAL_SOURCE_COLUMNS = {
-    "webhook_inbox_events": frozenset({"request_id"}),
-    "channel_outbox_messages": frozenset({"request_id"}),
+# Closed compatibility matrix for columns added after the staging baseline.
+# Values are safe expected values after PostgreSQL applies its explicit default,
+# or None when omission is intentionally represented as SQL NULL.
+ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
+    "businesses": {
+        "whatsapp_phone": {"action": "omit_as_null", "expected_value": None},
+        "public_email": {"action": "omit_as_null", "expected_value": None},
+        "postal_code": {"action": "omit_as_null", "expected_value": None},
+        "region": {"action": "omit_as_null", "expected_value": None},
+        "country_code": {"action": "use_destination_default", "expected_value": "ES"},
+        "language_code": {"action": "use_destination_default", "expected_value": "es"},
+        "timezone": {
+            "action": "use_destination_default",
+            "expected_value": "Europe/Madrid",
+        },
+        "currency": {"action": "use_destination_default", "expected_value": "EUR"},
+        "legal_name": {"action": "omit_as_null", "expected_value": None},
+        "tax_identifier": {"action": "omit_as_null", "expected_value": None},
+        "tiktok_url": {"action": "omit_as_null", "expected_value": None},
+        "external_website_url": {"action": "omit_as_null", "expected_value": None},
+        "landing_cta": {"action": "omit_as_null", "expected_value": None},
+        "seo_title": {"action": "omit_as_null", "expected_value": None},
+        "seo_description": {"action": "omit_as_null", "expected_value": None},
+        "seo_noindex": {"action": "use_destination_default", "expected_value": True},
+        "activated_at": {"action": "omit_as_null", "expected_value": None},
+        "activated_by_user_id": {"action": "omit_as_null", "expected_value": None},
+        "status_updated_at": {"action": "omit_as_null", "expected_value": None},
+        "archived_at": {"action": "omit_as_null", "expected_value": None},
+    },
+    "services": {
+        "price_amount": {"action": "omit_as_null", "expected_value": None},
+        "currency": {"action": "use_destination_default", "expected_value": "EUR"},
+        "category": {"action": "omit_as_null", "expected_value": None},
+        "visible": {"action": "use_destination_default", "expected_value": True},
+        "bookable": {"action": "use_destination_default", "expected_value": True},
+        "requires_approval": {
+            "action": "use_destination_default",
+            "expected_value": False,
+        },
+        "buffer_before_minutes": {
+            "action": "use_destination_default",
+            "expected_value": 0,
+        },
+        "buffer_after_minutes": {
+            "action": "use_destination_default",
+            "expected_value": 0,
+        },
+        "position": {"action": "use_destination_default", "expected_value": 0},
+        "source_key": {"action": "omit_as_null", "expected_value": None},
+        "archived_at": {"action": "omit_as_null", "expected_value": None},
+    },
+    "availability_settings": {
+        "auto_confirm_bookings": {
+            "action": "use_destination_default",
+            "expected_value": True,
+        },
+        "cancellation_allowed": {
+            "action": "use_destination_default",
+            "expected_value": True,
+        },
+        "cancellation_notice_minutes": {
+            "action": "use_destination_default",
+            "expected_value": 120,
+        },
+        "reschedule_allowed": {
+            "action": "use_destination_default",
+            "expected_value": True,
+        },
+        "max_simultaneous_bookings": {
+            "action": "use_destination_default",
+            "expected_value": 1,
+        },
+    },
+    "webhook_inbox_events": {"request_id": {"action": "omit_as_null", "expected_value": None}},
+    "channel_outbox_messages": {"request_id": {"action": "omit_as_null", "expected_value": None}},
+}
+
+BUSINESS_STATUS_VALUES = frozenset(
+    {"draft", "onboarding", "configuration_pending", "ready", "active", "suspended", "archived"}
+)
+COPY_VALUE_TRANSFORMS = {
+    "businesses": {"status": {"inactive": "suspended"}},
 }
 
 SENSITIVE_COLUMNS = {
@@ -128,6 +213,7 @@ CRITICAL_CHECKSUM_COLUMNS = {
     "backup_records": frozenset(
         {"backup_set_id", "checksum_sha256", "size_bytes", "status", "protected"}
     ),
+    "businesses": frozenset({"slug", "status"}),
 }
 
 
@@ -183,6 +269,8 @@ def validate_copy_order() -> None:
         raise RuntimeError("Source table classifications do not match COPY_ORDER")
     if set(DESTINATION_ONLY_TABLES) & declared:
         raise RuntimeError("Destination-only tables cannot be present in COPY_ORDER")
+    if not set(ALLOWED_MISSING_SOURCE_COLUMNS) <= declared:
+        raise RuntimeError("Missing-column policies reference tables outside COPY_ORDER")
     positions = {name: index for index, name in enumerate(COPY_ORDER)}
     for table in Base.metadata.tables.values():
         for foreign_key in table.foreign_keys:
@@ -205,62 +293,254 @@ def require_destination_at_head(engine: Engine) -> None:
         )
 
 
-def source_copy_order(engine_or_connection: Engine | Connection) -> tuple[str, ...]:
-    """Return present copyable tables after strict legacy schema validation."""
+def analyze_source_schema(engine_or_connection: Engine | Connection) -> dict[str, Any]:
+    """Describe legacy compatibility without raising or changing either database."""
 
     register_models()
     inspector = inspect(engine_or_connection)
     tables = set(inspector.get_table_names())
-    missing = sorted(set(REQUIRED_SOURCE_TABLES) - tables)
-    if missing:
-        raise RuntimeError(f"Source schema is incomplete; missing tables: {missing}")
-
+    copyable_tables = [table_name for table_name in COPY_ORDER if table_name in tables]
+    absent_optional_tables = sorted(set(OPTIONAL_SOURCE_TABLES) - tables)
+    missing_required_tables = sorted(set(REQUIRED_SOURCE_TABLES) - tables)
+    allowed_missing_columns: dict[str, dict[str, dict[str, Any]]] = {}
     column_mismatches: dict[str, dict[str, list[str]]] = {}
     for table_name in COPY_ORDER:
         if table_name not in tables:
             continue
         expected_columns = set(Base.metadata.tables[table_name].columns.keys())
         source_columns = {column["name"] for column in inspector.get_columns(table_name)}
-        missing_columns = sorted(
-            expected_columns
-            - source_columns
-            - set(OPTIONAL_SOURCE_COLUMNS.get(table_name, frozenset()))
-        )
+        missing_columns = expected_columns - source_columns
+        policies = ALLOWED_MISSING_SOURCE_COLUMNS.get(table_name, {})
+        allowed = {
+            column_name: policies[column_name]
+            for column_name in sorted(missing_columns & set(policies))
+        }
+        if allowed:
+            allowed_missing_columns[table_name] = allowed
+        incompatible_missing = sorted(missing_columns - set(policies))
         extra_columns = sorted(source_columns - expected_columns)
-        if missing_columns or extra_columns:
+        if incompatible_missing or extra_columns:
             column_mismatches[table_name] = {
-                "missing": missing_columns,
+                "missing": incompatible_missing,
                 "extra": extra_columns,
             }
+    blockers: list[str] = []
+    if missing_required_tables:
+        blockers.append(f"Source schema is incomplete; missing tables: {missing_required_tables}")
     if column_mismatches:
-        raise RuntimeError(
+        blockers.append(
             "Source schema has incompatible columns: "
             + json.dumps(column_mismatches, sort_keys=True)
         )
-    return tuple(table_name for table_name in COPY_ORDER if table_name in tables)
+    return {
+        "copyable_tables": copyable_tables,
+        "absent_optional_tables": absent_optional_tables,
+        "missing_required_tables": missing_required_tables,
+        "allowed_missing_columns": allowed_missing_columns,
+        "incompatible_columns": column_mismatches,
+        "blockers": blockers,
+    }
+
+
+def source_copy_order(engine_or_connection: Engine | Connection) -> tuple[str, ...]:
+    """Return present copyable tables after strict legacy schema validation."""
+
+    analysis = analyze_source_schema(engine_or_connection)
+    if analysis["missing_required_tables"]:
+        raise RuntimeError(
+            f"Source schema is incomplete; missing tables: {analysis['missing_required_tables']}"
+        )
+    if analysis["incompatible_columns"]:
+        raise RuntimeError(
+            "Source schema has incompatible columns: "
+            + json.dumps(analysis["incompatible_columns"], sort_keys=True)
+        )
+    return tuple(analysis["copyable_tables"])
+
+
+def missing_source_columns(
+    analysis: dict[str, Any],
+) -> dict[str, frozenset[str]]:
+    return {
+        table_name: frozenset(columns)
+        for table_name, columns in analysis["allowed_missing_columns"].items()
+    }
+
+
+def normalize_copy_value(table_name: str, column_name: str, value: Any) -> Any:
+    transforms = COPY_VALUE_TRANSFORMS.get(table_name, {}).get(column_name, {})
+    return transforms.get(value, value)
+
+
+def prepared_row(table_name: str, row: Any) -> dict[str, Any]:
+    return {
+        column_name: normalize_copy_value(table_name, column_name, value)
+        for column_name, value in dict(row).items()
+    }
+
+
+def analyze_source_data(engine: Engine) -> dict[str, Any]:
+    """Validate legacy data against constraints that exist at the destination head."""
+
+    metadata = MetaData()
+    with engine.connect() as connection:
+        integrity_rows = connection.exec_driver_sql("PRAGMA integrity_check").fetchmany(20)
+        integrity = [str(row[0]) for row in integrity_rows]
+        foreign_key_violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchmany(
+            20
+        )
+        businesses = Table("businesses", metadata, autoload_with=connection)
+        integrations = Table("business_channel_integrations", metadata, autoload_with=connection)
+        settings = Table("conversation_automation_settings", metadata, autoload_with=connection)
+        credits = Table("automation_credit_transactions", metadata, autoload_with=connection)
+        bookings = Table("bookings", metadata, autoload_with=connection)
+        services = Table("services", metadata, autoload_with=connection)
+        availability = Table("availability_settings", metadata, autoload_with=connection)
+
+        status_rows = connection.execute(
+            select(businesses.c.status, func.count()).group_by(businesses.c.status)
+        ).all()
+        status_counts = {str(value): int(count) for value, count in status_rows}
+        unsupported_statuses = sorted(
+            value
+            for value in status_counts
+            if value not in BUSINESS_STATUS_VALUES and value != "inactive"
+        )
+        planned_value_transforms = []
+        if status_counts.get("inactive"):
+            planned_value_transforms.append(
+                {
+                    "table": "businesses",
+                    "column": "status",
+                    "from": "inactive",
+                    "to": "suspended",
+                    "rows": status_counts["inactive"],
+                    "reason": "explicit 20260730_05 Alembic transition",
+                }
+            )
+
+        missing_ciphertext = int(
+            connection.execute(
+                select(func.count())
+                .select_from(integrations)
+                .where(
+                    integrations.c.integration_status.in_(("connected", "degraded")),
+                    (
+                        integrations.c.encrypted_access_token.is_(None)
+                        | integrations.c.encryption_key_version.is_(None)
+                    ),
+                )
+            ).scalar_one()
+        )
+
+        constraint_violations = {
+            "conversation_automation_settings.credit_balances": int(
+                connection.execute(
+                    select(func.count())
+                    .select_from(settings)
+                    .where(
+                        or_(
+                            settings.c.included_credits_per_period < 0,
+                            settings.c.included_credits_used < 0,
+                            settings.c.included_credits_used
+                            > settings.c.included_credits_per_period,
+                            settings.c.additional_credits_balance < 0,
+                            settings.c.auto_used_current_period < 0,
+                        )
+                    )
+                ).scalar_one()
+            ),
+            "automation_credit_transactions.ledger": int(
+                connection.execute(
+                    select(func.count())
+                    .select_from(credits)
+                    .where(
+                        or_(
+                            and_(
+                                credits.c.amount < 0,
+                                credits.c.transaction_type.not_in(
+                                    ("manual_adjustment", "correction")
+                                ),
+                            ),
+                            credits.c.included_balance_after < 0,
+                            credits.c.additional_balance_after < 0,
+                            credits.c.total_balance_after < 0,
+                            credits.c.total_balance_after
+                            != credits.c.included_balance_after
+                            + credits.c.additional_balance_after,
+                            credits.c.payment_amount < 0,
+                        )
+                    )
+                ).scalar_one()
+            ),
+            "bookings.modern_checks": int(
+                connection.execute(
+                    select(func.count())
+                    .select_from(bookings)
+                    .where(
+                        or_(
+                            bookings.c.duration_minutes <= 0,
+                            and_(
+                                bookings.c.start_datetime.is_not(None),
+                                bookings.c.end_datetime.is_not(None),
+                                bookings.c.end_datetime <= bookings.c.start_datetime,
+                            ),
+                        )
+                    )
+                ).scalar_one()
+            ),
+            "services.modern_checks": int(
+                connection.execute(
+                    select(func.count())
+                    .select_from(services)
+                    .where(services.c.duration_minutes <= 0)
+                ).scalar_one()
+            ),
+            "availability_settings.modern_checks": int(
+                connection.execute(
+                    select(func.count())
+                    .select_from(availability)
+                    .where(
+                        or_(
+                            availability.c.slot_interval_minutes <= 0,
+                            availability.c.min_notice_minutes < 0,
+                            availability.c.max_days_ahead <= 0,
+                        )
+                    )
+                ).scalar_one()
+            ),
+        }
+    constraint_violations = {name: count for name, count in constraint_violations.items() if count}
+    blockers: list[str] = []
+    if integrity != ["ok"]:
+        blockers.append(f"Source SQLite integrity validation failed: {integrity}")
+    if foreign_key_violations:
+        blockers.append("Source SQLite foreign-key validation failed")
+    if missing_ciphertext:
+        blockers.append("Source has active integrations without complete ciphertext metadata")
+    if unsupported_statuses:
+        blockers.append(f"Source has unsupported business statuses: {unsupported_statuses}")
+    if constraint_violations:
+        blockers.append(
+            "Source data violates destination constraints: "
+            + json.dumps(constraint_violations, sort_keys=True)
+        )
+    return {
+        "integrity_check": integrity,
+        "foreign_key_violations": len(foreign_key_violations),
+        "missing_active_integration_ciphertext": missing_ciphertext,
+        "business_status_counts": status_counts,
+        "planned_value_transforms": planned_value_transforms,
+        "constraint_violations": constraint_violations,
+        "blockers": blockers,
+    }
 
 
 def require_complete_source(engine: Engine) -> tuple[str, ...]:
     copy_order = source_copy_order(engine)
-    with engine.connect() as connection:
-        violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchmany(20)
-        metadata = MetaData()
-        integrations = Table("business_channel_integrations", metadata, autoload_with=connection)
-        missing_ciphertext = connection.execute(
-            select(func.count())
-            .select_from(integrations)
-            .where(
-                integrations.c.integration_status.in_(("connected", "degraded")),
-                (
-                    integrations.c.encrypted_access_token.is_(None)
-                    | integrations.c.encryption_key_version.is_(None)
-                ),
-            )
-        ).scalar_one()
-    if violations:
-        raise RuntimeError("Source SQLite foreign-key validation failed")
-    if missing_ciphertext:
-        raise RuntimeError("Source has active integrations without complete ciphertext metadata")
+    data_analysis = analyze_source_data(engine)
+    if data_analysis["blockers"]:
+        raise RuntimeError("; ".join(data_analysis["blockers"]))
     return copy_order
 
 
@@ -300,31 +580,46 @@ def safe_json_value(value: Any) -> Any:
     return value
 
 
-def structural_checksum(connection: Connection, table: Table) -> str:
+def structural_checksum(
+    connection: Connection,
+    table: Table,
+    excluded_columns: frozenset[str] = frozenset(),
+) -> str:
     primary_keys = list(table.primary_key.columns)
     critical_names = CRITICAL_CHECKSUM_COLUMNS.get(table.name, frozenset())
     columns = [
         column
         for column in table.columns
         if column.name not in SENSITIVE_COLUMNS
+        and column.name not in excluded_columns
         and (column.primary_key or column.foreign_keys or column.name in critical_names)
     ]
     if not columns:
         return hashlib.sha256(b"").hexdigest()
     rows = connection.execute(select(*columns).order_by(*primary_keys)).all()
-    payload = [[safe_json_value(value) for value in row] for row in rows]
+    payload = [
+        [
+            safe_json_value(normalize_copy_value(table.name, column.name, value))
+            for column, value in zip(columns, row, strict=True)
+        ]
+        for row in rows
+    ]
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
 
-def inspect_table(connection: Connection, table: Table) -> dict[str, Any]:
+def inspect_table(
+    connection: Connection,
+    table: Table,
+    excluded_columns: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     primary_keys = list(table.primary_key.columns)
     primary_key = primary_keys[0] if len(primary_keys) == 1 else None
     result: dict[str, Any] = {
         "present": True,
         "rows": int(connection.execute(select(func.count()).select_from(table)).scalar_one()),
-        "structural_checksum": structural_checksum(connection, table),
+        "structural_checksum": structural_checksum(connection, table, excluded_columns),
         "critical_nulls": {},
     }
     if primary_key is not None:
@@ -376,20 +671,28 @@ def safe_database_report(
 
 
 def safe_connection_report(
-    connection: Connection, table_names: tuple[str, ...] = COPY_ORDER
+    connection: Connection,
+    table_names: tuple[str, ...] = COPY_ORDER,
+    excluded_columns: dict[str, frozenset[str]] | None = None,
 ) -> dict[str, Any]:
     metadata = MetaData()
     result: dict[str, Any] = {}
     for table_name in table_names:
         table = Table(table_name, metadata, autoload_with=connection)
-        result[table_name] = inspect_table(connection, table)
+        result[table_name] = inspect_table(
+            connection,
+            table,
+            (excluded_columns or {}).get(table_name, frozenset()),
+        )
     return result
 
 
 def safe_source_connection_report(
-    connection: Connection, source_tables: tuple[str, ...]
+    connection: Connection,
+    source_tables: tuple[str, ...],
+    excluded_columns: dict[str, frozenset[str]] | None = None,
 ) -> dict[str, Any]:
-    present_report = safe_connection_report(connection, source_tables)
+    present_report = safe_connection_report(connection, source_tables, excluded_columns)
     return {
         table_name: present_report.get(table_name, {"present": False, "rows": 0})
         for table_name in COPY_ORDER
@@ -400,8 +703,9 @@ def safe_source_database_report(
     engine: Engine, source_tables: tuple[str, ...] | None = None
 ) -> dict[str, Any]:
     validated_tables = source_tables or source_copy_order(engine)
+    excluded_columns = missing_source_columns(analyze_source_schema(engine))
     with engine.connect() as connection:
-        return safe_source_connection_report(connection, validated_tables)
+        return safe_source_connection_report(connection, validated_tables, excluded_columns)
 
 
 def copy_rows(source: Engine, destination: Engine) -> None:
@@ -416,8 +720,57 @@ def copy_rows(source: Engine, destination: Engine) -> None:
             rows = source_connection.execute(select(source_table)).mappings()
             while batch := rows.fetchmany(500):
                 destination_connection.execute(
-                    destination_table.insert(), [dict(row) for row in batch]
+                    destination_table.insert(),
+                    [prepared_row(table_name, row) for row in batch],
                 )
+
+
+def require_destination_column_policies(engine: Engine, source_analysis: dict[str, Any]) -> None:
+    inspector = inspect(engine)
+    incompatible: dict[str, dict[str, str]] = {}
+    for table_name, policies in source_analysis["allowed_missing_columns"].items():
+        destination_columns = {
+            column["name"]: column for column in inspector.get_columns(table_name)
+        }
+        for column_name, policy in policies.items():
+            destination_column = destination_columns[column_name]
+            action = policy["action"]
+            if action == "use_destination_default" and destination_column.get("default") is None:
+                incompatible.setdefault(table_name, {})[column_name] = (
+                    "destination default is missing"
+                )
+            if action == "omit_as_null" and not destination_column.get("nullable"):
+                incompatible.setdefault(table_name, {})[column_name] = (
+                    "destination column is not nullable"
+                )
+    if incompatible:
+        raise RuntimeError(
+            "Destination cannot apply legacy column policies: "
+            + json.dumps(incompatible, sort_keys=True)
+        )
+
+
+def omitted_column_differences(
+    connection: Connection, source_analysis: dict[str, Any]
+) -> list[str]:
+    metadata = MetaData()
+    differences: list[str] = []
+    for table_name, policies in source_analysis["allowed_missing_columns"].items():
+        table = Table(table_name, metadata, autoload_with=connection)
+        for column_name, policy in policies.items():
+            column = table.c[column_name]
+            expected = policy["expected_value"]
+            mismatch = (
+                column.is_not(None)
+                if expected is None
+                else or_(column.is_(None), column != expected)
+            )
+            count = connection.execute(
+                select(func.count()).select_from(table).where(mismatch)
+            ).scalar_one()
+            if count:
+                differences.append(f"{table_name}.{column_name}.legacy_policy")
+    return differences
 
 
 def reset_sequences(engine: Engine) -> dict[str, dict[str, int]]:
@@ -472,9 +825,15 @@ def reset_sequences_on_connection(connection: Connection) -> dict[str, dict[str,
 
 
 def verify_migration(source: Engine, destination: Engine) -> dict[str, Any]:
+    source_analysis = analyze_source_schema(source)
     source_tables = source_copy_order(source)
+    excluded_columns = missing_source_columns(source_analysis)
     source_report = safe_source_database_report(source, source_tables)
-    destination_report = safe_database_report(destination)
+    with destination.connect() as destination_connection:
+        destination_report = safe_connection_report(
+            destination_connection, COPY_ORDER, excluded_columns
+        )
+        policy_differences = omitted_column_differences(destination_connection, source_analysis)
     differences: list[str] = []
     for table_name in COPY_ORDER:
         source_table = source_report[table_name]
@@ -486,6 +845,7 @@ def verify_migration(source: Engine, destination: Engine) -> dict[str, Any]:
         for key in ("rows", "pk_min", "pk_max", "structural_checksum", "critical_nulls"):
             if source_table.get(key) != destination_table.get(key):
                 differences.append(f"{table_name}.{key}")
+    differences.extend(policy_differences)
     if differences:
         raise RuntimeError(f"Migration validation failed: {differences}")
     source_metadata = MetaData()
@@ -522,7 +882,9 @@ def copy_and_validate_atomic(source: Engine, destination: Engine) -> dict[str, A
     source_metadata = MetaData()
     destination_metadata = MetaData()
     with source.connect() as source_connection, destination.connect() as destination_connection:
+        source_analysis = analyze_source_schema(source_connection)
         source_tables = source_copy_order(source_connection)
+        excluded_columns = missing_source_columns(source_analysis)
         transaction = destination_connection.begin()
         try:
             for table_name in source_tables:
@@ -535,12 +897,17 @@ def copy_and_validate_atomic(source: Engine, destination: Engine) -> dict[str, A
                 rows = source_connection.execute(select(source_table)).mappings()
                 while batch := rows.fetchmany(500):
                     destination_connection.execute(
-                        destination_table.insert(), [dict(row) for row in batch]
+                        destination_table.insert(),
+                        [prepared_row(table_name, row) for row in batch],
                     )
 
             sequence_report = reset_sequences_on_connection(destination_connection)
-            source_report = safe_source_connection_report(source_connection, source_tables)
-            destination_report = safe_connection_report(destination_connection)
+            source_report = safe_source_connection_report(
+                source_connection, source_tables, excluded_columns
+            )
+            destination_report = safe_connection_report(
+                destination_connection, COPY_ORDER, excluded_columns
+            )
             differences: list[str] = []
             for table_name in COPY_ORDER:
                 if not source_report[table_name]["present"]:
@@ -558,6 +925,7 @@ def copy_and_validate_atomic(source: Engine, destination: Engine) -> dict[str, A
                         key
                     ):
                         differences.append(f"{table_name}.{key}")
+            differences.extend(omitted_column_differences(destination_connection, source_analysis))
             source_integration = Table(
                 "business_channel_integrations",
                 source_metadata,
@@ -620,32 +988,55 @@ def main() -> int:
     source = create_engine(sqlite_url)
     destination = create_engine(destination_url, isolation_level="READ COMMITTED")
     try:
-        source_tables = require_complete_source(source)
-        if args.upgrade_destination:
-            config = alembic_config()
-            config.attributes["database_url"] = destination_url
-            command.upgrade(config, "head")
-        require_destination_at_head(destination)
-        require_empty_destination(destination)
+        source_analysis = analyze_source_schema(source)
         report: dict[str, Any] = {
             "mode": "apply" if args.apply else "dry-run",
             "source": "sqlite:///<local-file>",
             "destination": sanitize_database_url(destination_url),
             "alembic_head": list(head_revisions()),
-            "source_preflight": safe_source_database_report(source, source_tables),
             "copy_order": list(COPY_ORDER),
             "required_source_tables": list(REQUIRED_SOURCE_TABLES),
             "optional_source_tables": list(OPTIONAL_SOURCE_TABLES),
-            "absent_optional_source_tables": [
-                table_name
-                for table_name in OPTIONAL_SOURCE_TABLES
-                if table_name not in source_tables
-            ],
             "destination_only_tables": list(DESTINATION_ONLY_TABLES),
+            "source_schema": source_analysis,
+            "copyable_tables": source_analysis["copyable_tables"],
+            "absent_optional_source_tables": source_analysis["absent_optional_tables"],
+            "missing_required_source_tables": source_analysis["missing_required_tables"],
+            "allowed_missing_source_columns": source_analysis["allowed_missing_columns"],
+            "incompatible_source_columns": source_analysis["incompatible_columns"],
+            "blockers": list(source_analysis["blockers"]),
+            "ready_to_apply": False,
         }
-        if args.apply:
-            report["validation"] = copy_and_validate_atomic(source, destination)
-        else:
+        if report["blockers"]:
+            write_report(args.report, report)
+            raise RuntimeError("; ".join(report["blockers"]))
+
+        source_data = analyze_source_data(source)
+        report["source_data"] = source_data
+        report["blockers"].extend(source_data["blockers"])
+        if report["blockers"]:
+            write_report(args.report, report)
+            raise RuntimeError("; ".join(report["blockers"]))
+
+        source_tables = tuple(source_analysis["copyable_tables"])
+        report["source_preflight"] = safe_source_database_report(source, source_tables)
+        if args.upgrade_destination:
+            config = alembic_config()
+            config.attributes["database_url"] = destination_url
+            command.upgrade(config, "head")
+        try:
+            require_destination_at_head(destination)
+            require_empty_destination(destination)
+            require_destination_column_policies(destination, source_analysis)
+            if args.apply:
+                report["validation"] = copy_and_validate_atomic(source, destination)
+            else:
+                report["ready_to_apply"] = True
+        except RuntimeError as error:
+            report["blockers"].append(str(error))
+            write_report(args.report, report)
+            raise
+        if not args.apply:
             report["ready_to_apply"] = True
         write_report(args.report, report)
         print(

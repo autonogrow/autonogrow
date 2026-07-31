@@ -1,11 +1,21 @@
 # Migración SQLite a PostgreSQL
 
-El migrador exige las tablas legacy de negocio y un PostgreSQL vacío en la única head Alembic. Las
-tablas `operational_states` y `backup_records`, introducidas en `20260730_06`, son opcionales solo en
-el origen: si existen se copian y validan; si no existen, sus tablas destino permanecen vacías. No se
-crean registros sintéticos. `alembic_version` es solo destino y `app_migrations`, si existe en una
-SQLite legacy, se ignora. Las columnas nullable `request_id` de inbox/outbox también pueden faltar en
-un origen `20260730_05`.
+El migrador exige las 29 tablas de negocio de la baseline `20260730_01` y un PostgreSQL vacío en la
+única head Alembic. Son opcionales solo en el origen las tablas añadidas después de esa baseline:
+`webhook_inbox_events`, `channel_outbox_messages`, `worker_heartbeats`, las cuatro tablas de
+onboarding/perfiles, `operational_states` y `backup_records`. Si existen se copian y validan; si no
+existen, sus tablas destino permanecen vacías. No se crean registros sintéticos.
+
+Una fuente baseline puede omitir las columnas añadidas por `20260730_05` en `businesses`, `services`
+y `availability_settings`. Solo se aceptan los NULL y defaults declarados por esa revisión (ES,
+español, Europe/Madrid, EUR, flags y buffers documentados). El estado legacy `inactive` se convierte
+explícitamente en `suspended`, como hizo Alembic; cualquier otro estado desconocido bloquea la copia.
+Las columnas nullable `request_id` de inbox/outbox pueden faltar en fuentes anteriores a
+`20260730_06`. Cada omisión, default y transformación prevista aparece en el informe.
+
+`alembic_version` es solo destino y `app_migrations`, si existe en SQLite, se ignora. El informe se
+escribe también si el análisis encuentra tablas obligatorias ausentes o columnas incompatibles, antes
+de abrir una transacción de copia.
 
 No es reanudable: si detecta una tabla o columna legacy obligatoria ausente, tablas pobladas, destino
 parcial, FK inválidas o revisión incorrecta, aborta. Nunca copia `alembic_version`, `app_migrations`,

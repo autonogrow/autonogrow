@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -9,26 +10,46 @@ from scripts.migrate_sqlite_to_postgresql import (
     DESTINATION_ONLY_TABLES,
     OPTIONAL_SOURCE_TABLES,
     REQUIRED_SOURCE_TABLES,
+    analyze_source_data,
+    analyze_source_schema,
     copy_rows,
     require_complete_source,
+    require_destination_column_policies,
     require_empty_destination,
     safe_source_database_report,
     validate_copy_order,
 )
-from sqlalchemy import create_engine, text
+from scripts.migrate_sqlite_to_postgresql import (
+    main as migration_main,
+)
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Engine
 
 from app.core.database import Base
 from app.core.migration_state import alembic_config, head_revisions
 from app.models.registry import register_models
 
 
-def upgraded_sqlite(tmp_path: Path, revision: str = "head"):
+def upgraded_sqlite(tmp_path: Path, revision: str = "head") -> Engine:
     path = tmp_path / f"source-{revision}.db"
     url = f"sqlite:///{path.as_posix()}"
     config = alembic_config()
     config.attributes["database_url"] = url
     command.upgrade(config, revision)
     return create_engine(url)
+
+
+def staging_baseline_source(tmp_path: Path) -> Engine:
+    source = upgraded_sqlite(tmp_path, "20260730_01")
+    with source.begin() as connection:
+        connection.execute(text("DROP TABLE alembic_version"))
+        connection.execute(
+            text("CREATE TABLE app_migrations (name VARCHAR(255) PRIMARY KEY, applied_at DATETIME)")
+        )
+        connection.execute(
+            text("INSERT INTO app_migrations (name) VALUES ('legacy-schema-marker')")
+        )
+    return source
 
 
 def test_copy_order_matches_current_metadata_and_foreign_keys() -> None:
@@ -41,30 +62,41 @@ def test_copy_order_matches_current_metadata_and_foreign_keys() -> None:
 
 
 def test_source_table_classifications_are_explicit_and_complete() -> None:
-    assert OPTIONAL_SOURCE_TABLES == ("operational_states", "backup_records")
+    assert OPTIONAL_SOURCE_TABLES == (
+        "webhook_inbox_events",
+        "channel_outbox_messages",
+        "worker_heartbeats",
+        "business_onboarding_sessions",
+        "business_onboarding_templates",
+        "business_staff_profiles",
+        "business_staff_profile_services",
+        "operational_states",
+        "backup_records",
+    )
     assert DESTINATION_ONLY_TABLES == ("alembic_version",)
     assert set(REQUIRED_SOURCE_TABLES).isdisjoint(OPTIONAL_SOURCE_TABLES)
     assert set(REQUIRED_SOURCE_TABLES) | set(OPTIONAL_SOURCE_TABLES) == set(COPY_ORDER)
 
 
-def test_legacy_20260730_05_source_without_alembic_version_is_valid(
-    tmp_path: Path,
-) -> None:
-    source = upgraded_sqlite(tmp_path, "20260730_05")
-    with source.begin() as connection:
-        connection.execute(text("DROP TABLE alembic_version"))
-        connection.execute(
-            text("CREATE TABLE app_migrations (name VARCHAR(255) PRIMARY KEY, applied_at DATETIME)")
-        )
-        connection.execute(
-            text("INSERT INTO app_migrations (name) VALUES ('legacy-schema-marker')")
-        )
-
+def test_exact_30_table_staging_baseline_is_valid(tmp_path: Path) -> None:
+    source = staging_baseline_source(tmp_path)
+    actual_tables = set(inspect(source).get_table_names())
+    assert len(actual_tables) == 30
+    assert actual_tables == set(REQUIRED_SOURCE_TABLES) | {"app_migrations"}
     source_tables = require_complete_source(source)
     assert source_tables == REQUIRED_SOURCE_TABLES
+    analysis = analyze_source_schema(source)
+    assert analysis["absent_optional_tables"] == sorted(OPTIONAL_SOURCE_TABLES)
+    assert not analysis["missing_required_tables"]
+    assert not analysis["incompatible_columns"]
+    assert set(analysis["allowed_missing_columns"]) == {
+        "availability_settings",
+        "businesses",
+        "services",
+    }
     report = safe_source_database_report(source, source_tables)
-    assert report["operational_states"] == {"present": False, "rows": 0}
-    assert report["backup_records"] == {"present": False, "rows": 0}
+    for table_name in OPTIONAL_SOURCE_TABLES:
+        assert report[table_name] == {"present": False, "rows": 0}
     source.dispose()
 
 
@@ -116,12 +148,155 @@ def test_modern_source_copies_new_table_rows(tmp_path: Path) -> None:
     destination.dispose()
 
 
-def test_missing_essential_legacy_table_is_still_rejected(tmp_path: Path) -> None:
-    source = upgraded_sqlite(tmp_path)
+def test_baseline_columns_use_only_explicit_safe_defaults_and_nulls(
+    tmp_path: Path,
+) -> None:
+    source = staging_baseline_source(tmp_path)
+    destination_path = tmp_path / "baseline-destination.db"
+    destination_url = f"sqlite:///{destination_path.as_posix()}"
+    config = alembic_config()
+    config.attributes["database_url"] = destination_url
+    command.upgrade(config, "head")
+    destination = create_engine(destination_url)
     with source.begin() as connection:
-        connection.execute(text("DROP TABLE worker_heartbeats"))
-    with pytest.raises(RuntimeError, match="missing tables.*worker_heartbeats"):
+        connection.execute(
+            text(
+                "INSERT INTO businesses (id, slug, name, status, created_at, updated_at) "
+                "VALUES (42, 'legacy-business', 'Legacy Business', 'inactive', "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO services (id, business_id, name, active, created_at) "
+                "VALUES (43, 42, 'Legacy Service', 1, CURRENT_TIMESTAMP)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO availability_settings "
+                "(id, business_id, timezone, slot_interval_minutes, "
+                "buffer_between_bookings_minutes, min_notice_minutes, max_days_ahead, "
+                "weekly_schedule_json, created_at, updated_at) VALUES "
+                "(44, 42, 'Europe/Madrid', 15, 0, 120, 30, '{}', "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+
+    analysis = analyze_source_schema(source)
+    data_analysis = analyze_source_data(source)
+    assert data_analysis["planned_value_transforms"] == [
+        {
+            "table": "businesses",
+            "column": "status",
+            "from": "inactive",
+            "to": "suspended",
+            "rows": 1,
+            "reason": "explicit 20260730_05 Alembic transition",
+        }
+    ]
+    require_destination_column_policies(destination, analysis)
+    copy_rows(source, destination)
+    with destination.connect() as connection:
+        business = connection.execute(
+            text(
+                "SELECT status, country_code, language_code, timezone, currency, "
+                "seo_noindex, activated_at FROM businesses WHERE id = 42"
+            )
+        ).one()
+        assert business == (
+            "suspended",
+            "ES",
+            "es",
+            "Europe/Madrid",
+            "EUR",
+            1,
+            None,
+        )
+        service = connection.execute(
+            text(
+                "SELECT currency, visible, bookable, requires_approval, "
+                "buffer_before_minutes, buffer_after_minutes, position, price_amount "
+                "FROM services WHERE id = 43"
+            )
+        ).one()
+        assert service == ("EUR", 1, 1, 0, 0, 0, 0, None)
+        availability = connection.execute(
+            text(
+                "SELECT auto_confirm_bookings, cancellation_allowed, "
+                "cancellation_notice_minutes, reschedule_allowed, "
+                "max_simultaneous_bookings FROM availability_settings WHERE id = 44"
+            )
+        ).one()
+        assert availability == (1, 1, 120, 1, 1)
+    source.dispose()
+    destination.dispose()
+
+
+def test_unknown_legacy_business_status_remains_blocking(tmp_path: Path) -> None:
+    source = staging_baseline_source(tmp_path)
+    with source.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO businesses (id, slug, name, status, created_at, updated_at) "
+                "VALUES (1, 'unknown-status', 'Unknown', 'legacy-unknown', "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+    with pytest.raises(RuntimeError, match="unsupported business statuses.*legacy-unknown"):
         require_complete_source(source)
+    source.dispose()
+
+
+def test_missing_essential_legacy_table_is_still_rejected(tmp_path: Path) -> None:
+    source = staging_baseline_source(tmp_path)
+    with source.begin() as connection:
+        connection.execute(text("DROP TABLE audit_logs"))
+    with pytest.raises(RuntimeError, match="missing tables.*audit_logs"):
+        require_complete_source(source)
+    source.dispose()
+
+
+def test_incompatible_source_columns_remain_blocking(tmp_path: Path) -> None:
+    source = staging_baseline_source(tmp_path)
+    with source.begin() as connection:
+        connection.execute(text("ALTER TABLE users ADD COLUMN unknown_legacy_value TEXT"))
+    analysis = analyze_source_schema(source)
+    assert analysis["incompatible_columns"] == {
+        "users": {"missing": [], "extra": ["unknown_legacy_value"]}
+    }
+    with pytest.raises(RuntimeError, match="incompatible columns.*unknown_legacy_value"):
+        require_complete_source(source)
+    source.dispose()
+
+
+def test_dry_run_writes_report_before_raising_on_incompatible_source(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = staging_baseline_source(tmp_path)
+    with source.begin() as connection:
+        connection.execute(text("ALTER TABLE users ADD COLUMN unknown_legacy_value TEXT"))
+    report_path = tmp_path / "blocked-report.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "migrate_sqlite_to_postgresql.py",
+            "--source",
+            str(source.url.database),
+            "--destination-url",
+            "postgresql+psycopg://unused:unused@127.0.0.1:1/unused",
+            "--report",
+            str(report_path),
+        ],
+    )
+    with pytest.raises(RuntimeError, match="incompatible columns"):
+        migration_main()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ready_to_apply"] is False
+    assert report["copyable_tables"]
+    assert report["absent_optional_source_tables"] == sorted(OPTIONAL_SOURCE_TABLES)
+    assert report["incompatible_source_columns"]["users"]["extra"] == ["unknown_legacy_value"]
+    assert report["blockers"]
     source.dispose()
 
 
