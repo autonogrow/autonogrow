@@ -93,7 +93,7 @@ def check_health(reporter: Reporter, result: HttpResult) -> None:
     if result.status != 200:
         reporter.fail("GET /health no devuelve 200")
         return
-    if parse_json(result) == {"status": "ok", "app": "autonogrow"}:
+    if parse_json(result) == {"status": "ok"}:
         reporter.passed("GET /health devuelve el JSON mínimo esperado")
     else:
         reporter.fail("GET /health expone un payload inesperado o no válido")
