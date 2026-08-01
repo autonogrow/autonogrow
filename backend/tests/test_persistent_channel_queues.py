@@ -403,6 +403,45 @@ def test_heartbeat_create_update_stale_and_clean_stop(database):
     )
 
 
+
+def test_heartbeat_starting_refreshes_started_at(database):
+    db, _factory = database
+    first_start = datetime.utcnow()
+
+    row = update_worker_heartbeat(
+        db,
+        worker_id="stable-worker",
+        status="starting",
+        now=first_start,
+    )
+    db.commit()
+
+    update_worker_heartbeat(
+        db,
+        worker_id="stable-worker",
+        status="idle",
+        now=first_start + timedelta(seconds=10),
+    )
+    db.commit()
+
+    assert row.started_at == first_start
+
+    second_start = first_start + timedelta(minutes=5)
+    restarted = update_worker_heartbeat(
+        db,
+        worker_id="stable-worker",
+        status="starting",
+        now=second_start,
+    )
+    db.commit()
+
+    assert restarted.id == row.id
+    assert restarted.started_at == second_start
+    assert db.query(WorkerHeartbeat).filter(
+        WorkerHeartbeat.worker_id == "stable-worker"
+    ).count() == 1
+
+
 def test_worker_configuration_rejects_unsafe_ranges():
     with pytest.raises(ValueError):
         settings(worker_batch_size=101)

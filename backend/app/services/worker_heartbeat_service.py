@@ -27,6 +27,8 @@ def update_worker_heartbeat(
             last_seen_at=current,
         )
         db.add(row)
+    elif status == "starting":
+        row.started_at = current
     row.status = status
     row.last_seen_at = current
     row.current_job_type = current_job_type

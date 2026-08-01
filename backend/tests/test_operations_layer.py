@@ -9,19 +9,22 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from scripts.backup_common import atomic_json, manifest_for
+from scripts.backup_common import atomic_json, load_manifest, manifest_for
 from scripts.backup_uploads import validate_archive, validate_tree
 from scripts.prune_backups import plan_prune
 from scripts.verify_backup import verify
+from scripts.verify_latest_backups import verify_latest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
 from app.core.database import Base
 from app.core.observability import OperationalFormatter, redact_sensitive
 from app.middleware.request_context import RequestContextMiddleware, safe_request_id
+from app.models import BackupRecord
 from app.models.registry import register_models
 from app.routers.health import health_check
+from app.services.backup_record_service import record_backup_manifest
 from app.services.maintenance_service import maintenance_enabled, set_maintenance
 from app.services.metrics_service import metrics_authorized
 from app.services.operational_alert_service import (
@@ -293,6 +296,33 @@ def test_upload_archive_and_manifest_verify(tmp_path: Path) -> None:
     artifact, manifest = create_upload_backup(tmp_path)
     assert validate_archive(artifact) == 1
     assert verify(manifest) == ("valid", [])
+
+
+
+def test_verify_latest_persists_verification_status(tmp_path: Path) -> None:
+    artifact, manifest_path = create_upload_backup(tmp_path)
+
+    db = database_session()
+    engine = db.get_bind()
+
+    record_backup_manifest(db, load_manifest(manifest_path))
+    db.commit()
+    db.close()
+
+    factory = sessionmaker(bind=engine)
+    results = verify_latest(tmp_path.resolve(), session_factory=factory)
+
+    assert results == {"uploads": "valid"}
+
+    with factory() as check:
+        row = (
+            check.query(BackupRecord)
+            .filter(BackupRecord.artifact_name == artifact.name)
+            .one()
+        )
+
+        assert row.verification_status == "valid"
+        assert row.verified_at is not None
 
 
 def test_checksum_mismatch_is_invalid(tmp_path: Path) -> None:
