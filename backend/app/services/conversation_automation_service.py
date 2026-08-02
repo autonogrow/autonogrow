@@ -33,6 +33,7 @@ from app.services.conversation_intent_service import (
     normalize_text,
 )
 from app.services.conversation_service import (
+    conversation_delivery_capabilities,
     ensure_default_templates,
     render_template,
     send_outbound_message,
@@ -487,6 +488,33 @@ def _has_recent_identical_inbound(
     return False
 
 
+def _has_automation_for_inbound(
+    db: Session,
+    *,
+    message: ConversationMessage,
+) -> bool:
+    outbound_messages = (
+        db.query(ConversationMessage)
+        .filter(
+            ConversationMessage.conversation_id == message.conversation_id,
+            ConversationMessage.direction == "outbound",
+            ConversationMessage.sender_type == "automation",
+            ConversationMessage.raw_payload_json.is_not(None),
+        )
+        .order_by(ConversationMessage.id.desc())
+        .all()
+    )
+    for outbound in outbound_messages:
+        try:
+            payload = json.loads(outbound.raw_payload_json or "null")
+        except (TypeError, ValueError):
+            continue
+        automation = payload.get("automation") if isinstance(payload, dict) else None
+        if isinstance(automation, dict) and automation.get("inbound_message_id") == message.id:
+            return True
+    return False
+
+
 def _skip_automatic_response(
     result: dict[str, Any],
     *,
@@ -515,6 +543,8 @@ def process_inbound_automation(
     conversation: Conversation,
     message: ConversationMessage,
 ) -> dict[str, Any]:
+    if db.get_bind().dialect.name == "postgresql":
+        db.query(Conversation).filter(Conversation.id == conversation.id).with_for_update().one()
     detection = detect_intent(message.body)
     conversation.detected_intent = detection.intent
     conversation.intent_confidence = detection.confidence
@@ -634,10 +664,25 @@ def process_inbound_automation(
         and (detection.confidence >= settings.auto_threshold or detection.intent == "unknown")
         and not limit_reached
     )
-    if (
-        can_send_automatically
-        and inbound_supported(conversation.channel)
-        and not delivery_supported(channel=conversation.channel)
+    if can_send_automatically and conversation.channel == "whatsapp":
+        delivery_capabilities = conversation_delivery_capabilities(
+            db,
+            conversation=conversation,
+            now=message.created_at,
+        )
+    else:
+        delivery_capabilities = None
+    if can_send_automatically and (
+        (
+            conversation.channel == "whatsapp"
+            and delivery_capabilities is not None
+            and not delivery_capabilities.integrated_delivery_available
+        )
+        or (
+            conversation.channel != "whatsapp"
+            and inbound_supported(conversation.channel)
+            and not delivery_supported(channel=conversation.channel)
+        )
     ):
         suggestion = create_suggestion(
             db,
@@ -649,11 +694,25 @@ def process_inbound_automation(
         )
         result.update(
             action="suggestion",
-            reason="delivery_not_supported",
+            reason=(
+                delivery_capabilities.unavailable_reason
+                if delivery_capabilities is not None
+                else "delivery_not_supported"
+            )
+            or "delivery_not_available",
             suggestion_id=suggestion.id,
         )
         return result
     if can_send_automatically:
+        if _has_automation_for_inbound(db, message=message):
+            return _skip_automatic_response(
+                result,
+                business=business,
+                conversation=conversation,
+                message=message,
+                intent=detection.intent,
+                reason="inbound_already_processed",
+            )
         if detection.intent == "welcome_intent" and (
             _has_recent_successful_automation_for_intent(
                 db,

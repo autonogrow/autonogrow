@@ -11,10 +11,16 @@ Arranque local: `cd backend && python -m app.workers.channel_worker`.
 
 El worker despacha inbox y outbox usando el `provider` persistido. Los proveedores no registrados
 fallan de forma permanente y segura; no se reintentan como errores transitorios ni se marcan como
-procesados/enviados. Instagram tiene inbox y outbox; WhatsApp sólo tiene inbox. Un mensaje de texto
-WhatsApp se resuelve por `phone_number_id`, mientras estados y tipos no soportados terminan sin
-crear conversaciones. La extensión y los límites del contrato se documentan en
+procesados/enviados. Instagram y WhatsApp tienen inbox y outbox. Un mensaje de texto WhatsApp se
+resuelve por `phone_number_id`; un estado reconcilia el mensaje sólo si provider, integración,
+negocio y número coinciden. Tipos no soportados terminan sin crear conversaciones. La extensión y
+los límites del contrato se documentan en
 `docs/multichannel_provider_architecture.md`.
+
+Para outbox WhatsApp, el worker valida el contexto completo, descifra el token y cierra la sesión de
+base de datos antes del POST a Meta. Timeout, conexión, 429 y 5xx reintentan con backoff. Token
+revocado, cuenta suspendida, número no registrado, destinatario o payload inválidos no se reintentan
+inútilmente. El estado de integración sólo se degrada ante errores bloqueantes, nunca por un timeout.
 
 En un despliegue futuro:
 

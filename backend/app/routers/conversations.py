@@ -17,6 +17,7 @@ from app.models import (
 from app.schemas.conversation import (
     CHANNELS,
     CONVERSATION_STATUSES,
+    AssistedDeliveryCreate,
     AutomationCreditReadOnlyResponse,
     BusinessAutomationSettingsUpdate,
     BusinessIntegrationStatusResponse,
@@ -55,7 +56,10 @@ from app.services.conversation_intent_service import (
     INTENT_LABELS,
 )
 from app.services.conversation_service import (
+    ConversationDeliveryUnavailable,
     add_message,
+    build_conversation_assisted_whatsapp_url,
+    conversation_delivery_capabilities,
     create_or_get_conversation,
     ensure_default_templates,
     get_conversation,
@@ -261,6 +265,12 @@ def admin_send_conversation_message(
                 updated_by=actor.id,
             )
         db.commit()
+    except ConversationDeliveryUnavailable as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"reason": error.reason, "message": error.safe_message},
+        ) from error
     except Exception:
         db.rollback()
         raise
@@ -289,6 +299,48 @@ def admin_send_conversation_message(
         "message": serialize_message(message),
         "conversation": serialize_conversation(db, conversation),
         "provider_configured": delivery.provider_configured,
+    }
+
+
+@admin_router.post("/conversations/{conversation_id}/assisted-delivery")
+def admin_prepare_assisted_whatsapp_delivery(
+    business_slug: str,
+    conversation_id: int,
+    payload: AssistedDeliveryCreate,
+    request: Request,
+    actor: User = Depends(require_business_access),
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    conversation = get_conversation_or_404(
+        db,
+        business_id=business.id,
+        conversation_id=conversation_id,
+    )
+    capabilities = conversation_delivery_capabilities(db, conversation=conversation)
+    if not capabilities.assisted_delivery_available:
+        raise HTTPException(status_code=409, detail="El envío asistido no está disponible.")
+    try:
+        whatsapp_url = build_conversation_assisted_whatsapp_url(conversation, payload.body)
+    except (ConversationDeliveryUnavailable, ValueError) as error:
+        raise HTTPException(
+            status_code=409, detail="El envío asistido no está disponible."
+        ) from error
+    record_audit(
+        db,
+        action="conversation_assisted_delivery_opened",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="conversation",
+        resource_id=conversation.id,
+        metadata={"channel": "whatsapp"},
+    )
+    return {
+        "ok": True,
+        "delivery_mode": "assisted",
+        "sent": False,
+        "whatsapp_url": whatsapp_url,
     }
 
 
@@ -830,6 +882,12 @@ def admin_send_conversation_suggestion(
                 updated_by=actor.id,
             )
         db.commit()
+    except ConversationDeliveryUnavailable as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"reason": error.reason, "message": error.safe_message},
+        ) from error
     except HTTPException:
         db.rollback()
         raise

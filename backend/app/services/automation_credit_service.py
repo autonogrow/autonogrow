@@ -313,7 +313,7 @@ def consume_automation_credit(
         amount=1,
         included_delta=included_delta,
         additional_delta=additional_delta,
-        reason="Mensaje automático entregado",
+        reason="Mensaje automático encolado",
         related_message_id=related_message_id,
         idempotency_key=f"automatic-message:{related_message_id}",
     )

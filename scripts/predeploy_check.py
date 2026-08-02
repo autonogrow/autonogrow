@@ -89,6 +89,8 @@ def check_required_files(reporter: Reporter) -> None:
         "docs/channel_worker_operations.md",
         "docs/whatsapp_cloud_api_inbound_architecture.md",
         "docs/manual_test_whatsapp_cloud_api_inbound.md",
+        "docs/whatsapp_cloud_api_outbound_architecture.md",
+        "docs/manual_test_whatsapp_cloud_api_outbound.md",
         "docs/webhook_inbox.md",
         "docs/channel_outbox.md",
         "docs/queue_incident_recovery.md",
@@ -193,6 +195,7 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "WHATSAPP_WEBHOOK_ENABLED=false",
             "WHATSAPP_VERIFY_TOKEN=",
             "WHATSAPP_REQUIRE_SIGNATURE=true",
+            "WHATSAPP_CUSTOMER_SERVICE_WINDOW_HOURS=24",
             "INTEGRATION_ENCRYPTION_KEYS_JSON=CHANGE_ME_JSON_KEYRING",
             "INTEGRATION_ENCRYPTION_ACTIVE_KEY_VERSION=v1",
             "INCIDENT_ALERTS_ENABLED=false",
@@ -219,6 +222,7 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "WHATSAPP_WEBHOOK_ENABLED=false",
             "WHATSAPP_VERIFY_TOKEN=",
             "WHATSAPP_REQUIRE_SIGNATURE=true",
+            "WHATSAPP_CUSTOMER_SERVICE_WINDOW_HOURS=24",
             "INTEGRATION_ENCRYPTION_KEYS_JSON=CHANGE_ME_JSON_KEYRING",
             "INTEGRATION_ENCRYPTION_ACTIVE_KEY_VERSION=v1",
             "INCIDENT_ALERTS_ENABLED=false",
@@ -447,6 +451,7 @@ def production_baseline() -> dict[str, object]:
         "instagram_require_signature": True,
         "whatsapp_webhook_enabled": False,
         "whatsapp_require_signature": True,
+        "whatsapp_customer_service_window_hours": 24,
     }
 
 
@@ -499,6 +504,8 @@ def check_production_validation(reporter: Reporter, Settings) -> None:
             "meta_app_secret": "",
             "whatsapp_verify_token": "",
         },
+        "ventana WhatsApp nula": {"whatsapp_customer_service_window_hours": 0},
+        "ventana WhatsApp ilimitada": {"whatsapp_customer_service_window_hours": 25},
         "alertas de incidencias incompletas": {"incident_alerts_enabled": True},
     }
     accepted: list[str] = []
@@ -709,7 +716,7 @@ def check_onboarding_contract(reporter: Reporter) -> None:
         reporter.fail("La matriz manual de onboarding debe tener 40 pendientes")
 
 
-def check_whatsapp_inbound_contract(reporter: Reporter) -> None:
+def check_whatsapp_contract(reporter: Reporter) -> None:
     from app.services.channel_provider_service import (
         DELIVERY_PROVIDERS_BY_CHANNEL,
         INBOX_CHANNELS_BY_PROVIDER,
@@ -723,13 +730,13 @@ def check_whatsapp_inbound_contract(reporter: Reporter) -> None:
     else:
         reporter.fail("WhatsApp no está registrado correctamente en el inbox")
     if (
-        "whatsapp" not in PROVIDER_SENDERS
-        and "whatsapp" not in DELIVERY_PROVIDERS_BY_CHANNEL
-        and not delivery_supported(channel="whatsapp")
+        "whatsapp" in PROVIDER_SENDERS
+        and DELIVERY_PROVIDERS_BY_CHANNEL.get("whatsapp") == "whatsapp"
+        and delivery_supported(channel="whatsapp")
     ):
-        reporter.passed("WhatsApp permanece sin sender ni soporte de entrega")
+        reporter.passed("WhatsApp registrado con sender y soporte de entrega")
     else:
-        reporter.fail("WhatsApp anuncia entrega o sender antes de implementarlos")
+        reporter.fail("Sender o soporte de entrega WhatsApp incompleto")
 
     main_text = (ROOT / "backend/app/main.py").read_text(encoding="utf-8-sig")
     if (
@@ -744,6 +751,7 @@ def check_whatsapp_inbound_contract(reporter: Reporter) -> None:
         "WHATSAPP_WEBHOOK_ENABLED=false",
         "WHATSAPP_VERIFY_TOKEN=",
         "WHATSAPP_REQUIRE_SIGNATURE=",
+        "WHATSAPP_CUSTOMER_SERVICE_WINDOW_HOURS=24",
     }
     env_paths = (
         "backend/.env.example",
@@ -758,6 +766,26 @@ def check_whatsapp_inbound_contract(reporter: Reporter) -> None:
     else:
         reporter.fail("Faltan variables WhatsApp en los ejemplos de entorno")
 
+    admin_text = (ROOT / "autonogrow-admin/admin.js").read_text(encoding="utf-8-sig")
+    conversation_router = (ROOT / "backend/app/routers/conversations.py").read_text(
+        encoding="utf-8-sig"
+    )
+    if (
+        all(
+            marker in admin_text
+            for marker in (
+                "Enviar desde AutonoGrow",
+                "Abrir en WhatsApp",
+                "integrated_delivery_available",
+                "assisted_delivery_available",
+            )
+        )
+        and "assisted-delivery" in conversation_router
+    ):
+        reporter.passed("Fallback asistido WhatsApp conserva contrato separado")
+    else:
+        reporter.fail("Fallback asistido WhatsApp incompleto")
+
 
 def main() -> int:
     reporter = Reporter()
@@ -770,7 +798,7 @@ def main() -> int:
     check_persistent_queue_contract(reporter)
     check_postgresql_contract(reporter)
     check_onboarding_contract(reporter)
-    check_whatsapp_inbound_contract(reporter)
+    check_whatsapp_contract(reporter)
     check_tracked_secrets(reporter)
     Settings = check_application(reporter)
     if Settings is not None:

@@ -254,13 +254,14 @@ class ConversationsTest(unittest.TestCase):
             get_current_user(None)
         self.assertEqual(anonymous.exception.status_code, 401)
 
-    def test_whatsapp_without_adapter_remains_manual_and_is_not_advertised(self):
+    def test_whatsapp_without_integration_requires_assisted_delivery(self):
         created = admin_create_conversation(
             self.business_a.slug,
             ConversationCreate(
                 channel="whatsapp",
                 customer_name="WhatsApp customer",
-                external_user_id="wa-manual-1",
+                customer_phone="34600000001",
+                external_user_id="34600000001",
                 initial_message="Hola",
             ),
             self.request(),
@@ -268,20 +269,26 @@ class ConversationsTest(unittest.TestCase):
             db=self.db,
         )["conversation"]
 
-        sent = admin_send_conversation_message(
-            self.business_a.slug,
-            created["id"],
-            ConversationMessageCreate(body="Respuesta manual"),
-            self.request(),
-            actor=self.admin_user,
-            db=self.db,
-        )
+        with self.assertRaises(HTTPException) as unavailable:
+            admin_send_conversation_message(
+                self.business_a.slug,
+                created["id"],
+                ConversationMessageCreate(body="Respuesta manual"),
+                self.request(),
+                actor=self.admin_user,
+                db=self.db,
+            )
 
-        self.assertEqual(sent["message"]["delivery_status"], "sent")
-        self.assertFalse(sent["conversation"]["delivery_supported"])
-        self.assertFalse(sent["conversation"]["provider_configured"])
-        self.assertIsNone(sent["conversation"]["integration_status"])
-        self.assertIsNone(sent["conversation"]["instagram_provider_configured"])
+        self.assertEqual(unavailable.exception.status_code, 409)
+        detail = admin_get_conversation(self.business_a.slug, created["id"], db=self.db)[
+            "conversation"
+        ]
+        self.assertTrue(detail["delivery_supported"])
+        self.assertFalse(detail["provider_configured"])
+        self.assertFalse(detail["integrated_delivery_available"])
+        self.assertTrue(detail["assisted_delivery_available"])
+        self.assertIsNone(detail["integration_status"])
+        self.assertIsNone(detail["instagram_provider_configured"])
         self.assertEqual(self.db.query(ChannelOutboxMessage).count(), 0)
 
     def test_inbound_webhook_creates_then_reuses_conversation(self):

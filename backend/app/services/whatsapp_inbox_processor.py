@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Business,
     BusinessChannelIntegration,
+    ChannelOutboxMessage,
     Conversation,
     ConversationMessage,
     WebhookInboxEvent,
@@ -23,6 +24,7 @@ from app.services.whatsapp_provider import whatsapp_status_is_supported
 WHATSAPP_PROVIDER = "whatsapp"
 WHATSAPP_CHANNEL = "whatsapp"
 USABLE_INTEGRATION_STATUSES = {"connected", "degraded"}
+WHATSAPP_DELIVERY_STATUS_RANK = {"sent": 1, "delivered": 2, "read": 3}
 
 
 def _required_text(payload: dict, field: str, *, max_length: int = 255) -> str:
@@ -69,6 +71,130 @@ def _resolve_whatsapp_integration(
     return integration
 
 
+def _merge_whatsapp_delivery_metadata(
+    message: ConversationMessage,
+    *,
+    status: str,
+    timestamp: str | None,
+    error_code: str | None,
+    error_type: str | None,
+) -> None:
+    try:
+        metadata = json.loads(message.raw_payload_json or "{}")
+    except (TypeError, ValueError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata["whatsapp_delivery"] = {
+        "status": status,
+        "timestamp": timestamp,
+        "error_code": error_code,
+        "error_type": error_type,
+    }
+    message.raw_payload_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+
+
+def _reconcile_whatsapp_status(
+    db: Session,
+    *,
+    inbox: WebhookInboxEvent,
+    payload: dict,
+) -> InboxProcessResult:
+    status = payload.get("status")
+    if not whatsapp_status_is_supported(status if isinstance(status, str) else None):
+        inbox.last_error_code = "whatsapp_unsupported_status"
+        inbox.safe_error_message = "WhatsApp status is not supported"
+        finish_inbox_job(inbox, status="ignored")
+        return InboxProcessResult("ignored")
+    assert isinstance(status, str)
+    message_id = _required_text(payload, "message_id")
+    phone_number_id = _required_text(payload, "phone_number_id")
+    matches = (
+        db.query(ChannelOutboxMessage)
+        .filter(
+            ChannelOutboxMessage.provider == WHATSAPP_PROVIDER,
+            ChannelOutboxMessage.channel == WHATSAPP_CHANNEL,
+            ChannelOutboxMessage.provider_message_id == message_id,
+        )
+        .limit(2)
+        .all()
+    )
+    if not matches:
+        finish_inbox_job(inbox)
+        return InboxProcessResult("status_recorded")
+    if len(matches) != 1:
+        raise ChannelInboxProcessingError(
+            error_code="whatsapp_status_ambiguous",
+            safe_message="WhatsApp status mapping is ambiguous",
+            retryable=False,
+        )
+    outbox = matches[0]
+    integration = db.get(BusinessChannelIntegration, outbox.integration_id)
+    if (
+        integration is None
+        or integration.business_id != outbox.business_id
+        or integration.provider != WHATSAPP_PROVIDER
+        or integration.channel != WHATSAPP_CHANNEL
+        or integration.external_account_id != phone_number_id
+    ):
+        raise ChannelInboxProcessingError(
+            error_code="whatsapp_status_context_mismatch",
+            safe_message="WhatsApp status context is invalid",
+            retryable=False,
+        )
+    message = (
+        db.get(ConversationMessage, outbox.conversation_message_id)
+        if outbox.conversation_message_id is not None
+        else None
+    )
+    conversation = db.get(Conversation, outbox.conversation_id)
+    if (
+        message is None
+        or conversation is None
+        or message.conversation_id != conversation.id
+        or conversation.business_id != outbox.business_id
+        or conversation.channel != WHATSAPP_CHANNEL
+    ):
+        raise ChannelInboxProcessingError(
+            error_code="whatsapp_status_message_missing",
+            safe_message="WhatsApp status message is unavailable",
+            retryable=False,
+        )
+    inbox.business_id = outbox.business_id
+    inbox.integration_id = integration.id
+    current_status = message.delivery_status or ""
+    error_code = payload.get("status_error_code")
+    safe_error_code = error_code[:120] if isinstance(error_code, str) else None
+    error_type = payload.get("status_error_type")
+    safe_error_type = error_type[:120] if isinstance(error_type, str) else None
+    should_update = False
+    if status == "failed":
+        should_update = current_status not in {"delivered", "failed", "read"}
+        if should_update:
+            outbox.status = "failed"
+            outbox.failed_at = datetime.utcnow()
+            outbox.last_error_code = safe_error_code or "whatsapp_delivery_failed"
+            outbox.last_error_type = safe_error_type
+            outbox.safe_error_message = "WhatsApp delivery failed"
+    elif current_status != "failed":
+        should_update = WHATSAPP_DELIVERY_STATUS_RANK[status] > WHATSAPP_DELIVERY_STATUS_RANK.get(
+            current_status, 0
+        )
+    if should_update:
+        message.delivery_status = status
+        _merge_whatsapp_delivery_metadata(
+            message,
+            status=status,
+            timestamp=(
+                payload.get("timestamp") if isinstance(payload.get("timestamp"), str) else None
+            ),
+            error_code=safe_error_code,
+            error_type=safe_error_type,
+        )
+    finish_inbox_job(inbox)
+    return InboxProcessResult("status_reconciled" if should_update else "status_unchanged")
+
+
 def process_whatsapp_inbox_event(db: Session, inbox_id: int) -> InboxProcessResult:
     row = db.get(WebhookInboxEvent, inbox_id)
     if row is None or row.status != "processing":
@@ -83,14 +209,7 @@ def process_whatsapp_inbox_event(db: Session, inbox_id: int) -> InboxProcessResu
         raise InvalidChannelInboxPayload("Stored WhatsApp event is invalid")
 
     if row.event_type == "status":
-        status = payload.get("status")
-        if whatsapp_status_is_supported(status if isinstance(status, str) else None):
-            finish_inbox_job(row)
-            return InboxProcessResult("status_recorded")
-        row.last_error_code = "whatsapp_unsupported_status"
-        row.safe_error_message = "WhatsApp status is not supported"
-        finish_inbox_job(row, status="ignored")
-        return InboxProcessResult("ignored")
+        return _reconcile_whatsapp_status(db, inbox=row, payload=payload)
 
     if row.event_type == "unsupported_message":
         row.last_error_code = "whatsapp_unsupported_message"

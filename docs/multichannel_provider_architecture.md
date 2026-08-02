@@ -44,24 +44,26 @@ de base de datos abierta. Al finalizar persiste el estado y `provider_message_id
 | Proveedor | Inbox persistente | Outbox persistente | Sender real |
 | --- | --- | --- | --- |
 | Instagram | Sí | Sí | Sí |
-| WhatsApp | Sí | No | No |
+| WhatsApp | Sí | Sí | Sí, texto libre dentro de ventana |
 
-WhatsApp admite recepción persistente, pero mantiene el envío manual. `delivery_supported` es
-`false`; no se crea outbox ni se anuncia automatización real. Una regla automática genera una
-sugerencia manual y no consume crédito. `provider_configured` puede reflejar que existe una
-integración, pero nunca implica entrega sin `delivery_supported`.
+`delivery_supported` expresa capacidad del sistema. Para WhatsApp, `provider_configured` expresa
+que existe una integración persistida; su operatividad se refleja por separado en
+`integration_status` e `integrated_delivery_available`. Este último exige credenciales utilizables,
+canal comercial y ventana de atención. `assisted_delivery_available` sólo indica que puede generarse
+un enlace oficial `wa.me`; nunca equivale a entrega.
 
-## Añadir entrega WhatsApp posteriormente
+## Entrega WhatsApp
 
-La implementación futura deberá aportar código real y probado, no stubs:
+WhatsApp usa `POST /{phone_number_id}/messages` mediante el Graph API oficial. El
+`external_account_id` de la integración es el `phone_number_id`; el destinatario es el `wa_id` de
+la conversación. El worker descifra el token después de validar el contexto y persiste el ID
+devuelto por Meta.
 
-1. Implementar `send_whatsapp_text_message` con el contrato `ProviderSendResult`.
-2. Registrar el sender en `PROVIDER_SENDERS` y el proveedor interno del canal en
-   `DELIVERY_PROVIDERS_BY_CHANNEL`.
-3. Añadir la configuración habilitadora a `provider_enabled` y pruebas de aislamiento,
-   idempotencia, reintentos y errores permanentes.
+El texto libre sólo se encola durante las 24 horas posteriores al último inbound real con timestamp
+Meta válido. Fuera de ventana se crea una sugerencia y se requiere una plantilla, aún fuera de
+alcance. El fallback asistido no crea `ConversationMessage`, outbox ni consumo de créditos.
 
-El núcleo del worker no necesita cambios para esos pasos.
+La arquitectura detallada está en `docs/whatsapp_cloud_api_outbound_architecture.md`.
 
 ## Errores, seguridad y responsabilidades
 

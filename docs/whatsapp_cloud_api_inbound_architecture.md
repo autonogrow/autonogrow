@@ -22,8 +22,8 @@ Cada `entry` y `change[field=messages]` puede producir eventos independientes:
   timestamp y texto;
 - `unsupported_message`: mensaje no textual, persistido y posteriormente marcado `ignored` sin
   inventar texto ni descargar contenido;
-- `status`: `sent`, `delivered`, `read` o `failed`, almacenado y marcado procesado sin conciliación
-  de outbox en este sprint. Otros estados quedan `ignored`.
+- `status`: `sent`, `delivered`, `read` o `failed`; se reconcilia con un outbox WhatsApp conocido.
+  Otros estados quedan `ignored`.
 
 Cambios sin mensajes ni estados se ignoran sin crear filas. Sólo se persiste el payload normalizado,
 no cabeceras ni secretos. Se conservan `payload_hash` y `payload_size_bytes`.
@@ -63,24 +63,22 @@ Integración inexistente o no utilizable, combinación proveedor/canal errónea 
 inválido son fallos permanentes con códigos y mensajes seguros. Los errores de base de datos siguen
 la clasificación reintentable común. No se registran tokens, firmas, cabeceras ni payloads completos.
 
-## Automatización sin sender
+## Automatización y entrega
 
-WhatsApp está registrado exclusivamente en `INBOX_PROCESSORS` e `INBOX_CHANNELS_BY_PROVIDER`. No
-aparece en `PROVIDER_SENDERS` ni en `DELIVERY_PROVIDERS_BY_CHANNEL`, así que
-`delivery_supported(channel="whatsapp")` es falso.
+WhatsApp está registrado tanto en inbox como en sender y entrega. Una automatización sólo crea
+outbox si la integración cifrada está utilizable, el canal comercial está habilitado y la ventana
+de atención permanece abierta.
 
-Cuando una regla permitiría responder automáticamente, el motor crea una sugerencia manual con
-`reason=delivery_not_supported`. No crea mensaje saliente, no crea outbox, no marca una respuesta
-como enviada y no consume crédito. Las reglas almacenadas no se reescriben.
+Sin integración se usa `provider_not_configured`; fuera de plan,
+`integrated_delivery_not_in_plan`; fuera de ventana, `whatsapp_template_required`. En esos casos el
+motor crea una sugerencia, no crea outbox y no consume crédito.
 
 ## Límites y prueba local
 
-Este sprint sólo recibe texto. No implementa multimedia, templates, OAuth, Embedded Signup,
-mensajes proactivos, sender Cloud API ni conciliación completa de estados. La WABA queda conservada
-en el payload normalizado; el `phone_number_id` ocupa `external_account_id`, por lo que no se
-requiere migración.
+La recepción sólo interpreta texto y estados. No descarga multimedia. La WABA queda conservada en
+el payload normalizado; el `phone_number_id` ocupa `external_account_id`, por lo que no se requiere
+migración.
 
 Para probar, use una base temporal, cree una integración directamente en fixtures o servicios
 internos y siga `docs/manual_test_whatsapp_cloud_api_inbound.md`. Nunca ponga secretos reales en el
-repositorio. El siguiente sprint de entrega deberá implementar el sender real y sólo entonces
-registrar WhatsApp como proveedor de salida.
+repositorio. Para la salida consulte `docs/whatsapp_cloud_api_outbound_architecture.md`.

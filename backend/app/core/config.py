@@ -108,6 +108,7 @@ class Settings(BaseSettings):
     whatsapp_webhook_enabled: bool = False
     whatsapp_verify_token: str = ""
     whatsapp_require_signature: bool = True
+    whatsapp_customer_service_window_hours: int = 24
     integration_encryption_keys_json: str = ""
     integration_encryption_active_key_version: str = "v1"
     incident_alerts_enabled: bool = False
@@ -335,6 +336,8 @@ class Settings(BaseSettings):
             raise ValueError("SQLite solo permite WORKER_CONCURRENCY_MODE=single")
         if not 1024 <= self.webhook_max_payload_bytes <= 10_485_760:
             raise ValueError("WEBHOOK_MAX_PAYLOAD_BYTES debe estar entre 1024 y 10485760")
+        if not 1 <= self.whatsapp_customer_service_window_hours <= 24:
+            raise ValueError("WHATSAPP_CUSTOMER_SERVICE_WINDOW_HOURS debe estar entre 1 y 24")
         if not 0.1 <= self.worker_poll_interval_seconds <= 60:
             raise ValueError("WORKER_POLL_INTERVAL_SECONDS debe estar entre 0.1 y 60")
         if not 1 <= self.worker_batch_size <= 100:

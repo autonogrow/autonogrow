@@ -38,6 +38,18 @@ class ConversationMessageCreate(BaseModel):
         return value
 
 
+class AssistedDeliveryCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("body")
+    @classmethod
+    def strip_body(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Message body is required")
+        return value
+
+
 class ConversationStatusUpdate(BaseModel):
     status: str
 

@@ -1,5 +1,9 @@
 # Prueba manual: Centro de Conversaciones v1
 
+Para envío integrado y asistido de WhatsApp, ventana de atención y estados de Cloud API, siga
+también `docs/manual_test_whatsapp_cloud_api_outbound.md`. “Abrir en WhatsApp” no debe
+contabilizarse como mensaje enviado.
+
 ## Preparación
 
 - Arrancar el backend para que SQLAlchemy cree de forma aditiva `conversations`,

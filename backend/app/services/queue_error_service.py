@@ -24,6 +24,10 @@ BLOCKED_CODES = {
     "insufficient_permissions",
     "token_expired",
     "token_revoked",
+    "account_suspended",
+    "invalid_phone_number_id",
+    "number_not_registered",
+    "whatsapp_template_required",
 }
 BACKOFF_SECONDS = (30, 120, 600, 1800, 7200)
 
@@ -50,7 +54,12 @@ def classify_queue_error(
         )
     if code in BLOCKED_CODES or http_status in {401, 403}:
         return QueueErrorClassification(code, False, True, "Integration is unavailable")
-    if code in {"connection_error", "provider_unavailable", "request_failed"}:
+    if code in {
+        "connection_error",
+        "provider_rate_limited",
+        "provider_unavailable",
+        "request_failed",
+    }:
         return QueueErrorClassification(
             code, True, safe_message="Provider is temporarily unavailable"
         )

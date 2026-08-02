@@ -12,6 +12,7 @@ from app.services.channel_provider_contracts import (
     UnsupportedChannelProvider,
 )
 from app.services.instagram_provider import send_instagram_text_message
+from app.services.whatsapp_provider import send_whatsapp_text_message
 
 InboxProcessor = Callable[[Session, int], InboxProcessResult]
 
@@ -42,10 +43,12 @@ INBOX_CHANNELS_BY_PROVIDER: Mapping[str, str] = {
 
 PROVIDER_SENDERS: dict[str, ProviderSender] = {
     "instagram": send_instagram_text_message,
+    "whatsapp": send_whatsapp_text_message,
 }
 
 DELIVERY_PROVIDERS_BY_CHANNEL: Mapping[str, str] = {
     "instagram": "instagram",
+    "whatsapp": "whatsapp",
 }
 
 
@@ -82,6 +85,11 @@ def delivery_supported(*, channel: str, provider: str | None = None) -> bool:
 def provider_enabled(settings: Settings, provider: str) -> bool:
     if provider == "instagram":
         return bool(getattr(settings, "instagram_provider_enabled", False))
+    if provider == "whatsapp":
+        # The sender is a built-in capability. Per-business availability is
+        # determined by the encrypted integration, commercial channel flag,
+        # and customer-service window.
+        return True
     return False
 
 

@@ -1544,6 +1544,7 @@ function conversationErrorMessage(body, fallback) {
   if (typeof body === "string") return body;
   if (typeof body?.message === "string") return body.message;
   if (typeof body?.detail === "string") return body.detail;
+  if (typeof body?.detail?.message === "string") return body.detail.message;
   if (body?.detail) return JSON.stringify(body.detail);
   return fallback;
 }
@@ -1592,7 +1593,8 @@ function conversationDeliveryLabel(status) {
     queued: "En cola",
     processing: "Enviando",
     sent: "Enviado",
-    delivered: "Enviado",
+    delivered: "Entregado",
+    read: "Leído",
     retry: "Error temporal",
     blocked: "No enviado por conexión",
     failed: "Error definitivo",
@@ -1602,11 +1604,24 @@ function conversationDeliveryLabel(status) {
   }[status] || status;
 }
 
-function instagramProviderBadge(conversation) {
-  if (conversation.channel !== "instagram") return "";
-  return conversation.instagram_provider_configured
-    ? `<span class="conversation-provider conversation-provider-connected">Instagram conectado</span>`
-    : `<span class="conversation-provider conversation-provider-internal">Instagram no conectado · modo interno</span>`;
+function conversationProviderBadge(conversation) {
+  if (conversation.channel === "instagram") {
+    return conversation.instagram_provider_configured
+      ? `<span class="conversation-provider conversation-provider-connected">Instagram conectado</span>`
+      : `<span class="conversation-provider conversation-provider-internal">Instagram no conectado · modo interno</span>`;
+  }
+  if (conversation.channel === "whatsapp") {
+    if (
+      conversation.provider_configured
+      && ["connected", "degraded"].includes(conversation.integration_status)
+    ) {
+      return `<span class="conversation-provider conversation-provider-connected">WhatsApp conectado</span>`;
+    }
+    return conversation.assisted_delivery_available
+      ? `<span class="conversation-provider conversation-provider-internal">Envío asistido</span>`
+      : `<span class="conversation-provider conversation-provider-internal">WhatsApp no disponible</span>`;
+  }
+  return "";
 }
 
 function formatConversationDate(value) {
@@ -1694,7 +1709,7 @@ function renderConversationList() {
         <span class="conversation-status conversation-status-${item.status}">${escapeHtml(conversationStatusLabel(item.status))}</span>
       </span>
       <span class="conversation-channel">${escapeHtml(conversationChannelLabel(item.channel))}</span>
-      ${instagramProviderBadge(item)}
+      ${conversationProviderBadge(item)}
       ${conversationIntentBadge(item)}
       <p>${escapeHtml(item.last_message_text || "Sin mensajes")}</p>
       <small>${escapeHtml(formatConversationDate(item.last_message_at))}${item.unread_count ? ` · ${item.unread_count} sin responder` : ""}</small>
@@ -1796,7 +1811,13 @@ function renderConversationDetail(conversation, uiState = null) {
     ? (conversation.instagram_provider_configured
       ? "El mensaje se enviará mediante Instagram."
       : "Instagram real no está conectado; este mensaje solo se registra internamente.")
-    : "En v1 el mensaje se registra como enviado, sin contactar todavía al proveedor externo.";
+    : conversation.channel === "whatsapp"
+      ? (conversation.integrated_delivery_available
+        ? "Envío integrado disponible mediante WhatsApp Cloud API."
+        : conversation.delivery_unavailable_reason === "whatsapp_template_required"
+          ? "Se requiere una plantilla aprobada de WhatsApp para iniciar de nuevo la conversación."
+          : "El envío se completará fuera de AutonoGrow mediante Abrir en WhatsApp.")
+      : "El mensaje se registra como enviado sin contactar a un proveedor externo.";
   const suggestionsMarkup = pendingSuggestions.length || conversationSuggestionNotice ? `
     <div class="conversation-suggestions">
       ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
@@ -1820,7 +1841,7 @@ function renderConversationDetail(conversation, uiState = null) {
         <strong>${escapeHtml(conversationDisplayName(conversation))}</strong>
         <span>${escapeHtml(contactParts.join(" · ") || "Sin datos adicionales")}</span>
         <span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>
-        ${instagramProviderBadge(conversation)}
+        ${conversationProviderBadge(conversation)}
         ${conversationIntentBadge(conversation)}
       </div>
       <div class="conversation-detail-actions">
@@ -1859,7 +1880,9 @@ function renderConversationDetail(conversation, uiState = null) {
       <textarea id="conversation-reply-body" placeholder="Escribe una respuesta..."></textarea>
       <div class="conversation-composer-actions">
         <small>${escapeHtml(deliveryNotice)}</small>
-        <button class="btn btn-primary" type="button" onclick="sendConversationReply()">Enviar</button>
+        ${conversation.channel === "whatsapp"
+          ? `<button class="btn btn-primary" type="button" onclick="sendConversationReply()" ${conversation.integrated_delivery_available ? "" : "disabled"}>Enviar desde AutonoGrow</button>${conversation.assisted_delivery_available ? `<button class="btn btn-whatsapp" type="button" onclick="openConversationWhatsApp()">Abrir en WhatsApp</button>` : ""}`
+          : `<button class="btn btn-primary" type="button" onclick="sendConversationReply()">Enviar</button>`}
       </div>
     </div>
   `;
@@ -1949,11 +1972,37 @@ async function sendConversationReply() {
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar el mensaje."));
     selectedConversationSuggestionId = null;
     if (textarea) textarea.value = "";
-    showConversationFeedback("Respuesta registrada correctamente.");
+    showConversationFeedback(body.message?.delivery_status === "queued" ? "Respuesta en cola." : "Respuesta registrada correctamente.");
     await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
   } catch (error) {
     showConversationFeedback(error.message, true);
     if (selectedConversationId) await requestAdminRefresh(["conversationList", "conversationThread"]);
+  }
+}
+
+async function openConversationWhatsApp() {
+  if (!selectedConversationId) return;
+  const textarea = document.getElementById("conversation-reply-body");
+  const bodyText = textarea?.value.trim();
+  if (!bodyText) return showConversationFeedback("Escribe un mensaje antes de abrir WhatsApp.", true);
+  const whatsappWindow = openBlankWhatsAppWindow();
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}/assisted-delivery`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: bodyText })
+      }
+    );
+    const body = await readAdminResponseBody(response);
+    if (!response.ok || !body.whatsapp_url) throw new Error(conversationErrorMessage(body, "No se pudo abrir WhatsApp."));
+    if (!whatsappWindow) throw new Error("El navegador bloqueó la nueva ventana de WhatsApp.");
+    whatsappWindow.location.href = body.whatsapp_url;
+    showConversationFeedback("WhatsApp abierto. El mensaje aún no se considera enviado.");
+  } catch (error) {
+    whatsappWindow?.close();
+    showConversationFeedback(error.message, true);
   }
 }
 

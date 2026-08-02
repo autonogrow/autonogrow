@@ -38,7 +38,7 @@ from app.services.incident_service import report_incident, resolve_related_incid
 from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
 from app.services.maintenance_service import maintenance_enabled
 from app.services.outbox_queue_service import claim_outbox_jobs, fail_outbox_job, finish_outbox_job
-from app.services.queue_error_service import classify_queue_error
+from app.services.queue_error_service import QueueErrorClassification, classify_queue_error
 from app.services.worker_heartbeat_service import update_worker_heartbeat
 
 logger = logging.getLogger(__name__)
@@ -324,12 +324,23 @@ class ChannelWorker:
                     operation=f"process_outbox_{row.id}",
                 )
             else:
+                error_code = result.error_code or (
+                    "connection_error" if result.http_status is None else "provider_rejected"
+                )
                 classification = classify_queue_error(
-                    error_code=result.error_code
-                    or ("connection_error" if result.http_status is None else "provider_rejected"),
+                    error_code=error_code,
                     http_status=result.http_status,
                     timed_out=result.timed_out,
                 )
+                if row.provider == "whatsapp" and error_code in {
+                    "invalid_recipient",
+                    "whatsapp_template_required",
+                }:
+                    classification = QueueErrorClassification(
+                        error_code,
+                        retryable=False,
+                        safe_message="Queue operation failed permanently",
+                    )
                 fail_outbox_job(
                     row,
                     message,
@@ -338,10 +349,27 @@ class ChannelWorker:
                     error_subcode=result.error_subcode,
                     error_type=result.error_type,
                 )
-                if integration and result.error_code == "190":
-                    integration.integration_status = (
-                        "expired" if result.error_subcode == "463" else "revoked"
-                    )
+                if integration:
+                    if result.error_code == "190":
+                        integration.integration_status = (
+                            "expired" if result.error_subcode == "463" else "revoked"
+                        )
+                    elif result.error_code in {"token_expired", "token_revoked"}:
+                        integration.integration_status = (
+                            "expired" if result.error_code == "token_expired" else "revoked"
+                        )
+                    elif result.error_code in {
+                        "account_suspended",
+                        "insufficient_permissions",
+                        "invalid_phone_number_id",
+                        "number_not_registered",
+                    }:
+                        integration.integration_status = "error"
+                    integration.last_error_at = datetime.utcnow()
+                    integration.last_error_code = result.error_code
+                    integration.last_error_subcode = result.error_subcode
+                    integration.last_error_type = result.error_type
+                    integration.safe_error_message = classification.safe_message
                 self._report_outbox_failure(db, row)
             db.commit()
 

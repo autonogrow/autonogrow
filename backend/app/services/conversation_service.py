@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import or_
@@ -25,7 +25,13 @@ from app.services.conversation_automation_state_service import (
     serialize_conversation_automation_state,
 )
 from app.services.incident_service import INSTAGRAM_AUTH_CLIENT_MESSAGE
+from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
+from app.services.message_outbox_service import build_whatsapp_url
 from app.services.outbox_queue_service import create_channel_outbox
+from app.services.whatsapp_provider import (
+    WHATSAPP_PHONE_NUMBER_ID_PATTERN,
+    WHATSAPP_TEXT_MAX_LENGTH,
+)
 
 
 @dataclass(frozen=True)
@@ -36,10 +42,32 @@ class OutboundMessageResult:
     error_message: str | None = None
     client_error_message: str | None = None
     incident_id: str | None = None
+    unavailable_reason: str | None = None
 
     @property
     def ok(self) -> bool:
         return self.message.delivery_status not in {"failed", "blocked", "cancelled"}
+
+
+@dataclass(frozen=True)
+class ConversationDeliveryCapabilities:
+    provider: str | None
+    integration: BusinessChannelIntegration | None
+    delivery_supported: bool
+    provider_configured: bool
+    channel_enabled: bool
+    customer_service_window_open: bool
+    integrated_delivery_available: bool
+    assisted_delivery_available: bool
+    unavailable_reason: str | None
+
+
+class ConversationDeliveryUnavailable(ValueError):
+    def __init__(self, reason: str, safe_message: str, *, status_code: int = 409) -> None:
+        self.reason = reason
+        self.safe_message = safe_message
+        self.status_code = status_code
+        super().__init__(safe_message)
 
 
 DEFAULT_TEMPLATES = (
@@ -83,7 +111,8 @@ def serialize_message(message: ConversationMessage) -> dict[str, Any]:
         "queued": "En cola",
         "processing": "Enviando",
         "sent": "Enviado",
-        "delivered": "Enviado",
+        "delivered": "Entregado",
+        "read": "Leído",
         "retry": "Error temporal",
         "blocked": "No enviado por conexión",
         "failed": "Error definitivo",
@@ -119,19 +148,18 @@ def serialize_conversation(
         matched_patterns = json.loads(conversation.matched_patterns_json or "[]")
     except (TypeError, ValueError):
         matched_patterns = []
-    provider, integration = resolve_delivery_integration(db, conversation=conversation)
-    provider_is_configured = is_provider_configured(
-        settings=get_settings(),
-        provider=provider,
-        integration=integration,
-    )
-    integration_status = (
-        "expired"
-        if integration and integration_credentials_expired(integration)
-        else integration.integration_status
-        if integration
-        else None
-    )
+    capabilities = conversation_delivery_capabilities(db, conversation=conversation)
+    provider = capabilities.provider
+    integration = capabilities.integration
+    provider_is_configured = capabilities.provider_configured
+    if integration is None:
+        integration_status = None
+    elif conversation.channel == "whatsapp":
+        integration_status = integration.integration_status
+    elif integration_credentials_expired(integration):
+        integration_status = "expired"
+    else:
+        integration_status = integration.integration_status
     result = {
         "id": conversation.id,
         "business_id": conversation.business_id,
@@ -163,6 +191,10 @@ def serialize_conversation(
             channel=conversation.channel,
             provider=provider,
         ),
+        "integrated_delivery_available": capabilities.integrated_delivery_available,
+        "assisted_delivery_available": capabilities.assisted_delivery_available,
+        "customer_service_window_open": capabilities.customer_service_window_open,
+        "delivery_unavailable_reason": capabilities.unavailable_reason,
         # Compatibility for the current Admin panel. New consumers must use
         # provider_configured together with delivery_supported.
         "instagram_provider_configured": (
@@ -362,9 +394,179 @@ def is_provider_configured(
     provider: str | None,
     integration: BusinessChannelIntegration | None,
 ) -> bool:
-    return bool(
-        provider and provider_enabled(settings, provider) and integration_is_ready(integration)
+    if not provider or not provider_enabled(settings, provider):
+        return False
+    if provider == "whatsapp":
+        return integration is not None
+    return integration_is_ready(integration)
+
+
+def _whatsapp_integration_is_usable(
+    *,
+    settings: Settings,
+    integration: BusinessChannelIntegration | None,
+) -> bool:
+    if not integration_is_ready(integration):
+        return False
+    assert integration is not None
+    if WHATSAPP_PHONE_NUMBER_ID_PATTERN.fullmatch(integration.external_account_id.strip()) is None:
+        return False
+    try:
+        token = decrypt_secret(
+            integration.encrypted_access_token or "",
+            integration.encryption_key_version or "",
+            settings=settings,
+        )
+    except IntegrationCryptoError:
+        return False
+    return bool(token.strip())
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _whatsapp_inbound_provider_time(message: ConversationMessage) -> datetime | None:
+    if not message.provider_message_id or not message.raw_payload_json:
+        return None
+    try:
+        payload = json.loads(message.raw_payload_json)
+        timestamp = payload.get("timestamp") if isinstance(payload, dict) else None
+        numeric = int(timestamp) if isinstance(timestamp, str) and timestamp.isdigit() else None
+        return datetime.fromtimestamp(numeric, tz=timezone.utc) if numeric is not None else None
+    except (OverflowError, TypeError, ValueError):
+        return None
+
+
+def is_whatsapp_customer_service_window_open(
+    db: Session,
+    *,
+    conversation: Conversation,
+    settings: Settings | None = None,
+    now: datetime | None = None,
+) -> bool:
+    if conversation.channel != "whatsapp":
+        return True
+    inbound_messages = (
+        db.query(ConversationMessage)
+        .filter(
+            ConversationMessage.conversation_id == conversation.id,
+            ConversationMessage.direction == "inbound",
+            ConversationMessage.provider_message_id.is_not(None),
+        )
+        .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
+        .all()
     )
+    if not inbound_messages:
+        return False
+    if _whatsapp_inbound_provider_time(inbound_messages[0]) is None:
+        return False
+    provider_times = [
+        provider_time
+        for inbound in inbound_messages
+        if (provider_time := _whatsapp_inbound_provider_time(inbound)) is not None
+    ]
+    provider_time = max(provider_times)
+    current = _as_utc(now or datetime.now(timezone.utc))
+    if provider_time > current:
+        return False
+    configured = settings or get_settings()
+    return current - provider_time <= timedelta(
+        hours=configured.whatsapp_customer_service_window_hours
+    )
+
+
+def _assisted_delivery_available(conversation: Conversation) -> bool:
+    if conversation.channel != "whatsapp":
+        return False
+    try:
+        build_whatsapp_url(conversation.customer_phone or conversation.external_user_id, "test")
+    except ValueError:
+        return False
+    return True
+
+
+def conversation_delivery_capabilities(
+    db: Session,
+    *,
+    conversation: Conversation,
+    settings: Settings | None = None,
+    now: datetime | None = None,
+) -> ConversationDeliveryCapabilities:
+    configured_settings = settings or get_settings()
+    provider, integration = resolve_delivery_integration(db, conversation=conversation)
+    system_supported = delivery_supported(channel=conversation.channel, provider=provider)
+    provider_is_configured = is_provider_configured(
+        settings=configured_settings,
+        provider=provider,
+        integration=integration,
+    )
+    integration_is_usable = (
+        _whatsapp_integration_is_usable(
+            settings=configured_settings,
+            integration=integration,
+        )
+        if provider == "whatsapp"
+        else provider_is_configured
+    )
+    commercial_settings = (
+        db.query(ConversationAutomationSettings)
+        .filter(ConversationAutomationSettings.business_id == conversation.business_id)
+        .first()
+    )
+    channel_enabled = (
+        {
+            "instagram": commercial_settings.instagram_channel_enabled,
+            "whatsapp": commercial_settings.whatsapp_channel_enabled,
+        }.get(conversation.channel, True)
+        if commercial_settings is not None
+        else True
+    )
+    window_open = is_whatsapp_customer_service_window_open(
+        db,
+        conversation=conversation,
+        settings=configured_settings,
+        now=now,
+    )
+    integrated_available = bool(
+        system_supported and integration_is_usable and channel_enabled and window_open
+    )
+    reason = None
+    if not system_supported:
+        reason = "delivery_not_supported"
+    elif not provider_is_configured:
+        reason = "provider_not_configured"
+    elif not integration_is_usable:
+        reason = "delivery_not_available"
+    elif not channel_enabled:
+        reason = "integrated_delivery_not_in_plan"
+    elif not window_open:
+        reason = "whatsapp_template_required"
+    return ConversationDeliveryCapabilities(
+        provider=provider,
+        integration=integration,
+        delivery_supported=system_supported,
+        provider_configured=provider_is_configured,
+        channel_enabled=channel_enabled,
+        customer_service_window_open=window_open,
+        integrated_delivery_available=integrated_available,
+        assisted_delivery_available=_assisted_delivery_available(conversation),
+        unavailable_reason=reason,
+    )
+
+
+def build_conversation_assisted_whatsapp_url(
+    conversation: Conversation,
+    body: str,
+) -> str:
+    if conversation.channel != "whatsapp":
+        raise ConversationDeliveryUnavailable(
+            "assisted_delivery_not_available",
+            "El envío asistido sólo está disponible para WhatsApp.",
+        )
+    return build_whatsapp_url(conversation.customer_phone or conversation.external_user_id, body)
 
 
 def send_outbound_message(
@@ -376,12 +578,37 @@ def send_outbound_message(
     intent: str | None = None,
 ) -> OutboundMessageResult:
     settings = get_settings()
-    provider, integration = resolve_delivery_integration(db, conversation=conversation)
-    provider_configured = is_provider_configured(
+    capabilities = conversation_delivery_capabilities(
+        db,
+        conversation=conversation,
         settings=settings,
-        provider=provider,
-        integration=integration,
     )
+    provider = capabilities.provider
+    integration = capabilities.integration
+    provider_configured = capabilities.provider_configured
+    if conversation.channel == "whatsapp":
+        if len(body.strip()) > WHATSAPP_TEXT_MAX_LENGTH:
+            raise ConversationDeliveryUnavailable(
+                "invalid_payload",
+                "El mensaje de WhatsApp supera el máximo de 4096 caracteres.",
+                status_code=422,
+            )
+        if not capabilities.integrated_delivery_available:
+            safe_messages = {
+                "provider_not_configured": "La integración de WhatsApp no está disponible.",
+                "integrated_delivery_not_in_plan": (
+                    "El envío integrado de WhatsApp no está habilitado para este negocio."
+                ),
+                "whatsapp_template_required": (
+                    "Se requiere una plantilla aprobada de WhatsApp para iniciar de nuevo "
+                    "la conversación."
+                ),
+            }
+            reason = capabilities.unavailable_reason or "delivery_not_available"
+            raise ConversationDeliveryUnavailable(
+                reason,
+                safe_messages.get(reason, "El envío integrado de WhatsApp no está disponible."),
+            )
     legacy_simulation = not hasattr(settings, "worker_max_attempts")
     provider_attempted = False
     error_message = None
@@ -456,6 +683,7 @@ def send_outbound_message(
         error_message=error_message,
         client_error_message=client_error_message,
         incident_id=incident_id,
+        unavailable_reason=capabilities.unavailable_reason,
     )
 
 

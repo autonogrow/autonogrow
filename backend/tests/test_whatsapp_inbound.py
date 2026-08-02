@@ -535,7 +535,7 @@ def test_automatic_whatsapp_creates_suggestion_without_credit_or_outbox(database
     db.commit()
 
     assert result.automation["action"] == "suggestion"
-    assert result.automation["reason"] == "delivery_not_supported"
+    assert result.automation["reason"] == "delivery_not_available"
     assert db.query(ConversationSuggestion).count() == 1
     assert (
         db.query(ConversationMessage).filter(ConversationMessage.direction == "outbound").count()
@@ -595,8 +595,8 @@ def test_database_prevents_ambiguous_phone_number_mapping(database):
     db.rollback()
 
 
-def test_whatsapp_is_inbound_only_and_never_delivery_supported():
+def test_whatsapp_inbound_remains_registered_after_delivery_is_added():
     assert "whatsapp" in INBOX_PROCESSORS
-    assert "whatsapp" not in PROVIDER_SENDERS
-    assert "whatsapp" not in DELIVERY_PROVIDERS_BY_CHANNEL
-    assert not delivery_supported(channel="whatsapp")
+    assert "whatsapp" in PROVIDER_SENDERS
+    assert DELIVERY_PROVIDERS_BY_CHANNEL["whatsapp"] == "whatsapp"
+    assert delivery_supported(channel="whatsapp")
