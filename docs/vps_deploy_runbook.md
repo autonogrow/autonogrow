@@ -49,6 +49,20 @@ Copiar a `/var/www/autonogrow` únicamente el contenido estático necesario para
 - `privacy`;
 - `data-deletion`.
 
+Publicar siempre el frontend mediante:
+
+```bash
+cd /opt/autonogrow
+sudo scripts/publish_frontend.sh
+```
+
+El script elimina archivos obsoletos, copia exclusivamente los directorios públicos,
+aplica propietario `root:root`, permisos `0755` a directorios y `0644` a archivos,
+y comprueba que las páginas principales existan y no estén vacías.
+
+Caddy debe servir estos archivos desde `/var/www/autonogrow`, nunca directamente
+desde el repositorio `/opt/autonogrow`.
+
 El frontend detecta production y usa `window.location.origin`. No es necesario editar los JS si proxy y frontend comparten dominio.
 
 Para publicar o actualizar únicamente las páginas legales desde una copia ya situada en
