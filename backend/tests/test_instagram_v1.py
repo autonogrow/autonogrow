@@ -691,6 +691,10 @@ class InstagramV1Test(unittest.TestCase):
         self.assertEqual(result["message"]["delivery_status"], "queued")
         self.assertIsNone(result["message"]["provider_message_id"])
         self.assertFalse(result["provider_configured"])
+        self.assertFalse(result["conversation"]["provider_configured"])
+        self.assertTrue(result["conversation"]["delivery_supported"])
+        self.assertEqual(result["conversation"]["integration_status"], "connected")
+        self.assertFalse(result["conversation"]["instagram_provider_configured"])
         self.assertEqual(self.db.query(ChannelOutboxMessage).count(), 1)
 
     def test_manual_outbound_provider_success_and_failure(self):

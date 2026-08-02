@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -31,13 +32,20 @@ from app.models import (
 from app.routers.instagram_webhook import receive_instagram_webhook
 from app.routers.owner import cancel_outbox_job, get_queue_status, retry_outbox_job
 from app.schemas.owner import QueueJobActionRequest
+from app.services.channel_provider_contracts import UnsupportedChannelProvider
+from app.services.channel_provider_service import (
+    INBOX_PROCESSORS,
+    process_channel_inbox_event,
+)
 from app.services.conversation_service import add_message
 from app.services.inbox_queue_service import (
     claim_inbox_jobs,
     enqueue_instagram_events,
     extract_instagram_webhook_events,
     fail_inbox_job,
+    finish_inbox_job,
 )
+from app.services.instagram_inbox_processor import InboxProcessResult
 from app.services.instagram_provider import ProviderSendResult
 from app.services.integration_crypto_service import encrypt_secret
 from app.services.outbox_queue_service import (
@@ -155,6 +163,8 @@ def add_channel_context(
         db,
         conversation=conversation,
         message=message,
+        provider="instagram",
+        channel="instagram",
         integration_id=integration.id,
         recipient_external_id=conversation.external_user_id,
         max_attempts=5,
@@ -168,6 +178,105 @@ def test_extraction_splits_payload_and_uses_provider_message_id():
     assert len(rows) == 2
     assert rows[0].idempotency_key == "instagram:message:a"
     assert rows[0].payload_hash == hashlib.sha256(rows[0].payload_json.encode()).hexdigest()
+
+
+def test_channel_inbox_dispatcher_delegates_instagram(database):
+    db, _ = database
+    row = WebhookInboxEvent(
+        provider="instagram",
+        channel="instagram",
+        idempotency_key="dispatcher-instagram",
+        payload_hash="x" * 64,
+        payload_json="{}",
+        payload_size_bytes=2,
+        status="processing",
+    )
+    db.add(row)
+    db.flush()
+    calls = []
+
+    def processor(processor_db, inbox_id):
+        calls.append((processor_db, inbox_id))
+        return InboxProcessResult("delegated")
+
+    with patch.dict(INBOX_PROCESSORS, {"instagram": processor}):
+        result = process_channel_inbox_event(db, row.id)
+
+    assert result.action == "delegated"
+    assert calls == [(db, row.id)]
+
+
+def test_unknown_inbox_provider_is_permanent_and_not_processed(database):
+    db, factory = database
+    row = WebhookInboxEvent(
+        provider="unknown",
+        channel="instagram",
+        idempotency_key="dispatcher-unknown",
+        payload_hash="x" * 64,
+        payload_json="{}",
+        payload_size_bytes=2,
+        status="pending",
+        max_attempts=5,
+    )
+    db.add(row)
+    db.commit()
+
+    with pytest.raises(UnsupportedChannelProvider):
+        row.status = "processing"
+        process_channel_inbox_event(db, row.id)
+    row.status = "pending"
+    db.commit()
+
+    ChannelWorker(settings=settings(), session_factory=factory, sleep=lambda _: None).run_once()
+    db.expire_all()
+    persisted = db.get(WebhookInboxEvent, row.id)
+    assert persisted.status == "failed"
+    assert persisted.attempt_count == 1
+    assert persisted.processed_at is None
+    assert persisted.last_error_code == "unsupported_channel_provider"
+    assert persisted.safe_error_message == "Channel provider is not supported"
+
+
+def test_inbox_dispatcher_preserves_transient_retry_policy(database):
+    db, factory = database
+    row = WebhookInboxEvent(
+        provider="instagram",
+        channel="instagram",
+        idempotency_key="dispatcher-retry",
+        payload_hash="x" * 64,
+        payload_json="{}",
+        payload_size_bytes=2,
+        status="pending",
+        max_attempts=3,
+    )
+    db.add(row)
+    db.commit()
+
+    with patch.dict(
+        INBOX_PROCESSORS,
+        {"instagram": lambda *_args: (_ for _ in ()).throw(RuntimeError("temporary"))},
+    ):
+        ChannelWorker(settings=settings(), session_factory=factory, sleep=lambda _: None).run_once()
+    db.expire_all()
+    persisted = db.get(WebhookInboxEvent, row.id)
+    assert persisted.status == "retry"
+    assert persisted.attempt_count == 1
+    assert persisted.next_retry_at is not None
+
+    persisted.next_retry_at = datetime.utcnow() - timedelta(seconds=1)
+    db.commit()
+
+    def finish(db_session, inbox_id):
+        finish_inbox_job(db_session.get(WebhookInboxEvent, inbox_id))
+        return SimpleNamespace(action="processed")
+
+    with patch.dict(INBOX_PROCESSORS, {"instagram": finish}):
+        ChannelWorker(settings=settings(), session_factory=factory, sleep=lambda _: None).run_once()
+    db.expire_all()
+    persisted = db.get(WebhookInboxEvent, row.id)
+    assert persisted.status == "processed"
+    assert persisted.attempt_count == 2
+    assert db.query(WebhookInboxEvent).count() == 1
 
 
 def test_database_uniqueness_and_savepoint_deduplicate(database):
@@ -308,6 +417,53 @@ def test_outbox_retry_block_and_dead_letter_transitions(database):
     assert outbox.status == "blocked" and message.delivery_status == "blocked"
 
 
+def test_outbox_creation_is_provider_scoped_and_idempotent(database):
+    db, _ = database
+    active = settings()
+    _, integration, conversation, message, outbox = add_channel_context(db, active)
+    duplicate = create_channel_outbox(
+        db,
+        conversation=conversation,
+        message=message,
+        provider="instagram",
+        channel="instagram",
+        integration_id=integration.id,
+        recipient_external_id=conversation.external_user_id,
+        max_attempts=5,
+    )
+    assert duplicate.id == outbox.id
+    assert duplicate.provider == "instagram"
+    assert duplicate.channel == "instagram"
+    assert duplicate.idempotency_key == f"instagram:outbound-message:{message.id}"
+    assert db.query(ChannelOutboxMessage).count() == 1
+
+
+def test_outbox_creation_rejects_another_business_integration(database):
+    db, _ = database
+    active = settings()
+    _, _, conversation, message, _ = add_channel_context(db, active, slug="outbox-owner")
+    _, other_integration, *_ = add_channel_context(
+        db,
+        active,
+        slug="outbox-other",
+        account="outbox-other-account",
+    )
+
+    with pytest.raises(ValueError, match="Integration does not match"):
+        create_channel_outbox(
+            db,
+            conversation=conversation,
+            message=message,
+            provider="instagram",
+            channel="instagram",
+            integration_id=other_integration.id,
+            recipient_external_id=conversation.external_user_id,
+            max_attempts=5,
+        )
+
+    assert db.query(ChannelOutboxMessage).count() == 2
+
+
 def test_worker_sends_outbox_and_persists_provider_id(database):
     db, factory = database
     active = settings()
@@ -319,7 +475,10 @@ def test_worker_sends_outbox_and_persists_provider_id(database):
         return ProviderSendResult("sent", "provider-mid")
 
     worker = ChannelWorker(
-        settings=active, session_factory=factory, provider_sender=provider, sleep=lambda _: None
+        settings=active,
+        session_factory=factory,
+        senders={"instagram": provider},
+        sleep=lambda _: None,
     )
     assert worker.run_once() == 1
     db.expire_all()
@@ -335,7 +494,7 @@ def test_worker_timeout_retries_without_duplicate_message(database):
     worker = ChannelWorker(
         settings=active,
         session_factory=factory,
-        provider_sender=lambda *args, **kwargs: ProviderSendResult("failed", timed_out=True),
+        senders={"instagram": lambda *args, **kwargs: ProviderSendResult("failed", timed_out=True)},
         sleep=lambda _: None,
     )
     worker.run_once()
@@ -343,6 +502,49 @@ def test_worker_timeout_retries_without_duplicate_message(database):
     assert db.get(ChannelOutboxMessage, outbox.id).status == "retry"
     assert db.query(ConversationMessage).filter(ConversationMessage.id == message.id).count() == 1
     assert db.query(ChannelOutboxMessage).count() == 1
+
+
+def test_worker_unknown_outbox_provider_fails_safely(database):
+    db, factory = database
+    active = settings()
+    *_, message, outbox = add_channel_context(db, active)
+    outbox.provider = "unknown"
+    db.commit()
+    calls = []
+
+    ChannelWorker(
+        settings=active,
+        session_factory=factory,
+        senders={"instagram": lambda *_args, **_kwargs: calls.append(1)},
+        sleep=lambda _: None,
+    ).run_once()
+    db.expire_all()
+    persisted = db.get(ChannelOutboxMessage, outbox.id)
+    assert persisted.status == "failed"
+    assert persisted.last_error_code == "unsupported_channel_provider"
+    assert persisted.safe_error_message == "Queue operation failed permanently"
+    assert db.get(ConversationMessage, message.id).delivery_status == "failed"
+    assert calls == []
+
+
+def test_worker_permanent_provider_error_does_not_retry(database):
+    db, factory = database
+    active = settings()
+    *_, message, outbox = add_channel_context(db, active)
+    worker = ChannelWorker(
+        settings=active,
+        session_factory=factory,
+        senders={
+            "instagram": lambda *_args, **_kwargs: ProviderSendResult(
+                "failed", http_status=400, error_code="invalid_recipient"
+            )
+        },
+        sleep=lambda _: None,
+    )
+    worker.run_once()
+    db.expire_all()
+    assert db.get(ChannelOutboxMessage, outbox.id).status == "blocked"
+    assert db.get(ConversationMessage, message.id).delivery_status == "blocked"
 
 
 def test_disconnected_integration_blocks_without_provider_call(database):
@@ -355,7 +557,7 @@ def test_disconnected_integration_blocks_without_provider_call(database):
     worker = ChannelWorker(
         settings=active,
         session_factory=factory,
-        provider_sender=lambda *args, **kwargs: calls.append(1),
+        senders={"instagram": lambda *args, **kwargs: calls.append(1)},
         sleep=lambda _: None,
     )
     worker.run_once()
@@ -376,7 +578,10 @@ def test_two_businesses_use_their_own_decrypted_token(database):
         return ProviderSendResult("sent")
 
     ChannelWorker(
-        settings=active, session_factory=factory, provider_sender=provider, sleep=lambda _: None
+        settings=active,
+        session_factory=factory,
+        senders={"instagram": provider},
+        sleep=lambda _: None,
     ).run_once()
     assert tokens == ["token-one", "token-two"]
 

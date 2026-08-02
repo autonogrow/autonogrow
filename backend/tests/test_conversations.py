@@ -10,7 +10,14 @@ from starlette.requests import Request
 from app.core.config import Settings, get_settings
 from app.core.database import Base
 from app.core.security import get_current_user, require_business_access, require_business_admin
-from app.models import Business, BusinessUser, Conversation, ConversationMessage, User
+from app.models import (
+    Business,
+    BusinessUser,
+    ChannelOutboxMessage,
+    Conversation,
+    ConversationMessage,
+    User,
+)
 from app.routers.conversations import (
     admin_create_conversation,
     admin_create_conversation_template,
@@ -246,6 +253,36 @@ class ConversationsTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as anonymous:
             get_current_user(None)
         self.assertEqual(anonymous.exception.status_code, 401)
+
+    def test_whatsapp_without_adapter_remains_manual_and_is_not_advertised(self):
+        created = admin_create_conversation(
+            self.business_a.slug,
+            ConversationCreate(
+                channel="whatsapp",
+                customer_name="WhatsApp customer",
+                external_user_id="wa-manual-1",
+                initial_message="Hola",
+            ),
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )["conversation"]
+
+        sent = admin_send_conversation_message(
+            self.business_a.slug,
+            created["id"],
+            ConversationMessageCreate(body="Respuesta manual"),
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )
+
+        self.assertEqual(sent["message"]["delivery_status"], "sent")
+        self.assertFalse(sent["conversation"]["delivery_supported"])
+        self.assertFalse(sent["conversation"]["provider_configured"])
+        self.assertIsNone(sent["conversation"]["integration_status"])
+        self.assertIsNone(sent["conversation"]["instagram_provider_configured"])
+        self.assertEqual(self.db.query(ChannelOutboxMessage).count(), 0)
 
     def test_inbound_webhook_creates_then_reuses_conversation(self):
         first = inbound_message_endpoint(

@@ -4,9 +4,10 @@ import os
 import signal
 import socket
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, cast
+from typing import cast
 
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
@@ -21,15 +22,20 @@ from app.models import (
     ConversationMessage,
     WebhookInboxEvent,
 )
+from app.services.channel_provider_contracts import (
+    InvalidChannelInboxPayload,
+    ProviderSender,
+    UnsupportedChannelProvider,
+)
+from app.services.channel_provider_service import (
+    delivery_supported,
+    integration_credentials_expired,
+    process_channel_inbox_event,
+    provider_senders,
+)
 from app.services.database_error_service import classify_database_error, report_database_incident
 from app.services.inbox_queue_service import claim_inbox_jobs, fail_inbox_job
 from app.services.incident_service import report_incident, resolve_related_incidents
-from app.services.instagram_inbox_processor import (
-    InvalidInboxPayload,
-    process_instagram_inbox_event,
-)
-from app.services.instagram_integration_service import integration_expiration_state
-from app.services.instagram_provider import ProviderSendResult, send_instagram_text_message
 from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
 from app.services.maintenance_service import maintenance_enabled
 from app.services.outbox_queue_service import claim_outbox_jobs, fail_outbox_job, finish_outbox_job
@@ -48,9 +54,7 @@ class PreparedDelivery:
     text: str
     access_token: str
     external_account_id: str
-
-
-ProviderSender = Callable[..., ProviderSendResult]
+    sender: ProviderSender
 
 
 class ChannelWorker:
@@ -59,12 +63,12 @@ class ChannelWorker:
         *,
         settings: Settings | None = None,
         session_factory: sessionmaker[Session] = SessionLocal,
-        provider_sender: ProviderSender = send_instagram_text_message,
+        senders: Mapping[str, ProviderSender] | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.settings = settings or get_settings()
         self.session_factory = session_factory
-        self.provider_sender = provider_sender
+        self.provider_senders = provider_senders(senders)
         self.sleep = sleep
         configured_id = self.settings.worker_id.strip()
         self.worker_id = configured_id or f"channel-{socket.gethostname()}-{os.getpid()}"
@@ -112,7 +116,7 @@ class ChannelWorker:
                 row = db.get(WebhookInboxEvent, inbox_id)
                 token = request_id_context.set(row.request_id if row else None)
                 try:
-                    result = process_instagram_inbox_event(db, inbox_id)
+                    result = process_channel_inbox_event(db, inbox_id)
                     db.commit()
                 finally:
                     request_id_context.reset(token)
@@ -127,17 +131,27 @@ class ChannelWorker:
             with self.session_factory() as db:
                 row = db.get(WebhookInboxEvent, inbox_id)
                 if row and row.status == "processing":
-                    permanent = isinstance(exc, InvalidInboxPayload)
+                    unsupported = isinstance(exc, UnsupportedChannelProvider)
+                    permanent = isinstance(exc, InvalidChannelInboxPayload) or unsupported
                     locked = is_sqlite_locked_error(exc)
+                    error_code = "webhook_processing_failed"
+                    safe_message = "Queue operation failed"
+                    if isinstance(exc, UnsupportedChannelProvider):
+                        error_code = exc.error_code
+                        safe_message = exc.safe_message
+                    elif permanent:
+                        error_code = "invalid_payload"
                     classification = classify_queue_error(
-                        error_code="invalid_payload" if permanent else "webhook_processing_failed",
+                        error_code=error_code,
                         database_locked=locked,
                     )
+                    if not unsupported:
+                        safe_message = classification.safe_message
                     retryable = locked or (not permanent and row.attempt_count < row.max_attempts)
                     fail_inbox_job(
                         row,
                         error_code=classification.code,
-                        safe_message=classification.safe_message,
+                        safe_message=safe_message,
                         retryable=retryable,
                     )
                     if row.status in {"failed", "dead_letter"}:
@@ -175,11 +189,19 @@ class ChannelWorker:
             )
             integration = db.get(BusinessChannelIntegration, row.integration_id)
             error_code = None
-            if integration is None or integration.business_id != row.business_id:
+            sender = self.provider_senders.get(row.provider)
+            if sender is None or not delivery_supported(
+                channel=row.channel,
+                provider=row.provider,
+            ):
+                error_code = "unsupported_channel_provider"
+            elif integration is None or integration.business_id != row.business_id:
+                error_code = "integration_not_configured"
+            elif integration.channel != row.channel or integration.provider != row.provider:
                 error_code = "integration_not_configured"
             elif integration.integration_status not in {"connected", "degraded"}:
                 error_code = f"integration_{integration.integration_status}"
-            elif integration_expiration_state(integration)[0]:
+            elif integration_credentials_expired(integration):
                 error_code = "integration_expired"
             elif not integration.encrypted_access_token or not integration.encryption_key_version:
                 error_code = "integration_not_configured"
@@ -230,6 +252,7 @@ class ChannelWorker:
                 text,
                 token,
                 integration.external_account_id,
+                cast(ProviderSender, sender),
             )
             db.commit()
             return prepared
@@ -266,7 +289,7 @@ class ChannelWorker:
         if prepared is None:
             return
         # The provider call intentionally runs with no Session/transaction open.
-        result = self.provider_sender(
+        result = prepared.sender(
             prepared.recipient_id,
             prepared.text,
             access_token=prepared.access_token,

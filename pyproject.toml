@@ -34,6 +34,8 @@ files = [
   "backend/app/services/instagram_integration_service.py",
   "backend/app/services/automation_credit_service.py",
   "backend/app/services/instagram_provider.py",
+  "backend/app/services/channel_provider_contracts.py",
+  "backend/app/services/channel_provider_service.py",
   "backend/app/services/queue_error_service.py",
   "backend/app/services/inbox_queue_service.py",
   "backend/app/services/outbox_queue_service.py",

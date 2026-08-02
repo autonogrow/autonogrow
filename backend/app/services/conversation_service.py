@@ -6,22 +6,25 @@ from typing import Any
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.models import (
     Business,
+    BusinessChannelIntegration,
     Conversation,
     ConversationAutomationSettings,
     ConversationMessage,
     ConversationTemplate,
 )
+from app.services.channel_provider_service import (
+    delivery_provider_for_channel,
+    delivery_supported,
+    integration_credentials_expired,
+    provider_enabled,
+)
 from app.services.conversation_automation_state_service import (
     serialize_conversation_automation_state,
 )
 from app.services.incident_service import INSTAGRAM_AUTH_CLIENT_MESSAGE
-from app.services.instagram_integration_service import (
-    get_instagram_integration,
-    integration_expiration_state,
-)
 from app.services.outbox_queue_service import create_channel_outbox
 
 
@@ -116,6 +119,19 @@ def serialize_conversation(
         matched_patterns = json.loads(conversation.matched_patterns_json or "[]")
     except (TypeError, ValueError):
         matched_patterns = []
+    provider, integration = resolve_delivery_integration(db, conversation=conversation)
+    provider_is_configured = is_provider_configured(
+        settings=get_settings(),
+        provider=provider,
+        integration=integration,
+    )
+    integration_status = (
+        "expired"
+        if integration and integration_credentials_expired(integration)
+        else integration.integration_status
+        if integration
+        else None
+    )
     result = {
         "id": conversation.id,
         "business_id": conversation.business_id,
@@ -141,20 +157,16 @@ def serialize_conversation(
         "intent_confidence": conversation.intent_confidence,
         "matched_patterns": matched_patterns,
         "automation": serialize_conversation_automation_state(conversation),
+        "provider_configured": provider_is_configured,
+        "integration_status": integration_status,
+        "delivery_supported": delivery_supported(
+            channel=conversation.channel,
+            provider=provider,
+        ),
+        # Compatibility for the current Admin panel. New consumers must use
+        # provider_configured together with delivery_supported.
         "instagram_provider_configured": (
-            bool(
-                getattr(get_settings(), "instagram_provider_enabled", False)
-                and (
-                    integration := get_instagram_integration(
-                        db, business_id=conversation.business_id
-                    )
-                )
-                and integration.integration_status in {"connected", "degraded"}
-                and integration.encrypted_access_token
-                and not integration_expiration_state(integration)[0]
-            )
-            if conversation.channel == "instagram"
-            else None
+            provider_is_configured if conversation.channel == "instagram" else None
         ),
         "unread_count": unread_count(db, conversation),
         "created_at": conversation.created_at.isoformat(),
@@ -314,6 +326,47 @@ def add_message(
     return message
 
 
+def resolve_delivery_integration(
+    db: Session,
+    *,
+    conversation: Conversation,
+) -> tuple[str | None, BusinessChannelIntegration | None]:
+    provider = delivery_provider_for_channel(conversation.channel)
+    if provider is None:
+        return None, None
+    integration = (
+        db.query(BusinessChannelIntegration)
+        .filter(
+            BusinessChannelIntegration.business_id == conversation.business_id,
+            BusinessChannelIntegration.channel == conversation.channel,
+            BusinessChannelIntegration.provider == provider,
+        )
+        .first()
+    )
+    return provider, integration
+
+
+def integration_is_ready(integration: BusinessChannelIntegration | None) -> bool:
+    return bool(
+        integration
+        and integration.integration_status in {"connected", "degraded"}
+        and integration.encrypted_access_token
+        and integration.encryption_key_version
+        and not integration_credentials_expired(integration)
+    )
+
+
+def is_provider_configured(
+    *,
+    settings: Settings,
+    provider: str | None,
+    integration: BusinessChannelIntegration | None,
+) -> bool:
+    return bool(
+        provider and provider_enabled(settings, provider) and integration_is_ready(integration)
+    )
+
+
 def send_outbound_message(
     db: Session,
     *,
@@ -323,17 +376,11 @@ def send_outbound_message(
     intent: str | None = None,
 ) -> OutboundMessageResult:
     settings = get_settings()
-    integration = (
-        get_instagram_integration(db, business_id=conversation.business_id)
-        if conversation.channel == "instagram"
-        else None
-    )
-    provider_configured = bool(
-        getattr(settings, "instagram_provider_enabled", False)
-        and integration
-        and integration.encrypted_access_token
-        and integration.integration_status in {"connected", "degraded"}
-        and not integration_expiration_state(integration)[0]
+    provider, integration = resolve_delivery_integration(db, conversation=conversation)
+    provider_configured = is_provider_configured(
+        settings=settings,
+        provider=provider,
+        integration=integration,
     )
     legacy_simulation = not hasattr(settings, "worker_max_attempts")
     provider_attempted = False
@@ -359,20 +406,19 @@ def send_outbound_message(
                 f"El canal {conversation.channel.title()} no está habilitado para este negocio. "
                 "Contacta con el equipo de AutonoGrow."
             )
-    if conversation.channel == "instagram" and not policy_blocked:
+    if provider is not None and not policy_blocked:
         integration_ready = bool(
-            integration
-            and integration.encrypted_access_token
-            and integration.encryption_key_version
-            and integration.integration_status in {"connected", "degraded"}
-            and not integration_expiration_state(integration)[0]
-            and conversation.external_user_id
+            integration_is_ready(integration) and conversation.external_user_id
         )
         delivery_status = (
             "simulated" if legacy_simulation else ("queued" if integration_ready else "blocked")
         )
         if not integration_ready and not legacy_simulation:
-            client_error_message = INSTAGRAM_AUTH_CLIENT_MESSAGE
+            client_error_message = (
+                INSTAGRAM_AUTH_CLIENT_MESSAGE
+                if provider == "instagram"
+                else "La integración del canal no está disponible."
+            )
     previous_last_outbound_at = conversation.last_outbound_at
     message = add_message(
         db,
@@ -392,11 +438,13 @@ def send_outbound_message(
             provider_attempted=False,
             client_error_message=client_error_message,
         )
-    if conversation.channel == "instagram" and integration and delivery_status == "queued":
+    if provider is not None and integration and delivery_status == "queued":
         create_channel_outbox(
             db,
             conversation=conversation,
             message=message,
+            provider=provider,
+            channel=conversation.channel,
             integration_id=integration.id,
             recipient_external_id=conversation.external_user_id or "",
             max_attempts=settings.worker_max_attempts,

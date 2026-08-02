@@ -7,6 +7,7 @@ from typing import Any
 import requests
 
 from app.core.config import Settings, get_settings
+from app.services.channel_provider_contracts import ProviderSendResult
 
 
 @dataclass(frozen=True)
@@ -20,22 +21,6 @@ class InstagramInboundMessage:
     has_attachments: bool
     is_echo: bool
     attachments: list[dict[str, Any]]
-
-
-@dataclass(frozen=True)
-class ProviderSendResult:
-    delivery_status: str
-    provider_message_id: str | None = None
-    error_message: str | None = None
-    http_status: int | None = None
-    error_code: str | None = None
-    error_subcode: str | None = None
-    error_type: str | None = None
-    timed_out: bool = False
-
-    @property
-    def ok(self) -> bool:
-        return self.delivery_status == "sent"
 
 
 @dataclass(frozen=True)

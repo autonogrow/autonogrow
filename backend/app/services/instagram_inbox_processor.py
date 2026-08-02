@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.models import Business, Conversation, ConversationMessage, WebhookInboxEvent
+from app.services.channel_provider_contracts import InvalidChannelInboxPayload
 from app.services.conversation_automation_service import process_inbound_automation
 from app.services.conversation_service import add_message, create_or_get_conversation
 from app.services.inbox_queue_service import finish_inbox_job
@@ -15,7 +16,7 @@ from app.services.instagram_integration_service import resolve_instagram_integra
 from app.services.instagram_provider import parse_instagram_webhook
 
 
-class InvalidInboxPayload(ValueError):
+class InvalidInboxPayload(InvalidChannelInboxPayload):
     pass
 
 
