@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     instagram_default_business_slug: str = ""
     instagram_provider_enabled: bool = False
     instagram_require_signature: bool = True
+    whatsapp_webhook_enabled: bool = False
+    whatsapp_verify_token: str = ""
+    whatsapp_require_signature: bool = True
     integration_encryption_keys_json: str = ""
     integration_encryption_active_key_version: str = "v1"
     incident_alerts_enabled: bool = False
@@ -485,6 +488,24 @@ class Settings(BaseSettings):
                 or active_version not in encryption_keys
             ):
                 errors.append("Configuración de cifrado de integraciones no válida")
+        if self.whatsapp_webhook_enabled:
+            if not self.whatsapp_require_signature:
+                errors.append("WHATSAPP_REQUIRE_SIGNATURE debe estar activo")
+            whatsapp_required = {
+                "META_APP_SECRET": self.meta_app_secret,
+                "WHATSAPP_VERIFY_TOKEN": self.whatsapp_verify_token,
+            }
+            missing_whatsapp = [
+                name
+                for name, value in whatsapp_required.items()
+                if not value.strip()
+                or any(
+                    marker in value.strip().lower()
+                    for marker in ("change_me", "change-me", "placeholder")
+                )
+            ]
+            if missing_whatsapp:
+                errors.append("Configuración WhatsApp incompleta: " + ", ".join(missing_whatsapp))
         if errors:
             raise ValueError("Configuración de producción insegura: " + "; ".join(errors))
         return self

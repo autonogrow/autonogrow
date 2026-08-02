@@ -46,6 +46,7 @@ from app.routers.staff import (
 from app.routers.staff import (
     public_router as public_staff_router,
 )
+from app.routers.whatsapp_webhook import router as whatsapp_webhook_router
 
 
 @asynccontextmanager
@@ -128,3 +129,4 @@ app.include_router(member_staff_router)
 app.include_router(conversations_router)
 app.include_router(test_webhook_router)
 app.include_router(instagram_webhook_router)
+app.include_router(whatsapp_webhook_router)

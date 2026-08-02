@@ -21,13 +21,41 @@ class ProviderSendResult:
 ProviderSender = Callable[..., ProviderSendResult]
 
 
-class InvalidChannelInboxPayload(ValueError):
+@dataclass(frozen=True)
+class InboxProcessResult:
+    action: str
+    automation: dict | None = None
+
+
+class ChannelInboxProcessingError(ValueError):
+    error_code = "channel_inbox_processing_failed"
+    safe_message = "Channel inbox processing failed"
+    retryable = True
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        error_code: str | None = None,
+        safe_message: str | None = None,
+        retryable: bool | None = None,
+    ) -> None:
+        if error_code is not None:
+            self.error_code = error_code
+        if safe_message is not None:
+            self.safe_message = safe_message
+        if retryable is not None:
+            self.retryable = retryable
+        super().__init__(message or self.safe_message)
+
+
+class InvalidChannelInboxPayload(ChannelInboxProcessingError):
     error_code = "invalid_payload"
     safe_message = "Stored webhook event is invalid"
     retryable = False
 
 
-class UnsupportedChannelProvider(ValueError):
+class UnsupportedChannelProvider(ChannelInboxProcessingError):
     error_code = "unsupported_channel_provider"
     safe_message = "Channel provider is not supported"
     retryable = False

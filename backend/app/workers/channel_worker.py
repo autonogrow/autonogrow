@@ -23,9 +23,8 @@ from app.models import (
     WebhookInboxEvent,
 )
 from app.services.channel_provider_contracts import (
-    InvalidChannelInboxPayload,
+    ChannelInboxProcessingError,
     ProviderSender,
-    UnsupportedChannelProvider,
 )
 from app.services.channel_provider_service import (
     delivery_supported,
@@ -131,23 +130,25 @@ class ChannelWorker:
             with self.session_factory() as db:
                 row = db.get(WebhookInboxEvent, inbox_id)
                 if row and row.status == "processing":
-                    unsupported = isinstance(exc, UnsupportedChannelProvider)
-                    permanent = isinstance(exc, InvalidChannelInboxPayload) or unsupported
+                    classified_error = exc if isinstance(exc, ChannelInboxProcessingError) else None
+                    permanent = bool(classified_error and not classified_error.retryable)
                     locked = is_sqlite_locked_error(exc)
                     error_code = "webhook_processing_failed"
                     safe_message = "Queue operation failed"
-                    if isinstance(exc, UnsupportedChannelProvider):
-                        error_code = exc.error_code
-                        safe_message = exc.safe_message
-                    elif permanent:
-                        error_code = "invalid_payload"
+                    if classified_error is not None:
+                        error_code = classified_error.error_code
+                        safe_message = classified_error.safe_message
                     classification = classify_queue_error(
                         error_code=error_code,
                         database_locked=locked,
                     )
-                    if not unsupported:
+                    if classified_error is None:
                         safe_message = classification.safe_message
-                    retryable = locked or (not permanent and row.attempt_count < row.max_attempts)
+                    retryable = locked or (
+                        not permanent
+                        and (classified_error is None or classified_error.retryable)
+                        and row.attempt_count < row.max_attempts
+                    )
                     fail_inbox_job(
                         row,
                         error_code=classification.code,

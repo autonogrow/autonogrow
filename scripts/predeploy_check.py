@@ -87,6 +87,8 @@ def check_required_files(reporter: Reporter) -> None:
         "docs/final_release_validation_matrix.md",
         "docs/persistent_queue_architecture.md",
         "docs/channel_worker_operations.md",
+        "docs/whatsapp_cloud_api_inbound_architecture.md",
+        "docs/manual_test_whatsapp_cloud_api_inbound.md",
         "docs/webhook_inbox.md",
         "docs/channel_outbox.md",
         "docs/queue_incident_recovery.md",
@@ -188,6 +190,9 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "UPLOADS_DIR=/var/lib/autonogrow/uploads",
             "INSTAGRAM_PROVIDER_ENABLED=false",
             "INSTAGRAM_REQUIRE_SIGNATURE=true",
+            "WHATSAPP_WEBHOOK_ENABLED=false",
+            "WHATSAPP_VERIFY_TOKEN=",
+            "WHATSAPP_REQUIRE_SIGNATURE=true",
             "INTEGRATION_ENCRYPTION_KEYS_JSON=CHANGE_ME_JSON_KEYRING",
             "INTEGRATION_ENCRYPTION_ACTIVE_KEY_VERSION=v1",
             "INCIDENT_ALERTS_ENABLED=false",
@@ -211,6 +216,9 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "UPLOADS_DIR=/var/lib/autonogrow-staging/uploads",
             "INSTAGRAM_PROVIDER_ENABLED=false",
             "INSTAGRAM_REQUIRE_SIGNATURE=true",
+            "WHATSAPP_WEBHOOK_ENABLED=false",
+            "WHATSAPP_VERIFY_TOKEN=",
+            "WHATSAPP_REQUIRE_SIGNATURE=true",
             "INTEGRATION_ENCRYPTION_KEYS_JSON=CHANGE_ME_JSON_KEYRING",
             "INTEGRATION_ENCRYPTION_ACTIVE_KEY_VERSION=v1",
             "INCIDENT_ALERTS_ENABLED=false",
@@ -437,6 +445,8 @@ def production_baseline() -> dict[str, object]:
         "upload_max_size_mb": 5,
         "instagram_provider_enabled": False,
         "instagram_require_signature": True,
+        "whatsapp_webhook_enabled": False,
+        "whatsapp_require_signature": True,
     }
 
 
@@ -473,7 +483,22 @@ def check_production_validation(reporter: Reporter, Settings) -> None:
         "UPLOADS_DIR pública": {"uploads_dir": "/var/www/autonogrow/uploads"},
         "UPLOADS_DIR dentro del frontend": {"uploads_dir": str(ROOT / "autonogrow-landing")},
         "firma Instagram desactivada": {"instagram_require_signature": False},
-        "provider Instagram incompleto": {"instagram_provider_enabled": True},
+        "provider Instagram incompleto": {
+            "instagram_provider_enabled": True,
+            "meta_app_id": "",
+            "meta_app_secret": "",
+            "meta_verify_token": "",
+            "integration_encryption_keys_json": "",
+        },
+        "firma WhatsApp desactivada": {
+            "whatsapp_webhook_enabled": True,
+            "whatsapp_require_signature": False,
+        },
+        "webhook WhatsApp incompleto": {
+            "whatsapp_webhook_enabled": True,
+            "meta_app_secret": "",
+            "whatsapp_verify_token": "",
+        },
         "alertas de incidencias incompletas": {"incident_alerts_enabled": True},
     }
     accepted: list[str] = []
@@ -485,7 +510,7 @@ def check_production_validation(reporter: Reporter, Settings) -> None:
         except Exception:
             pass
     if accepted:
-        reporter.fail("Alguna configuración production insegura no fue rechazada")
+        reporter.fail("Configuraciones production inseguras no rechazadas: " + ", ".join(accepted))
     else:
         reporter.passed(
             f"Las {len(unsafe_cases)} configuraciones production inseguras fueron rechazadas"
@@ -684,6 +709,56 @@ def check_onboarding_contract(reporter: Reporter) -> None:
         reporter.fail("La matriz manual de onboarding debe tener 40 pendientes")
 
 
+def check_whatsapp_inbound_contract(reporter: Reporter) -> None:
+    from app.services.channel_provider_service import (
+        DELIVERY_PROVIDERS_BY_CHANNEL,
+        INBOX_CHANNELS_BY_PROVIDER,
+        INBOX_PROCESSORS,
+        PROVIDER_SENDERS,
+        delivery_supported,
+    )
+
+    if INBOX_CHANNELS_BY_PROVIDER.get("whatsapp") == "whatsapp" and "whatsapp" in INBOX_PROCESSORS:
+        reporter.passed("WhatsApp registrado en el dispatcher de inbox")
+    else:
+        reporter.fail("WhatsApp no está registrado correctamente en el inbox")
+    if (
+        "whatsapp" not in PROVIDER_SENDERS
+        and "whatsapp" not in DELIVERY_PROVIDERS_BY_CHANNEL
+        and not delivery_supported(channel="whatsapp")
+    ):
+        reporter.passed("WhatsApp permanece sin sender ni soporte de entrega")
+    else:
+        reporter.fail("WhatsApp anuncia entrega o sender antes de implementarlos")
+
+    main_text = (ROOT / "backend/app/main.py").read_text(encoding="utf-8-sig")
+    if (
+        "whatsapp_webhook_router" in main_text
+        and "include_router(whatsapp_webhook_router)" in main_text
+    ):
+        reporter.passed("Router WhatsApp registrado en app.main")
+    else:
+        reporter.fail("Router WhatsApp no está registrado en app.main")
+
+    required_vars = {
+        "WHATSAPP_WEBHOOK_ENABLED=false",
+        "WHATSAPP_VERIFY_TOKEN=",
+        "WHATSAPP_REQUIRE_SIGNATURE=",
+    }
+    env_paths = (
+        "backend/.env.example",
+        "deploy/backend.env.example",
+        "deploy/staging.backend.env.example",
+    )
+    if all(
+        all(marker in (ROOT / path).read_text(encoding="utf-8-sig") for marker in required_vars)
+        for path in env_paths
+    ):
+        reporter.passed("Variables WhatsApp documentadas sin activar la integración")
+    else:
+        reporter.fail("Faltan variables WhatsApp en los ejemplos de entorno")
+
+
 def main() -> int:
     reporter = Reporter()
     check_required_files(reporter)
@@ -695,6 +770,7 @@ def main() -> int:
     check_persistent_queue_contract(reporter)
     check_postgresql_contract(reporter)
     check_onboarding_contract(reporter)
+    check_whatsapp_inbound_contract(reporter)
     check_tracked_secrets(reporter)
     Settings = check_application(reporter)
     if Settings is not None:

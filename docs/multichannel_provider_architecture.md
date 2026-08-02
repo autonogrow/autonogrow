@@ -7,14 +7,16 @@ El webhook valida y divide el payload del proveedor antes de persistir cada even
 idempotente del evento y la restricción única de la tabla evitan duplicados.
 
 El worker reclama el evento y llama a `process_channel_inbox_event(db, inbox_event_id)`. Esta
-entrada lee el `provider` persistido y selecciona un procesador en `INBOX_PROCESSORS`. Instagram es
-el único procesador registrado actualmente. Un proveedor desconocido lanza
+entrada lee el `provider` persistido y selecciona un procesador en `INBOX_PROCESSORS`. Instagram y
+WhatsApp están registrados para entrada. Un proveedor desconocido lanza
 `UnsupportedChannelProvider`, queda como fallo permanente con un mensaje seguro y nunca se marca
 silenciosamente como procesado. La combinación persistida de canal y proveedor también debe
 coincidir con `INBOX_CHANNELS_BY_PROVIDER`.
 
-El procesador de Instagram conserva el enrutado por cuenta, crea o reutiliza la conversación y
-entrega el mensaje al motor común de automatización. El dispatcher no duplica esas reglas.
+Cada procesador conserva su enrutado por cuenta, crea o reutiliza la conversación y entrega el
+mensaje al motor común de automatización. El dispatcher no duplica esas reglas. WhatsApp resuelve
+el negocio exclusivamente mediante una integración `whatsapp/whatsapp` cuyo
+`external_account_id` coincide con el `phone_number_id` receptor.
 
 ## Flujo de salida
 
@@ -42,21 +44,21 @@ de base de datos abierta. Al finalizar persiste el estado y `provider_message_id
 | Proveedor | Inbox persistente | Outbox persistente | Sender real |
 | --- | --- | --- | --- |
 | Instagram | Sí | Sí | Sí |
-| WhatsApp | No | No | No |
+| WhatsApp | Sí | No | No |
 
-WhatsApp mantiene por ahora el comportamiento manual existente. `delivery_supported` es `false` y
-`provider_configured` es `false`; no se crea outbox ni se anuncia automatización real.
+WhatsApp admite recepción persistente, pero mantiene el envío manual. `delivery_supported` es
+`false`; no se crea outbox ni se anuncia automatización real. Una regla automática genera una
+sugerencia manual y no consume crédito. `provider_configured` puede reflejar que existe una
+integración, pero nunca implica entrega sin `delivery_supported`.
 
-## Añadir WhatsApp posteriormente
+## Añadir entrega WhatsApp posteriormente
 
 La implementación futura deberá aportar código real y probado, no stubs:
 
-1. Implementar la recepción y `process_whatsapp_inbox_event`.
-2. Registrar el procesador en `INBOX_PROCESSORS` y su canal en `INBOX_CHANNELS_BY_PROVIDER`.
-3. Implementar `send_whatsapp_text_message` con el contrato `ProviderSendResult`.
-4. Registrar el sender en `PROVIDER_SENDERS` y el proveedor interno del canal en
+1. Implementar `send_whatsapp_text_message` con el contrato `ProviderSendResult`.
+2. Registrar el sender en `PROVIDER_SENDERS` y el proveedor interno del canal en
    `DELIVERY_PROVIDERS_BY_CHANNEL`.
-5. Añadir la configuración habilitadora a `provider_enabled` y pruebas de aislamiento,
+3. Añadir la configuración habilitadora a `provider_enabled` y pruebas de aislamiento,
    idempotencia, reintentos y errores permanentes.
 
 El núcleo del worker no necesita cambios para esos pasos.

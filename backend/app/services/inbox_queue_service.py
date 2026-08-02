@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models import WebhookInboxEvent
 from app.services.instagram_provider import parse_instagram_webhook
 from app.services.queue_error_service import calculate_next_retry
+from app.services.whatsapp_provider import parse_whatsapp_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,58 @@ def extract_instagram_webhook_events(payload: dict[str, Any]) -> list[ExtractedW
     return result
 
 
-def enqueue_instagram_events(
+def _bounded_idempotency_key(value: str, *, prefix: str) -> str:
+    if len(value) <= 255:
+        return value
+    return f"{prefix}{hashlib.sha256(value.encode()).hexdigest()}"
+
+
+def extract_whatsapp_webhook_events(payload: dict[str, Any]) -> list[ExtractedWebhookEvent]:
+    result: list[ExtractedWebhookEvent] = []
+    for event in parse_whatsapp_webhook(payload):
+        serialized = json.dumps(
+            event.normalized_payload(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        encoded = serialized.encode("utf-8")
+        payload_hash = hashlib.sha256(encoded).hexdigest()
+        if event.event_type in {"message", "unsupported_message"} and event.message_id:
+            raw_key = f"whatsapp:message:{event.message_id}"
+            idempotency_key = _bounded_idempotency_key(
+                raw_key,
+                prefix="whatsapp:message-hash:",
+            )
+        elif event.event_type == "status" and event.message_id and event.status:
+            raw_key = (
+                f"whatsapp:status:{event.message_id}:{event.status}:{event.timestamp or 'unknown'}"
+            )
+            idempotency_key = _bounded_idempotency_key(
+                raw_key,
+                prefix="whatsapp:status-hash:",
+            )
+        else:
+            idempotency_key = f"whatsapp:derived:{payload_hash}"
+        result.append(
+            ExtractedWebhookEvent(
+                event_type=event.event_type,
+                provider_event_id=event.provider_event_id,
+                idempotency_key=idempotency_key,
+                payload_hash=payload_hash,
+                payload_json=serialized,
+                payload_size_bytes=len(encoded),
+            )
+        )
+    return result
+
+
+def enqueue_channel_events(
     db: Session,
     events: list[ExtractedWebhookEvent],
     *,
+    provider: str,
+    channel: str,
     max_attempts: int,
     request_id: str | None = None,
 ) -> tuple[int, int]:
@@ -72,8 +121,8 @@ def enqueue_instagram_events(
             with db.begin_nested():
                 db.add(
                     WebhookInboxEvent(
-                        provider="instagram",
-                        channel="instagram",
+                        provider=provider,
+                        channel=channel,
                         event_type=extracted.event_type,
                         provider_event_id=extracted.provider_event_id,
                         idempotency_key=extracted.idempotency_key,
@@ -90,6 +139,40 @@ def enqueue_instagram_events(
         except IntegrityError:
             duplicates += 1
     return accepted, duplicates
+
+
+def enqueue_instagram_events(
+    db: Session,
+    events: list[ExtractedWebhookEvent],
+    *,
+    max_attempts: int,
+    request_id: str | None = None,
+) -> tuple[int, int]:
+    return enqueue_channel_events(
+        db,
+        events,
+        provider="instagram",
+        channel="instagram",
+        max_attempts=max_attempts,
+        request_id=request_id,
+    )
+
+
+def enqueue_whatsapp_events(
+    db: Session,
+    events: list[ExtractedWebhookEvent],
+    *,
+    max_attempts: int,
+    request_id: str | None = None,
+) -> tuple[int, int]:
+    return enqueue_channel_events(
+        db,
+        events,
+        provider="whatsapp",
+        channel="whatsapp",
+        max_attempts=max_attempts,
+        request_id=request_id,
+    )
 
 
 def claim_inbox_jobs(

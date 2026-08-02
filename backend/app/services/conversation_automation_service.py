@@ -22,6 +22,7 @@ from app.services.automation_credit_service import (
     serialize_credit_summary,
     total_credits_available,
 )
+from app.services.channel_provider_service import delivery_supported, inbound_supported
 from app.services.conversation_automation_state_service import automation_block_reason
 from app.services.conversation_intent_service import (
     AVAILABLE_INTENTS,
@@ -633,6 +634,25 @@ def process_inbound_automation(
         and (detection.confidence >= settings.auto_threshold or detection.intent == "unknown")
         and not limit_reached
     )
+    if (
+        can_send_automatically
+        and inbound_supported(conversation.channel)
+        and not delivery_supported(channel=conversation.channel)
+    ):
+        suggestion = create_suggestion(
+            db,
+            conversation=conversation,
+            message=message,
+            detection=detection,
+            template=template,
+            business=business,
+        )
+        result.update(
+            action="suggestion",
+            reason="delivery_not_supported",
+            suggestion_id=suggestion.id,
+        )
+        return result
     if can_send_automatically:
         if detection.intent == "welcome_intent" and (
             _has_recent_successful_automation_for_intent(
