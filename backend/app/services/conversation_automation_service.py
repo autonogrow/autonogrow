@@ -22,6 +22,7 @@ from app.services.automation_credit_service import (
     serialize_credit_summary,
     total_credits_available,
 )
+from app.services.channel_control_service import channel_automation_is_authorized
 from app.services.channel_provider_service import delivery_supported, inbound_supported
 from app.services.conversation_automation_state_service import automation_block_reason
 from app.services.conversation_intent_service import (
@@ -597,6 +598,19 @@ def process_inbound_automation(
             message=message,
             intent=detection.intent,
             reason="channel_not_in_plan",
+        )
+    if not channel_automation_is_authorized(
+        db,
+        business_id=business.id,
+        channel=conversation.channel,
+    ):
+        return _skip_automatic_response(
+            result,
+            business=business,
+            conversation=conversation,
+            message=message,
+            intent=detection.intent,
+            reason="channel_automation_not_enabled",
         )
     if not settings.automation_enabled:
         block_reason = automation_block_reason(conversation, now=message.created_at)

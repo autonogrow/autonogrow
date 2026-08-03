@@ -33,6 +33,7 @@ let conversations = [];
 let conversationTemplates = [];
 let conversationAutomation = null;
 let businessIntegrationStatus = null;
+let businessChannelOnboarding = null;
 let conversationSuggestions = [];
 let selectedConversationSuggestionId = null;
 let conversationSuggestionNotice = null;
@@ -400,12 +401,85 @@ async function loadAdminPanel() {
       loadAdminGallery(),
       loadConversationTemplates(),
       loadConversationAutomation(),
+      loadBusinessChannelOnboarding(),
       loadConversations()
     ]);
     restoreAdminMediaStatus();
   } catch (error) {
     console.error(error);
     renderError("No se pudo conectar con el backend.");
+  }
+}
+
+function channelOnboardingStatusLabel(status) {
+  return ({
+    not_allowed: "Aún no disponible",
+    available: "Listo para solicitar",
+    pending_approval: "Pendiente de revisión",
+    approved: "Aprobado",
+    suspended: "Suspendido",
+    revoked: "Revocado"
+  })[status] || status;
+}
+
+function renderBusinessChannelOnboarding() {
+  const container = document.getElementById("channel-onboarding-list");
+  if (!container || !businessChannelOnboarding) return;
+  const names = { instagram: "Instagram", whatsapp: "WhatsApp" };
+  container.innerHTML = businessChannelOnboarding.channels.map((channel) => {
+    const capabilities = channel.status === "approved"
+      ? `<ul class="channel-capability-list"><li>Envío integrado: <strong>${channel.integrated_delivery_enabled ? "activo" : "pendiente de activación"}</strong></li><li>Automatización: <strong>${channel.automation_enabled ? "activa" : "pendiente de activación"}</strong></li></ul>`
+      : "";
+    let action = "";
+    if (channel.can_request) {
+      action = `<button class="btn btn-primary" type="button" data-channel-request="${escapeHtml(channel.channel)}">Conectar ${escapeHtml(names[channel.channel])}</button>`;
+    } else if (channel.status === "available" && channel.connector_policy === "owner_only") {
+      action = '<p class="channel-guidance">La conexión debe realizarla el Owner de AutonoGrow.</p>';
+    } else if (channel.status === "not_allowed") {
+      action = '<p class="channel-guidance">Contacta con AutonoGrow para habilitar este canal.</p>';
+    } else if (channel.status === "pending_approval") {
+      action = '<p class="channel-guidance">No necesitas hacer nada más. El Owner revisará la solicitud.</p>';
+    }
+    return `<article class="channel-onboarding-card">
+      <div class="channel-onboarding-heading"><h3>${escapeHtml(names[channel.channel])}</h3><span class="channel-status channel-status-${escapeHtml(channel.status)}">${escapeHtml(channelOnboardingStatusLabel(channel.status))}</span></div>
+      <p>${channel.channel === "instagram" ? "Prepara tu cuenta profesional de Instagram." : "Prepara el acceso administrador de tu cuenta de WhatsApp Business."}</p>
+      ${capabilities}${action}
+    </article>`;
+  }).join("");
+}
+
+async function loadBusinessChannelOnboarding() {
+  const container = document.getElementById("channel-onboarding-list");
+  if (!container) return;
+  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channel-onboarding`);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    container.innerHTML = `<p class="empty-state">${escapeHtml(body.detail || "No se pudieron cargar los canales.")}</p>`;
+    return;
+  }
+  businessChannelOnboarding = body;
+  renderBusinessChannelOnboarding();
+}
+
+async function requestBusinessChannelConnection(channel, button) {
+  const feedback = document.getElementById("channel-onboarding-feedback");
+  const confirmed = window.confirm("Confirmo que soy administrador autorizado de los activos de Meta del negocio.");
+  if (!confirmed) return;
+  button.disabled = true;
+  feedback.textContent = "Enviando solicitud...";
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channel-onboarding/${encodeURIComponent(channel)}/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm_meta_authority: true })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail || "No se pudo solicitar la conexión.");
+    feedback.textContent = "Solicitud registrada. Queda pendiente de revisión por el Owner.";
+    await loadBusinessChannelOnboarding();
+  } catch (error) {
+    feedback.textContent = error.message;
+    button.disabled = false;
   }
 }
 
@@ -3600,6 +3674,10 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("save-availability-exception").addEventListener("click", saveAvailabilityException);
   setupExceptionForm();
   setupAdminBranding();
+  document.getElementById("channel-onboarding-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-channel-request]");
+    if (button) requestBusinessChannelConnection(button.dataset.channelRequest, button);
+  });
   document.getElementById("admin-logout").addEventListener("click", adminLogout);
   document.getElementById("admin-gate-logout").addEventListener("click", adminLogout);
   bootstrapAdminAuth();

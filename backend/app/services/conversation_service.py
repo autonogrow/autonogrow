@@ -15,6 +15,7 @@ from app.models import (
     ConversationMessage,
     ConversationTemplate,
 )
+from app.services.channel_control_service import integrated_delivery_is_authorized
 from app.services.channel_provider_service import (
     delivery_provider_for_channel,
     delivery_supported,
@@ -524,6 +525,11 @@ def conversation_delivery_capabilities(
         if commercial_settings is not None
         else True
     )
+    channel_enabled = channel_enabled and integrated_delivery_is_authorized(
+        db,
+        business_id=conversation.business_id,
+        channel=conversation.channel,
+    )
     window_open = is_whatsapp_customer_service_window_open(
         db,
         conversation=conversation,
@@ -621,18 +627,26 @@ def send_outbound_message(
         .filter(ConversationAutomationSettings.business_id == conversation.business_id)
         .first()
     )
-    if commercial_settings is not None:
-        channel_enabled = {
+    channel_enabled = (
+        {
             "instagram": commercial_settings.instagram_channel_enabled,
             "whatsapp": commercial_settings.whatsapp_channel_enabled,
         }.get(conversation.channel, True)
-        if not channel_enabled:
-            policy_blocked = True
-            delivery_status = "blocked"
-            client_error_message = (
+        if commercial_settings is not None
+        else True
+    )
+    channel_enabled = channel_enabled and integrated_delivery_is_authorized(
+        db,
+        business_id=conversation.business_id,
+        channel=conversation.channel,
+    )
+    if not channel_enabled:
+        policy_blocked = True
+        delivery_status = "blocked"
+        client_error_message = (
                 f"El canal {conversation.channel.title()} no está habilitado para este negocio. "
                 "Contacta con el equipo de AutonoGrow."
-            )
+        )
     if provider is not None and not policy_blocked:
         integration_ready = bool(
             integration_is_ready(integration) and conversation.external_user_id

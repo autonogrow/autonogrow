@@ -105,6 +105,11 @@ class Business(Base):
         back_populates="business",
         cascade="all, delete-orphan",
     )
+    channel_controls = relationship(
+        "BusinessChannelControl",
+        back_populates="business",
+        cascade="all, delete-orphan",
+    )
     gallery_images = relationship(
         "BusinessGalleryImage", back_populates="business", cascade="all, delete-orphan"
     )

@@ -49,6 +49,7 @@
       <button class="admin-tab" type="button" data-section="services" aria-selected="false">Servicios</button>
       <button class="admin-tab" type="button" data-section="staff" aria-selected="false">Equipo</button>
       <button class="admin-tab" type="button" data-section="schedule" aria-selected="false">Horarios</button>
+      <button class="admin-tab" type="button" data-section="channels" aria-selected="false">Canales</button>
       <button class="admin-tab" type="button" data-section="business" aria-selected="false">Datos del negocio</button>
       <button class="admin-tab" type="button" data-section="reviews" aria-selected="false">Reseñas</button>
     </nav>
@@ -220,6 +221,23 @@
         <button id="save-business-settings" class="btn btn-primary" type="button">Guardar cambios</button>
         <p id="business-settings-feedback" class="inline-feedback"></p>
       </div>
+    </section>
+
+    <section class="section admin-section channel-onboarding-section" data-admin-section="channels">
+      <div class="section-header">
+        <div>
+          <h2>Conecta tus canales</h2>
+          <p>Solicita Instagram o WhatsApp en un proceso guiado y revisado por AutonoGrow.</p>
+        </div>
+      </div>
+      <div class="channel-onboarding-notice">
+        <strong>Conexión de prueba controlada</strong>
+        <p>En esta fase no se solicitan contraseñas, tokens ni datos técnicos de Meta. La solicitud quedará pendiente de aprobación.</p>
+      </div>
+      <div id="channel-onboarding-list" class="channel-onboarding-grid">
+        <p class="empty-state">Cargando canales...</p>
+      </div>
+      <p id="channel-onboarding-feedback" class="inline-feedback"></p>
     </section>
 
     <section class="section admin-section services-settings-section" data-admin-section="services">

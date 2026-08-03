@@ -11,6 +11,7 @@ from app.models.availability import (
 from app.models.booking import Booking
 from app.models.booking_attachment import BookingAttachment
 from app.models.business import Business
+from app.models.business_channel_control import BusinessChannelControl
 from app.models.business_channel_integration import BusinessChannelIntegration
 from app.models.business_media import BusinessGalleryImage
 from app.models.business_onboarding import (
@@ -72,6 +73,7 @@ __all__ = [
     "AuditLog",
     "AutomationCreditTransaction",
     "BusinessChannelIntegration",
+    "BusinessChannelControl",
     "SystemIncident",
     "Conversation",
     "ConversationAutomationRule",

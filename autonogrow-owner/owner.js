@@ -262,6 +262,7 @@ function businessCard(business) {
         <div class="owner-user-form"><input data-owner-user-email type="email" placeholder="persona@negocio.com"><select data-owner-user-role><option value="business_admin">Administrador</option><option value="business_staff">Personal</option></select><button type="button" class="button button-primary button-small" data-owner-user-action="add">Añadir usuario</button></div>
         <div data-owner-users-list class="owner-users-list"><p>Cargando usuarios...</p></div><p data-owner-users-feedback class="status-text"></p>
       </details>
+      <details class="owner-channel-control-editor" data-owner-channel-control-id="${business.id}"><summary>Control y onboarding de canales</summary><div data-owner-channel-control-content><p>Cargando permisos...</p></div></details>
       <details class="owner-integration-editor" data-owner-integration-id="${business.id}" data-owner-integration-name="${escapeHtml(business.name)}"><summary>Integraciones</summary><div data-owner-integration-content><p>Cargando Instagram...</p></div></details>
       <details class="owner-automation-editor" data-owner-automation-id="${business.id}" data-owner-automation-name="${escapeHtml(business.name)}"><summary>Plan, automatización y cuota</summary><div data-owner-automation-content><p>Cargando configuración...</p></div></details>
     </article>`;
@@ -279,9 +280,69 @@ function renderBusinesses() {
   byId("list-status").textContent = `${businesses.length} negocio${businesses.length === 1 ? "" : "s"}`;
   document.querySelectorAll("[data-owner-editor]").forEach(loadOwnerGallery);
   document.querySelectorAll("[data-owner-users]").forEach(loadOwnerUsers);
+  document.querySelectorAll("[data-owner-channel-control-id]").forEach(loadOwnerChannelControls);
   document.querySelectorAll("[data-owner-integration-id]").forEach(loadOwnerIntegration);
   document.querySelectorAll("[data-owner-automation-id]").forEach(loadOwnerAutomation);
   restoreOwnerMediaStatus();
+}
+
+function ownerChannelControlStatusLabel(status) {
+  return ({ not_allowed: "No permitido", available: "Disponible", pending_approval: "Pendiente de aprobación", approved: "Aprobado", suspended: "Suspendido", revoked: "Revocado" })[status] || status;
+}
+
+function renderOwnerChannelControls(panel, data) {
+  const names = { instagram: "Instagram", whatsapp: "WhatsApp" };
+  panel.querySelector("[data-owner-channel-control-content]").innerHTML = `<p class="helper">Las solicitudes nuevas de este sprint son simuladas: no aceptan tokens ni credenciales. Aprobar no activa por sí solo el envío ni la automatización.</p><div class="owner-channel-control-grid">${data.channels.map((channel) => {
+    const policy = `<select data-owner-channel-policy="${escapeHtml(channel.channel)}"><option value="business_admin" ${channel.connector_policy === "business_admin" ? "selected" : ""}>Administrador del negocio</option><option value="owner_only" ${channel.connector_policy === "owner_only" ? "selected" : ""}>Solo Owner</option></select>`;
+    let actions = `<label>Quién puede solicitar${policy}</label><button class="button button-primary button-small" type="button" data-owner-channel-action="grant" data-channel="${escapeHtml(channel.channel)}">${channel.status === "not_allowed" ? "Conceder permiso" : "Guardar permiso"}</button>`;
+    if (channel.status === "available" && channel.connector_policy === "owner_only") actions += `<button class="button button-secondary button-small" type="button" data-owner-channel-action="request" data-channel="${escapeHtml(channel.channel)}">Simular conexión Owner</button>`;
+    if (channel.status === "pending_approval") actions += `<button class="button button-primary button-small" type="button" data-owner-channel-action="approve" data-channel="${escapeHtml(channel.channel)}">Aprobar uso</button>`;
+    if (channel.status === "approved") actions += `<label class="checkbox-row"><input type="checkbox" data-owner-channel-delivery="${escapeHtml(channel.channel)}" ${channel.integrated_delivery_enabled ? "checked" : ""}> Envío integrado</label><label class="checkbox-row"><input type="checkbox" data-owner-channel-automation="${escapeHtml(channel.channel)}" ${channel.automation_enabled ? "checked" : ""}> Automatización</label><button class="button button-primary button-small" type="button" data-owner-channel-action="capabilities" data-channel="${escapeHtml(channel.channel)}">Guardar activaciones</button>`;
+    if (!["not_allowed", "revoked"].includes(channel.status)) actions += `<button class="button button-danger button-small" type="button" data-owner-channel-action="suspend" data-channel="${escapeHtml(channel.channel)}">Suspender</button><button class="button button-danger button-small" type="button" data-owner-channel-action="revoke" data-channel="${escapeHtml(channel.channel)}">Revocar</button>`;
+    return `<article class="owner-channel-control-card"><div class="owner-integration-heading"><h4>${escapeHtml(names[channel.channel])}</h4><span class="state-badge ${channel.status === "approved" ? "active" : "inactive"}">${escapeHtml(ownerChannelControlStatusLabel(channel.status))}</span></div><div class="owner-channel-control-actions">${actions}</div></article>`;
+  }).join("")}</div><p data-owner-channel-feedback class="status-text"></p>`;
+}
+
+async function loadOwnerChannelControls(panel) {
+  const response = await fetch(`${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerChannelControlId}/channel-controls`);
+  const body = await readResponseBody(response);
+  if (!response.ok) {
+    panel.querySelector("[data-owner-channel-control-content]").innerHTML = `<p class="error-box">${escapeHtml(body.detail || "No se pudieron cargar los controles")}</p>`;
+    return;
+  }
+  renderOwnerChannelControls(panel, body);
+}
+
+async function handleOwnerChannelControlAction(button) {
+  const panel = button.closest("[data-owner-channel-control-id]");
+  const channel = button.dataset.channel;
+  const action = button.dataset.ownerChannelAction;
+  const base = `${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerChannelControlId}/channel-controls/${encodeURIComponent(channel)}`;
+  let url = `${base}/${action}`;
+  let method = "POST";
+  let payload = {};
+  if (action === "request") {
+    payload = { confirm_meta_authority: true };
+  } else {
+    const reason = window.prompt("Motivo obligatorio de la acción:");
+    if (!reason || reason.trim().length < 3) return;
+    payload.reason = reason.trim();
+    if (action === "grant") {
+      url = `${base}/access`;
+      method = "PUT";
+      payload.connector_policy = panel.querySelector(`[data-owner-channel-policy="${channel}"]`).value;
+    } else if (action === "capabilities") {
+      payload.integrated_delivery_enabled = panel.querySelector(`[data-owner-channel-delivery="${channel}"]`).checked;
+      payload.automation_enabled = panel.querySelector(`[data-owner-channel-automation="${channel}"]`).checked;
+      method = "PATCH";
+    }
+  }
+  button.disabled = true;
+  const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  const body = await readResponseBody(response);
+  if (!response.ok) { button.disabled = false; throw new Error(body.detail || "No se pudo actualizar el canal"); }
+  await loadOwnerChannelControls(panel);
+  panel.querySelector("[data-owner-channel-feedback]").textContent = "Control de canal actualizado y auditado.";
 }
 
 function ownerAutomationStatusLabel(status) {
@@ -920,6 +981,7 @@ byId("business-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-business-state-id]");
   if (button) changeBusinessState(button.dataset.businessStateId, button.dataset.businessStatus, button);
   else if (event.target.closest("[data-owner-user-action]")) handleOwnerUserAction(event.target.closest("[data-owner-user-action]")).catch((error) => console.error("Business user action failed", error));
+  else if (event.target.closest("[data-owner-channel-action]")) handleOwnerChannelControlAction(event.target.closest("[data-owner-channel-action]")).catch((error) => { const feedback = event.target.closest("[data-owner-channel-control-id]")?.querySelector("[data-owner-channel-feedback]"); if (feedback) feedback.textContent = error.message; });
   else if (event.target.closest("[data-owner-integration-action]")) handleOwnerIntegrationAction(event.target.closest("[data-owner-integration-action]")).catch((error) => { const feedback = event.target.closest("[data-owner-integration-id]")?.querySelector("[data-owner-integration-feedback]"); if (feedback) feedback.textContent = error.message; });
   else if (event.target.closest("[data-owner-automation-action]")) handleOwnerAutomationAction(event.target.closest("[data-owner-automation-action]")).catch((error) => { const feedback = event.target.closest("[data-owner-automation-id]")?.querySelector("[data-owner-automation-feedback]"); if (feedback) feedback.textContent = error.message; });
   else handleOwnerBrandClick(event).catch((error) => {

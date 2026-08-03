@@ -58,6 +58,7 @@ COPY_ORDER = (
     "conversation_automation_settings",
     "automation_credit_transactions",
     "business_channel_integrations",
+    "business_channel_controls",
     "system_incidents",
     "audit_logs",
     "business_gallery_images",
@@ -77,6 +78,7 @@ OPTIONAL_SOURCE_TABLES = (
     "business_onboarding_templates",
     "business_staff_profiles",
     "business_staff_profile_services",
+    "business_channel_controls",
     "operational_states",
     "backup_records",
 )
