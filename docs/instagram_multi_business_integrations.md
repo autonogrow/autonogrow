@@ -96,6 +96,10 @@ Endpoints owner:
 - `POST /api/owner/businesses/{business_id}/integrations/instagram/reconnect`
 - `POST /api/owner/businesses/{business_id}/integrations/instagram/disconnect`
 - `DELETE /api/owner/businesses/{business_id}/integrations/instagram/credentials`
+- `POST /api/owner/businesses/{business_id}/integrations/instagram/oauth/start`
+- `GET /api/owner/businesses/{business_id}/integrations/instagram/oauth/candidates`
+- `POST /api/owner/businesses/{business_id}/integrations/instagram/oauth/candidates/{id}/approve`
+- `POST /api/owner/businesses/{business_id}/integrations/instagram/oauth/candidates/{id}/reject`
 
 El alta y la reconexión verifican con Meta que el token permite acceder al account ID
 declarado antes de activar la integración. La verificación manual tiene protección ante
@@ -153,7 +157,7 @@ entorno y reiniciar. Envío y routing ya no las consultan.
 | Acción | Owner | Business admin | Staff | Cliente |
 |---|---:|---:|---:|---:|
 | Ver estado simplificado | Sí | Sí, propio | No | No |
-| Conectar | Sí | No | No | No |
+| Conectar mediante Instagram Login | Sí, negocio elegido | Sí, propio y autorizado | No | No |
 | Verificar | Sí | No | No | No |
 | Reconectar | Sí | No | No | No |
 | Desconectar | Sí | No | No | No |
@@ -162,6 +166,9 @@ entorno y reiniciar. Envío y routing ya no las consultan.
 | Ver errores técnicos seguros | Sí | No | No | No |
 | Recibir mensajes | Según integración | Negocio propio | Negocio propio | No |
 | Enviar mensajes | Gestión interna | Negocio propio | Negocio propio | No |
+
+El formulario de token del Owner permanece únicamente como vía manual avanzada de
+compatibilidad y recuperación. Instagram Login es el camino principal desde Sprint 4B.
 
 ## Despliegue, rollback y prueba manual
 

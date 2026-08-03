@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.models import BusinessChannelControl, User
 from app.models.business_channel_control import (
     CHANNEL_CONNECTOR_POLICIES,
@@ -128,6 +129,8 @@ def grant_channel_access(
             control.automation_enabled = False
             control.connection_mode = "simulated"
     control.updated_by_user_id = actor.id
+    if normalized == "instagram":
+        control.connection_mode = "oauth"
     control.last_reason = reason
     db.flush()
     return control, previous_status
@@ -139,7 +142,16 @@ def request_simulated_connection(
     control: BusinessChannelControl,
     actor: User,
     actor_role: str | None,
+    settings: Settings | None = None,
 ) -> bool:
+    settings = settings or get_settings()
+    if control.channel == "instagram" and not (
+        settings.app_env == "test" and settings.instagram_simulated_onboarding_test_only
+    ):
+        raise HTTPException(
+            status_code=410,
+            detail="Instagram simulation is disabled; use Instagram Login",
+        )
     if control.status == "pending_approval" and control.requested_by_user_id == actor.id:
         return False
     if control.status != "available":

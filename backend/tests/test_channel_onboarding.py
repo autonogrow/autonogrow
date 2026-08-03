@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
 
+from app.core.config import Settings
 from app.core.database import Base
 from app.core.migration_state import alembic_config
 from app.models import AuditLog, Business, BusinessUser, User
@@ -33,7 +34,15 @@ from app.services.channel_control_service import (
 
 
 @pytest.fixture
-def db():
+def db(monkeypatch):
+    test_settings = Settings(
+        _env_file=None,
+        app_env="test",
+        instagram_simulated_onboarding_test_only=True,
+    )
+    monkeypatch.setattr(
+        "app.services.channel_control_service.get_settings", lambda: test_settings
+    )
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()

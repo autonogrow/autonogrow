@@ -440,10 +440,12 @@ function renderBusinessChannelOnboarding() {
     } else if (channel.status === "pending_approval") {
       action = '<p class="channel-guidance">No necesitas hacer nada más. El Owner revisará la solicitud.</p>';
     }
+    const account = channel.channel === "instagram" && channel.connected_account_name ? `<p class="channel-guidance">Cuenta: <strong>@${escapeHtml(String(channel.connected_account_name).replace(/^@/, ""))}</strong></p>` : "";
+    const precheck = channel.channel === "instagram" && channel.can_request ? `<ul class="channel-capability-list"><li>Usa una cuenta profesional Business o Creator.</li><li>Debes tener acceso a esa cuenta.</li><li>Mantén esta ventana abierta durante la autorización.</li><li>AutonoGrow nunca te pedirá tu contraseña de Instagram.</li></ul><p class="channel-guidance">AutonoGrow necesita estos permisos para recibir y responder mensajes de tu cuenta profesional.</p>` : "";
     return `<article class="channel-onboarding-card">
       <div class="channel-onboarding-heading"><h3>${escapeHtml(names[channel.channel])}</h3><span class="channel-status channel-status-${escapeHtml(channel.status)}">${escapeHtml(channelOnboardingStatusLabel(channel.status))}</span></div>
       <p>${channel.channel === "instagram" ? "Prepara tu cuenta profesional de Instagram." : "Prepara el acceso administrador de tu cuenta de WhatsApp Business."}</p>
-      ${capabilities}${action}
+      ${account}${capabilities}${precheck}${action}
     </article>`;
   }).join("");
 }
@@ -468,6 +470,18 @@ async function requestBusinessChannelConnection(channel, button) {
   button.disabled = true;
   feedback.textContent = "Enviando solicitud...";
   try {
+    if (channel === "instagram") {
+      const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/integrations/instagram/oauth/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purpose: null })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.detail || "No se pudo iniciar Instagram Login.");
+      if (!String(body.authorization_url || "").startsWith("https://www.instagram.com/oauth/authorize?")) throw new Error("Meta devolvió una URL de autorización no válida.");
+      window.location.assign(body.authorization_url);
+      return;
+    }
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channel-onboarding/${encodeURIComponent(channel)}/request`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3708,6 +3722,11 @@ async function bootstrapAdminAuth() {
     document.getElementById("admin-app").hidden = false;
     document.getElementById("admin-auth-user").textContent = adminAuthUser.name || adminAuthUser.email;
     applyRoleVisibility();
+    const oauthResult = new URLSearchParams(window.location.search).get("instagram_oauth");
+    if (oauthResult) {
+      const feedback = document.getElementById("channel-onboarding-feedback");
+      if (feedback) feedback.textContent = oauthResult === "pending_review" ? "Instagram conectado. La cuenta queda pendiente de revisión por el Owner." : "No se pudo completar Instagram Login. Inicia un nuevo intento.";
+    }
     await loadAdminPanel();
     if (currentBusiness) startAdminPolling();
   } catch (error) {

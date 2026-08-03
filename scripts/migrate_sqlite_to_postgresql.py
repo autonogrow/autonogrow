@@ -59,6 +59,7 @@ COPY_ORDER = (
     "automation_credit_transactions",
     "business_channel_integrations",
     "business_channel_controls",
+    "instagram_oauth_attempts",
     "system_incidents",
     "audit_logs",
     "business_gallery_images",
@@ -79,6 +80,7 @@ OPTIONAL_SOURCE_TABLES = (
     "business_staff_profiles",
     "business_staff_profile_services",
     "business_channel_controls",
+    "instagram_oauth_attempts",
     "operational_states",
     "backup_records",
 )
@@ -175,6 +177,9 @@ COPY_VALUE_TRANSFORMS = {
 
 SENSITIVE_COLUMNS = {
     "encrypted_access_token",
+    "candidate_encrypted_access_token",
+    "session_fingerprint_hash",
+    "state_hash",
     "body",
     "message",
     "payload_json",
@@ -209,6 +214,14 @@ CRITICAL_CHECKSUM_COLUMNS = {
     ),
     "business_channel_integrations": frozenset(
         {"integration_status", "encryption_key_version", "external_account_id"}
+    ),
+    "instagram_oauth_attempts": frozenset(
+        {
+            "status",
+            "purpose",
+            "candidate_encryption_key_version",
+            "candidate_external_account_id",
+        }
     ),
     "webhook_inbox_events": frozenset({"idempotency_key", "payload_hash", "status"}),
     "channel_outbox_messages": frozenset({"idempotency_key", "status"}),

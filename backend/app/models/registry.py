@@ -25,6 +25,7 @@ MODEL_MODULES = (
     "app.models.conversation",
     "app.models.customer",
     "app.models.google_integration",
+    "app.models.instagram_oauth_attempt",
     "app.models.message_outbox",
     "app.models.operations",
     "app.models.review_request",

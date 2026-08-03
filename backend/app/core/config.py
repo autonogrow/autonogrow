@@ -105,6 +105,14 @@ class Settings(BaseSettings):
     instagram_default_business_slug: str = ""
     instagram_provider_enabled: bool = False
     instagram_require_signature: bool = True
+    instagram_login_enabled: bool = False
+    instagram_login_client_id: str = ""
+    instagram_login_client_secret: str = ""
+    instagram_login_redirect_uri: str = ""
+    instagram_login_graph_api_version: str = "v23.0"
+    instagram_oauth_attempt_ttl_seconds: int = 600
+    instagram_candidate_review_ttl_hours: int = 72
+    instagram_simulated_onboarding_test_only: bool = False
     whatsapp_webhook_enabled: bool = False
     whatsapp_verify_token: str = ""
     whatsapp_require_signature: bool = True
@@ -338,6 +346,14 @@ class Settings(BaseSettings):
             raise ValueError("WEBHOOK_MAX_PAYLOAD_BYTES debe estar entre 1024 y 10485760")
         if not 1 <= self.whatsapp_customer_service_window_hours <= 24:
             raise ValueError("WHATSAPP_CUSTOMER_SERVICE_WINDOW_HOURS debe estar entre 1 y 24")
+        if not 300 <= self.instagram_oauth_attempt_ttl_seconds <= 1800:
+            raise ValueError("INSTAGRAM_OAUTH_ATTEMPT_TTL_SECONDS debe estar entre 300 y 1800")
+        if not 1 <= self.instagram_candidate_review_ttl_hours <= 168:
+            raise ValueError("INSTAGRAM_CANDIDATE_REVIEW_TTL_HOURS debe estar entre 1 y 168")
+        if not re.fullmatch(r"v\d+\.\d+", self.instagram_login_graph_api_version.strip()):
+            raise ValueError("INSTAGRAM_LOGIN_GRAPH_API_VERSION no es válida")
+        if self.instagram_simulated_onboarding_test_only and self.app_env != "test":
+            raise ValueError("INSTAGRAM_SIMULATED_ONBOARDING_TEST_ONLY solo se permite en test")
         if not 0.1 <= self.worker_poll_interval_seconds <= 60:
             raise ValueError("WORKER_POLL_INTERVAL_SECONDS debe estar entre 0.1 y 60")
         if not 1 <= self.worker_batch_size <= 100:
@@ -491,6 +507,42 @@ class Settings(BaseSettings):
                 or active_version not in encryption_keys
             ):
                 errors.append("Configuración de cifrado de integraciones no válida")
+        if self.instagram_login_enabled:
+            if not self.instagram_provider_enabled:
+                errors.append("INSTAGRAM_LOGIN_ENABLED requiere INSTAGRAM_PROVIDER_ENABLED=true")
+            instagram_login_required = {
+                "INSTAGRAM_LOGIN_CLIENT_ID": self.instagram_login_client_id,
+                "INSTAGRAM_LOGIN_CLIENT_SECRET": self.instagram_login_client_secret,
+                "INSTAGRAM_LOGIN_REDIRECT_URI": self.instagram_login_redirect_uri,
+                "INTEGRATION_ENCRYPTION_KEYS_JSON": self.integration_encryption_keys_json,
+            }
+            missing_login = [
+                name
+                for name, value in instagram_login_required.items()
+                if not value.strip()
+                or any(
+                    marker in value.strip().lower()
+                    for marker in ("change_me", "change-me", "placeholder", "example.com")
+                )
+            ]
+            if missing_login:
+                errors.append(
+                    "Configuración Instagram Login incompleta: " + ", ".join(missing_login)
+                )
+            redirect = urlsplit(self.instagram_login_redirect_uri.strip())
+            redirect_origin = f"{redirect.scheme}://{redirect.netloc}" if redirect.netloc else ""
+            if (
+                redirect.scheme != "https"
+                or not redirect.netloc
+                or redirect_origin not in origins
+                or redirect.query
+                or redirect.fragment
+                or redirect.path != "/api/integrations/instagram/callback"
+            ):
+                errors.append(
+                    "INSTAGRAM_LOGIN_REDIRECT_URI debe ser HTTPS y terminar exactamente en "
+                    "/api/integrations/instagram/callback"
+                )
         if self.whatsapp_webhook_enabled:
             if not self.whatsapp_require_signature:
                 errors.append("WHATSAPP_REQUIRE_SIGNATURE debe estar activo")

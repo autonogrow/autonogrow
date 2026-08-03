@@ -3,18 +3,19 @@
 ## Alcance
 
 Este sprint incorpora el control previo a cualquier conexión oficial con Meta. El onboarding
-disponible para Instagram y WhatsApp es simulado y nunca recibe tokens, contraseñas,
-identificadores de cuenta ni códigos OAuth.
+de WhatsApp sigue siendo controlado/simulado. Desde Sprint 4B, Instagram usa Instagram
+Login real y nunca recibe contraseñas en AutonoGrow.
 
 Las integraciones creadas antes de este sprint se marcan como `legacy` durante la migración.
-Las solicitudes nuevas usan exclusivamente `simulated`.
+Las solicitudes nuevas de Instagram usan `oauth`; la simulación Instagram solo existe en
+tests con `APP_ENV=test` y un flag explícito.
 
 ## Estados
 
 ```text
 not_allowed (sin fila)
     -> available             Owner concede el permiso
-    -> pending_approval      administrador autorizado solicita conexión simulada
+    -> pending_approval      Meta autoriza una candidatura Instagram o se solicita WhatsApp
     -> approved              Owner revisa y aprueba
     -> suspended/revoked     Owner detiene el acceso y apaga capacidades
 ```
@@ -26,7 +27,7 @@ automatización. El Owner los activa después y por separado.
 ## Políticas y seguridad
 
 - `business_admin`: un administrador activo del mismo negocio puede solicitar la conexión.
-- `owner_only`: solo el Owner puede ejecutar la solicitud simulada.
+- `owner_only`: solo el Owner puede iniciar el enlace asistido para ese negocio.
 - Un miembro `business_staff` y un administrador de otro negocio reciben `403`.
 - Las capacidades solo son efectivas con estado `approved` y su flag específico activo.
 - Suspender o revocar apaga ambos flags de forma atómica.
@@ -39,6 +40,7 @@ Cliente:
 
 - `GET /api/admin/businesses/{slug}/channel-onboarding`
 - `POST /api/admin/businesses/{slug}/channel-onboarding/{channel}/request`
+- `POST /api/admin/businesses/{slug}/integrations/instagram/oauth/start`
 
 Owner:
 
@@ -50,4 +52,5 @@ Owner:
 - `POST /api/owner/businesses/{id}/channel-controls/{channel}/suspend`
 - `POST /api/owner/businesses/{id}/channel-controls/{channel}/revoke`
 
-No existe en estos contratos ningún campo para credenciales o activos externos de Meta.
+Los contratos de control no contienen credenciales. La candidatura OAuth temporal vive en
+`instagram_oauth_attempts` y la integración aprobada en `business_channel_integrations`.

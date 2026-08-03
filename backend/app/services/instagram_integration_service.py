@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.config import Settings, get_settings
-from app.models import Business, BusinessChannelIntegration
+from app.models import Business, BusinessChannelIntegration, InstagramOAuthAttempt
 from app.services.incident_service import report_incident, resolve_related_incidents
 from app.services.instagram_provider import (
     InstagramVerificationResult,
@@ -558,7 +558,12 @@ def validate_persisted_integration_secrets(
         .filter(BusinessChannelIntegration.encrypted_access_token.is_not(None))
         .all()
     )
-    if not rows:
+    candidates = (
+        db.query(InstagramOAuthAttempt)
+        .filter(InstagramOAuthAttempt.candidate_encrypted_access_token.is_not(None))
+        .all()
+    )
+    if not rows and not candidates:
         return
     configuration = load_encryption_configuration(settings, required=True)
     for integration in rows:
@@ -569,6 +574,17 @@ def validate_persisted_integration_secrets(
             )
         decrypt_secret(
             integration.encrypted_access_token or "",
+            version,
+            settings=settings,
+        )
+    for candidate in candidates:
+        version = candidate.candidate_encryption_key_version
+        if not version or version not in configuration.keys:
+            raise IntegrationCryptoError(
+                "A stored OAuth candidate uses an unavailable encryption key version"
+            )
+        decrypt_secret(
+            candidate.candidate_encrypted_access_token or "",
             version,
             settings=settings,
         )

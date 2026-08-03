@@ -292,11 +292,11 @@ function ownerChannelControlStatusLabel(status) {
 
 function renderOwnerChannelControls(panel, data) {
   const names = { instagram: "Instagram", whatsapp: "WhatsApp" };
-  panel.querySelector("[data-owner-channel-control-content]").innerHTML = `<p class="helper">Las solicitudes nuevas de este sprint son simuladas: no aceptan tokens ni credenciales. Aprobar no activa por sí solo el envío ni la automatización.</p><div class="owner-channel-control-grid">${data.channels.map((channel) => {
+  panel.querySelector("[data-owner-channel-control-content]").innerHTML = `<p class="helper">Instagram usa el flujo oficial de Meta. WhatsApp conserva el onboarding controlado actual. Aprobar una cuenta no activa por sí solo el envío ni la automatización.</p><div class="owner-channel-control-grid">${data.channels.map((channel) => {
     const policy = `<select data-owner-channel-policy="${escapeHtml(channel.channel)}"><option value="business_admin" ${channel.connector_policy === "business_admin" ? "selected" : ""}>Administrador del negocio</option><option value="owner_only" ${channel.connector_policy === "owner_only" ? "selected" : ""}>Solo Owner</option></select>`;
     let actions = `<label>Quién puede solicitar${policy}</label><button class="button button-primary button-small" type="button" data-owner-channel-action="grant" data-channel="${escapeHtml(channel.channel)}">${channel.status === "not_allowed" ? "Conceder permiso" : "Guardar permiso"}</button>`;
-    if (channel.status === "available" && channel.connector_policy === "owner_only") actions += `<button class="button button-secondary button-small" type="button" data-owner-channel-action="request" data-channel="${escapeHtml(channel.channel)}">Simular conexión Owner</button>`;
-    if (channel.status === "pending_approval") actions += `<button class="button button-primary button-small" type="button" data-owner-channel-action="approve" data-channel="${escapeHtml(channel.channel)}">Aprobar uso</button>`;
+    if (channel.status === "available" && channel.connector_policy === "owner_only") actions += channel.channel === "instagram" ? `<button class="button button-primary button-small" type="button" data-owner-channel-action="oauth-start" data-channel="instagram">Conectar con Instagram</button>` : `<button class="button button-secondary button-small" type="button" data-owner-channel-action="request" data-channel="${escapeHtml(channel.channel)}">Iniciar conexión controlada</button>`;
+    if (channel.status === "pending_approval" && channel.channel !== "instagram") actions += `<button class="button button-primary button-small" type="button" data-owner-channel-action="approve" data-channel="${escapeHtml(channel.channel)}">Aprobar uso</button>`;
     if (channel.status === "approved") actions += `<label class="checkbox-row"><input type="checkbox" data-owner-channel-delivery="${escapeHtml(channel.channel)}" ${channel.integrated_delivery_enabled ? "checked" : ""}> Envío integrado</label><label class="checkbox-row"><input type="checkbox" data-owner-channel-automation="${escapeHtml(channel.channel)}" ${channel.automation_enabled ? "checked" : ""}> Automatización</label><button class="button button-primary button-small" type="button" data-owner-channel-action="capabilities" data-channel="${escapeHtml(channel.channel)}">Guardar activaciones</button>`;
     if (!["not_allowed", "revoked"].includes(channel.status)) actions += `<button class="button button-danger button-small" type="button" data-owner-channel-action="suspend" data-channel="${escapeHtml(channel.channel)}">Suspender</button><button class="button button-danger button-small" type="button" data-owner-channel-action="revoke" data-channel="${escapeHtml(channel.channel)}">Revocar</button>`;
     return `<article class="owner-channel-control-card"><div class="owner-integration-heading"><h4>${escapeHtml(names[channel.channel])}</h4><span class="state-badge ${channel.status === "approved" ? "active" : "inactive"}">${escapeHtml(ownerChannelControlStatusLabel(channel.status))}</span></div><div class="owner-channel-control-actions">${actions}</div></article>`;
@@ -321,7 +321,10 @@ async function handleOwnerChannelControlAction(button) {
   let url = `${base}/${action}`;
   let method = "POST";
   let payload = {};
-  if (action === "request") {
+  if (action === "oauth-start") {
+    url = `${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerChannelControlId}/integrations/instagram/oauth/start`;
+    payload = { purpose: null };
+  } else if (action === "request") {
     payload = { confirm_meta_authority: true };
   } else {
     const reason = window.prompt("Motivo obligatorio de la acción:");
@@ -341,6 +344,11 @@ async function handleOwnerChannelControlAction(button) {
   const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   const body = await readResponseBody(response);
   if (!response.ok) { button.disabled = false; throw new Error(body.detail || "No se pudo actualizar el canal"); }
+  if (action === "oauth-start") {
+    if (!String(body.authorization_url || "").startsWith("https://www.instagram.com/oauth/authorize?")) throw new Error("Meta devolvió una URL de autorización no válida.");
+    window.location.assign(body.authorization_url);
+    return;
+  }
   await loadOwnerChannelControls(panel);
   panel.querySelector("[data-owner-channel-feedback]").textContent = "Control de canal actualizado y auditado.";
 }
@@ -366,35 +374,43 @@ function ownerInstagramCredentialForm(mode) {
     <label>Token de acceso<input data-integration-token type="password" maxlength="4096" autocomplete="new-password" required></label>
     <label>Caducidad opcional<input data-integration-expiration type="datetime-local"></label>
     <label>Motivo<input data-integration-reason maxlength="500" required></label>
-    <p class="wide helper">El token se envía una sola vez y se almacena cifrado. No se mostrará de nuevo.</p>
+    <p class="wide helper">Vía administrativa avanzada de compatibilidad. El token se envía una sola vez, se cifra y no se mostrará de nuevo.</p>
     <button class="button button-primary button-small" type="button" data-owner-integration-action="${mode}">${mode === "connect" ? "Conectar" : "Reconectar"}</button>
   </div>`;
 }
 
-function renderOwnerIntegration(panel, integration) {
+function ownerInstagramCandidate(candidate) {
+  const webhookRetry = candidate.webhook_subscription_status === "failed" ? `<button class="button button-secondary button-small" type="button" data-owner-integration-action="candidate-retry-webhook" data-attempt-id="${candidate.id}">Reintentar webhook</button>` : "";
+  return `<section class="owner-integration-warning"><h5>Cuenta pendiente de revisión</h5><p><strong>${escapeHtml(candidate.candidate_external_account_name || candidate.candidate_external_account_id_masked || "Instagram")}</strong> · ${escapeHtml(candidate.candidate_account_type || "Profesional")} · ${escapeHtml(candidate.purpose)}</p><p>Autorizada: ${escapeHtml(formatAutomationDate(candidate.created_at))} · Expira: ${escapeHtml(formatAutomationDate(candidate.candidate_token_expires_at))}</p><p>Webhook: ${escapeHtml(candidate.webhook_subscription_status || "pendiente")} · Scopes: ${(candidate.candidate_granted_scopes || []).map(escapeHtml).join(" · ")}</p>${candidate.safe_error_message ? `<p>${escapeHtml(candidate.safe_error_message)}</p>` : ""}<div class="owner-integration-actions">${webhookRetry}<button class="button button-primary button-small" type="button" data-owner-integration-action="candidate-approve" data-attempt-id="${candidate.id}" ${candidate.webhook_subscription_status !== "subscribed" ? "disabled" : ""}>Aprobar cuenta</button><button class="button button-danger button-small" type="button" data-owner-integration-action="candidate-reject" data-attempt-id="${candidate.id}">Rechazar cuenta</button></div></section>`;
+}
+
+function renderOwnerIntegration(panel, integration, candidates = []) {
   const content = panel.querySelector("[data-owner-integration-content]");
+  const candidateHtml = candidates.map(ownerInstagramCandidate).join("");
   if (!integration) {
-    content.innerHTML = `<article class="owner-integration-card"><h4>Instagram</h4><p>No conectado.</p>${ownerInstagramCredentialForm("connect")}<p data-owner-integration-feedback class="status-text"></p></article>`;
+    content.innerHTML = `<article class="owner-integration-card"><h4>Instagram</h4><p>No conectado.</p>${candidateHtml}<button class="button button-primary button-small" type="button" data-owner-integration-action="oauth-start" data-oauth-purpose="initial_connection">Conectar con Instagram</button><details><summary>Conexión manual avanzada</summary>${ownerInstagramCredentialForm("connect")}</details><p data-owner-integration-feedback class="status-text"></p></article>`;
     return;
   }
   content.innerHTML = `<article class="owner-integration-card">
-    <div class="owner-integration-heading"><h4>Instagram</h4><span class="state-badge ${integration.integration_status === "connected" ? "active" : "inactive"}">${escapeHtml(ownerIntegrationStatusLabel(integration.integration_status))}</span></div>
+    <div class="owner-integration-heading"><h4>Instagram</h4><span class="state-badge ${integration.integration_status === "connected" ? "active" : "inactive"}">${escapeHtml(ownerIntegrationStatusLabel(integration.integration_status))}</span></div>${candidateHtml}
     <div class="owner-integration-summary"><span><strong>${escapeHtml(integration.external_account_id_masked || "—")}</strong>Cuenta</span><span><strong>${escapeHtml(integration.external_account_name || "—")}</strong>Nombre</span><span><strong>${escapeHtml(formatAutomationDate(integration.connected_at))}</strong>Conectado desde</span><span><strong>${escapeHtml(formatAutomationDate(integration.last_verified_at))}</strong>Última verificación</span><span><strong>${escapeHtml(formatAutomationDate(integration.last_success_at))}</strong>Último éxito</span><span><strong>${escapeHtml(formatAutomationDate(integration.token_expires_at))}</strong>Caducidad</span></div>
     ${integration.expires_soon ? `<p class="owner-integration-warning">El token caduca próximamente (${integration.days_remaining} días).</p>` : ""}
     ${integration.safe_error_message ? `<p class="owner-integration-warning">${escapeHtml(integration.safe_error_message)}</p>` : ""}
     ${integration.has_open_incident ? `<p class="owner-integration-warning">Existe una incidencia abierta para esta integración.</p>` : ""}
     <p>Scopes: <strong>${(integration.granted_scopes || []).map(escapeHtml).join(" · ") || "No disponibles"}</strong></p>
-    <div class="owner-integration-actions"><button class="button button-secondary button-small" type="button" data-owner-integration-action="verify">Verificar conexión</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="show-reconnect">Reconectar</button><button class="button button-danger button-small" type="button" data-owner-integration-action="disconnect">Desconectar</button><button class="button button-danger button-small" type="button" data-owner-integration-action="delete-credentials">Eliminar credenciales</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="incidents">Ver incidencias</button></div>
+    <div class="owner-integration-actions"><button class="button button-primary button-small" type="button" data-owner-integration-action="oauth-start" data-oauth-purpose="replacement">Conectar o reemplazar con Instagram</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="verify">Verificar conexión</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="show-reconnect">Reconexión manual avanzada</button><button class="button button-danger button-small" type="button" data-owner-integration-action="disconnect">Desconectar</button><button class="button button-danger button-small" type="button" data-owner-integration-action="delete-credentials">Eliminar credenciales</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="incidents">Ver incidencias</button></div>
     <div data-owner-integration-reconnect></div><p data-owner-integration-feedback class="status-text"></p>
   </article>`;
 }
 
 async function loadOwnerIntegration(panel) {
-  const response = await fetch(`${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerIntegrationId}/integrations/instagram`);
-  if (response.status === 404) { renderOwnerIntegration(panel, null); return; }
+  const base = `${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerIntegrationId}/integrations/instagram`;
+  const [response, candidateResponse] = await Promise.all([fetch(base), fetch(`${base}/oauth/candidates`)]);
+  const candidates = candidateResponse.ok ? await candidateResponse.json() : [];
+  if (response.status === 404) { renderOwnerIntegration(panel, null, candidates); return; }
   const body = await readResponseBody(response);
   if (!response.ok) { panel.querySelector("[data-owner-integration-content]").innerHTML = `<p class="error-box">${escapeHtml(body.detail || "No se pudo cargar Instagram")}</p>`; return; }
-  renderOwnerIntegration(panel, body);
+  renderOwnerIntegration(panel, body, candidates);
 }
 
 async function handleOwnerIntegrationAction(button) {
@@ -404,6 +420,34 @@ async function handleOwnerIntegrationAction(button) {
   const base = `${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerIntegrationId}/integrations/instagram`;
   if (action === "show-reconnect") {
     panel.querySelector("[data-owner-integration-reconnect]").innerHTML = ownerInstagramCredentialForm("reconnect");
+    return;
+  }
+  if (action === "oauth-start") {
+    const response = await fetch(`${base}/oauth/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ purpose: button.dataset.oauthPurpose || null }) });
+    const body = await readResponseBody(response);
+    if (!response.ok) throw new Error(body.detail || "No se pudo iniciar Instagram Login");
+    if (!String(body.authorization_url || "").startsWith("https://www.instagram.com/oauth/authorize?")) throw new Error("Meta devolvió una URL de autorización no válida.");
+    window.location.assign(body.authorization_url);
+    return;
+  }
+  if (action === "candidate-approve" || action === "candidate-reject") {
+    const reason = window.prompt("Motivo obligatorio de la decisión Owner:");
+    if (!reason || reason.trim().length < 3) return;
+    const decision = action === "candidate-approve" ? "approve" : "reject";
+    const response = await fetch(`${base}/oauth/candidates/${encodeURIComponent(button.dataset.attemptId)}/${decision}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: reason.trim() }) });
+    const body = await readResponseBody(response);
+    if (!response.ok) throw new Error(body.detail || "No se pudo revisar la cuenta candidata");
+    const businessCard = panel.closest(".business-card");
+    const controlPanel = businessCard?.querySelector("[data-owner-channel-control-id]");
+    await loadOwnerIntegration(panel);
+    if (controlPanel) await loadOwnerChannelControls(controlPanel);
+    return;
+  }
+  if (action === "candidate-retry-webhook") {
+    const response = await fetch(`${base}/oauth/candidates/${encodeURIComponent(button.dataset.attemptId)}/webhook/retry`, { method: "POST" });
+    const body = await readResponseBody(response);
+    if (!response.ok) throw new Error(body.detail || "No se pudo reintentar el webhook");
+    await loadOwnerIntegration(panel);
     return;
   }
   if (action === "incidents") { setActiveTab("incidents"); await loadIncidents(); return; }
@@ -1038,6 +1082,8 @@ async function bootstrapOwnerAuth() {
     byId("owner-app").hidden = false;
     byId("owner-auth-user").textContent = ownerAuthUser.name || ownerAuthUser.email;
     await loadBusinesses();
+    const oauthResult = new URLSearchParams(window.location.search).get("instagram_oauth");
+    if (oauthResult) byId("list-status").textContent = oauthResult === "pending_review" ? "Instagram autorizado; revisa la cuenta candidata antes de aprobar." : "Instagram Login no se completó; inicia un nuevo intento.";
     await loadIncidents();
     await loadOnboardingTemplates();
   } catch (error) {

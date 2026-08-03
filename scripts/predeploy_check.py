@@ -78,6 +78,8 @@ def check_required_files(reporter: Reporter) -> None:
         "docs/vps_security_deploy_plan.md",
         "docs/staging_deploy_checklist.md",
         "docs/instagram_multi_business_integrations.md",
+        "docs/instagram_login_architecture.md",
+        "docs/manual_test_instagram_login.md",
         "docs/database_migrations.md",
         "docs/dependency_management.md",
         "docs/ci_pipeline.md",
@@ -160,6 +162,7 @@ def check_required_files(reporter: Reporter) -> None:
         "scripts/postgresql_index_health.py",
         "scripts/generate_release_metadata.py",
         "alembic/versions/20260730_06_add_operational_state.py",
+        "alembic/versions/20260803_08_add_instagram_oauth_attempts.py",
         "deploy/autonogrow-operational-check.service",
         "deploy/autonogrow-operational-check.timer",
         "deploy/autonogrow-backup.service",
@@ -364,8 +367,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260730_06":
-            reporter.fail("La head operativa esperada es 20260730_06")
+        if heads[0] != "20260803_08":
+            reporter.fail("La head operativa esperada es 20260803_08")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 
@@ -787,6 +790,91 @@ def check_whatsapp_contract(reporter: Reporter) -> None:
         reporter.fail("Fallback asistido WhatsApp incompleto")
 
 
+def check_instagram_login_contract(reporter: Reporter) -> None:
+    from app.models.registry import register_models
+    from app.services.instagram_login_provider import INSTAGRAM_LOGIN_SCOPES
+
+    register_models()
+    from app.core.database import Base
+
+    if "instagram_oauth_attempts" in Base.metadata.tables:
+        table = Base.metadata.tables["instagram_oauth_attempts"]
+        required_columns = {
+            "state_hash",
+            "session_fingerprint_hash",
+            "expires_at",
+            "candidate_encrypted_access_token",
+            "candidate_encryption_key_version",
+        }
+        if required_columns <= set(table.columns.keys()):
+            reporter.passed("Estado OAuth hasheado y candidatura cifrada registrados")
+        else:
+            reporter.fail("Modelo temporal de Instagram Login incompleto")
+    else:
+        reporter.fail("Falta instagram_oauth_attempts en metadata")
+
+    expected_scopes = (
+        "instagram_business_basic",
+        "instagram_business_manage_messages",
+    )
+    if INSTAGRAM_LOGIN_SCOPES == expected_scopes:
+        reporter.passed("Instagram Login solicita solo identidad y mensajería")
+    else:
+        reporter.fail("Scopes de Instagram Login fuera del alcance aprobado")
+
+    env_paths = (
+        "backend/.env.example",
+        "deploy/backend.env.example",
+        "deploy/staging.backend.env.example",
+    )
+    required_env = {
+        "INSTAGRAM_LOGIN_ENABLED=false",
+        "INSTAGRAM_LOGIN_CLIENT_ID=",
+        "INSTAGRAM_LOGIN_CLIENT_SECRET=",
+        "INSTAGRAM_LOGIN_REDIRECT_URI=",
+        "INSTAGRAM_LOGIN_GRAPH_API_VERSION=",
+        "INSTAGRAM_OAUTH_ATTEMPT_TTL_SECONDS=600",
+        "INSTAGRAM_SIMULATED_ONBOARDING_TEST_ONLY=false",
+    }
+    if all(
+        all(marker in (ROOT / path).read_text(encoding="utf-8-sig") for marker in required_env)
+        for path in env_paths
+    ):
+        reporter.passed("Variables Instagram Login documentadas y simulación desactivada")
+    else:
+        reporter.fail("Plantillas de entorno Instagram Login incompletas")
+
+    oauth_router = (ROOT / "backend/app/routers/instagram_oauth.py").read_text(
+        encoding="utf-8-sig"
+    )
+    oauth_service = (ROOT / "backend/app/services/instagram_oauth_service.py").read_text(
+        encoding="utf-8-sig"
+    )
+    required_markers = (
+        'callback_router.get("/callback")',
+        'admin_router.post("/oauth/start")',
+        "session_fingerprint",
+        'InstagramOAuthAttempt.status == "pending"',
+        'attempt.status = "candidate_ready"',
+        "integrated_delivery_enabled = False",
+        "automation_enabled = False",
+    )
+    contract = oauth_router + oauth_service
+    if all(marker in contract for marker in required_markers):
+        reporter.passed("Callback, replay y aprobación Owner conservan capacidades apagadas")
+    else:
+        reporter.fail("Contrato seguro de Instagram Login incompleto")
+
+    frontend = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8-sig")
+        for path in ("autonogrow-admin/admin.js", "autonogrow-owner/owner.js")
+    )
+    if "authorization_url" in frontend and "instagram-client-secret" not in frontend.lower():
+        reporter.passed("Frontend navega a autorización sin secretos OAuth")
+    else:
+        reporter.fail("Frontend Instagram Login no cumple el contrato de secretos")
+
+
 def main() -> int:
     reporter = Reporter()
     check_required_files(reporter)
@@ -799,6 +887,7 @@ def main() -> int:
     check_postgresql_contract(reporter)
     check_onboarding_contract(reporter)
     check_whatsapp_contract(reporter)
+    check_instagram_login_contract(reporter)
     check_tracked_secrets(reporter)
     Settings = check_application(reporter)
     if Settings is not None:

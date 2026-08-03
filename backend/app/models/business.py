@@ -110,6 +110,11 @@ class Business(Base):
         back_populates="business",
         cascade="all, delete-orphan",
     )
+    instagram_oauth_attempts = relationship(
+        "InstagramOAuthAttempt",
+        back_populates="business",
+        cascade="all, delete-orphan",
+    )
     gallery_images = relationship(
         "BusinessGalleryImage", back_populates="business", cascade="all, delete-orphan"
     )

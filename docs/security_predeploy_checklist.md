@@ -40,6 +40,13 @@
 
 ## Autorización y datos
 
+- [ ] Instagram Login usa `state` hasheado, TTL corto, sesión/usuario/negocio y consumo único.
+- [ ] `INSTAGRAM_LOGIN_REDIRECT_URI` es HTTPS, exacta y pertenece a `FRONTEND_ORIGINS`.
+- [ ] El callback no registra query strings, codes, states, respuestas Meta ni tokens.
+- [ ] Una candidatura Instagram no crea integración utilizable antes de aprobación Owner.
+- [ ] La aprobación no activa envío ni automatización; un webhook fallido bloquea aprobación.
+- [ ] `INSTAGRAM_SIMULATED_ONBOARDING_TEST_ONLY=false` fuera de tests.
+
 - [ ] IDOR probado entre negocios para reservas, servicios, horarios, media y usuarios.
 - [ ] Un customer no puede leer citas de otro customer.
 - [ ] Una reserva anónima solo gestiona adjuntos con su `booking_manage_token`.

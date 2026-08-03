@@ -33,6 +33,7 @@ from app.models.conversation import (
 )
 from app.models.customer import Customer
 from app.models.google_integration import GoogleIntegration
+from app.models.instagram_oauth_attempt import InstagramOAuthAttempt
 from app.models.message_outbox import MessageOutbox
 from app.models.operations import BackupRecord, OperationalState
 from app.models.review_request import ReviewRequest
@@ -54,6 +55,7 @@ __all__ = [
     "BusinessUserAvailability",
     "BusinessUserAvailabilityException",
     "GoogleIntegration",
+    "InstagramOAuthAttempt",
     "SyncJob",
     "ReviewRequest",
     "MessageOutbox",

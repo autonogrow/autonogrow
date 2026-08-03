@@ -4,7 +4,13 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.security import get_business_membership, require_business_admin, require_owner
-from app.models import Business, BusinessChannelControl, User
+from app.models import (
+    Business,
+    BusinessChannelControl,
+    BusinessChannelIntegration,
+    InstagramOAuthAttempt,
+    User,
+)
 from app.schemas.channel_onboarding import (
     ChannelAccessGrantRequest,
     ChannelCapabilitiesUpdate,
@@ -21,6 +27,7 @@ from app.services.channel_control_service import (
     stop_channel_access,
     validate_controlled_channel,
 )
+from app.services.instagram_oauth_service import invalidate_instagram_oauth_attempts
 
 admin_router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}/channel-onboarding",
@@ -95,6 +102,61 @@ def _audit(
     )
 
 
+def _client_channel_payload(
+    db: Session,
+    *,
+    business_id: int,
+    channel: str,
+    actor: User,
+    actor_role: str,
+) -> dict:
+    payload = serialize_channel_control(
+        get_channel_control(db, business_id=business_id, channel=channel),
+        channel=channel,
+        actor_is_owner=actor.is_owner,
+        actor_role=actor_role,
+    )
+    if channel != "instagram":
+        return payload
+    candidate = (
+        db.query(InstagramOAuthAttempt)
+        .filter(
+            InstagramOAuthAttempt.business_id == business_id,
+            InstagramOAuthAttempt.status == "candidate_ready",
+        )
+        .order_by(InstagramOAuthAttempt.created_at.desc(), InstagramOAuthAttempt.id.desc())
+        .first()
+    )
+    integration = (
+        db.query(BusinessChannelIntegration)
+        .filter(
+            BusinessChannelIntegration.business_id == business_id,
+            BusinessChannelIntegration.provider == "instagram",
+        )
+        .first()
+    )
+    payload.update(
+        {
+            "connected_account_name": (
+                candidate.candidate_external_account_name
+                if candidate
+                else (integration.external_account_name if integration else None)
+            ),
+            "oauth_status": (
+                "pending_review"
+                if candidate
+                else (integration.integration_status if integration else None)
+            ),
+            "reconnect_required": bool(
+                integration
+                and integration.integration_status
+                in {"degraded", "expired", "disconnected", "revoked", "error"}
+            ),
+        }
+    )
+    return payload
+
+
 @admin_router.get("", dependencies=[Depends(require_business_admin)])
 def get_business_channel_onboarding(
     business_slug: str,
@@ -106,15 +168,16 @@ def get_business_channel_onboarding(
     return {
         "business": {"id": business.id, "slug": business.slug, "name": business.name},
         "channels": [
-            serialize_channel_control(
-                get_channel_control(db, business_id=business.id, channel=channel),
+            _client_channel_payload(
+                db,
+                business_id=business.id,
                 channel=channel,
-                actor_is_owner=actor.is_owner,
                 actor_role=role,
+                actor=actor,
             )
             for channel in ("instagram", "whatsapp")
         ],
-        "connection_mode": "simulated",
+        "connection_mode": "oauth_primary",
         "accepts_credentials": False,
     }
 
@@ -177,7 +240,7 @@ def list_owner_channel_controls(
             )
             for channel in ("instagram", "whatsapp")
         ],
-        "connection_mode": "simulated",
+        "connection_mode": "oauth_primary",
         "accepts_credentials": False,
     }
 
@@ -272,6 +335,11 @@ def approve_owner_channel_connection(
     require_owner(actor)
     _business_by_id(db, business_id)
     control = _control_or_404(db, business_id=business_id, channel=channel)
+    if control.channel == "instagram" and control.connection_mode == "oauth":
+        raise HTTPException(
+            status_code=409,
+            detail="Approve the reviewed Instagram OAuth candidate instead",
+        )
     old_status = control.status
     approve_channel_connection(db, control=control, actor=actor, reason=payload.reason)
     _audit(
@@ -372,6 +440,13 @@ def stop_owner_channel_access(
         action=action,
         reason=payload.reason,
     )
+    cancelled_attempts = 0
+    if control.channel == "instagram":
+        cancelled_attempts = invalidate_instagram_oauth_attempts(
+            db,
+            business_id=business_id,
+            safe_code=f"channel_{action}",
+        )
     _audit(
         db,
         request=request,
@@ -388,6 +463,7 @@ def stop_owner_channel_access(
             "integrated_delivery_enabled": False,
             "automation_enabled": False,
             "reason": payload.reason,
+            "cancelled_oauth_attempts": cancelled_attempts,
         },
     )
     db.commit()

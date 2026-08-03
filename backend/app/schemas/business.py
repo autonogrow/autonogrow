@@ -101,7 +101,7 @@ class BusinessSettingsUpdate(BaseModel):
     )
     @classmethod
     def valid_hex_color(cls, value, info: ValidationInfo):
-        return validate_color(value, info.field_name)
+        return validate_color(value, info.field_name or "color")
 
     @field_validator("theme_key")
     @classmethod

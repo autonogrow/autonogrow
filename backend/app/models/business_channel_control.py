@@ -33,7 +33,7 @@ class BusinessChannelControl(Base):
             name="ck_business_channel_control_connector_policy",
         ),
         CheckConstraint(
-            "connection_mode IN ('simulated','legacy')",
+            "connection_mode IN ('simulated','legacy','oauth')",
             name="ck_business_channel_control_connection_mode",
         ),
         CheckConstraint(
