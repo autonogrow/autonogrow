@@ -27,8 +27,6 @@ let agendaSelectedDate = "";
 let selectedBookingStatusFilter = "";
 let selectedBookingServiceFilter = "";
 let bookingCustomerSearch = "";
-let previousGrowthTaskStates = null;
-let previousGrowthAllComplete = null;
 let adminGallery = [];
 let adminMembership = null;
 let staffMembers = [];
@@ -57,6 +55,7 @@ let conversationDetailVersion = 0;
 let conversationAutomationLoadVersion = 0;
 let conversationTemplatesLoadVersion = 0;
 let channelOnboardingLoadVersion = 0;
+let reviewRequestsLoadVersion = 0;
 let conversationListFingerprint = "";
 let conversationDetailFingerprint = "";
 let bookingsFingerprint = "";
@@ -66,6 +65,8 @@ let rescheduleReturnFocus = null;
 let rescheduleSubmitting = false;
 const bookingMutationIds = new Set();
 let messageOutboxFingerprint = "";
+let messageOutboxLoadVersion = 0;
+let reviewRequestsFingerprint = "";
 const ADMIN_POLL_INTERVALS = {
   conversationThread: { visible: 5000, hidden: 15000 },
   conversationList: { visible: 10000, hidden: 15000 },
@@ -86,11 +87,7 @@ const BRAND_PALETTES = {
   amber_barber: ["#92400e", "#451a03", "#fbbf24", "#fffbeb"], violet_modern: ["#7c3aed", "#4c1d95", "#c4b5fd", "#f5f3ff"]
 };
 const BRAND_COLOR_NAMES = ["primary", "secondary", "accent", "background"];
-const growthDataReady = {
-  bookings: false,
-  messages: false,
-  reviews: false
-};
+const growthLoadState = { reviews: "loading", outbox: "loading" };
 const dashboardDataState = {
   business: "loading",
   bookings: "loading",
@@ -109,6 +106,12 @@ let rescheduleState = {
 };
 const CONFIGURATION_SECTIONS = new Set(["configuration", "business", "services", "staff", "schedule", "public-page"]);
 const CHANNEL_HUB_SECTIONS = new Set(["channels", "channel-instagram", "channel-whatsapp", "messages"]);
+const GROWTH_HUB_SECTIONS = new Set(["growth", "reviews", "growth-opportunities"]);
+const GROWTH_HUB_CATEGORIES = [
+  { id: "growth", label: "Resumen", description: "Prioridades y actividad" },
+  { id: "reviews", label: "Reseñas", description: "Clientes y solicitudes" },
+  { id: "growth-opportunities", label: "Oportunidades", description: "Mejoras basadas en datos" }
+];
 const CHANNEL_HUB_CATEGORIES = [
   { id: "channels", label: "Resumen", description: "Estado de los canales" },
   { id: "channel-instagram", label: "Instagram", description: "Conexión y diagnóstico" },
@@ -127,6 +130,7 @@ const configurationSnapshots = new Map();
 const configurationDirtyKeys = new Set();
 const configurationMutationKeys = new Set();
 const channelActionKeys = new Set();
+const reviewMutationKeys = new Set();
 const channelHubLoadState = { onboarding: "loading", health: "loading", automation: "loading", templates: "loading" };
 const configurationLoadState = { staff: "loading", gallery: "loading", exceptions: "loading" };
 let staffRemovalReturnFocus = null;
@@ -296,6 +300,64 @@ function renderConfigurationOverview() {
   }
 }
 
+function growthNavigationMarkup(activeSection) {
+  return `<nav class="growth-navigation" aria-label="Crecimiento"><p>Crecimiento</p>${GROWTH_HUB_CATEGORIES.map((category) => `<button type="button" data-growth-target="${category.id}" ${category.id === activeSection ? 'aria-current="page"' : ""}><span><strong>${category.label}</strong><small>${category.description}</small></span></button>`).join("")}</nav>`;
+}
+
+function renderGrowthNavigation() {
+  const active = document.querySelector("[data-admin-section].admin-section-active")?.dataset.adminSection || "growth";
+  document.querySelectorAll("[data-growth-navigation]").forEach((container) => { container.innerHTML = growthNavigationMarkup(active); });
+}
+
+function navigateToGrowthAction(button) {
+  const action = button.dataset.growthAction;
+  if (action === "reviews") return showAdminSection("reviews");
+  if (action === "opportunities") return showAdminSection("growth-opportunities");
+  if (action === "bookings-pending") {
+    if (!showAdminSection("bookings")) return;
+    setBookingView("pending");
+    return;
+  }
+  if (action === "booking") return goToBooking(Number(button.dataset.bookingId));
+  if (action === "configuration-reviews") {
+    if (showAdminSection("business")) window.requestAnimationFrame(() => document.getElementById("business-setting-reviews-url")?.focus());
+    return;
+  }
+  if (action === "services") return showAdminSection("services");
+  if (action === "schedule") return showAdminSection("schedule");
+  if (action === "public-page") return showAdminSection("public-page");
+  if (action === "conversations") return showAdminSection("conversations");
+  if (action === "automations") return showAdminSection("messages");
+  if (action === "channel") return showAdminSection(`channel-${button.dataset.channel}`);
+}
+
+function setupGrowthHub() {
+  const main = document.getElementById("admin-main-content");
+  main.addEventListener("click", (event) => {
+    const navigation = event.target.closest("[data-growth-target]");
+    if (navigation) {
+      const section = navigation.dataset.growthTarget;
+      if (showAdminSection(section)) window.requestAnimationFrame(() => {
+        const heading = document.querySelector(`[data-admin-section="${section}"] h2`);
+        heading?.setAttribute("tabindex", "-1");
+        heading?.focus({ preventScroll: true });
+      });
+      return;
+    }
+    const action = event.target.closest("[data-growth-action]");
+    if (action) { navigateToGrowthAction(action); return; }
+    const create = event.target.closest("[data-review-create]");
+    if (create) { createReviewRequest(Number(create.dataset.reviewCreate)); return; }
+    const open = event.target.closest("[data-review-open]");
+    if (open) { openReviewWhatsApp(Number(open.dataset.reviewOpen)); return; }
+    const copy = event.target.closest("[data-review-copy]");
+    if (copy) { copyReviewMessage(Number(copy.dataset.reviewCopy)); return; }
+    const status = event.target.closest("[data-review-status]");
+    if (status) updateReviewRequestStatus(Number(status.dataset.reviewRequest), status.dataset.reviewStatus);
+  });
+  renderGrowthNavigation();
+}
+
 function setupChannelHub() {
   const main = document.getElementById("admin-main-content");
   main.addEventListener("click", (event) => {
@@ -422,7 +484,9 @@ function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = fal
   });
 
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
-    const primarySection = CONFIGURATION_SECTIONS.has(targetSection) ? "configuration" : CHANNEL_HUB_SECTIONS.has(targetSection) ? "channels" : targetSection;
+    const primarySection = CONFIGURATION_SECTIONS.has(targetSection) ? "configuration"
+      : CHANNEL_HUB_SECTIONS.has(targetSection) ? "channels"
+        : GROWTH_HUB_SECTIONS.has(targetSection) ? "growth" : targetSection;
     const isActive = tab.dataset.section === primarySection;
     tab.classList.toggle("admin-tab-active", isActive);
     tab.setAttribute("aria-selected", String(isActive));
@@ -433,6 +497,7 @@ function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = fal
   }
   if (CONFIGURATION_SECTIONS.has(targetSection)) renderConfigurationOverview();
   if (CHANNEL_HUB_SECTIONS.has(targetSection)) renderChannelHubNavigation();
+  if (GROWTH_HUB_SECTIONS.has(targetSection)) renderGrowthNavigation();
   return true;
 }
 
@@ -593,6 +658,7 @@ function setDashboardDataState(source, status) {
   if (!(source in dashboardDataState)) return;
   dashboardDataState[source] = status;
   renderDashboard();
+  if (!isBusinessStaff()) renderGrowth();
 }
 
 function getMadridTimeKey(value = new Date()) {
@@ -911,6 +977,19 @@ function getDashboardAttentionItems() {
     items.push({ severity: "danger", title: "No pudimos comprobar los mensajes", description: "Reintenta para revisar las conversaciones pendientes.", retry: "conversations", action: "Reintentar" });
   }
   if (!isBusinessStaff()) {
+    const reviewCandidates = getReviewCandidates();
+    const failedReviewMessages = getFailedReviewMessages();
+    const pendingReviewRequests = Array.from(reviewRequestsByBooking.values())
+      .filter((request) => ["pending", "copied"].includes(request.status));
+    if (failedReviewMessages.length) {
+      items.push({ severity: "warning", title: `${failedReviewMessages.length} solicitud${failedReviewMessages.length === 1 ? "" : "es"} de reseña necesita${failedReviewMessages.length === 1 ? "" : "n"} atención`, description: "El envío asistido no quedó preparado correctamente.", section: "reviews", action: "Revisar" });
+    } else if (growthLoadState.reviews === "ready" && reviewCandidates.length && !getSafeReviewUrl()) {
+      items.push({ severity: "warning", title: "Falta el enlace de reseñas", description: `${reviewCandidates.length} cliente${reviewCandidates.length === 1 ? "" : "s"} atendido${reviewCandidates.length === 1 ? "" : "s"} no puede${reviewCandidates.length === 1 ? "" : "n"} recibir una solicitud todavía.`, section: "reviews", action: "Configurar" });
+    } else if (growthLoadState.reviews === "ready" && (pendingReviewRequests.length || reviewCandidates.length)) {
+      const count = pendingReviewRequests.length || reviewCandidates.length;
+      const prepared = pendingReviewRequests.length > 0;
+      items.push({ severity: "info", title: prepared ? `${count} solicitud${count === 1 ? "" : "es"} de reseña pendiente${count === 1 ? "" : "s"}` : `${count} cliente${count === 1 ? "" : "s"} puede${count === 1 ? "" : "n"} recibir una solicitud`, description: prepared ? "Continúa el envío asistido o cierra la solicitud." : "Prepara la solicitud desde Crecimiento.", section: "reviews", action: "Revisar" });
+    }
     if (!currentBusiness?.active && dashboardDataState.business === "ready") {
       items.push({ severity: "danger", title: "El negocio no está activo", description: "Revisa su estado antes de compartir la página pública.", section: "business", action: "Revisar" });
     }
@@ -941,7 +1020,7 @@ function renderAttentionItems() {
   if (!container) return;
   const relevantStates = isBusinessStaff()
     ? [dashboardDataState.bookings, dashboardDataState.conversations]
-    : [dashboardDataState.bookings, dashboardDataState.conversations, dashboardDataState.services, dashboardDataState.availability, dashboardDataState.channels];
+    : [dashboardDataState.bookings, dashboardDataState.conversations, dashboardDataState.services, dashboardDataState.availability, dashboardDataState.channels, growthLoadState.reviews, growthLoadState.outbox];
   const items = getDashboardAttentionItems();
   if (!items.length && relevantStates.some((state) => state === "loading")) return;
   if (!items.length) {
@@ -1102,172 +1181,248 @@ function setupDashboardInteractions() {
 }
 
 function calculateGrowthTasks() {
-  const today = getMadridDateKey();
   const pendingBookings = allBookings.filter((booking) => ["requested", "pending"].includes(booking.status));
-  const pendingConfirmations = messageOutbox.filter(
-    (message) => message.message_type === "booking_confirmed" && message.status === "pending"
-  );
-  const importantPendingMessages = messageOutbox.filter(
-    (message) => [
-      "booking_confirmed",
-      "booking_rejected",
-      "booking_rescheduled",
-      "booking_completed_review"
-    ].includes(message.message_type) && message.status === "pending"
-  );
-  const todayApplicableBookings = allBookings.filter((booking) =>
-    getBookingDateKey(booking) === today && !["rejected", "cancelled"].includes(booking.status)
-  );
-  const completedToday = todayApplicableBookings.filter((booking) => booking.status === "completed");
-  const reviewMessageSentToday = messageOutbox.some((message) =>
-    message.message_type === "booking_completed_review" &&
-    ["opened", "sent"].includes(message.status) &&
-    getTimestampDateKey(message.sent_at || message.opened_at || message.created_at) === today
-  );
-  const reviewHandledToday = Array.from(reviewRequestsByBooking.values()).some((reviewRequest) =>
-    ["copied", "sent"].includes(reviewRequest.status) &&
-    getTimestampDateKey(reviewRequest.sent_at || reviewRequest.copied_at || reviewRequest.created_at) === today
-  );
-
-  return [
+  const pendingConversations = dashboardDataState.conversations === "ready" ? getDashboardPendingConversations() : [];
+  const candidates = getReviewCandidates();
+  const failedReviews = getFailedReviewMessages();
+  const pendingReviews = Array.from(reviewRequestsByBooking.values()).filter((request) => ["pending", "copied"].includes(request.status));
+  const hasReviewLink = Boolean(getSafeReviewUrl());
+  const tasks = [
     {
-      id: "confirm-pending-bookings",
-      title: "Confirma tus citas pendientes",
-      description: "Acepta o rechaza las solicitudes que todavía esperan respuesta.",
-      status: pendingBookings.length === 0 ? "completed" : "pending",
-      points: 10,
-      progress_label: pendingBookings.length ? `${pendingBookings.length} por responder` : "Sin solicitudes pendientes"
+      id: "review-link",
+      title: "Configura el enlace de reseñas",
+      description: "Hace falta un destino válido antes de preparar nuevas solicitudes.",
+      dependency: "Configuración del negocio",
+      status: hasReviewLink ? "completed" : "blocked",
+      priority: 1,
+      action: "configuration-reviews",
+      action_label: "Configurar enlace"
     },
     {
-      id: "send-confirmations",
-      title: "Envía las confirmaciones por WhatsApp",
-      description: "Asegúrate de que los clientes confirmados tienen su mensaje preparado o enviado.",
-      status: pendingConfirmations.length === 0 ? "completed" : "pending",
-      points: 10,
-      progress_label: pendingConfirmations.length ? `${pendingConfirmations.length} por preparar` : "Confirmaciones al día"
+      id: "review-pending",
+      title: "Continúa las solicitudes preparadas",
+      description: pendingReviews.length ? `${pendingReviews.length} solicitud${pendingReviews.length === 1 ? "" : "es"} necesita${pendingReviews.length === 1 ? "" : "n"} envío o una decisión.` : "No hay solicitudes preparadas pendientes.",
+      dependency: "Envío manual o cierre por una persona",
+      status: pendingReviews.length ? "needs_attention" : "completed",
+      priority: 2,
+      action: "reviews",
+      action_label: "Revisar solicitudes"
     },
     {
-      id: "complete-today-bookings",
-      title: "Completa las citas atendidas de hoy",
-      description: "Marca como completadas las citas que ya se han realizado.",
-      status: todayApplicableBookings.length === 0 ? "neutral" : completedToday.length > 0 ? "completed" : "pending",
-      points: 10,
-      progress_label: todayApplicableBookings.length === 0
-        ? "Sin citas aplicables hoy"
-        : completedToday.length > 0 ? `${completedToday.length} completada${completedToday.length === 1 ? "" : "s"}` : "Ninguna completada todavía"
+      id: "review-failures",
+      title: "Revisa las solicitudes con error",
+      description: failedReviews.length ? `${failedReviews.length} solicitud${failedReviews.length === 1 ? "" : "es"} no se pudo${failedReviews.length === 1 ? "" : "ieron"} preparar correctamente.` : "No hay solicitudes con error.",
+      dependency: "Outbox asistido de WhatsApp",
+      status: failedReviews.length ? "needs_attention" : growthLoadState.outbox === "error" ? "not_available" : "completed",
+      priority: 3,
+      action: "reviews",
+      action_label: "Revisar solicitudes"
     },
     {
-      id: "request-review",
-      title: "Pide una reseña",
-      description: "Envía una solicitud de reseña a un cliente atendido.",
-      status: completedToday.length === 0 ? "neutral" : reviewMessageSentToday || reviewHandledToday ? "completed" : "pending",
-      points: 10,
-      progress_label: completedToday.length === 0
-        ? "Sin citas completadas hoy"
-        : reviewMessageSentToday || reviewHandledToday ? "Solicitud preparada hoy" : "Una reseña por solicitar"
+      id: "review-candidates",
+      title: "Solicita reseñas a clientes atendidos",
+      description: candidates.length ? `${candidates.length} cliente${candidates.length === 1 ? "" : "s"} todavía no ${candidates.length === 1 ? "tiene" : "tienen"} una solicitud preparada.` : "No hay clientes atendidos pendientes de solicitud.",
+      dependency: hasReviewLink ? "Solicitud asistida por WhatsApp" : "Falta el enlace de reseñas",
+      status: candidates.length ? (hasReviewLink ? "recommended" : "blocked") : "completed",
+      priority: 4,
+      action: "reviews",
+      action_label: "Ver clientes"
     },
     {
-      id: "day-up-to-date",
-      title: "Deja el día al día",
-      description: "Sin solicitudes pendientes ni mensajes importantes por gestionar.",
-      status: pendingBookings.length === 0 && importantPendingMessages.length === 0 ? "completed" : "pending",
-      points: 10,
-      progress_label: pendingBookings.length === 0 && importantPendingMessages.length === 0
-        ? "Todo gestionado" : `${pendingBookings.length + importantPendingMessages.length} acción${pendingBookings.length + importantPendingMessages.length === 1 ? "" : "es"} pendiente${pendingBookings.length + importantPendingMessages.length === 1 ? "" : "s"}`
+      id: "pending-bookings",
+      title: "Confirma las reservas pendientes",
+      description: pendingBookings.length ? `${pendingBookings.length} reserva${pendingBookings.length === 1 ? "" : "s"} espera${pendingBookings.length === 1 ? "" : "n"} respuesta.` : "No hay reservas pendientes de confirmación.",
+      dependency: "Agenda",
+      status: pendingBookings.length ? "needs_attention" : "completed",
+      priority: 5,
+      action: "bookings-pending",
+      action_label: "Abrir pendientes"
+    },
+    {
+      id: "pending-conversations",
+      title: "Responde los mensajes pendientes",
+      description: pendingConversations.length ? `${pendingConversations.length} conversación${pendingConversations.length === 1 ? "" : "es"} requiere${pendingConversations.length === 1 ? "" : "n"} respuesta.` : "Las conversaciones están al día.",
+      dependency: "Clientes y mensajes",
+      status: dashboardDataState.conversations === "error" ? "not_available" : dashboardDataState.conversations === "loading" ? "neutral" : pendingConversations.length ? "recommended" : "completed",
+      priority: 6,
+      action: "conversations",
+      action_label: "Responder mensajes"
+    },
+    {
+      id: "active-services",
+      title: "Activa un servicio reservable",
+      description: "Los clientes necesitan al menos un servicio activo para reservar.",
+      dependency: "Configuración / Servicios",
+      status: dashboardDataState.services === "error" ? "not_available" : dashboardDataState.services === "loading" ? "neutral" : adminServices.some((service) => service.active) ? "completed" : "blocked",
+      priority: 7,
+      action: "services",
+      action_label: "Configurar servicios"
+    },
+    {
+      id: "business-hours",
+      title: "Completa los horarios del negocio",
+      description: "Sin tramos de apertura no se pueden ofrecer horas de reserva.",
+      dependency: "Configuración / Horarios",
+      status: dashboardDataState.availability === "error" ? "not_available" : dashboardDataState.availability === "loading" ? "neutral" : dashboardHasConfiguredAvailability() ? "completed" : "blocked",
+      priority: 8,
+      action: "schedule",
+      action_label: "Configurar horarios"
+    },
+    {
+      id: "public-business",
+      title: "Activa la página pública",
+      description: "El negocio debe estar activo para aceptar nuevas reservas públicas.",
+      dependency: "Configuración / Página pública",
+      status: dashboardDataState.business === "loading" ? "neutral" : currentBusiness?.active ? "completed" : "blocked",
+      priority: 9,
+      action: "public-page",
+      action_label: "Revisar publicación"
     }
   ];
+  if (configurationLoadState.gallery === "ready") tasks.push({
+    id: "business-gallery",
+    title: "Añade una imagen a la página pública",
+    description: "La galería está vacía; puedes añadir una imagen real del negocio.",
+    dependency: "Configuración / Página pública",
+    status: adminGallery.length ? "completed" : "recommended",
+    priority: 10,
+    action: "public-page",
+    action_label: "Revisar galería"
+  });
+  businessChannelHealth.filter((health) => health.reconnection_required).forEach((health) => tasks.push({
+    id: `channel-${health.channel}`,
+    title: `${health.channel === "whatsapp" ? "WhatsApp" : "Instagram"} necesita reconexión`,
+    description: "La conexión del canal ya no es válida y necesita el flujo oficial de Meta.",
+    dependency: "Canales y automatizaciones",
+    status: "blocked",
+    priority: 1,
+    action: "channel",
+    channel: health.channel,
+    action_label: "Revisar canal"
+  }));
+  const priorityGroup = (task) => {
+    if (["blocked", "not_available"].includes(task.status)) return 0;
+    if (task.id === "review-pending") return 1;
+    if (task.id === "review-failures") return 2;
+    if (task.id === "review-candidates") return 3;
+    if (task.status === "needs_attention") return 4;
+    if (task.status === "recommended") return 5;
+    if (task.status === "completed") return 6;
+    return 7;
+  };
+  return tasks.sort((first, second) => priorityGroup(first) - priorityGroup(second) || first.priority - second.priority);
 }
 
-function getGrowthStorageKey() {
-  return `autonogrow:growth:${getBusinessSlug()}:${getMadridDateKey()}`;
+function getSafeReviewUrl() {
+  const value = String(currentBusiness?.reviews_url || "").trim();
+  return value && isSafePublicUrl(value) ? value : "";
 }
 
-function readCelebratedGrowthItems() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(getGrowthStorageKey()) || "[]"));
-  } catch (error) {
-    console.warn("No se pudo leer el progreso celebrado.", error);
-    return new Set();
-  }
+function getReviewCandidates() {
+  return allBookings.filter((booking) => booking.status === "completed" && !reviewRequestsByBooking.has(booking.id))
+    .sort((first, second) => getBookingSortValue(second).localeCompare(getBookingSortValue(first)));
 }
 
-function saveCelebratedGrowthItems(items) {
-  try {
-    localStorage.setItem(getGrowthStorageKey(), JSON.stringify(Array.from(items)));
-  } catch (error) {
-    console.warn("No se pudo guardar el progreso celebrado.", error);
-  }
+function getReviewOutboxMessage(bookingId) {
+  return messageOutbox.find((message) => message.booking_id === bookingId && message.message_type === "booking_completed_review") || null;
 }
 
-function renderGrowth() {
-  if (!Object.values(growthDataReady).every(Boolean)) {
-    return;
-  }
+function getFailedReviewMessages() {
+  return messageOutbox.filter((message) => message.message_type === "booking_completed_review" && message.status === "failed");
+}
 
-  const tasks = calculateGrowthTasks();
-  const applicableTasks = tasks.filter((task) => task.status !== "neutral");
-  const completedTasks = applicableTasks.filter((task) => task.status === "completed");
-  const total = applicableTasks.length;
-  const completed = completedTasks.length;
-  const percentage = total ? Math.round((completed / total) * 100) : 100;
-  const allComplete = total > 0 && completed === total;
-  const celebrated = readCelebratedGrowthItems();
-  const isInitialRender = previousGrowthTaskStates === null;
-  const taskTransitions = new Set();
+function hasUsableReviewPhone(booking) {
+  let digits = String(booking?.customer_phone || "").replace(/\D/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  return digits.length >= 8 && digits.length <= 15 && !digits.startsWith("0");
+}
 
-  if (!isInitialRender) {
-    tasks.forEach((task) => {
-      if (previousGrowthTaskStates.get(task.id) === "pending" && task.status === "completed" && !celebrated.has(task.id)) {
-        taskTransitions.add(task.id);
-        celebrated.add(task.id);
-      }
-    });
-  }
+function growthSourcesSettled() {
+  return dashboardDataState.bookings !== "loading" && growthLoadState.reviews !== "loading" && growthLoadState.outbox !== "loading";
+}
 
-  const dayTransition = previousGrowthAllComplete === false && allComplete && !celebrated.has("day-complete");
-  if (dayTransition) {
-    celebrated.add("day-complete");
-  }
-  if (taskTransitions.size || dayTransition) {
-    saveCelebratedGrowthItems(celebrated);
-  }
+function growthSourceErrors() {
+  const errors = [];
+  if (dashboardDataState.bookings === "error") errors.push("No se pudieron comprobar las reservas.");
+  if (growthLoadState.reviews === "error") errors.push("No se pudieron actualizar las solicitudes de reseña.");
+  if (growthLoadState.outbox === "error") errors.push("No se pudo comprobar el estado de los mensajes asistidos.");
+  return errors;
+}
 
-  document.getElementById("growth-progress-count").textContent = `${completed}/${total} tareas completadas`;
-  document.getElementById("growth-points").textContent = `${completed * 10} puntos hoy`;
+function growthTaskStateLabel(status) {
+  return ({ recommended: "Recomendada", needs_attention: "Necesita atención", blocked: "Bloqueada", completed: "Completada", not_available: "No disponible", neutral: "Comprobando" })[status] || "Estado no disponible";
+}
+
+function renderGrowthActivity() {
+  const container = document.getElementById("growth-activity-list");
+  if (!container) return;
+  const activity = Array.from(reviewRequestsByBooking.values()).map((request) => {
+    const outbox = getReviewOutboxMessage(request.booking_id);
+    if (outbox?.status === "failed") return { label: "No se pudo preparar la solicitud", customer: request.customer_name, at: outbox.created_at };
+    if (request.status === "sent") return { label: "Solicitud marcada como enviada", customer: request.customer_name, at: request.sent_at };
+    if (request.status === "skipped") return { label: "Solicitud omitida", customer: request.customer_name, at: request.created_at };
+    if (outbox?.status === "opened") return { label: "Solicitud abierta en WhatsApp", customer: request.customer_name, at: outbox.opened_at };
+    if (request.status === "copied") return { label: "Mensaje de reseña copiado", customer: request.customer_name, at: request.copied_at };
+    return { label: "Solicitud preparada", customer: request.customer_name, at: request.created_at };
+  }).sort((first, second) => String(second.at || "").localeCompare(String(first.at || ""))).slice(0, 6);
+  container.setAttribute("aria-busy", "false");
+  container.innerHTML = activity.length ? activity.map((item) => `<article><div><strong>${escapeHtml(item.label)}</strong><p>${escapeHtml(item.customer || "Cliente sin nombre")}</p></div><time>${escapeHtml(formatConversationDate(item.at))}</time></article>`).join("") : `<div class="growth-empty-state"><strong>Aún no hay actividad de reseñas</strong><p>Las solicitudes preparadas aparecerán aquí.</p></div>`;
+}
+
+function renderGrowthOverview(tasks) {
+  const candidates = getReviewCandidates();
+  const requests = Array.from(reviewRequestsByBooking.values());
+  const prepared = requests.filter((request) => ["pending", "copied"].includes(request.status)).length;
+  const sent = requests.filter((request) => request.status === "sent").length;
+  const failed = getFailedReviewMessages().length;
+  const activeTasks = tasks.filter((task) => ["recommended", "needs_attention", "blocked", "not_available"].includes(task.status));
+  const completed = tasks.filter((task) => task.status === "completed").length;
+  const percentage = tasks.length ? Math.round((completed / tasks.length) * 100) : 100;
+  const metricValues = { "growth-metric-candidates": candidates.length, "growth-metric-prepared": prepared, "growth-metric-sent": sent, "growth-metric-failed": failed, "growth-metric-opportunities": activeTasks.length };
+  Object.entries(metricValues).forEach(([id, value]) => { document.getElementById(id).textContent = String(value); });
+  document.querySelector(".growth-metrics")?.setAttribute("aria-busy", "false");
+  document.getElementById("growth-progress-count").textContent = `${completed} de ${tasks.length} condiciones resueltas`;
+  document.getElementById("growth-points").textContent = "Basado en datos operativos reales";
   document.getElementById("growth-progress-percent").textContent = `${percentage}%`;
   const progress = document.querySelector(".growth-progress");
   progress.setAttribute("aria-valuenow", String(percentage));
   document.getElementById("growth-progress-bar").style.width = `${percentage}%`;
-  progress.classList.toggle("growth-progress-complete", allComplete);
-
-  document.getElementById("growth-tasks-list").innerHTML = tasks.map((task) => `
-    <article class="growth-task growth-task-${task.status} ${taskTransitions.has(task.id) ? "growth-task-completed-pulse" : ""}" data-growth-task="${task.id}">
-      <span class="growth-task-status" aria-label="${task.status === "completed" ? "Completada" : task.status === "pending" ? "Pendiente" : "No aplicable"}">
-        ${task.status === "completed" ? "Completada" : ""}
-      </span>
-      <div class="growth-task-copy">
-        <h3>${task.title}</h3>
-        <p>${task.description}</p>
-        <span>${task.progress_label || ""}</span>
-      </div>
-      <div class="growth-task-points">${task.status === "completed" ? `+${task.points} puntos` : `${task.points} puntos`}</div>
-      ${taskTransitions.has(task.id) ? `<div class="growth-task-feedback">Tarea completada · +${task.points} puntos</div>` : ""}
-    </article>
-  `).join("");
-
+  progress.classList.toggle("growth-progress-complete", activeTasks.length === 0);
+  const priority = document.getElementById("growth-priority-list");
+  priority.setAttribute("aria-busy", "false");
+  priority.innerHTML = activeTasks.length ? activeTasks.slice(0, 5).map((task) => `<article class="growth-priority-item growth-priority-item--${task.status}"><div><span>${growthTaskStateLabel(task.status)}</span><h4>${escapeHtml(task.title)}</h4><p>${escapeHtml(task.description)}</p><small>Depende de: ${escapeHtml(task.dependency)}</small></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="${escapeHtml(task.action)}"${task.channel ? ` data-channel="${escapeHtml(task.channel)}"` : ""}>${escapeHtml(task.action_label)}</button></article>`).join("") : `<div class="growth-empty-state"><strong>No hay acciones prioritarias</strong><p>Las condiciones comprobadas no requieren intervención.</p></div>`;
   const dayComplete = document.getElementById("growth-day-complete");
-  dayComplete.hidden = !allComplete;
-  dayComplete.classList.toggle("growth-day-complete-animation", dayTransition);
-
-  const nextTask = tasks.find((task) => task.status === "pending");
-  document.getElementById("growth-summary-count").textContent = `${completed}/${total} tareas completadas`;
-  document.getElementById("growth-summary-next").textContent = nextTask
-    ? `Próxima tarea: ${nextTask.title}`
-    : allComplete ? "Has dejado tu negocio al día." : "No hay acciones aplicables pendientes.";
+  dayComplete.hidden = activeTasks.length > 0 || growthSourceErrors().length > 0;
+  const nextTask = activeTasks[0];
+  document.getElementById("growth-summary-count").textContent = activeTasks.length ? `${activeTasks.length} acción${activeTasks.length === 1 ? "" : "es"} pendiente${activeTasks.length === 1 ? "" : "s"}` : "Sin acciones pendientes";
+  document.getElementById("growth-summary-next").textContent = nextTask ? `Prioridad: ${nextTask.title}` : "No hay bloqueos con los datos disponibles.";
   document.getElementById("growth-summary-progress-bar").style.width = `${percentage}%`;
+  document.getElementById("growth-overview-status").textContent = activeTasks.length ? `${activeTasks.length} pendientes` : "Sin pendientes";
+  renderGrowthActivity();
+}
 
-  previousGrowthTaskStates = new Map(tasks.map((task) => [task.id, task.status]));
-  previousGrowthAllComplete = allComplete;
+function renderGrowthOpportunities(tasks) {
+  const container = document.getElementById("growth-tasks-list");
+  if (!container) return;
+  const visible = tasks.filter((task) => ["recommended", "needs_attention", "blocked", "not_available"].includes(task.status));
+  container.setAttribute("aria-busy", "false");
+  container.innerHTML = visible.length ? visible.map((task) => `<article class="growth-task growth-task-${task.status}" data-growth-task="${escapeHtml(task.id)}"><span class="growth-task-status">${escapeHtml(growthTaskStateLabel(task.status))}</span><div class="growth-task-copy"><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(task.description)}</p><span>Depende de: ${escapeHtml(task.dependency)}</span></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="${escapeHtml(task.action)}"${task.channel ? ` data-channel="${escapeHtml(task.channel)}"` : ""}>${escapeHtml(task.action_label)}</button></article>`).join("") : `<div class="growth-empty-state"><strong>No hay oportunidades activas</strong><p>Cuando cambien reservas, mensajes o configuración, las nuevas acciones aparecerán aquí.</p></div>`;
+  document.getElementById("growth-opportunities-status").textContent = visible.length ? `${visible.length} activas` : "Sin oportunidades";
+}
+
+function renderGrowth() {
+  renderGrowthNavigation();
+  if (!growthSourcesSettled()) return;
+  const tasks = calculateGrowthTasks();
+  const errors = growthSourceErrors();
+  for (const id of ["growth-overview-errors", "growth-opportunities-errors"]) {
+    const container = document.getElementById(id);
+    container.hidden = errors.length === 0;
+    container.innerHTML = errors.length ? `<strong>Hay información que no se pudo actualizar</strong><ul>${errors.map((error) => `<li>${escapeHtml(error)}</li>`).join("")}</ul>` : "";
+  }
+  renderGrowthOverview(tasks);
+  renderGrowthOpportunities(tasks);
+  renderReviewRequests();
 }
 
 async function loadAdminPanel() {
@@ -3212,13 +3367,12 @@ async function loadBookings({ background = false } = {}) {
       reviewRequestsByBooking = new Map();
       await enrichBookingsWithAttachments();
     } else if (!background) {
-      await Promise.all([enrichBookingsWithAttachments(), loadReviewRequests()]);
+      await Promise.allSettled([enrichBookingsWithAttachments(), loadReviewRequests()]);
     }
     if (loadVersion !== bookingsLoadVersion) return;
     const nextFingerprint = JSON.stringify(allBookings);
     const changed = nextFingerprint !== bookingsFingerprint;
     bookingsFingerprint = nextFingerprint;
-    growthDataReady.bookings = true;
     if (!changed && background) return;
     const editorState = background ? captureBookingEditorState() : null;
     syncAgendaServiceFilter();
@@ -3245,22 +3399,38 @@ async function loadBookings({ background = false } = {}) {
   }
 }
 
-async function loadReviewRequests() {
-  const response = await fetch(
-    `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/review-requests`
-  );
-
-  if (!response.ok) {
-    reviewRequestsByBooking = new Map();
-    throw new Error("No se pudieron cargar las solicitudes de reseña.");
+async function loadReviewRequests({ background = false } = {}) {
+  const requestVersion = ++reviewRequestsLoadVersion;
+  if (!reviewRequestsByBooking.size) growthLoadState.reviews = "loading";
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/review-requests`);
+    if (!response.ok) throw new Error("review_requests_unavailable");
+    const data = await response.json();
+    if (requestVersion !== reviewRequestsLoadVersion) return;
+    const nextRequests = data.review_requests || [];
+    const nextFingerprint = JSON.stringify(nextRequests);
+    const changed = nextFingerprint !== reviewRequestsFingerprint;
+    reviewRequestsByBooking = new Map(nextRequests.map((reviewRequest) => [reviewRequest.booking_id, reviewRequest]));
+    reviewRequestsFingerprint = nextFingerprint;
+    growthLoadState.reviews = "ready";
+    if (!changed && background) {
+      renderReviewRequests();
+      renderGrowth();
+      renderDashboard();
+      return;
+    }
+    renderReviewStats();
+    renderReviewRequests();
+    renderGrowth();
+    renderDashboard();
+  } catch (error) {
+    if (requestVersion !== reviewRequestsLoadVersion) return;
+    growthLoadState.reviews = "error";
+    renderReviewRequests();
+    renderGrowth();
+    renderDashboard();
+    if (background) throw error;
   }
-
-  const data = await response.json();
-  reviewRequestsByBooking = new Map(
-    (data.review_requests || []).map((reviewRequest) => [reviewRequest.booking_id, reviewRequest])
-  );
-  growthDataReady.reviews = true;
-  renderDashboard();
 }
 
 function conversationErrorMessage(body, fallback) {
@@ -4459,7 +4629,9 @@ async function mutateConversationAutomation(url, payload, successMessage) {
 }
 
 async function loadMessageOutbox({ background = false } = {}) {
+  const requestVersion = ++messageOutboxLoadVersion;
   const container = document.getElementById("message-outbox-list");
+  if (!messageOutbox.length) growthLoadState.outbox = "loading";
 
   try {
     const response = await fetch(
@@ -4471,18 +4643,28 @@ async function loadMessageOutbox({ background = false } = {}) {
     }
 
     const data = await response.json();
+    if (requestVersion !== messageOutboxLoadVersion) return;
     const nextMessages = data.messages || [];
     const nextFingerprint = JSON.stringify(nextMessages);
     const changed = nextFingerprint !== messageOutboxFingerprint;
     messageOutbox = nextMessages;
     messageOutboxFingerprint = nextFingerprint;
-    growthDataReady.messages = true;
-    if (!changed && background) return;
+    growthLoadState.outbox = "ready";
+    if (!changed && background) {
+      renderGrowth();
+      renderDashboard();
+      return;
+    }
     renderMessageOutboxMetrics();
     renderMessageOutbox();
     renderGrowth();
+    renderDashboard();
   } catch (error) {
+    if (requestVersion !== messageOutboxLoadVersion) return;
     console.error(error);
+    growthLoadState.outbox = "error";
+    renderGrowth();
+    renderDashboard();
     if (background) throw error;
     if (!messageOutbox.length) {
       container.innerHTML = `<p class="empty-state">No se pudieron cargar los mensajes.</p>`;
@@ -4528,13 +4710,18 @@ function renderMessageOutbox() {
   historyContainer.innerHTML = renderMessageCards(historyMessages, "No hay mensajes enviados u omitidos en el historial.");
 }
 
+function maskedOutboxPhone(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length >= 4 ? `WhatsApp terminado en ${digits.slice(-4)}` : "Teléfono no disponible";
+}
+
 function renderMessageCards(messages, emptyMessage = "No hay mensajes para este filtro.") {
   if (!messages.length) {
     return `<p class="empty-state">${emptyMessage}</p>`;
   }
 
   return messages.map((message) => {
-    const phoneIsValid = Boolean(message.whatsapp_url);
+    const phoneIsValid = isSafeWhatsAppUrl(message.whatsapp_url);
     const isClosed = ["sent", "skipped"].includes(message.status);
     return `
       <article class="message-outbox-item">
@@ -4542,7 +4729,7 @@ function renderMessageCards(messages, emptyMessage = "No hay mensajes para este 
           <div>
             <span class="message-type">${getMessageTypeLabel(message.message_type)}</span>
             <h3>${escapeHtml(message.customer_name)}</h3>
-            <p>${escapeHtml(message.customer_phone || "Sin teléfono")} ${message.booking_id ? `· Cita #${message.booking_id}` : ""}</p>
+            <p>${escapeHtml(maskedOutboxPhone(message.customer_phone))}</p>
           </div>
           <span class="status-pill ${getMessageStatusClass(message.status)}">${getMessageStatusLabel(message.status)}</span>
         </div>
@@ -4615,7 +4802,7 @@ function openBlankWhatsAppWindow() {
 }
 
 async function openPreparedWhatsAppMessage(message, whatsappWindow) {
-  if (!message?.whatsapp_url) {
+  if (!isSafeWhatsAppUrl(message?.whatsapp_url)) {
     whatsappWindow?.close();
     alert("No se puede abrir WhatsApp porque el teléfono del cliente no es válido.");
     return false;
@@ -4639,12 +4826,13 @@ async function openPreparedWhatsAppMessage(message, whatsappWindow) {
 
     replaceOutboxMessage(result.message);
     requestAdminRefresh(["operations"]);
+    if (!isSafeWhatsAppUrl(result.message?.whatsapp_url)) throw new Error("unsafe_whatsapp_url");
     whatsappWindow.location.href = result.message.whatsapp_url;
     return true;
   } catch (error) {
     whatsappWindow.close();
     console.error(error);
-    alert(error.message || "No se pudo preparar el mensaje.");
+    alert("No se pudo abrir WhatsApp de forma segura. Comprueba el teléfono e inténtalo de nuevo.");
     return false;
   }
 }
@@ -4669,7 +4857,7 @@ async function updateOutboxStatus(messageId, status) {
     await requestAdminRefresh(["operations"]);
   } catch (error) {
     console.error(error);
-    alert(error.message || "No se pudo actualizar el mensaje.");
+    alert("No se pudo actualizar el mensaje. Inténtalo de nuevo.");
   }
 }
 
@@ -4710,7 +4898,7 @@ function ensureAdminPollingTasks() {
   adminPollingTasks.set("operations", {
     run: async () => {
       const requests = [loadBookings({ background: true })];
-      if (!isBusinessStaff()) requests.push(loadMessageOutbox({ background: true }));
+      if (!isBusinessStaff()) requests.push(loadMessageOutbox({ background: true }), loadReviewRequests({ background: true }));
       await Promise.all(requests);
     },
     inFlight: false,
@@ -4894,46 +5082,59 @@ function renderReviewStats() {
 function renderReviewRequests() {
   const pendingContainer = document.getElementById("review-requests-pending-list");
   const historyContainer = document.getElementById("review-requests-history-list");
+  const candidatesContainer = document.getElementById("review-candidates-list");
+  if (!pendingContainer || !historyContainer || !candidatesContainer) return;
   const reviewRequests = Array.from(reviewRequestsByBooking.values());
   const pending = reviewRequests.filter((item) => ["pending", "copied"].includes(item.status));
   const history = reviewRequests.filter((item) => ["sent", "skipped"].includes(item.status));
-
+  const candidates = getReviewCandidates();
+  const reviewLink = getSafeReviewUrl();
+  const errors = document.getElementById("growth-reviews-errors");
+  const status = document.getElementById("growth-reviews-status");
+  const linkCard = document.getElementById("growth-review-link-card");
+  const loadFailed = growthLoadState.reviews === "error";
+  errors.hidden = !loadFailed;
+  errors.textContent = loadFailed ? "No se pudieron actualizar las solicitudes. Los clientes y estados ya cargados siguen disponibles." : "";
+  status.textContent = loadFailed ? "Error parcial" : pending.length ? `${pending.length} pendientes` : "Sin pendientes";
+  linkCard.setAttribute("aria-busy", "false");
+  linkCard.innerHTML = reviewLink ? `<div><p>Configuración</p><h3 id="growth-review-link-title">Enlace de reseñas</h3><span class="growth-link-state growth-link-state--ready">Enlace configurado</span><small>Las nuevas solicitudes conservarán exactamente este destino.</small></div><a class="ag-button ag-button--secondary ag-button--small" href="${escapeHtml(reviewLink)}" target="_blank" rel="noopener noreferrer">Comprobar enlace</a>` : `<div><p>Configuración</p><h3 id="growth-review-link-title">Enlace de reseñas</h3><span class="growth-link-state growth-link-state--missing">${currentBusiness?.reviews_url?.trim() ? "Enlace no válido" : "Falta configurar"}</span><small>Añade el enlace donde quieres recibir las reseñas para poder preparar solicitudes.</small></div><button class="ag-button ag-button--primary ag-button--small" type="button" data-growth-action="configuration-reviews">Configurar enlace</button>`;
+  candidatesContainer.setAttribute("aria-busy", "false");
+  candidatesContainer.innerHTML = candidates.length ? candidates.map(renderReviewCandidateCard).join("") : `<div class="growth-empty-state"><strong>No hay clientes pendientes de solicitud</strong><p>Cuando completes nuevas citas, aparecerán aquí los clientes que todavía no tengan una solicitud.</p></div>`;
+  pendingContainer.setAttribute("aria-busy", "false");
   pendingContainer.innerHTML = pending.length
     ? pending.map(renderReviewSummaryCard).join("")
-    : `<p class="empty-state">No hay solicitudes de reseña pendientes.</p>`;
+    : `<div class="growth-empty-state"><strong>No hay solicitudes de reseña pendientes</strong><p>Las solicitudes preparadas o abiertas en WhatsApp aparecerán aquí.</p></div>`;
+  historyContainer.setAttribute("aria-busy", "false");
   historyContainer.innerHTML = history.length
     ? history.map(renderReviewSummaryCard).join("")
-    : `<p class="empty-state">No hay solicitudes enviadas u omitidas.</p>`;
+    : `<div class="growth-empty-state"><strong>Aún no hay solicitudes cerradas</strong><p>Este historial distingue las marcadas como enviadas de las omitidas.</p></div>`;
+}
+
+function renderReviewCandidateCard(booking) {
+  const reviewLink = getSafeReviewUrl();
+  const hasPhone = hasUsableReviewPhone(booking);
+  const state = !reviewLink ? "Falta enlace de reseñas" : hasPhone ? "Puede recibir una solicitud" : "Sin WhatsApp disponible";
+  return `<article class="review-summary-card review-candidate-card"><div class="review-request-header"><div><h4>${escapeHtml(booking.customer_name || "Cliente sin nombre")}</h4><p>${escapeHtml(booking.service_name || "Servicio sin indicar")}</p></div><span class="review-status">${escapeHtml(state)}</span></div><dl class="review-useful-data"><div><dt>Fecha de la cita</dt><dd>${escapeHtml(formatBookingSlot(booking))}</dd></div><div><dt>Canal disponible</dt><dd>${hasPhone ? "WhatsApp asistido" : "Copia manual del mensaje"}</dd></div></dl><p class="review-delivery-note">${reviewLink ? (hasPhone ? "Prepararemos el mensaje y podrás abrir WhatsApp para enviarlo tú." : "Puedes preparar y copiar el mensaje, pero no abrir WhatsApp sin un teléfono válido.") : "Primero configura el destino de las reseñas."}</p><div class="review-actions">${reviewLink ? `<button class="ag-button ag-button--primary ag-button--small" type="button" data-review-create="${booking.id}">Preparar solicitud</button>` : `<button class="ag-button ag-button--primary ag-button--small" type="button" data-growth-action="configuration-reviews">Configurar enlace</button>`}<button class="ag-button ag-button--ghost ag-button--small" type="button" data-growth-action="booking" data-booking-id="${booking.id}">Ver reserva</button></div></article>`;
+}
+
+function reviewDeliveryState(reviewRequest) {
+  const outbox = getReviewOutboxMessage(reviewRequest.booking_id);
+  if (outbox?.status === "failed") return { label: "No se pudo preparar", detail: "Comprueba el canal. Este mensaje no dispone de un reintento automático seguro." };
+  if (reviewRequest.status === "sent") return { label: "Marcada como enviada", detail: "Este estado lo confirmó una persona; no significa que la reseña se haya publicado." };
+  if (reviewRequest.status === "skipped") return { label: "Omitida", detail: "La solicitud se cerró sin marcarla como enviada." };
+  if (outbox?.status === "opened") return { label: "Abierta en WhatsApp", detail: "WhatsApp se abrió con el mensaje preparado; AutonoGrow no lo marcó como enviado." };
+  if (reviewRequest.status === "copied") return { label: "Mensaje copiado", detail: "El texto se copió para un envío manual." };
+  return { label: "Solicitud preparada", detail: "Todavía requiere que una persona copie el mensaje o abra WhatsApp." };
 }
 
 function renderReviewSummaryCard(reviewRequest) {
-  return `
-    <article class="review-summary-card">
-      <div class="review-request-header">
-        <div>
-          <h3>${escapeHtml(reviewRequest.customer_name)}</h3>
-          <p>Cita #${reviewRequest.booking_id}</p>
-        </div>
-        <span class="review-status review-status-${escapeHtml(reviewRequest.status)}">
-          ${getReviewStatusLabel(reviewRequest.status)}
-        </span>
-      </div>
-      <p class="review-message">${escapeHtml(reviewRequest.message)}</p>
-      <textarea data-review-fallback="${reviewRequest.id}" class="review-copy-fallback" readonly>${escapeHtml(reviewRequest.message)}</textarea>
-      <div class="review-actions">
-        <button class="btn btn-small btn-whatsapp" type="button" onclick="openReviewWhatsApp(${reviewRequest.id})" ${["sent", "skipped"].includes(reviewRequest.status) ? "disabled" : ""}>
-          Enviar por WhatsApp
-        </button>
-        <button class="btn btn-small btn-success" type="button" onclick="updateReviewRequestStatus(${reviewRequest.id}, 'sent')" ${reviewRequest.status === "sent" ? "disabled" : ""}>
-          Marcar como enviada
-        </button>
-        <button class="btn btn-small btn-secondary" type="button" onclick="updateReviewRequestStatus(${reviewRequest.id}, 'skipped')" ${reviewRequest.status === "skipped" ? "disabled" : ""}>
-          Omitir
-        </button>
-      </div>
-      <p data-review-feedback="${reviewRequest.id}" class="inline-feedback"></p>
-    </article>
-  `;
+  const booking = allBookings.find((item) => item.id === reviewRequest.booking_id);
+  const outbox = getReviewOutboxMessage(reviewRequest.booking_id);
+  const delivery = reviewDeliveryState(reviewRequest);
+  const openAvailable = !["sent", "skipped"].includes(reviewRequest.status) && ["pending", "opened"].includes(outbox?.status) && isSafeWhatsAppUrl(outbox?.whatsapp_url);
+  const active = !["sent", "skipped"].includes(reviewRequest.status);
+  const timestamp = reviewRequest.sent_at || reviewRequest.copied_at || outbox?.opened_at || reviewRequest.created_at;
+  return `<article class="review-summary-card"><div class="review-request-header"><div><h4>${escapeHtml(reviewRequest.customer_name || "Cliente sin nombre")}</h4><p>${escapeHtml(booking?.service_name || "Servicio sin indicar")}${booking ? ` · ${escapeHtml(formatBookingSlot(booking))}` : ""}</p></div><span class="review-status review-status-${escapeHtml(reviewRequest.status)}">${escapeHtml(delivery.label)}</span></div><p class="review-delivery-note">${escapeHtml(delivery.detail)}</p><details class="review-message-details"><summary>Ver mensaje preparado</summary><p class="review-message">${escapeHtml(reviewRequest.message)}</p></details><textarea data-review-fallback="${reviewRequest.id}" class="review-copy-fallback" readonly>${escapeHtml(reviewRequest.message)}</textarea><p class="review-request-time">Actualizada: ${escapeHtml(formatConversationDate(timestamp))}</p><div class="review-actions">${openAvailable ? `<button class="btn btn-small btn-whatsapp" type="button" data-review-open="${reviewRequest.id}">${outbox?.status === "opened" ? "Abrir de nuevo en WhatsApp" : "Abrir en WhatsApp"}</button>` : ""}${active ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-review-copy="${reviewRequest.id}">Copiar mensaje</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-review-status="sent" data-review-request="${reviewRequest.id}">Marcar como enviada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-review-status="skipped" data-review-request="${reviewRequest.id}">Omitir</button>` : ""}${booking ? `<button class="ag-button ag-button--ghost ag-button--small" type="button" data-growth-action="booking" data-booking-id="${booking.id}">Ver reserva</button>` : ""}</div><p data-review-feedback="${reviewRequest.id}" class="inline-feedback" role="status"></p></article>`;
 }
 
 function getAgendaWeekStart(dateKey = agendaSelectedDate) {
@@ -5253,11 +5454,12 @@ function renderReviewRequest(booking) {
 
   const reviewRequest = reviewRequestsByBooking.get(booking.id);
 
-  if (!reviewRequest && !currentBusiness?.reviews_url?.trim()) {
+  if (!reviewRequest && !getSafeReviewUrl()) {
     return `
       <div class="review-request review-request-warning">
-        <strong>Solicitud de reseña</strong>
-        <p>Este negocio todavía no tiene enlace de reseñas configurado.</p>
+        <div class="review-request-header"><strong>Solicitud de reseña</strong><span class="review-status">Falta configuración</span></div>
+        <p>Configura el enlace de reseñas antes de preparar una solicitud.</p>
+        <button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="configuration-reviews">Configurar enlace</button>
       </div>
     `;
   }
@@ -5267,10 +5469,11 @@ function renderReviewRequest(booking) {
       <div class="review-request">
         <div class="review-request-header">
           <strong>Solicitud de reseña</strong>
-          <span class="review-status">No creada</span>
+          <span class="review-status">Puede recibir una solicitud</span>
         </div>
-        <button class="btn btn-small btn-secondary" type="button" onclick="createReviewRequest(${booking.id})">
-          Crear solicitud
+        <p>Prepararemos el mensaje; tú decidirás si lo copias o lo abres en WhatsApp.</p>
+        <button class="ag-button ag-button--secondary ag-button--small" type="button" data-review-create="${booking.id}">
+          Preparar solicitud
         </button>
       </div>
     `;
@@ -5281,38 +5484,41 @@ function renderReviewRequest(booking) {
       <div class="review-request-header">
         <strong>Solicitud de reseña</strong>
         <span class="review-status review-status-${escapeHtml(reviewRequest.status)}">
-          ${getReviewStatusLabel(reviewRequest.status)}
+          ${escapeHtml(reviewDeliveryState(reviewRequest).label)}
         </span>
       </div>
-      <p class="review-message">${escapeHtml(reviewRequest.message)}</p>
-      <textarea data-review-fallback="${reviewRequest.id}" class="review-copy-fallback" readonly>${escapeHtml(reviewRequest.message)}</textarea>
+      <p>${escapeHtml(reviewDeliveryState(reviewRequest).detail)}</p>
       <div class="review-actions">
-        <button class="btn btn-small btn-whatsapp" type="button" onclick="openReviewWhatsApp(${reviewRequest.id})" ${["sent", "skipped"].includes(reviewRequest.status) ? "disabled" : ""}>
-          Enviar por WhatsApp
-        </button>
-        <button class="btn btn-small btn-success" type="button" onclick="updateReviewRequestStatus(${reviewRequest.id}, 'sent')" ${reviewRequest.status === "sent" ? "disabled" : ""}>
-          Marcar como enviada
-        </button>
-        <button class="btn btn-small btn-secondary" type="button" onclick="updateReviewRequestStatus(${reviewRequest.id}, 'skipped')" ${reviewRequest.status === "skipped" ? "disabled" : ""}>
-          Omitir
-        </button>
+        <button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="showAdminSection('reviews')">Gestionar en Crecimiento</button>
       </div>
       <p data-review-feedback="${reviewRequest.id}" class="inline-feedback"></p>
     </div>
   `;
 }
 
-function getReviewStatusLabel(status) {
-  const labels = {
-    pending: "Pendiente",
-    copied: "Copiada",
-    sent: "Enviada",
-    skipped: "Omitida"
-  };
-  return labels[status] || status;
+function showGrowthReviewFeedback(message, isError = false, reviewRequestId = null) {
+  const mainFeedback = document.getElementById("growth-reviews-feedback");
+  if (mainFeedback) {
+    mainFeedback.textContent = message || "";
+    mainFeedback.className = `inline-feedback ${message ? (isError ? "error" : "success") : ""}`;
+  }
+  if (reviewRequestId) document.querySelectorAll(`[data-review-feedback="${reviewRequestId}"]`).forEach((feedback) => {
+    feedback.textContent = message || "";
+    feedback.className = `inline-feedback ${message ? (isError ? "error" : "success") : ""}`;
+  });
 }
 
 async function createReviewRequest(bookingId) {
+  const booking = allBookings.find((item) => item.id === bookingId);
+  if (!booking || booking.status !== "completed") return showGrowthReviewFeedback("Esta reserva no está disponible para solicitar una reseña.", true);
+  const reviewUrl = getSafeReviewUrl();
+  if (!reviewUrl) return showGrowthReviewFeedback("Configura primero un enlace de reseñas válido.", true);
+  const confirmed = window.confirm(`Preparar solicitud de reseña\n\nCliente: ${booking.customer_name || "Cliente sin nombre"}\nCanal: ${hasUsableReviewPhone(booking) ? "WhatsApp asistido" : "Copia manual"}\nEntrega: la enviarás tú; AutonoGrow no la marcará como enviada.\nDestino: ${reviewUrl}`);
+  if (!confirmed) return;
+  const mutationKey = `review-create:${bookingId}`;
+  if (reviewMutationKeys.has(mutationKey) || reviewRequestsByBooking.has(bookingId)) return;
+  reviewMutationKeys.add(mutationKey);
+  document.querySelectorAll(`[data-review-create="${bookingId}"]`).forEach((button) => { button.disabled = true; });
   try {
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/bookings/${bookingId}/review-request`,
@@ -5321,31 +5527,41 @@ async function createReviewRequest(bookingId) {
     const result = await response.json().catch(() => null);
 
     if (!response.ok) {
-      throw new Error(result?.detail || "No se pudo crear la solicitud de reseña.");
+      throw new Error("review_request_failed");
     }
 
     reviewRequestsByBooking.set(bookingId, result.review_request);
+    replaceOutboxMessage(result.outbox_message);
     renderReviewStats();
     renderReviewRequests();
     renderBookings();
     renderGrowth();
     await requestAdminRefresh(["operations"]);
+    showGrowthReviewFeedback("Solicitud preparada. Puedes copiar el mensaje o abrirlo en WhatsApp.");
   } catch (error) {
     console.error(error);
-    alert(error.message || "No se pudo crear la solicitud de reseña.");
+    showGrowthReviewFeedback("No pudimos preparar la solicitud. Comprueba el enlace y vuelve a intentarlo.", true);
+  } finally {
+    reviewMutationKeys.delete(mutationKey);
+    document.querySelectorAll(`[data-review-create="${bookingId}"]`).forEach((button) => { button.disabled = false; });
   }
 }
 
 async function openReviewWhatsApp(reviewRequestId) {
   const reviewRequest = Array.from(reviewRequestsByBooking.values())
     .find((item) => item.id === reviewRequestId);
-  const whatsappWindow = openBlankWhatsAppWindow();
-
   if (!reviewRequest) {
-    whatsappWindow?.close();
-    alert("No se encontró la solicitud de reseña.");
-    return;
+    return showGrowthReviewFeedback("No se encontró la solicitud de reseña.", true);
   }
+  if (["sent", "skipped"].includes(reviewRequest.status)) return;
+  const reviewUrl = isSafePublicUrl(reviewRequest.reviews_url) ? reviewRequest.reviews_url : "";
+  const confirmed = window.confirm(`Abrir solicitud en WhatsApp\n\nCliente: ${reviewRequest.customer_name || "Cliente sin nombre"}\nCanal: WhatsApp asistido\nEntrega: se abrirá WhatsApp para que tú envíes el mensaje.\nDestino: ${reviewUrl || "Enlace guardado en la solicitud"}`);
+  if (!confirmed) return;
+  const mutationKey = `review-open:${reviewRequestId}`;
+  if (reviewMutationKeys.has(mutationKey)) return;
+  reviewMutationKeys.add(mutationKey);
+  document.querySelectorAll(`[data-review-open="${reviewRequestId}"]`).forEach((button) => { button.disabled = true; });
+  const whatsappWindow = openBlankWhatsAppWindow();
 
   try {
     const response = await fetch(
@@ -5355,19 +5571,24 @@ async function openReviewWhatsApp(reviewRequestId) {
     const result = await response.json().catch(() => null);
 
     if (!response.ok) {
-      throw new Error(result?.detail || "No se pudo preparar la solicitud de reseña.");
+      throw new Error("review_request_open_failed");
     }
 
     reviewRequestsByBooking.set(reviewRequest.booking_id, result.review_request);
+    replaceOutboxMessage(result.outbox_message);
     renderReviewStats();
     renderReviewRequests();
     renderBookings();
     renderGrowth();
-    await openPreparedWhatsAppMessage(result.outbox_message, whatsappWindow);
+    const opened = await openPreparedWhatsAppMessage(result.outbox_message, whatsappWindow);
+    if (opened) showGrowthReviewFeedback("WhatsApp abierto. La solicitud todavía no está marcada como enviada.", false, reviewRequestId);
   } catch (error) {
     whatsappWindow?.close();
     console.error(error);
-    alert(error.message || "No se pudo preparar el mensaje de WhatsApp.");
+    showGrowthReviewFeedback("No pudimos abrir WhatsApp. Comprueba el canal y vuelve a intentarlo.", true, reviewRequestId);
+  } finally {
+    reviewMutationKeys.delete(mutationKey);
+    document.querySelectorAll(`[data-review-open="${reviewRequestId}"]`).forEach((button) => { button.disabled = false; });
   }
 }
 
@@ -5375,60 +5596,73 @@ async function copyReviewMessage(reviewRequestId) {
   const reviewRequest = Array.from(reviewRequestsByBooking.values())
     .find((item) => item.id === reviewRequestId);
 
-  if (!reviewRequest) {
-    return;
-  }
+  if (!reviewRequest || ["sent", "skipped"].includes(reviewRequest.status)) return;
+  const mutationKey = `review-copy:${reviewRequestId}`;
+  if (reviewMutationKeys.has(mutationKey)) return;
+  reviewMutationKeys.add(mutationKey);
+  document.querySelectorAll(`[data-review-copy="${reviewRequestId}"]`).forEach((button) => { button.disabled = true; });
+  let copied = false;
 
   try {
     await navigator.clipboard.writeText(reviewRequest.message);
-    await updateReviewRequestStatus(reviewRequestId, "copied", false);
-    document.querySelectorAll(`[data-review-feedback="${reviewRequestId}"]`).forEach((feedback) => {
-      feedback.className = "inline-feedback success";
-      feedback.textContent = "Mensaje copiado";
-    });
+    copied = true;
+    const statusSaved = await updateReviewRequestStatus(reviewRequestId, "copied", false);
+    if (!statusSaved) throw new Error("review_copy_status_failed");
+    showGrowthReviewFeedback("Mensaje copiado. La solicitud todavía no está marcada como enviada.", false, reviewRequestId);
   } catch (error) {
     console.error(error);
-    const textareas = document.querySelectorAll(`[data-review-fallback="${reviewRequestId}"]`);
-    textareas.forEach((textarea) => textarea.classList.add("visible"));
-    const visibleTextarea = Array.from(textareas).find((textarea) => textarea.offsetParent !== null) || textareas[0];
-    visibleTextarea?.focus();
-    visibleTextarea?.select();
-    document.querySelectorAll(`[data-review-feedback="${reviewRequestId}"]`).forEach((feedback) => {
-      feedback.className = "inline-feedback error";
-      feedback.textContent = "No se pudo copiar automáticamente. Selecciona el mensaje para copiarlo manualmente.";
-    });
+    if (copied) {
+      showGrowthReviewFeedback("El mensaje se copió, pero no pudimos guardar el estado. Actualiza y vuelve a intentarlo.", true, reviewRequestId);
+    } else {
+      const textareas = document.querySelectorAll(`[data-review-fallback="${reviewRequestId}"]`);
+      textareas.forEach((textarea) => textarea.classList.add("visible"));
+      const visibleTextarea = Array.from(textareas).find((textarea) => textarea.offsetParent !== null) || textareas[0];
+      visibleTextarea?.focus();
+      visibleTextarea?.select();
+      showGrowthReviewFeedback("No se pudo copiar automáticamente. Selecciona el mensaje para copiarlo manualmente.", true, reviewRequestId);
+    }
+  } finally {
+    reviewMutationKeys.delete(mutationKey);
+    document.querySelectorAll(`[data-review-copy="${reviewRequestId}"]`).forEach((button) => { button.disabled = false; });
   }
 }
 
 async function updateReviewRequestStatus(reviewRequestId, status, showFeedback = true) {
-  const response = await fetch(
-    `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/review-requests/${reviewRequestId}/status`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status })
-    }
-  );
-  const result = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    if (showFeedback) {
-      alert(result?.detail || "No se pudo actualizar la solicitud de reseña.");
-    }
-    throw new Error(result?.detail || "No se pudo actualizar la solicitud de reseña.");
-  }
-
-  reviewRequestsByBooking.set(result.review_request.booking_id, result.review_request);
-  renderReviewStats();
-  renderReviewRequests();
-  renderBookings();
-  renderGrowth();
-
-  if (showFeedback) {
-    document.querySelectorAll(`[data-review-feedback="${reviewRequestId}"]`).forEach((feedback) => {
-      feedback.className = "inline-feedback success";
-      feedback.textContent = status === "sent" ? "Solicitud marcada como enviada." : "Estado actualizado.";
-    });
+  if (!["copied", "sent", "skipped"].includes(status)) return false;
+  const reviewRequest = Array.from(reviewRequestsByBooking.values()).find((item) => item.id === reviewRequestId);
+  if (!reviewRequest) return false;
+  if (showFeedback && status === "sent" && !window.confirm("Marca esta solicitud como enviada solo si ya enviaste el mensaje. Esto no confirma que el cliente haya publicado una reseña.")) return false;
+  if (showFeedback && status === "skipped" && !window.confirm("Omitir esta solicitud la cerrará sin marcarla como enviada. ¿Continuar?")) return false;
+  const mutationKey = `review-status:${reviewRequestId}`;
+  if (reviewMutationKeys.has(mutationKey)) return false;
+  reviewMutationKeys.add(mutationKey);
+  document.querySelectorAll(`[data-review-request="${reviewRequestId}"]`).forEach((button) => { button.disabled = true; });
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/review-requests/${reviewRequestId}/status`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status })
+      }
+    );
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.review_request) throw new Error("review_status_failed");
+    reviewRequestsByBooking.set(result.review_request.booking_id, result.review_request);
+    renderReviewStats();
+    renderBookings();
+    renderGrowth();
+    renderDashboard();
+    if (showFeedback) showGrowthReviewFeedback(status === "sent" ? "Solicitud marcada como enviada. Esto no confirma una reseña publicada." : "Solicitud omitida.", false, reviewRequestId);
+    requestAdminRefresh(["operations"]);
+    return true;
+  } catch (error) {
+    console.error(error);
+    if (showFeedback) showGrowthReviewFeedback("No pudimos actualizar la solicitud. Inténtalo de nuevo.", true, reviewRequestId);
+    return false;
+  } finally {
+    reviewMutationKeys.delete(mutationKey);
+    document.querySelectorAll(`[data-review-request="${reviewRequestId}"]`).forEach((button) => { button.disabled = false; });
   }
 }
 
@@ -6009,6 +6243,7 @@ function setupConversationInterface() {
 document.addEventListener("DOMContentLoaded", () => {
   setupBusinessConfiguration();
   setupChannelHub();
+  setupGrowthHub();
   setupAdminNavigation();
   setupBookingViews();
   setupDashboardInteractions();

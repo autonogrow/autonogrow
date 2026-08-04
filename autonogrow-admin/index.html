@@ -6,7 +6,7 @@
 
   <title>AutonoGrow Admin</title>
 
-  <link rel="stylesheet" href="styles.css?v=20260804-5" />
+  <link rel="stylesheet" href="styles.css?v=20260804-6" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -76,7 +76,7 @@
       <button class="admin-tab admin-tab--legacy" type="button" data-section="schedule" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>Horarios</button>
       <button class="admin-tab" type="button" data-section="channels" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2"/></svg></span>Canales y automatizaciones</button>
       <button class="admin-tab admin-tab--legacy" type="button" data-section="business" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5l8-3 8 3v16"/><path d="M9 21v-5h6v5M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span>Datos del negocio</button>
-      <button class="admin-tab" type="button" data-section="reviews" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg></span>Reseñas</button>
+      <button class="admin-tab admin-tab--legacy" type="button" data-section="reviews" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg></span>Reseñas</button>
     </nav>
 
     <div id="admin-main-content" class="ag-shell__content" tabindex="-1">
@@ -195,14 +195,14 @@
 
       <article class="growth-summary-card ag-card ag-card--interactive">
         <div class="growth-summary-copy">
-          <span class="stat-label">Crecimiento de hoy</span>
-          <strong id="growth-summary-count">0/0 tareas completadas</strong>
-          <p id="growth-summary-next">Cargando próxima tarea...</p>
+          <span class="stat-label">Crecimiento</span>
+          <strong id="growth-summary-count">Comprobando acciones</strong>
+          <p id="growth-summary-next">Cargando prioridades reales…</p>
         </div>
         <div class="growth-summary-progress" aria-hidden="true">
           <span id="growth-summary-progress-bar"></span>
         </div>
-        <button class="btn btn-primary" type="button" onclick="showAdminSection('growth')">Ver tareas</button>
+        <button class="btn btn-primary" type="button" onclick="showAdminSection('growth')">Ver resumen</button>
       </article>
 
       <div hidden aria-hidden="true">
@@ -213,32 +213,27 @@
       </div>
     </section>
 
-    <section class="section admin-section growth-section" data-admin-section="growth">
-      <div class="section-header">
-        <div>
-          <h2>Crecimiento de hoy</h2>
-          <p>Completa estas acciones para dejar tu negocio al día.</p>
+    <section class="section admin-section growth-section growth-hub-overview" data-admin-section="growth" aria-labelledby="growth-hub-title">
+      <div class="growth-hub-layout">
+        <div data-growth-navigation></div>
+        <div class="growth-hub-content">
+          <header class="growth-hub-header"><div><p class="eyebrow">Acciones comerciales</p><h2 id="growth-hub-title">Crecimiento</h2><p>Prioriza solicitudes de reseña y mejoras basadas en datos reales del negocio.</p></div><span id="growth-overview-status" class="growth-human-status">Comprobando…</span></header>
+          <div id="growth-overview-errors" class="growth-partial-error" role="alert" tabindex="-1" hidden></div>
+          <section class="growth-metrics" aria-label="Resumen de crecimiento" aria-busy="true">
+            <article><span>Clientes pendientes de solicitud</span><strong id="growth-metric-candidates">—</strong></article>
+            <article><span>Solicitudes preparadas</span><strong id="growth-metric-prepared">—</strong></article>
+            <article><span>Marcadas como enviadas</span><strong id="growth-metric-sent">—</strong></article>
+            <article><span>Solicitudes con error</span><strong id="growth-metric-failed">—</strong></article>
+            <article><span>Oportunidades activas</span><strong id="growth-metric-opportunities">—</strong></article>
+          </section>
+          <section class="growth-priority-card" aria-labelledby="growth-priority-title"><div class="section-header"><div><h3 id="growth-priority-title">Qué conviene hacer primero</h3><p>Bloqueos y acciones ordenados por utilidad operativa.</p></div></div><div id="growth-priority-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Calculando prioridades.</span></div></section>
+          <section class="growth-activity-card" aria-labelledby="growth-activity-title"><div class="section-header"><div><h3 id="growth-activity-title">Actividad reciente</h3><p>Preparaciones y cambios reales registrados en solicitudes de reseña.</p></div></div><div id="growth-activity-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando actividad.</span></div></section>
+          <div class="growth-overview growth-readiness" aria-label="Preparación operativa">
+            <div><strong id="growth-progress-count">Comprobando acciones</strong><span id="growth-points">Basado en datos operativos reales</span></div><strong id="growth-progress-percent">—</strong>
+          </div>
+          <div class="growth-progress" role="progressbar" aria-label="Condiciones operativas resueltas" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="growth-progress-bar"></span></div>
+          <div id="growth-day-complete" class="growth-day-complete" hidden><strong>Sin acciones pendientes</strong><p>No hay bloqueos ni oportunidades activas con los datos disponibles.</p></div>
         </div>
-      </div>
-
-      <div class="growth-overview">
-        <div>
-          <strong id="growth-progress-count">0/0 tareas completadas</strong>
-          <span id="growth-points">0 puntos hoy</span>
-        </div>
-        <strong id="growth-progress-percent">0%</strong>
-      </div>
-      <div class="growth-progress" role="progressbar" aria-label="Progreso diario" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-        <span id="growth-progress-bar"></span>
-      </div>
-
-      <div id="growth-tasks-list" class="growth-tasks-list">
-        <p class="empty-state">Calculando tareas de hoy...</p>
-      </div>
-
-      <div id="growth-day-complete" class="growth-day-complete" hidden>
-        <strong>Día completado</strong>
-        <p>Has dejado tu negocio al día.</p>
       </div>
     </section>
 
@@ -715,31 +710,29 @@
       </div>
     </section>
 
-    <section class="section admin-section reviews-section" data-admin-section="reviews">
-      <div class="section-header">
-        <div>
-          <h2>Reseñas</h2>
-          <p>Solicitudes preparadas al completar una cita y su historial de envío.</p>
+    <section class="section admin-section reviews-section growth-hub-category" data-admin-section="reviews" aria-labelledby="growth-reviews-title">
+      <div class="growth-hub-layout">
+        <div data-growth-navigation></div>
+        <div class="growth-hub-content">
+          <header class="growth-hub-header"><div><p class="eyebrow">Crecimiento</p><h2 id="growth-reviews-title">Reseñas</h2><p>Prepara solicitudes para clientes atendidos y distingue lo preparado de lo enviado.</p></div><span id="growth-reviews-status" class="growth-human-status">Comprobando…</span></header>
+          <div id="growth-reviews-errors" class="growth-partial-error" role="alert" tabindex="-1" hidden></div>
+          <section id="growth-review-link-card" class="growth-review-link-card" aria-labelledby="growth-review-link-title" aria-busy="true"><div><p>Configuración</p><h3 id="growth-review-link-title">Enlace de reseñas</h3><span>Comprobando…</span></div></section>
+          <section class="growth-review-block" aria-labelledby="growth-review-candidates-title"><div class="section-header"><div><h3 id="growth-review-candidates-title">Clientes atendidos</h3><p>Reservas completadas que todavía no tienen una solicitud.</p></div></div><div id="review-candidates-list" class="review-requests-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando clientes.</span></div></section>
+          <section class="growth-review-block" aria-labelledby="growth-review-pending-title"><div class="section-header"><div><h3 id="growth-review-pending-title">Necesitan seguimiento</h3><p>Solicitudes preparadas, copiadas o abiertas en WhatsApp.</p></div></div><div id="review-requests-pending-list" class="review-requests-list" aria-busy="true"><p class="empty-state">Cargando solicitudes de reseña...</p></div></section>
+          <section class="growth-review-block" aria-labelledby="growth-review-history-title"><div class="section-header"><div><h3 id="growth-review-history-title">Solicitudes recientes</h3><p>Solicitudes marcadas como enviadas u omitidas; no equivalen a una reseña publicada.</p></div></div><div id="review-requests-history-list" class="review-requests-list" aria-busy="true"><p class="empty-state">Cargando historial...</p></div></section>
+          <p id="growth-reviews-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
         </div>
       </div>
+    </section>
 
-      <div class="history-group">
-        <div class="history-group-header">
-          <h3>Pendientes</h3>
-          <p>Solicitudes pendientes o copiadas que todavía requieren seguimiento.</p>
-        </div>
-        <div id="review-requests-pending-list" class="review-requests-list">
-          <p class="empty-state">Cargando solicitudes de reseña...</p>
-        </div>
-      </div>
-
-      <div class="history-group">
-        <div class="history-group-header">
-          <h3>Historial</h3>
-          <p>Solicitudes enviadas u omitidas.</p>
-        </div>
-        <div id="review-requests-history-list" class="review-requests-list">
-          <p class="empty-state">Cargando historial...</p>
+    <section class="section admin-section growth-hub-category" data-admin-section="growth-opportunities" aria-labelledby="growth-opportunities-title">
+      <div class="growth-hub-layout">
+        <div data-growth-navigation></div>
+        <div class="growth-hub-content">
+          <header class="growth-hub-header"><div><p class="eyebrow">Crecimiento</p><h2 id="growth-opportunities-title">Oportunidades</h2><p>Recomendaciones concretas derivadas de reservas, mensajes y configuración.</p></div><span id="growth-opportunities-status" class="growth-human-status">Comprobando…</span></header>
+          <div id="growth-opportunities-errors" class="growth-partial-error" role="alert" tabindex="-1" hidden></div>
+          <div id="growth-tasks-list" class="growth-tasks-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Calculando oportunidades.</span></div>
+          <aside class="growth-review-automation-note"><div><strong>Solicitudes de reseña asistidas</strong><p>El sistema actual no envía automáticamente estas solicitudes ni consume créditos. Puedes configurar las automatizaciones de conversación por separado.</p></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="automations">Ver respuestas automáticas</button></aside>
         </div>
       </div>
     </section>
@@ -750,7 +743,7 @@
       <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="summary" aria-current="page"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11 12 3l9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg></span><span>Inicio</span></button>
       <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="bookings"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span><span>Agenda</span></button>
       <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="conversations"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg></span><span>Mensajes</span></button>
-      <button class="ag-mobile-nav__item" type="button" data-ag-shell-open data-ag-shell-more data-ag-shell-sections="growth,messages,configuration,services,staff,schedule,channels,channel-instagram,channel-whatsapp,business,public-page,reviews" aria-controls="admin-sidebar" aria-expanded="false"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></span><span>Más</span></button>
+      <button class="ag-mobile-nav__item" type="button" data-ag-shell-open data-ag-shell-more data-ag-shell-sections="growth,growth-opportunities,messages,configuration,services,staff,schedule,channels,channel-instagram,channel-whatsapp,business,public-page,reviews" aria-controls="admin-sidebar" aria-expanded="false"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></span><span>Más</span></button>
     </nav>
     </div>
   </main>
