@@ -28,6 +28,7 @@ from app.services.conversation_automation_state_service import (
 from app.services.incident_service import INSTAGRAM_AUTH_CLIENT_MESSAGE
 from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
 from app.services.message_outbox_service import build_whatsapp_url
+from app.services.meta_integration_job_service import integration_health_blocks_delivery
 from app.services.outbox_queue_service import create_channel_outbox
 from app.services.whatsapp_provider import (
     WHATSAPP_PHONE_NUMBER_ID_PATTERN,
@@ -386,6 +387,7 @@ def integration_is_ready(integration: BusinessChannelIntegration | None) -> bool
         and integration.encrypted_access_token
         and integration.encryption_key_version
         and not integration_credentials_expired(integration)
+        and not integration_health_blocks_delivery(integration)
     )
 
 
@@ -644,8 +646,8 @@ def send_outbound_message(
         policy_blocked = True
         delivery_status = "blocked"
         client_error_message = (
-                f"El canal {conversation.channel.title()} no está habilitado para este negocio. "
-                "Contacta con el equipo de AutonoGrow."
+            f"El canal {conversation.channel.title()} no está habilitado para este negocio. "
+            "Contacta con el equipo de AutonoGrow."
         )
     if provider is not None and not policy_blocked:
         integration_ready = bool(

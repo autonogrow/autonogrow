@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import math
 from collections import defaultdict
+from datetime import datetime
 from threading import Lock
 
 from fastapi import HTTPException, Request
@@ -11,11 +12,13 @@ from sqlalchemy import func
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal, safe_database_pool_status
 from app.models import (
+    AuditLog,
     AutomationCreditTransaction,
     BackupRecord,
     Booking,
     BusinessChannelIntegration,
     ChannelOutboxMessage,
+    MetaIntegrationJob,
     SystemIncident,
     WebhookInboxEvent,
     WorkerHeartbeat,
@@ -143,6 +146,97 @@ def render_metrics() -> str:
                 func.count(BusinessChannelIntegration.id),
             ).group_by(BusinessChannelIntegration.integration_status):
                 _metric(lines, "autonogrow_integrations", value, status=status)
+            for status, value in db.query(
+                BusinessChannelIntegration.health_status,
+                func.count(BusinessChannelIntegration.id),
+            ).group_by(BusinessChannelIntegration.health_status):
+                _metric(lines, "autonogrow_meta_integrations_health", value, status=status)
+            for job_type, status, value in db.query(
+                MetaIntegrationJob.job_type,
+                MetaIntegrationJob.status,
+                func.count(MetaIntegrationJob.id),
+            ).group_by(MetaIntegrationJob.job_type, MetaIntegrationJob.status):
+                _metric(
+                    lines,
+                    "autonogrow_meta_integration_jobs",
+                    value,
+                    job_type=job_type,
+                    status=status,
+                )
+            health_jobs = db.query(MetaIntegrationJob).filter(
+                MetaIntegrationJob.job_type == "health_check"
+            )
+            _metric(
+                lines,
+                "autonogrow_meta_integration_checks_scheduled_total",
+                health_jobs.count(),
+            )
+            _metric(
+                lines,
+                "autonogrow_meta_integration_checks_started_total",
+                health_jobs.with_entities(
+                    func.coalesce(func.sum(MetaIntegrationJob.attempt_count), 0)
+                ).scalar(),
+            )
+            _metric(
+                lines,
+                "autonogrow_meta_integration_checks_succeeded_total",
+                health_jobs.filter(MetaIntegrationJob.status == "completed").count(),
+            )
+            _metric(
+                lines,
+                "autonogrow_meta_integration_checks_failed_total",
+                health_jobs.filter(
+                    MetaIntegrationJob.status.in_(("failed", "dead_letter"))
+                ).count(),
+            )
+            duration_count, duration_sum = (
+                db.query(
+                    func.count(MetaIntegrationJob.id),
+                    func.coalesce(func.sum(MetaIntegrationJob.duration_ms), 0),
+                )
+                .filter(MetaIntegrationJob.duration_ms.is_not(None))
+                .one()
+            )
+            _metric(lines, "autonogrow_meta_integration_job_duration_ms_count", duration_count)
+            _metric(lines, "autonogrow_meta_integration_job_duration_ms_sum", duration_sum)
+            oldest_meta_job = (
+                db.query(func.min(MetaIntegrationJob.available_at))
+                .filter(MetaIntegrationJob.status.in_(("queued", "retry")))
+                .scalar()
+            )
+            oldest_age = (
+                max(0.0, (datetime.utcnow() - oldest_meta_job).total_seconds())
+                if oldest_meta_job
+                else 0
+            )
+            _metric(lines, "autonogrow_meta_integration_oldest_queued_seconds", oldest_age)
+            last_cleanup = (
+                db.query(MetaIntegrationJob.completed_at)
+                .filter(
+                    MetaIntegrationJob.job_type == "attempt_cleanup",
+                    MetaIntegrationJob.status == "completed",
+                )
+                .order_by(MetaIntegrationJob.completed_at.desc())
+                .first()
+            )
+            _metric(
+                lines,
+                "autonogrow_meta_integration_last_maintenance_timestamp_seconds",
+                last_cleanup[0].timestamp() if last_cleanup and last_cleanup[0] else 0,
+            )
+            for action in (
+                "integration_recovered",
+                "reconnection_requested",
+                "subscription_retry_succeeded",
+                "expired_attempt_cleaned",
+                "candidate_credentials_destroyed",
+            ):
+                _metric(
+                    lines,
+                    f"autonogrow_{action}_total",
+                    db.query(AuditLog).filter(AuditLog.action == action).count(),
+                )
             for status, value in db.query(Booking.status, func.count(Booking.id)).group_by(
                 Booking.status
             ):

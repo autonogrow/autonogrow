@@ -122,6 +122,16 @@ class Settings(BaseSettings):
     whatsapp_embedded_signup_graph_api_version: str = ""
     whatsapp_embedded_signup_attempt_ttl_seconds: int = 600
     whatsapp_embedded_signup_test_only: bool = False
+    meta_integration_health_check_enabled: bool = True
+    meta_integration_health_check_interval_hours: int = 24
+    meta_token_expiry_warning_days: int = 14
+    meta_token_expiry_critical_days: int = 3
+    meta_integration_failure_threshold: int = 3
+    meta_integration_cleanup_interval_hours: int = 24
+    meta_expired_attempt_retention_days: int = 7
+    meta_integration_health_batch_size: int = 5
+    meta_integration_health_job_timeout_seconds: int = 20
+    meta_integration_health_lock_ttl_seconds: int = 180
     integration_encryption_keys_json: str = ""
     integration_encryption_active_key_version: str = "v1"
     incident_alerts_enabled: bool = False
@@ -368,6 +378,66 @@ class Settings(BaseSettings):
             raise ValueError("INSTAGRAM_LOGIN_GRAPH_API_VERSION no es válida")
         if self.instagram_simulated_onboarding_test_only and self.app_env != "test":
             raise ValueError("INSTAGRAM_SIMULATED_ONBOARDING_TEST_ONLY solo se permite en test")
+        health_ranges = (
+            (
+                "META_INTEGRATION_HEALTH_CHECK_INTERVAL_HOURS",
+                self.meta_integration_health_check_interval_hours,
+                1,
+                168,
+            ),
+            ("META_TOKEN_EXPIRY_WARNING_DAYS", self.meta_token_expiry_warning_days, 2, 90),
+            ("META_TOKEN_EXPIRY_CRITICAL_DAYS", self.meta_token_expiry_critical_days, 1, 30),
+            (
+                "META_INTEGRATION_FAILURE_THRESHOLD",
+                self.meta_integration_failure_threshold,
+                2,
+                20,
+            ),
+            (
+                "META_INTEGRATION_CLEANUP_INTERVAL_HOURS",
+                self.meta_integration_cleanup_interval_hours,
+                1,
+                168,
+            ),
+            (
+                "META_EXPIRED_ATTEMPT_RETENTION_DAYS",
+                self.meta_expired_attempt_retention_days,
+                1,
+                365,
+            ),
+            (
+                "META_INTEGRATION_HEALTH_BATCH_SIZE",
+                self.meta_integration_health_batch_size,
+                1,
+                50,
+            ),
+            (
+                "META_INTEGRATION_HEALTH_JOB_TIMEOUT_SECONDS",
+                self.meta_integration_health_job_timeout_seconds,
+                1,
+                300,
+            ),
+            (
+                "META_INTEGRATION_HEALTH_LOCK_TTL_SECONDS",
+                self.meta_integration_health_lock_ttl_seconds,
+                10,
+                3600,
+            ),
+        )
+        for name, value, minimum, maximum in health_ranges:
+            if not minimum <= value <= maximum:
+                raise ValueError(f"{name} debe estar entre {minimum} y {maximum}")
+        if self.meta_token_expiry_warning_days <= self.meta_token_expiry_critical_days:
+            raise ValueError(
+                "META_TOKEN_EXPIRY_WARNING_DAYS debe superar META_TOKEN_EXPIRY_CRITICAL_DAYS"
+            )
+        if (
+            self.meta_integration_health_lock_ttl_seconds
+            <= self.meta_integration_health_job_timeout_seconds * 6
+        ):
+            raise ValueError(
+                "META_INTEGRATION_HEALTH_LOCK_TTL_SECONDS debe superar seis veces el timeout"
+            )
         if not 0.1 <= self.worker_poll_interval_seconds <= 60:
             raise ValueError("WORKER_POLL_INTERVAL_SECONDS debe estar entre 0.1 y 60")
         if not 1 <= self.worker_batch_size <= 100:

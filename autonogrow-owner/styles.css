@@ -39,6 +39,10 @@ code { background: #eef1ed; border-radius: 6px; padding: 2px 6px; font-size: .84
 .state-badge.active, .health-badge.healthy { color: #0a6a42; background: #ddf4e8; }
 .state-badge.inactive, .health-badge.missing { color: #98413d; background: #f9e4e1; }
 .health-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0; }
+.owner-integration-health { border-left: 4px solid #6b7280; background: #f6f7f8; padding: 10px 12px; margin: 10px 0; }
+.owner-integration-health.state-healthy { border-color: #0a6a42; background: #eefaf3; }
+.owner-integration-health.state-warning, .owner-integration-health.state-degraded { border-color: #b7791f; background: #fff8e8; }
+.owner-integration-health.state-action_required, .owner-integration-health.state-revoked, .owner-integration-health.state-suspended, .owner-integration-health.state-error { border-color: #98413d; background: #fff0ee; }
 .metrics-grid { display: grid; grid-template-columns: repeat(5, 1fr); border-block: 1px solid var(--line); padding: 14px 0; margin-bottom: 16px; }
 .metrics-grid span { color: var(--muted); text-align: center; font-size: .7rem; }
 .metrics-grid strong { display: block; color: var(--ink); font-size: 1.2rem; }

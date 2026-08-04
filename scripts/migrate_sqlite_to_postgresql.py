@@ -61,6 +61,7 @@ COPY_ORDER = (
     "business_channel_controls",
     "instagram_oauth_attempts",
     "whatsapp_embedded_signup_attempts",
+    "meta_integration_jobs",
     "system_incidents",
     "audit_logs",
     "business_gallery_images",
@@ -83,6 +84,7 @@ OPTIONAL_SOURCE_TABLES = (
     "business_channel_controls",
     "instagram_oauth_attempts",
     "whatsapp_embedded_signup_attempts",
+    "meta_integration_jobs",
     "operational_states",
     "backup_records",
 )
@@ -99,6 +101,16 @@ DESTINATION_ONLY_TABLES = ("alembic_version",)
 ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
     "business_channel_integrations": {
         "provider_account_id": {"action": "omit_as_null", "expected_value": None},
+        "health_status": {"action": "use_destination_default", "expected_value": "unknown"},
+        "last_health_check_at": {"action": "omit_as_null", "expected_value": None},
+        "next_health_check_at": {"action": "omit_as_null", "expected_value": None},
+        "consecutive_health_failures": {
+            "action": "use_destination_default",
+            "expected_value": 0,
+        },
+        "health_error_code": {"action": "omit_as_null", "expected_value": None},
+        "health_safe_error_message": {"action": "omit_as_null", "expected_value": None},
+        "health_metadata_json": {"action": "omit_as_null", "expected_value": None},
     },
     "businesses": {
         "whatsapp_phone": {"action": "omit_as_null", "expected_value": None},
@@ -218,7 +230,13 @@ CRITICAL_CHECKSUM_COLUMNS = {
         }
     ),
     "business_channel_integrations": frozenset(
-        {"integration_status", "encryption_key_version", "external_account_id"}
+        {
+            "integration_status",
+            "health_status",
+            "consecutive_health_failures",
+            "encryption_key_version",
+            "external_account_id",
+        }
     ),
     "instagram_oauth_attempts": frozenset(
         {
@@ -236,6 +254,9 @@ CRITICAL_CHECKSUM_COLUMNS = {
             "candidate_waba_id",
             "candidate_phone_number_id",
         }
+    ),
+    "meta_integration_jobs": frozenset(
+        {"job_type", "status", "idempotency_key", "origin", "attempt_count"}
     ),
     "webhook_inbox_events": frozenset({"idempotency_key", "payload_hash", "status"}),
     "channel_outbox_messages": frozenset({"idempotency_key", "status"}),

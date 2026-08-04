@@ -28,6 +28,7 @@ MODEL_MODULES = (
     "app.models.instagram_oauth_attempt",
     "app.models.whatsapp_embedded_signup_attempt",
     "app.models.message_outbox",
+    "app.models.meta_integration_job",
     "app.models.operations",
     "app.models.review_request",
     "app.models.service",

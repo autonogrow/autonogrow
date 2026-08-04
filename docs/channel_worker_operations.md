@@ -35,3 +35,5 @@ sudo journalctl -u autonogrow-worker -f
 SIGTERM y SIGINT solicitan parada ordenada. Los trabajos ya reclamados que no terminen vuelven a ser elegibles al expirar `lock_expires_at`. El heartbeat se considera stale después de `WORKER_STALE_AFTER_SECONDS`.
 
 La limpieza es dry-run por defecto: `python scripts/cleanup_queue_history.py`; para aplicar: `python scripts/cleanup_queue_history.py --apply`.
+
+Desde Sprint 4D el mismo proceso reclama `meta_integration_jobs` después de inbox/outbox. Programa health checks vencidos y limpieza acotada, persiste el claim antes de descifrar y llama a Meta sin transacción abierta. PostgreSQL usa `SKIP LOCKED`; SQLite permanece single-worker. Operación y recuperación: `meta_integration_health_architecture.md` y `meta_integration_recovery_runbook.md`.

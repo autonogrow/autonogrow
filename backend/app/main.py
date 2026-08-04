@@ -39,6 +39,8 @@ from app.routers.instagram_oauth import callback_router as instagram_oauth_callb
 from app.routers.instagram_oauth import owner_router as instagram_oauth_owner_router
 from app.routers.instagram_webhook import router as instagram_webhook_router
 from app.routers.media import router as media_router
+from app.routers.meta_integration_health import admin_router as meta_health_admin_router
+from app.routers.meta_integration_health import owner_router as meta_health_owner_router
 from app.routers.owner import router as owner_router
 from app.routers.owner_onboarding import router as owner_onboarding_router
 from app.routers.services import router as services_router
@@ -133,6 +135,8 @@ app.include_router(admin_router)
 app.include_router(channel_onboarding_router)
 app.include_router(owner_router)
 app.include_router(owner_channel_controls_router)
+app.include_router(meta_health_owner_router)
+app.include_router(meta_health_admin_router)
 app.include_router(owner_onboarding_router)
 app.include_router(media_router)
 app.include_router(customer_router)

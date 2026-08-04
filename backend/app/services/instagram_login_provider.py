@@ -47,6 +47,13 @@ def _version(settings: Settings) -> str:
     return version
 
 
+def _response_status_code(response: object) -> int:
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    return 200 if getattr(response, "ok", False) else 400
+
+
 def build_instagram_authorization_url(state: str, *, settings: Settings | None = None) -> str:
     settings = settings or get_settings()
     query = urlencode(
@@ -81,9 +88,13 @@ def exchange_instagram_authorization_code(
             timeout=timeout_seconds,
         )
     except requests.Timeout as exc:
-        raise InstagramLoginProviderError("token_exchange_timeout", "Instagram did not respond") from exc
+        raise InstagramLoginProviderError(
+            "token_exchange_timeout", "Instagram did not respond"
+        ) from exc
     except requests.RequestException as exc:
-        raise InstagramLoginProviderError("token_exchange_failed", "Instagram authorization failed") from exc
+        raise InstagramLoginProviderError(
+            "token_exchange_failed", "Instagram authorization failed"
+        ) from exc
     try:
         payload = response.json()
     except ValueError:
@@ -91,7 +102,9 @@ def exchange_instagram_authorization_code(
     token = payload.get("access_token") if isinstance(payload, dict) else None
     raw_permissions = payload.get("permissions") if isinstance(payload, dict) else None
     if not response.ok or not isinstance(token, str) or not token.strip():
-        raise InstagramLoginProviderError("token_exchange_rejected", "Instagram authorization was rejected")
+        raise InstagramLoginProviderError(
+            "token_exchange_rejected", "Instagram authorization was rejected"
+        )
     if isinstance(raw_permissions, str):
         permissions = {item.strip() for item in raw_permissions.split(",") if item.strip()}
     elif isinstance(raw_permissions, list):
@@ -131,9 +144,13 @@ def exchange_instagram_long_lived_token(
             timeout=timeout_seconds,
         )
     except requests.Timeout as exc:
-        raise InstagramLoginProviderError("long_lived_token_timeout", "Instagram did not respond") from exc
+        raise InstagramLoginProviderError(
+            "long_lived_token_timeout", "Instagram did not respond"
+        ) from exc
     except requests.RequestException as exc:
-        raise InstagramLoginProviderError("long_lived_token_failed", "Instagram token exchange failed") from exc
+        raise InstagramLoginProviderError(
+            "long_lived_token_failed", "Instagram token exchange failed"
+        ) from exc
     try:
         payload = response.json()
     except ValueError:
@@ -141,7 +158,9 @@ def exchange_instagram_long_lived_token(
     token = payload.get("access_token") if isinstance(payload, dict) else None
     expires_in = payload.get("expires_in") if isinstance(payload, dict) else None
     if not response.ok or not isinstance(token, str) or not token.strip():
-        raise InstagramLoginProviderError("long_lived_token_rejected", "Instagram token exchange was rejected")
+        raise InstagramLoginProviderError(
+            "long_lived_token_rejected", "Instagram token exchange was rejected"
+        )
     expires_at = None
     if isinstance(expires_in, (int, float)) and 0 < expires_in <= 366 * 24 * 60 * 60:
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
@@ -170,14 +189,25 @@ def get_instagram_account_profile(
     except requests.Timeout as exc:
         raise InstagramLoginProviderError("profile_timeout", "Instagram did not respond") from exc
     except requests.RequestException as exc:
-        raise InstagramLoginProviderError("profile_failed", "Instagram account validation failed") from exc
+        raise InstagramLoginProviderError(
+            "profile_failed", "Instagram account validation failed"
+        ) from exc
     try:
         payload = response.json()
     except ValueError:
         payload = {}
     scoped_id = str(payload.get("id") or "").strip() if isinstance(payload, dict) else ""
-    routing_id = str(payload.get("user_id") or scoped_id).strip() if isinstance(payload, dict) else ""
-    account_type = str(payload.get("account_type") or "").strip().upper() if isinstance(payload, dict) else ""
+    routing_id = (
+        str(payload.get("user_id") or scoped_id).strip() if isinstance(payload, dict) else ""
+    )
+    account_type = (
+        str(payload.get("account_type") or "").strip().upper() if isinstance(payload, dict) else ""
+    )
+    status_code = _response_status_code(response)
+    if status_code == 429 or status_code >= 500:
+        raise InstagramLoginProviderError(
+            "profile_failed", "Instagram account validation is temporarily unavailable"
+        )
     if not response.ok or not scoped_id or not routing_id:
         raise InstagramLoginProviderError("profile_rejected", "Instagram account validation failed")
     if account_type not in INSTAGRAM_PROFESSIONAL_ACCOUNT_TYPES:
@@ -203,7 +233,9 @@ def subscribe_instagram_messages_webhook(
 ) -> None:
     settings = settings or get_settings()
     if not re.fullmatch(r"[A-Za-z0-9_-]+", external_account_id):
-        raise InstagramLoginProviderError("account_id_invalid", "Instagram account validation failed")
+        raise InstagramLoginProviderError(
+            "account_id_invalid", "Instagram account validation failed"
+        )
     try:
         response = requests.post(
             f"https://graph.instagram.com/{_version(settings)}/{external_account_id}/subscribed_apps",
@@ -212,12 +244,81 @@ def subscribe_instagram_messages_webhook(
             timeout=timeout_seconds,
         )
     except requests.Timeout as exc:
-        raise InstagramLoginProviderError("webhook_subscription_timeout", "Instagram did not respond") from exc
+        raise InstagramLoginProviderError(
+            "webhook_subscription_timeout", "Instagram did not respond"
+        ) from exc
     except requests.RequestException as exc:
-        raise InstagramLoginProviderError("webhook_subscription_failed", "Instagram webhook setup failed") from exc
+        raise InstagramLoginProviderError(
+            "webhook_subscription_failed", "Instagram webhook setup failed"
+        ) from exc
     try:
         payload = response.json()
     except ValueError:
         payload = {}
+    status_code = _response_status_code(response)
+    if status_code == 429 or status_code >= 500:
+        raise InstagramLoginProviderError(
+            "webhook_subscription_failed", "Instagram webhook setup is temporarily unavailable"
+        )
     if not response.ok or not isinstance(payload, dict) or payload.get("success") is not True:
-        raise InstagramLoginProviderError("webhook_subscription_rejected", "Instagram webhook setup failed")
+        raise InstagramLoginProviderError(
+            "webhook_subscription_rejected", "Instagram webhook setup failed"
+        )
+
+
+def instagram_messages_subscription_active(
+    external_account_id: str,
+    access_token: str,
+    *,
+    settings: Settings | None = None,
+    timeout_seconds: float = 10.0,
+) -> bool:
+    """Return whether this app is subscribed to the messages field.
+
+    Only the bounded subscription fields are interpreted; the provider response
+    is never returned to callers or persisted.
+    """
+    settings = settings or get_settings()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", external_account_id):
+        raise InstagramLoginProviderError(
+            "account_id_invalid", "Instagram account validation failed"
+        )
+    try:
+        response = requests.get(
+            f"https://graph.instagram.com/{_version(settings)}/{external_account_id}/subscribed_apps",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=timeout_seconds,
+        )
+    except requests.Timeout as exc:
+        raise InstagramLoginProviderError(
+            "webhook_inspection_timeout", "Instagram did not respond"
+        ) from exc
+    except requests.RequestException as exc:
+        raise InstagramLoginProviderError(
+            "webhook_inspection_failed", "Instagram webhook status could not be checked"
+        ) from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    data = payload.get("data") if isinstance(payload, dict) else None
+    status_code = _response_status_code(response)
+    if status_code == 429 or status_code >= 500:
+        raise InstagramLoginProviderError(
+            "webhook_inspection_failed",
+            "Instagram webhook status is temporarily unavailable",
+        )
+    if not response.ok or not isinstance(data, list):
+        raise InstagramLoginProviderError(
+            "webhook_inspection_rejected", "Instagram webhook status could not be checked"
+        )
+    expected_app_id = settings.instagram_login_client_id.strip()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        if expected_app_id and str(item.get("id") or "") != expected_app_id:
+            continue
+        fields = item.get("subscribed_fields")
+        if isinstance(fields, list) and "messages" in fields:
+            return True
+    return False

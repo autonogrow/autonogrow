@@ -6,6 +6,8 @@ Contrato revisado el 3 de agosto de 2026 contra la documentación oficial de Met
 [suscripción de webhooks](https://www.postman.com/meta/instagram/request/23987686-0223707a-7035-46a2-8015-1fdf7249278f).
 La versión validada por código y tests es `v23.0`, configurable mediante
 `INSTAGRAM_LOGIN_GRAPH_API_VERSION`; no modifica `META_GRAPH_API_VERSION` de otras rutas.
+
+Sprint 4D comprueba periódicamente perfil profesional, cuenta, expiración conocida y `messages` en `subscribed_apps`. Puede reparar únicamente esa suscripción idempotente. OAuth y permisos nuevos siempre requieren interacción y nueva aprobación Owner.
 Antes de desplegar debe confirmarse que esa versión está habilitada en el panel Meta.
 
 ## Flujo y autoridad

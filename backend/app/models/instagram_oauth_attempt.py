@@ -79,7 +79,9 @@ class InstagramOAuthAttempt(Base):
     session_fingerprint_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     return_path: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     candidate_external_account_id: Mapped[str | None] = mapped_column(String(255), index=True)

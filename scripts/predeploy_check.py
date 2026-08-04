@@ -89,6 +89,9 @@ def check_required_files(reporter: Reporter) -> None:
         "docs/final_release_validation_matrix.md",
         "docs/persistent_queue_architecture.md",
         "docs/channel_worker_operations.md",
+        "docs/meta_integration_health_architecture.md",
+        "docs/manual_test_meta_integration_health.md",
+        "docs/meta_integration_recovery_runbook.md",
         "docs/whatsapp_cloud_api_inbound_architecture.md",
         "docs/manual_test_whatsapp_cloud_api_inbound.md",
         "docs/whatsapp_cloud_api_outbound_architecture.md",
@@ -164,6 +167,7 @@ def check_required_files(reporter: Reporter) -> None:
         "alembic/versions/20260730_06_add_operational_state.py",
         "alembic/versions/20260803_08_add_instagram_oauth_attempts.py",
         "alembic/versions/20260803_09_add_whatsapp_embedded_signup_attempts.py",
+        "alembic/versions/20260804_10_add_meta_integration_health.py",
         "docs/whatsapp_embedded_signup_architecture.md",
         "docs/manual_test_whatsapp_embedded_signup.md",
         "deploy/autonogrow-operational-check.service",
@@ -370,8 +374,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260803_09":
-            reporter.fail("La head operativa esperada es 20260803_09")
+        if heads[0] != "20260804_10":
+            reporter.fail("La head operativa esperada es 20260804_10")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 
@@ -966,6 +970,63 @@ def check_whatsapp_embedded_signup_contract(reporter: Reporter) -> None:
         reporter.fail("Frontend Embedded Signup contiene marcadores sensibles")
 
 
+def check_meta_integration_health_contract(reporter: Reporter) -> None:
+    from app.core.database import Base
+    from app.models.registry import register_models
+    from app.services.meta_integration_health_checkers import INTEGRATION_HEALTH_CHECKERS
+
+    register_models()
+    integration = Base.metadata.tables.get("business_channel_integrations")
+    jobs = Base.metadata.tables.get("meta_integration_jobs")
+    required_health_columns = {
+        "health_status",
+        "last_health_check_at",
+        "next_health_check_at",
+        "consecutive_health_failures",
+        "health_error_code",
+        "health_safe_error_message",
+        "health_metadata_json",
+    }
+    if (
+        integration is not None
+        and required_health_columns <= {column.name for column in integration.columns}
+        and jobs is not None
+    ):
+        reporter.passed("Persistencia de salud Meta registrada")
+    else:
+        reporter.fail("Falta persistencia de salud Meta")
+    if set(INTEGRATION_HEALTH_CHECKERS) == {"instagram", "whatsapp"}:
+        reporter.passed("Checkers Meta registrados sin proveedor controlable")
+    else:
+        reporter.fail("Registro de checkers Meta inesperado")
+    env_text = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8-sig")
+        for path in (
+            "backend/.env.example",
+            "deploy/backend.env.example",
+            "deploy/staging.backend.env.example",
+        )
+    )
+    required_vars = {
+        "META_INTEGRATION_HEALTH_CHECK_ENABLED",
+        "META_INTEGRATION_HEALTH_CHECK_INTERVAL_HOURS",
+        "META_TOKEN_EXPIRY_WARNING_DAYS",
+        "META_TOKEN_EXPIRY_CRITICAL_DAYS",
+        "META_INTEGRATION_HEALTH_BATCH_SIZE",
+        "META_INTEGRATION_HEALTH_LOCK_TTL_SECONDS",
+    }
+    if required_vars <= {line.split("=", 1)[0] for line in env_text.splitlines() if "=" in line}:
+        reporter.passed("Configuración Meta health documentada")
+    else:
+        reporter.fail("Faltan variables Meta health")
+    worker = (ROOT / "backend/app/workers/channel_worker.py").read_text(encoding="utf-8-sig")
+    forbidden = ("send_instagram_text_message(", "send_whatsapp_text_message(")
+    if "schedule_due_meta_jobs" in worker and not any(value in worker for value in forbidden):
+        reporter.passed("Predeploy valida registro sin ejecutar llamadas Meta")
+    else:
+        reporter.fail("Contrato del scheduler Meta inesperado")
+
+
 def main() -> int:
     reporter = Reporter()
     check_required_files(reporter)
@@ -980,6 +1041,7 @@ def main() -> int:
     check_whatsapp_contract(reporter)
     check_instagram_login_contract(reporter)
     check_whatsapp_embedded_signup_contract(reporter)
+    check_meta_integration_health_contract(reporter)
     check_tracked_secrets(reporter)
     Settings = check_application(reporter)
     if Settings is not None:

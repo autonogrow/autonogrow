@@ -297,23 +297,28 @@ function ownerWhatsAppCandidate(candidate) {
 
 function renderOwnerChannelControls(panel, data) {
   const names = { instagram: "Instagram", whatsapp: "WhatsApp" };
+  const healthByChannel = Object.fromEntries((data.health_channels || []).map((item) => [item.channel, item]));
   panel.querySelector("[data-owner-channel-control-content]").innerHTML = `<p class="helper">Instagram y WhatsApp usan los flujos oficiales de Meta. Aprobar una cuenta no activa por sí solo el envío ni la automatización.</p><div class="owner-channel-control-grid">${data.channels.map((channel) => {
+    const health = healthByChannel[channel.channel];
     const policy = `<select data-owner-channel-policy="${escapeHtml(channel.channel)}"><option value="business_admin" ${channel.connector_policy === "business_admin" ? "selected" : ""}>Administrador del negocio</option><option value="owner_only" ${channel.connector_policy === "owner_only" ? "selected" : ""}>Solo Owner</option></select>`;
     let actions = `<label>Quién puede solicitar${policy}</label><button class="button button-primary button-small" type="button" data-owner-channel-action="grant" data-channel="${escapeHtml(channel.channel)}">${channel.status === "not_allowed" ? "Conceder permiso" : "Guardar permiso"}</button>`;
     if (channel.status === "available" && channel.connector_policy === "owner_only") actions += channel.channel === "instagram" ? `<button class="button button-primary button-small" type="button" data-owner-channel-action="oauth-start" data-channel="instagram">Conectar con Instagram</button>` : `<button class="button button-secondary button-small" type="button" data-owner-channel-action="request" data-channel="${escapeHtml(channel.channel)}">Iniciar conexión controlada</button>`;
     if (channel.status === "pending_approval" && channel.connection_mode === "simulated" && channel.channel !== "instagram") actions += `<button class="button button-primary button-small" type="button" data-owner-channel-action="approve" data-channel="${escapeHtml(channel.channel)}">Aprobar uso</button>`;
     if (channel.status === "approved") actions += `<label class="checkbox-row"><input type="checkbox" data-owner-channel-delivery="${escapeHtml(channel.channel)}" ${channel.integrated_delivery_enabled ? "checked" : ""}> Envío integrado</label><label class="checkbox-row"><input type="checkbox" data-owner-channel-automation="${escapeHtml(channel.channel)}" ${channel.automation_enabled ? "checked" : ""}> Automatización</label><button class="button button-primary button-small" type="button" data-owner-channel-action="capabilities" data-channel="${escapeHtml(channel.channel)}">Guardar activaciones</button>`;
     if (!["not_allowed", "revoked"].includes(channel.status)) actions += `<button class="button button-danger button-small" type="button" data-owner-channel-action="suspend" data-channel="${escapeHtml(channel.channel)}">Suspender</button><button class="button button-danger button-small" type="button" data-owner-channel-action="revoke" data-channel="${escapeHtml(channel.channel)}">Revocar</button>`;
+    if (health) actions += `<button class="button button-secondary button-small" type="button" data-owner-channel-action="health-check" data-channel="${escapeHtml(channel.channel)}">Comprobar ahora</button>${health.subscription_status === "missing" ? `<button class="button button-secondary button-small" type="button" data-owner-channel-action="retry-subscription" data-channel="${escapeHtml(channel.channel)}">Reintentar suscripción</button>` : ""}${health.reconnection_required && channel.channel === "instagram" ? `<button class="button button-primary button-small" type="button" data-owner-channel-action="health-reconnect" data-channel="instagram">Reconectar</button>` : ""}${health.reconnection_required && channel.channel === "whatsapp" ? `<a class="button button-primary button-small" href="../autonogrow-admin/index.html?b=${escapeHtml(data.business.slug)}#channels">Abrir onboarding</a>` : ""}`;
     const candidates = channel.channel === "whatsapp" ? (data.whatsapp_candidates || []).map(ownerWhatsAppCandidate).join("") : "";
-    return `<article class="owner-channel-control-card"><div class="owner-integration-heading"><h4>${escapeHtml(names[channel.channel])}</h4><span class="state-badge ${channel.status === "approved" ? "active" : "inactive"}">${escapeHtml(ownerChannelControlStatusLabel(channel.status))}</span></div>${candidates}<div class="owner-channel-control-actions">${actions}</div></article>`;
+    const healthPanel = health ? `<div class="owner-integration-health state-${escapeHtml(health.health_status)}"><p><strong>Salud: ${escapeHtml(health.health_status)}</strong></p><p>Última: ${escapeHtml(formatAutomationDate(health.last_health_check_at))} · Próxima: ${escapeHtml(formatAutomationDate(health.next_health_check_at))}</p><p>Token: ${escapeHtml(health.token_expiry_status)} · Suscripción: ${escapeHtml(health.subscription_status)} · Activo: ${escapeHtml(health.asset_status)}</p><p>Fallos consecutivos: ${Number(health.consecutive_health_failures || 0)}</p>${health.safe_error_message ? `<p>${escapeHtml(health.safe_error_message)}</p>` : ""}</div>` : `<p class="helper">Sin integración operativa.</p>`;
+    return `<article class="owner-channel-control-card"><div class="owner-integration-heading"><h4>${escapeHtml(names[channel.channel])}</h4><span class="state-badge ${channel.status === "approved" ? "active" : "inactive"}">${escapeHtml(ownerChannelControlStatusLabel(channel.status))}</span></div>${healthPanel}${candidates}<div class="owner-channel-control-actions">${actions}</div></article>`;
   }).join("")}</div><p data-owner-channel-feedback class="status-text"></p>`;
 }
 
 async function loadOwnerChannelControls(panel) {
   const businessId = panel.dataset.ownerChannelControlId;
-  const [response, candidateResponse] = await Promise.all([
+  const [response, candidateResponse, healthResponse] = await Promise.all([
     fetch(`${API_BASE_URL}/api/owner/businesses/${businessId}/channel-controls`),
-    fetch(`${API_BASE_URL}/api/owner/businesses/${businessId}/integrations/whatsapp/embedded-signup/candidates`)
+    fetch(`${API_BASE_URL}/api/owner/businesses/${businessId}/integrations/whatsapp/embedded-signup/candidates`),
+    fetch(`${API_BASE_URL}/api/owner/businesses/${businessId}/channels/health`)
   ]);
   const body = await readResponseBody(response);
   if (!response.ok) {
@@ -321,6 +326,7 @@ async function loadOwnerChannelControls(panel) {
     return;
   }
   body.whatsapp_candidates = candidateResponse.ok ? await candidateResponse.json() : [];
+  body.health_channels = healthResponse.ok ? (await healthResponse.json()).channels : [];
   renderOwnerChannelControls(panel, body);
 }
 
@@ -332,7 +338,10 @@ async function handleOwnerChannelControlAction(button) {
   let url = `${base}/${action}`;
   let method = "POST";
   let payload = {};
-  if (["whatsapp-approve", "whatsapp-reject", "whatsapp-retry"].includes(action)) {
+  if (["health-check", "retry-subscription", "health-reconnect"].includes(action)) {
+    const healthBase = `${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerChannelControlId}/channels/${encodeURIComponent(channel)}`;
+    url = `${healthBase}/${action === "health-reconnect" ? "request-reconnection" : action}`;
+  } else if (["whatsapp-approve", "whatsapp-reject", "whatsapp-retry"].includes(action)) {
     const signupBase = `${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerChannelControlId}/integrations/whatsapp/embedded-signup/candidates/${encodeURIComponent(button.dataset.attemptId)}`;
     if (action === "whatsapp-retry") {
       url = `${signupBase}/setup/retry`;
@@ -366,6 +375,11 @@ async function handleOwnerChannelControlAction(button) {
   const body = await readResponseBody(response);
   if (!response.ok) { button.disabled = false; throw new Error(body.detail || "No se pudo actualizar el canal"); }
   if (action === "oauth-start") {
+    if (!String(body.authorization_url || "").startsWith("https://www.instagram.com/oauth/authorize?")) throw new Error("Meta devolvió una URL de autorización no válida.");
+    window.location.assign(body.authorization_url);
+    return;
+  }
+  if (action === "health-reconnect" && channel === "instagram") {
     if (!String(body.authorization_url || "").startsWith("https://www.instagram.com/oauth/authorize?")) throw new Error("Meta devolvió una URL de autorización no válida.");
     window.location.assign(body.authorization_url);
     return;

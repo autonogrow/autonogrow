@@ -1,6 +1,15 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -12,6 +21,17 @@ INTEGRATION_STATUSES = (
     "expired",
     "disconnected",
     "revoked",
+    "error",
+)
+
+INTEGRATION_HEALTH_STATUSES = (
+    "unknown",
+    "healthy",
+    "warning",
+    "degraded",
+    "action_required",
+    "revoked",
+    "suspended",
     "error",
 )
 
@@ -33,6 +53,15 @@ class BusinessChannelIntegration(Base):
             "integration_status IN ('pending','connected','degraded','expired',"
             "'disconnected','revoked','error')",
             name="ck_channel_integration_status",
+        ),
+        CheckConstraint(
+            "health_status IN ('unknown','healthy','warning','degraded','action_required',"
+            "'revoked','suspended','error')",
+            name="ck_channel_integration_health_status",
+        ),
+        CheckConstraint(
+            "consecutive_health_failures >= 0",
+            name="ck_channel_integration_health_failures",
         ),
         CheckConstraint(
             "(encrypted_access_token IS NULL AND encryption_key_version IS NULL) OR "
@@ -81,6 +110,17 @@ class BusinessChannelIntegration(Base):
     last_error_type: Mapped[str | None] = mapped_column(String(120))
     safe_error_message: Mapped[str | None] = mapped_column(String(500))
     metadata_json: Mapped[str | None] = mapped_column(Text)
+    health_status: Mapped[str] = mapped_column(
+        String(30), default="unknown", server_default="unknown", nullable=False, index=True
+    )
+    last_health_check_at: Mapped[datetime | None] = mapped_column(DateTime)
+    next_health_check_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    consecutive_health_failures: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    health_error_code: Mapped[str | None] = mapped_column(String(80))
+    health_safe_error_message: Mapped[str | None] = mapped_column(String(500))
+    health_metadata_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

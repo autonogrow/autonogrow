@@ -102,6 +102,18 @@ def _start(
         metadata={"attempt_id": attempt.id, "purpose": attempt.purpose},
         commit=False,
     )
+    if attempt.purpose != "initial_connection":
+        record_audit(
+            db,
+            action="reconnection_requested",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="whatsapp_embedded_signup_attempt",
+            resource_id=attempt.id,
+            metadata={"channel": "whatsapp", "attempt_id": attempt.id},
+            commit=False,
+        )
     db.commit()
     return {
         "attempt_id": attempt.id,

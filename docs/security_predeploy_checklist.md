@@ -88,3 +88,12 @@
 - [ ] Schemas con `extra="forbid"`; URLs peligrosas y slugs reservados rechazados.
 - [ ] Plantillas y clonación sin secretos ni datos de otro tenant.
 - [ ] Business admin, staff y cliente no acceden a plan, clonación o activación.
+# Integraciones Meta Sprint 4D
+
+- Health endpoints protegidos por Owner/business_admin, CSRF y rate limit global.
+- `business_id`, proveedor e integración se derivan en servidor; no se aceptan IDs técnicos arbitrarios.
+- El claim se confirma antes de descifrar y toda llamada Meta ocurre fuera de transacción larga.
+- `health_metadata_json`, respuestas API, métricas, auditoría y logs no contienen tokens, respuestas Meta ni teléfonos completos.
+- Predeploy solo inspecciona registro/configuración; nunca ejecuta checkers ni envía mensajes.
+- Reconexión mantiene la credencial anterior hasta aprobación Owner y no activa entrega ni automatización.
+- `backend/data/autonogrow.db` heredada no se migra ni repara automáticamente.

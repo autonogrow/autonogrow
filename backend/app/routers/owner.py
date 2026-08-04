@@ -1054,6 +1054,9 @@ def create_owner_business_instagram_integration(
         )
         db.add(integration)
         db.flush()
+        integration.health_status = "unknown"
+        integration.next_health_check_at = now + timedelta(minutes=(integration.id % 60) + 1)
+        integration.consecutive_health_failures = 0
         record_audit(
             db,
             action="instagram_integration_created",
@@ -1225,6 +1228,13 @@ def reconnect_owner_business_instagram_integration(
     integration.last_error_subcode = None
     integration.last_error_type = None
     integration.safe_error_message = None
+    integration.health_status = "unknown"
+    integration.last_health_check_at = None
+    integration.next_health_check_at = now + timedelta(minutes=(integration.id % 60) + 1)
+    integration.consecutive_health_failures = 0
+    integration.health_error_code = None
+    integration.health_safe_error_message = None
+    integration.health_metadata_json = None
     for operation in (
         "verify_integration",
         "send_message",

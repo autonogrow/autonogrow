@@ -72,9 +72,7 @@ def start_admin_instagram_oauth(
     business = _business_by_slug(db, business_slug)
     role = "owner"
     if not actor.is_owner:
-        membership = get_business_membership(
-            db, business_slug=business.slug, user_id=actor.id
-        )
+        membership = get_business_membership(db, business_slug=business.slug, user_id=actor.id)
         if membership is None or membership.role != "business_admin":
             raise HTTPException(status_code=403, detail="Business administrator access required")
         role = membership.role
@@ -101,6 +99,18 @@ def start_admin_instagram_oauth(
         metadata={"attempt_id": attempt.id, "purpose": attempt.purpose},
         commit=False,
     )
+    if attempt.purpose != "initial_connection":
+        record_audit(
+            db,
+            action="reconnection_requested",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="instagram_oauth_attempt",
+            resource_id=attempt.id,
+            metadata={"channel": "instagram", "attempt_id": attempt.id},
+            commit=False,
+        )
     db.commit()
     return {
         "authorization_url": authorization_url,
@@ -142,6 +152,18 @@ def start_owner_instagram_oauth(
         metadata={"attempt_id": attempt.id, "purpose": attempt.purpose},
         commit=False,
     )
+    if attempt.purpose != "initial_connection":
+        record_audit(
+            db,
+            action="reconnection_requested",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="instagram_oauth_attempt",
+            resource_id=attempt.id,
+            metadata={"channel": "instagram", "attempt_id": attempt.id},
+            commit=False,
+        )
     db.commit()
     return {
         "authorization_url": authorization_url,

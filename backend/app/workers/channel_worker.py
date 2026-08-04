@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
 
+from sqlalchemy import or_
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.orm import Session, sessionmaker
@@ -20,6 +21,7 @@ from app.models import (
     BusinessChannelIntegration,
     ChannelOutboxMessage,
     ConversationMessage,
+    MetaIntegrationJob,
     WebhookInboxEvent,
 )
 from app.services.channel_provider_contracts import (
@@ -37,6 +39,21 @@ from app.services.inbox_queue_service import claim_inbox_jobs, fail_inbox_job
 from app.services.incident_service import report_incident, resolve_related_incidents
 from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
 from app.services.maintenance_service import maintenance_enabled
+from app.services.meta_integration_health_checkers import health_checker_for_provider
+from app.services.meta_integration_health_contracts import (
+    IntegrationHealthChecker,
+    UnsupportedIntegrationHealthProvider,
+)
+from app.services.meta_integration_job_service import (
+    apply_integration_health_result,
+    claim_meta_integration_jobs,
+    cleanup_meta_integration_attempts,
+    enqueue_meta_integration_job,
+    fail_meta_integration_job,
+    finish_meta_integration_job,
+    integration_health_blocks_delivery,
+    schedule_due_meta_jobs,
+)
 from app.services.outbox_queue_service import claim_outbox_jobs, fail_outbox_job, finish_outbox_job
 from app.services.queue_error_service import QueueErrorClassification, classify_queue_error
 from app.services.worker_heartbeat_service import update_worker_heartbeat
@@ -56,6 +73,17 @@ class PreparedDelivery:
     sender: ProviderSender
 
 
+@dataclass(frozen=True)
+class PreparedMetaHealthJob:
+    job_id: int
+    business_id: int
+    integration_id: int
+    job_type: str
+    integration: BusinessChannelIntegration
+    access_token: str
+    checker: IntegrationHealthChecker
+
+
 class ChannelWorker:
     def __init__(
         self,
@@ -72,6 +100,7 @@ class ChannelWorker:
         configured_id = self.settings.worker_id.strip()
         self.worker_id = configured_id or f"channel-{socket.gethostname()}-{os.getpid()}"
         self._stop_requested = False
+        self._next_meta_schedule_at = 0.0
 
     def request_stop(self, *_args: object) -> None:
         self._stop_requested = True
@@ -107,6 +136,27 @@ class ChannelWorker:
             )
             db.commit()
             return inbox_ids, outbox_ids
+
+    def _schedule_meta_jobs(self) -> int:
+        current_monotonic = time.monotonic()
+        if current_monotonic < self._next_meta_schedule_at:
+            return 0
+        with self.session_factory() as db:
+            count = schedule_due_meta_jobs(db, settings=self.settings)
+            db.commit()
+        self._next_meta_schedule_at = current_monotonic + 60.0
+        return count
+
+    def _claim_meta_jobs(self) -> list[int]:
+        with self.session_factory() as db:
+            ids = claim_meta_integration_jobs(
+                db,
+                worker_id=self.worker_id,
+                limit=self.settings.meta_integration_health_batch_size,
+                lock_ttl_seconds=self.settings.meta_integration_health_lock_ttl_seconds,
+            )
+            db.commit()
+            return ids
 
     def _process_inbox(self, inbox_id: int) -> None:
         started = time.monotonic()
@@ -202,6 +252,8 @@ class ChannelWorker:
                 error_code = "integration_not_configured"
             elif integration.integration_status not in {"connected", "degraded"}:
                 error_code = f"integration_{integration.integration_status}"
+            elif integration_health_blocks_delivery(integration):
+                error_code = "integration_unavailable"
             elif integration_credentials_expired(integration):
                 error_code = "integration_expired"
             elif not integration.encrypted_access_token or not integration.encryption_key_version:
@@ -311,7 +363,6 @@ class ChannelWorker:
             if result.ok:
                 finish_outbox_job(row, message, provider_message_id=result.provider_message_id)
                 if integration:
-                    integration.integration_status = "connected"
                     integration.last_success_at = datetime.utcnow()
                     integration.last_error_code = None
                     integration.safe_error_message = None
@@ -354,9 +405,15 @@ class ChannelWorker:
                         integration.integration_status = (
                             "expired" if result.error_subcode == "463" else "revoked"
                         )
+                        integration.health_status = (
+                            "action_required" if result.error_subcode == "463" else "revoked"
+                        )
                     elif result.error_code in {"token_expired", "token_revoked"}:
                         integration.integration_status = (
                             "expired" if result.error_code == "token_expired" else "revoked"
+                        )
+                        integration.health_status = (
+                            "action_required" if result.error_code == "token_expired" else "revoked"
                         )
                     elif result.error_code in {
                         "account_suspended",
@@ -365,12 +422,257 @@ class ChannelWorker:
                         "number_not_registered",
                     }:
                         integration.integration_status = "error"
+                        integration.health_status = (
+                            "suspended"
+                            if result.error_code == "account_suspended"
+                            else "action_required"
+                        )
                     integration.last_error_at = datetime.utcnow()
                     integration.last_error_code = result.error_code
                     integration.last_error_subcode = result.error_subcode
                     integration.last_error_type = result.error_type
                     integration.safe_error_message = classification.safe_message
                 self._report_outbox_failure(db, row)
+            db.commit()
+
+    def _prepare_meta_health_job(self, job_id: int) -> PreparedMetaHealthJob | None:
+        with self.session_factory() as db:
+            job = db.get(MetaIntegrationJob, job_id)
+            if job is None or job.status != "processing" or job.integration_id is None:
+                return None
+            integration = db.get(BusinessChannelIntegration, job.integration_id)
+            error_code = None
+            checker: IntegrationHealthChecker | None = None
+            if integration is None or integration.business_id != job.business_id:
+                error_code = "integration_not_configured"
+            elif integration.channel != integration.provider:
+                error_code = "integration_provider_mismatch"
+            else:
+                try:
+                    checker = health_checker_for_provider(integration.provider)
+                except UnsupportedIntegrationHealthProvider:
+                    error_code = "unsupported_integration_provider"
+            if integration is not None and error_code is None:
+                conflict_filters = [
+                    BusinessChannelIntegration.id != integration.id,
+                    BusinessChannelIntegration.business_id != job.business_id,
+                    BusinessChannelIntegration.provider == integration.provider,
+                ]
+                if integration.provider == "whatsapp" and integration.provider_account_id:
+                    conflict_filters.append(
+                        or_(
+                            BusinessChannelIntegration.external_account_id
+                            == integration.external_account_id,
+                            BusinessChannelIntegration.provider_account_id
+                            == integration.provider_account_id,
+                        )
+                    )
+                else:
+                    conflict_filters.append(
+                        BusinessChannelIntegration.external_account_id
+                        == integration.external_account_id
+                    )
+                conflict = db.query(BusinessChannelIntegration.id).filter(*conflict_filters)
+                if conflict.first() is not None:
+                    error_code = "integration_tenant_conflict"
+            if (
+                integration is not None
+                and error_code is None
+                and (
+                    not integration.encrypted_access_token or not integration.encryption_key_version
+                )
+            ):
+                error_code = "integration_credentials_missing"
+            if error_code is not None:
+                if integration is not None:
+                    checked_at = datetime.utcnow()
+                    integration.health_status = "error"
+                    integration.last_health_check_at = checked_at
+                    integration.next_health_check_at = None
+                    integration.consecutive_health_failures += 1
+                    integration.health_error_code = error_code
+                    integration.health_safe_error_message = (
+                        "Integration health check is unavailable"
+                    )
+                    integration.health_metadata_json = json.dumps(
+                        {
+                            "asset_status": "invalid",
+                            "blocking": True,
+                            "reconnection_required": True,
+                            "subscription_status": "unknown",
+                            "token_expiry_status": "unknown",
+                        },
+                        sort_keys=True,
+                    )
+                    integration.last_error_at = checked_at
+                fail_meta_integration_job(
+                    db,
+                    job,
+                    error_code=error_code,
+                    safe_message="Integration health check is unavailable",
+                    retryable=False,
+                    duration_ms=0,
+                )
+                db.commit()
+                return None
+            if integration is None or checker is None:
+                fail_meta_integration_job(
+                    db,
+                    job,
+                    error_code="health_preparation_failed",
+                    safe_message="Integration health check could not be prepared",
+                    retryable=False,
+                    duration_ms=0,
+                )
+                db.commit()
+                return None
+            try:
+                token = decrypt_secret(
+                    integration.encrypted_access_token or "",
+                    integration.encryption_key_version or "",
+                    settings=self.settings,
+                )
+            except IntegrationCryptoError:
+                integration.health_status = "error"
+                integration.health_error_code = "integration_decryption_failed"
+                integration.health_safe_error_message = "Integration credentials could not be read"
+                fail_meta_integration_job(
+                    db,
+                    job,
+                    error_code="integration_decryption_failed",
+                    safe_message="Integration credentials could not be read",
+                    retryable=False,
+                    duration_ms=0,
+                )
+                db.commit()
+                return None
+            db.expunge(integration)
+            db.commit()
+            return PreparedMetaHealthJob(
+                job_id=job.id,
+                business_id=job.business_id,
+                integration_id=integration.id,
+                job_type=job.job_type,
+                integration=integration,
+                access_token=token,
+                checker=checker,
+            )
+
+    def _process_meta_job(self, job_id: int) -> None:
+        started = time.monotonic()
+        with self.session_factory() as db:
+            job = db.get(MetaIntegrationJob, job_id)
+            if job is None or job.status != "processing":
+                return
+            if job.job_type == "attempt_cleanup":
+                try:
+                    cleanup_meta_integration_attempts(
+                        db,
+                        business_id=job.business_id,
+                        settings=self.settings,
+                    )
+                    finish_meta_integration_job(
+                        db, job, duration_ms=int((time.monotonic() - started) * 1000)
+                    )
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    with self.session_factory() as failure_db:
+                        failed_job = failure_db.get(MetaIntegrationJob, job_id)
+                        if failed_job and failed_job.status == "processing":
+                            fail_meta_integration_job(
+                                failure_db,
+                                failed_job,
+                                error_code="attempt_cleanup_failed",
+                                safe_message="Temporary integration attempts could not be cleaned",
+                                retryable=True,
+                                duration_ms=int((time.monotonic() - started) * 1000),
+                            )
+                            failure_db.commit()
+                return
+
+        prepared = self._prepare_meta_health_job(job_id)
+        if prepared is None:
+            return
+        try:
+            result = prepared.checker(
+                prepared.integration,
+                access_token=prepared.access_token,
+                settings=self.settings,
+                repair_subscription=prepared.job_type == "retry_subscription",
+            )
+        except Exception:
+            with self.session_factory() as db:
+                job = db.get(MetaIntegrationJob, job_id)
+                if job and job.status == "processing":
+                    fail_meta_integration_job(
+                        db,
+                        job,
+                        error_code="health_checker_failed",
+                        safe_message="Integration health check failed safely",
+                        retryable=True,
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                    )
+                    db.commit()
+            logger.warning(
+                "meta_integration_job_failed worker_id=%s job_id=%s",
+                self.worker_id,
+                job_id,
+            )
+            return
+        with self.session_factory() as db:
+            job = db.get(MetaIntegrationJob, job_id)
+            integration = db.get(BusinessChannelIntegration, prepared.integration_id)
+            if (
+                job is None
+                or job.status != "processing"
+                or integration is None
+                or integration.business_id != prepared.business_id
+            ):
+                return
+            apply_integration_health_result(
+                db,
+                job=job,
+                integration=integration,
+                result=result,
+                settings=self.settings,
+            )
+            duration_ms = int((time.monotonic() - started) * 1000)
+            transient_failure = result.retryable and (
+                result.subscription_status != "missing" or prepared.job_type == "retry_subscription"
+            )
+            if transient_failure:
+                fail_meta_integration_job(
+                    db,
+                    job,
+                    error_code=result.safe_error_code or "provider_temporarily_unavailable",
+                    safe_message=result.safe_error_message or "Provider is temporarily unavailable",
+                    retryable=True,
+                    duration_ms=duration_ms,
+                )
+            else:
+                finish_meta_integration_job(db, job, duration_ms=duration_ms)
+                if result.subscription_status == "missing" and job.job_type == "health_check":
+                    enqueue_meta_integration_job(
+                        db,
+                        business_id=integration.business_id,
+                        integration_id=integration.id,
+                        job_type="retry_subscription",
+                        origin="system",
+                        max_attempts=self.settings.meta_integration_failure_threshold,
+                    )
+                if job.job_type == "retry_subscription" and result.healthy:
+                    from app.core.audit import record_audit
+
+                    record_audit(
+                        db,
+                        action="subscription_retry_succeeded",
+                        business_id=integration.business_id,
+                        resource_type="business_channel_integration",
+                        resource_id=integration.id,
+                        metadata={"job_id": job.id, "channel": integration.channel},
+                        commit=False,
+                    )
             db.commit()
 
     def run_once(self) -> int:
@@ -390,8 +692,15 @@ class ChannelWorker:
                 break
             self._heartbeat("processing", "outbox", outbox_id)
             self._process_outbox(outbox_id)
+        self._schedule_meta_jobs()
+        meta_ids = self._claim_meta_jobs()
+        for job_id in meta_ids:
+            if self._stop_requested:
+                break
+            self._heartbeat("processing", "meta_integration", job_id)
+            self._process_meta_job(job_id)
         self._heartbeat("idle")
-        return len(inbox_ids) + len(outbox_ids)
+        return len(inbox_ids) + len(outbox_ids) + len(meta_ids)
 
     def run_forever(self) -> None:
         self._heartbeat("starting")

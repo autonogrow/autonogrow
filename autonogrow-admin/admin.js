@@ -34,6 +34,7 @@ let conversationTemplates = [];
 let conversationAutomation = null;
 let businessIntegrationStatus = null;
 let businessChannelOnboarding = null;
+let businessChannelHealth = [];
 let conversationSuggestions = [];
 let selectedConversationSuggestionId = null;
 let conversationSuggestionNotice = null;
@@ -426,7 +427,9 @@ function renderBusinessChannelOnboarding() {
   const container = document.getElementById("channel-onboarding-list");
   if (!container || !businessChannelOnboarding) return;
   const names = { instagram: "Instagram", whatsapp: "WhatsApp" };
+  const healthByChannel = Object.fromEntries(businessChannelHealth.map((item) => [item.channel, item]));
   container.innerHTML = businessChannelOnboarding.channels.map((channel) => {
+    const health = healthByChannel[channel.channel];
     const capabilities = channel.status === "approved"
       ? `<ul class="channel-capability-list"><li>Envío integrado: <strong>${channel.integrated_delivery_enabled ? "activo" : "pendiente de activación"}</strong></li><li>Automatización: <strong>${channel.automation_enabled ? "activa" : "pendiente de activación"}</strong></li></ul>`
       : "";
@@ -439,6 +442,12 @@ function renderBusinessChannelOnboarding() {
       action = '<p class="channel-guidance">Contacta con AutonoGrow para habilitar este canal.</p>';
     } else if (channel.status === "pending_approval") {
       action = '<p class="channel-guidance">No necesitas hacer nada más. El Owner revisará la solicitud.</p>';
+    }
+    if (health) {
+      const message = health.health_status === "healthy"
+        ? `${names[channel.channel]} conectado. Última comprobación: ${health.last_health_check_at ? new Date(health.last_health_check_at).toLocaleString("es-ES") : "pendiente"}.`
+        : (health.reconnection_required ? `Necesitas volver a conectar ${names[channel.channel]}.` : `No pudimos verificar completamente la conexión con ${names[channel.channel]}.`);
+      action += `<div class="channel-health state-${escapeHtml(health.health_status)}"><p><strong>${escapeHtml(message)}</strong></p>${health.display_phone_number_redacted ? `<p>Número terminado en ${escapeHtml(health.display_phone_number_redacted)}</p>` : ""}${health.safe_error_message ? `<p>${escapeHtml(health.safe_error_message)}</p>` : ""}<button class="btn btn-secondary" type="button" data-channel-health-action="check" data-channel="${escapeHtml(channel.channel)}">Comprobar estado</button>${health.reconnection_required ? `<button class="btn btn-primary" type="button" data-channel-health-action="reconnect" data-channel="${escapeHtml(channel.channel)}">Volver a conectar</button>` : ""}</div>`;
     }
     const account = channel.channel === "instagram" && channel.connected_account_name ? `<p class="channel-guidance">Cuenta: <strong>@${escapeHtml(String(channel.connected_account_name).replace(/^@/, ""))}</strong></p>` : "";
     const precheck = channel.can_request
@@ -457,13 +466,17 @@ function renderBusinessChannelOnboarding() {
 async function loadBusinessChannelOnboarding() {
   const container = document.getElementById("channel-onboarding-list");
   if (!container) return;
-  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channel-onboarding`);
+  const [response, healthResponse] = await Promise.all([
+    fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channel-onboarding`),
+    fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channels/health`)
+  ]);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     container.innerHTML = `<p class="empty-state">${escapeHtml(body.detail || "No se pudieron cargar los canales.")}</p>`;
     return;
   }
   businessChannelOnboarding = body;
+  businessChannelHealth = healthResponse.ok ? (await healthResponse.json()).channels : [];
   renderBusinessChannelOnboarding();
 }
 
@@ -516,11 +529,11 @@ async function completeWhatsAppEmbeddedSignup(start, eventPayload, authorization
   return body;
 }
 
-async function launchWhatsAppEmbeddedSignup() {
+async function launchWhatsAppEmbeddedSignup(purpose = null) {
   const startResponse = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/integrations/whatsapp/embedded-signup/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ purpose: null })
+    body: JSON.stringify({ purpose })
   });
   const start = await startResponse.json().catch(() => ({}));
   if (!startResponse.ok) throw new Error(start.detail || "No se pudo iniciar WhatsApp Embedded Signup.");
@@ -606,6 +619,38 @@ async function requestBusinessChannelConnection(channel, button) {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.detail || "No se pudo solicitar la conexión.");
     feedback.textContent = "Solicitud registrada. Queda pendiente de revisión por el Owner.";
+    await loadBusinessChannelOnboarding();
+  } catch (error) {
+    feedback.textContent = error.message;
+    button.disabled = false;
+  }
+}
+
+async function handleChannelHealthAction(button) {
+  const channel = button.dataset.channel;
+  const action = button.dataset.channelHealthAction;
+  const feedback = document.getElementById("channel-onboarding-feedback");
+  button.disabled = true;
+  try {
+    if (action === "reconnect" && channel === "instagram") {
+      const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channels/instagram/reconnect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.detail || "No se pudo iniciar la reconexión.");
+      if (!String(body.authorization_url || "").startsWith("https://www.instagram.com/oauth/authorize?")) throw new Error("Meta devolvió una URL no válida.");
+      window.location.assign(body.authorization_url);
+      return;
+    }
+    if (action === "reconnect" && channel === "whatsapp") {
+      feedback.textContent = "Abriendo el flujo oficial de Meta...";
+      const result = await launchWhatsAppEmbeddedSignup("reconnect");
+      feedback.textContent = result.status === "candidate_ready" ? "Nueva candidatura pendiente de aprobación Owner." : (result.safe_error_message || "Reconexión incompleta.");
+      await loadBusinessChannelOnboarding();
+      return;
+    }
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channels/${encodeURIComponent(channel)}/health-check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail || "No se pudo encolar la comprobación.");
+    feedback.textContent = body.created ? "Comprobación encolada." : "Ya existe una comprobación en curso.";
     await loadBusinessChannelOnboarding();
   } catch (error) {
     feedback.textContent = error.message;
@@ -3807,6 +3852,8 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("channel-onboarding-list").addEventListener("click", (event) => {
     const button = event.target.closest("[data-channel-request]");
     if (button) requestBusinessChannelConnection(button.dataset.channelRequest, button);
+    const healthButton = event.target.closest("[data-channel-health-action]");
+    if (healthButton) handleChannelHealthAction(healthButton);
   });
   document.getElementById("admin-logout").addEventListener("click", adminLogout);
   document.getElementById("admin-gate-logout").addEventListener("click", adminLogout);

@@ -63,6 +63,13 @@ def _payload(response: requests.Response) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _response_status_code(response: object) -> int:
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    return 200 if getattr(response, "ok", False) else 400
+
+
 def _provider_request_error(prefix: str, exc: requests.RequestException) -> None:
     if isinstance(exc, requests.Timeout):
         raise WhatsAppEmbeddedSignupProviderError(
@@ -134,6 +141,11 @@ def inspect_whatsapp_business_token(
     data = cast(dict[str, Any], raw_data) if isinstance(raw_data, dict) else {}
     scopes = {str(item) for item in data.get("scopes", []) if isinstance(item, str)}
     missing = set(WHATSAPP_EMBEDDED_SIGNUP_SCOPES) - scopes
+    status_code = _response_status_code(response)
+    if status_code == 429 or status_code >= 500:
+        raise WhatsAppEmbeddedSignupProviderError(
+            "token_inspection_failed", "Meta token inspection is temporarily unavailable"
+        )
     if (
         not response.ok
         or data.get("is_valid") is not True
@@ -191,8 +203,14 @@ def _business_waba_ids(
             )
         except requests.RequestException as exc:
             _provider_request_error("business_verification", exc)
-        if response.status_code in {400, 403, 404}:
+        status_code = _response_status_code(response)
+        if status_code in {400, 403, 404}:
             continue
+        if status_code == 429 or status_code >= 500:
+            raise WhatsAppEmbeddedSignupProviderError(
+                "business_verification_failed",
+                "Meta Business verification is temporarily unavailable",
+            )
         payload = _payload(response)
         if not response.ok or not isinstance(payload.get("data"), list):
             raise WhatsAppEmbeddedSignupProviderError(
@@ -251,6 +269,12 @@ def verify_whatsapp_embedded_signup_assets(
         if isinstance(item, dict) and str(item.get("id") or "") == phone_number_id:
             phone = item
             break
+    status_code = _response_status_code(response)
+    if status_code == 429 or status_code >= 500:
+        raise WhatsAppEmbeddedSignupProviderError(
+            "phone_verification_failed",
+            "WhatsApp phone verification is temporarily unavailable",
+        )
     if not response.ok or phone is None:
         raise WhatsAppEmbeddedSignupProviderError(
             "phone_waba_mismatch", "The WhatsApp phone number could not be verified"
@@ -300,10 +324,55 @@ def subscribe_app_to_whatsapp_waba(
     except requests.RequestException as exc:
         _provider_request_error("app_subscription", exc)
     payload = _payload(response)
+    status_code = _response_status_code(response)
+    if status_code == 429 or status_code >= 500:
+        raise WhatsAppEmbeddedSignupProviderError(
+            "app_subscription_failed", "WhatsApp subscription is temporarily unavailable"
+        )
     if not response.ok or payload.get("success") is not True:
         raise WhatsAppEmbeddedSignupProviderError(
             "app_subscription_rejected", "Meta did not confirm the WhatsApp subscription"
         )
+
+
+def whatsapp_app_subscription_active(
+    waba_id: str,
+    access_token: str,
+    *,
+    settings: Settings | None = None,
+    timeout_seconds: float = 10.0,
+) -> bool:
+    settings = settings or get_settings()
+    waba_id = _require_meta_id(waba_id, safe_code="waba_id_invalid")
+    try:
+        response = requests.get(
+            f"https://graph.facebook.com/{_version(settings)}/{waba_id}/subscribed_apps",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=timeout_seconds,
+        )
+    except requests.RequestException as exc:
+        _provider_request_error("app_subscription_inspection", exc)
+    payload = _payload(response)
+    data = payload.get("data")
+    status_code = _response_status_code(response)
+    if status_code == 429 or status_code >= 500:
+        raise WhatsAppEmbeddedSignupProviderError(
+            "app_subscription_inspection_failed",
+            "WhatsApp subscription status is temporarily unavailable",
+        )
+    if not response.ok or not isinstance(data, list):
+        raise WhatsAppEmbeddedSignupProviderError(
+            "app_subscription_inspection_rejected",
+            "Meta did not return the WhatsApp subscription status",
+        )
+    expected_app_id = settings.meta_app_id.strip()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        app_data = item.get("whatsapp_business_api_data")
+        if isinstance(app_data, dict) and str(app_data.get("id") or "") == expected_app_id:
+            return True
+    return False
 
 
 def redact_display_phone_number(value: str) -> str | None:

@@ -71,3 +71,6 @@ El control queda aprobado con `integrated_delivery_enabled=false` y
 - Renovación/expiración automática del business token, configuración comercial de Meta,
   pagos, credit line y homologación como Tech Provider pertenecen a Sprint 4D u operación
   externa.
+# Mantenimiento posterior
+
+Sprint 4D reutiliza el token aprobado para `debug_token`, WABA `phone_numbers` y `subscribed_apps`, sin enviar mensajes. Puede reparar la suscripción de la app al WABA; Embedded Signup, registro con PIN, cambio de número/WABA y activación de capacidades requieren el flujo humano correspondiente.

@@ -813,6 +813,13 @@ def decide_whatsapp_signup_candidate(
         },
         sort_keys=True,
     )
+    integration.health_status = "unknown"
+    integration.last_health_check_at = None
+    integration.next_health_check_at = now + timedelta(minutes=(integration.id or 1) % 60 + 1)
+    integration.consecutive_health_failures = 0
+    integration.health_error_code = None
+    integration.health_safe_error_message = None
+    integration.health_metadata_json = None
     db.flush()
     control.status = "approved"
     control.connection_mode = "embedded_signup"

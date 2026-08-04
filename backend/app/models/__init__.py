@@ -35,6 +35,7 @@ from app.models.customer import Customer
 from app.models.google_integration import GoogleIntegration
 from app.models.instagram_oauth_attempt import InstagramOAuthAttempt
 from app.models.message_outbox import MessageOutbox
+from app.models.meta_integration_job import MetaIntegrationJob
 from app.models.operations import BackupRecord, OperationalState
 from app.models.review_request import ReviewRequest
 from app.models.service import BusinessService
@@ -61,6 +62,7 @@ __all__ = [
     "SyncJob",
     "ReviewRequest",
     "MessageOutbox",
+    "MetaIntegrationJob",
     "BackupRecord",
     "OperationalState",
     "BusinessGalleryImage",

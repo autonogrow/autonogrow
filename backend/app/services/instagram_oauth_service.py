@@ -47,7 +47,11 @@ ACTIVE_STATE_STATUSES = ("pending", "processing")
 
 
 def _as_utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
 
 
 def _hash_value(value: str) -> str:
@@ -150,7 +154,9 @@ def start_instagram_oauth(
         .first()
     )
     if ready is not None:
-        raise HTTPException(status_code=409, detail="An Instagram candidate is awaiting Owner review")
+        raise HTTPException(
+            status_code=409, detail="An Instagram candidate is awaiting Owner review"
+        )
     processing = (
         db.query(InstagramOAuthAttempt.id)
         .filter(
@@ -230,7 +236,9 @@ def _fail_processing_attempt(
     attempt.safe_error_code = safe_code[:80]
     attempt.safe_error_message = safe_message[:500]
     attempt.webhook_subscription_status = (
-        "failed" if safe_code.startswith("webhook_subscription") else attempt.webhook_subscription_status
+        "failed"
+        if safe_code.startswith("webhook_subscription")
+        else attempt.webhook_subscription_status
     )
     _clear_candidate_credentials(attempt)
     db.commit()
@@ -351,9 +359,7 @@ def complete_instagram_oauth_callback(
         )
 
     try:
-        short_token = exchange_instagram_authorization_code(
-            authorization_code, settings=settings
-        )
+        short_token = exchange_instagram_authorization_code(authorization_code, settings=settings)
         long_token = exchange_instagram_long_lived_token(
             short_token.access_token,
             granted_scopes=short_token.granted_scopes,
@@ -373,8 +379,7 @@ def complete_instagram_oauth_callback(
             db.query(InstagramOAuthAttempt)
             .filter(
                 InstagramOAuthAttempt.status == "candidate_ready",
-                InstagramOAuthAttempt.candidate_external_account_id
-                == profile.external_account_id,
+                InstagramOAuthAttempt.candidate_external_account_id == profile.external_account_id,
                 InstagramOAuthAttempt.business_id != attempt.business_id,
             )
             .first()
@@ -433,9 +438,7 @@ def complete_instagram_oauth_callback(
     )
     attempt.purpose = actual_purpose
     attempt.status = "candidate_ready"
-    review_expires_at = utc_now() + timedelta(
-        hours=settings.instagram_candidate_review_ttl_hours
-    )
+    review_expires_at = utc_now() + timedelta(hours=settings.instagram_candidate_review_ttl_hours)
     if long_token.expires_at is not None:
         review_expires_at = min(review_expires_at, _as_utc(long_token.expires_at))
     attempt.expires_at = review_expires_at
@@ -496,9 +499,7 @@ def serialize_instagram_oauth_attempt(attempt: InstagramOAuthAttempt) -> dict:
         "candidate_account_type": attempt.candidate_account_type,
         "candidate_token_expires_at": attempt.candidate_token_expires_at,
         "candidate_granted_scopes": (
-            json.loads(attempt.candidate_granted_scopes)
-            if attempt.candidate_granted_scopes
-            else []
+            json.loads(attempt.candidate_granted_scopes) if attempt.candidate_granted_scopes else []
         ),
         "webhook_subscription_status": attempt.webhook_subscription_status,
         "safe_error_code": attempt.safe_error_code,
@@ -582,7 +583,9 @@ def retry_instagram_candidate_webhook(
         and attempt.candidate_encrypted_access_token
         and attempt.candidate_encryption_key_version
     ):
-        raise HTTPException(status_code=409, detail="Instagram candidate credentials are unavailable")
+        raise HTTPException(
+            status_code=409, detail="Instagram candidate credentials are unavailable"
+        )
     try:
         token = decrypt_secret(
             attempt.candidate_encrypted_access_token,
@@ -590,7 +593,9 @@ def retry_instagram_candidate_webhook(
             settings=settings,
         )
     except IntegrationCryptoError as exc:
-        raise HTTPException(status_code=503, detail="Instagram credentials are unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="Instagram credentials are unavailable"
+        ) from exc
     account_id = attempt.candidate_external_account_id
     db.commit()
     try:
@@ -669,7 +674,9 @@ def decide_instagram_oauth_candidate(
 
     account_id = attempt.candidate_external_account_id
     if not account_id or not attempt.candidate_encrypted_access_token:
-        raise HTTPException(status_code=409, detail="Instagram candidate credentials are unavailable")
+        raise HTTPException(
+            status_code=409, detail="Instagram candidate credentials are unavailable"
+        )
     if attempt.webhook_subscription_status != "subscribed":
         raise HTTPException(
             status_code=409,
@@ -711,7 +718,9 @@ def decide_instagram_oauth_candidate(
         )
         for conversation in conversations:
             conversation.external_user_id = None
-            conversation.external_conversation_id = f"retired:{old_account_id}:{conversation.id}"[:255]
+            conversation.external_conversation_id = f"retired:{old_account_id}:{conversation.id}"[
+                :255
+            ]
             conversation.status = "closed"
             conversation.updated_at = now
 
@@ -735,6 +744,13 @@ def decide_instagram_oauth_candidate(
     integration.last_error_type = None
     integration.safe_error_message = None
     integration.metadata_json = attempt.metadata_json
+    integration.health_status = "unknown"
+    integration.last_health_check_at = None
+    integration.next_health_check_at = now + timedelta(minutes=(integration.id or 1) % 60 + 1)
+    integration.consecutive_health_failures = 0
+    integration.health_error_code = None
+    integration.health_safe_error_message = None
+    integration.health_metadata_json = None
     db.flush()
 
     if control.status == "pending_approval":
