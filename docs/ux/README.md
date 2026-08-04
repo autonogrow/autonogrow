@@ -51,6 +51,7 @@ No había Chrome, Edge, Firefox, Playwright ni Selenium ejecutables en el entorn
 15. [Dashboard operativo del Business Admin](15_admin_dashboard.md)
 16. [Agenda y gestión de reservas del Business Admin](16_admin_agenda.md)
 17. [Clientes y conversaciones del Business Admin](17_admin_conversations.md)
+18. [Configuración del negocio en Business Admin](18_admin_business_configuration.md)
 
 ## Principios de implementación
 

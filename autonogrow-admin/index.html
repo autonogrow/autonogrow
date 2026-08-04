@@ -6,7 +6,7 @@
 
   <title>AutonoGrow Admin</title>
 
-  <link rel="stylesheet" href="styles.css?v=20260804-3" />
+  <link rel="stylesheet" href="styles.css?v=20260804-4" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -69,12 +69,13 @@
       <button class="admin-tab" type="button" data-section="growth" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 18 10 12l4 4 6-9"/><path d="M15 7h5v5"/></svg></span>Crecimiento</button>
       <button class="admin-tab" type="button" data-section="bookings" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span>Agenda</button>
       <button class="admin-tab" type="button" data-section="conversations" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg></span>Clientes y mensajes</button>
+      <button class="admin-tab" type="button" data-section="configuration" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.37a1.7 1.7 0 0 0-1 .63 1.7 1.7 0 0 0-.37 1.06V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.23 15a1.7 1.7 0 0 0-.63-1 1.7 1.7 0 0 0-1.06-.37H2.5v-4h.09A1.7 1.7 0 0 0 4.1 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.5 4.23a1.7 1.7 0 0 0 1-.63 1.7 1.7 0 0 0 .37-1.06V2.5h4v.09A1.7 1.7 0 0 0 14.9 4.1a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.27 8.5c.13.39.35.73.63 1 .3.28.67.4 1.06.4H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg></span>Configuración</button>
       <button class="admin-tab" type="button" data-section="messages" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8Z"/><path d="m11 13 4-4"/></svg></span>Mensajes automáticos</button>
-      <button class="admin-tab" type="button" data-section="services" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8h14l1 13H4Z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg></span>Servicios</button>
-      <button class="admin-tab" type="button" data-section="staff" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 4a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5"/></svg></span>Equipo</button>
-      <button class="admin-tab" type="button" data-section="schedule" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>Horarios</button>
+      <button class="admin-tab admin-tab--legacy" type="button" data-section="services" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8h14l1 13H4Z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg></span>Servicios</button>
+      <button class="admin-tab admin-tab--legacy" type="button" data-section="staff" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 4a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5"/></svg></span>Equipo</button>
+      <button class="admin-tab admin-tab--legacy" type="button" data-section="schedule" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>Horarios</button>
       <button class="admin-tab" type="button" data-section="channels" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2"/></svg></span>Canales</button>
-      <button class="admin-tab" type="button" data-section="business" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5l8-3 8 3v16"/><path d="M9 21v-5h6v5M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span>Datos del negocio</button>
+      <button class="admin-tab admin-tab--legacy" type="button" data-section="business" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5l8-3 8 3v16"/><path d="M9 21v-5h6v5M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span>Datos del negocio</button>
       <button class="admin-tab" type="button" data-section="reviews" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg></span>Reseñas</button>
     </nav>
 
@@ -241,33 +242,71 @@
       </div>
     </section>
 
-    <section class="section admin-section business-settings-section" data-admin-section="business">
-      <div class="section-header">
-        <div>
-          <h2>Datos del negocio</h2>
-          <p>Información pública que aparece en la landing y los enlaces de contacto.</p>
+    <section class="section admin-section business-configuration-overview" data-admin-section="configuration" aria-labelledby="configuration-title">
+      <div class="business-configuration-layout">
+        <div data-configuration-navigation></div>
+        <div class="business-configuration-content">
+          <header class="configuration-hero">
+            <div><p class="eyebrow">Preparación del negocio</p><h2 id="configuration-title">Configuración del negocio</h2><p>Completa lo necesario para recibir reservas y mantener tu página pública.</p></div>
+            <a id="configuration-public-link" class="ag-button ag-button--secondary" target="_blank" rel="noopener noreferrer">Ver página pública</a>
+          </header>
+          <section class="configuration-summary-card" aria-labelledby="configuration-summary-title">
+            <div><h3 id="configuration-summary-title">Estado general</h3><p id="configuration-business-name">Cargando negocio…</p></div>
+            <strong id="configuration-ready-summary">Comprobando apartados…</strong>
+          </section>
+          <div id="configuration-overview-list" class="configuration-overview-list" aria-live="polite">
+            <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Comprobando configuración.</span>
+          </div>
+          <section id="configuration-tasks" class="configuration-tasks" aria-labelledby="configuration-tasks-title">
+            <h3 id="configuration-tasks-title">Qué revisar ahora</h3><div id="configuration-task-list"><p class="empty-state">Comprobando tareas…</p></div>
+          </section>
         </div>
       </div>
+    </section>
 
-      <div class="business-settings-grid">
-        <label class="ag-field ag-label">Nombre<input id="business-setting-name" class="ag-input" type="text" required /></label>
-        <label>Categoría<input id="business-setting-category" type="text" /></label>
-        <label class="field-wide">Titular<input id="business-setting-headline" type="text" /></label>
-        <label class="field-wide">Descripción<textarea id="business-setting-description" rows="4"></textarea></label>
-        <label>Teléfono WhatsApp<input id="business-setting-phone" type="tel" placeholder="+34 600 000 000" /></label>
-        <label>Ciudad<input id="business-setting-city" type="text" /></label>
-        <label class="field-wide">Dirección<input id="business-setting-address" type="text" /></label>
-        <label class="field-wide">Horario visible<input id="business-setting-schedule" type="text" /></label>
-        <label class="field-wide">Google Maps URL<input id="business-setting-maps-url" type="url" /></label>
-        <label class="field-wide">Instagram URL<input id="business-setting-instagram-url" type="url" /></label>
-        <label class="field-wide">Google Reviews URL<input id="business-setting-reviews-url" type="url" /></label>
-        <label class="active-setting">
-          <input id="business-setting-active" type="checkbox" />
-          Negocio activo
-        </label>
+    <section class="section admin-section business-settings-section configuration-category" data-admin-section="business" aria-labelledby="business-information-title">
+      <div class="business-configuration-layout">
+        <div data-configuration-navigation></div>
+        <div class="business-configuration-content">
+      <header class="configuration-category-header">
+        <div><p class="eyebrow">Configuración</p><h2 id="business-information-title">Información del negocio</h2><p>Datos de contacto y textos que tus clientes pueden ver.</p></div>
+        <span id="configuration-status-business" class="configuration-status">Comprobando…</span>
+      </header>
+      <div id="business-settings-errors" class="configuration-error-summary" role="alert" tabindex="-1" hidden></div>
+      <div class="business-settings-grid" data-config-dirty-key="business-info">
+        <label class="ag-field ag-label" for="business-setting-name">Nombre <span aria-hidden="true">*</span><input id="business-setting-name" class="ag-input" type="text" required aria-describedby="business-setting-name-help business-setting-name-error" /><small id="business-setting-name-help">Nombre público del negocio.</small><small id="business-setting-name-error" class="ag-field-error"></small></label>
+        <label for="business-setting-category">Categoría<input id="business-setting-category" type="text" aria-describedby="business-setting-category-help" /><small id="business-setting-category-help">Ayuda a explicar a qué se dedica el negocio.</small></label>
+        <label class="field-wide" for="business-setting-headline">Titular<input id="business-setting-headline" type="text" aria-describedby="business-setting-headline-help" /><small id="business-setting-headline-help">Este texto aparece destacado en tu página pública.</small></label>
+        <label class="field-wide" for="business-setting-description">Descripción<textarea id="business-setting-description" rows="4" aria-describedby="business-setting-description-help"></textarea><small id="business-setting-description-help">Explica tus servicios y propuesta en texto plano.</small></label>
+        <label for="business-setting-phone">Teléfono público<input id="business-setting-phone" type="tel" placeholder="+34 600 000 000" /></label>
+        <label for="business-setting-city">Ciudad<input id="business-setting-city" type="text" /></label>
+        <label class="field-wide" for="business-setting-address">Dirección<input id="business-setting-address" type="text" /></label>
+        <label class="field-wide" for="business-setting-schedule">Horario descriptivo<input id="business-setting-schedule" type="text" aria-describedby="business-setting-schedule-help" /><small id="business-setting-schedule-help">Texto informativo de la página pública; no modifica la disponibilidad de Agenda.</small></label>
+        <label class="field-wide" for="business-setting-maps-url">Enlace de Google Maps<input id="business-setting-maps-url" type="url" aria-describedby="business-setting-maps-url-error" /><small id="business-setting-maps-url-error" class="ag-field-error"></small></label>
+        <label class="field-wide" for="business-setting-instagram-url">Enlace público de Instagram<input id="business-setting-instagram-url" type="url" aria-describedby="business-setting-instagram-url-error" /><small id="business-setting-instagram-url-error" class="ag-field-error"></small></label>
+        <label class="field-wide" for="business-setting-reviews-url">Enlace público de reseñas<input id="business-setting-reviews-url" type="url" aria-describedby="business-setting-reviews-url-error" /><small id="business-setting-reviews-url-error" class="ag-field-error"></small></label>
       </div>
+      <div class="configuration-save-bar">
+        <span id="business-settings-save-state" class="configuration-save-state">Sin cambios</span>
+        <button id="save-business-settings" class="ag-button ag-button--primary" type="button">Guardar cambios</button>
+        <p id="business-settings-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
+      </div>
+        </div>
+      </div>
+    </section>
 
-      <div class="branding-panel">
+    <section class="section admin-section public-page-settings-section configuration-category" data-admin-section="public-page" aria-labelledby="public-page-settings-title">
+      <div class="business-configuration-layout">
+        <div data-configuration-navigation></div>
+        <div class="business-configuration-content">
+      <header class="configuration-category-header">
+        <div><p class="eyebrow">Configuración</p><h2 id="public-page-settings-title">Página pública</h2><p>Publicación, logo, galería y uno de los seis estilos visuales disponibles.</p></div>
+        <span id="configuration-status-public-page" class="configuration-status">Comprobando…</span>
+      </header>
+      <div id="public-page-errors" class="configuration-error-summary" role="alert" tabindex="-1" hidden></div>
+      <div class="public-page-preview-card"><div><strong id="public-page-preview-name">Tu negocio</strong><p id="public-page-preview-copy">Una estructura funcional con seis estilos visuales.</p></div><a id="public-page-preview-link" class="ag-button ag-button--secondary ag-button--small" target="_blank" rel="noopener noreferrer">Ver página pública</a></div>
+      <div class="branding-panel" data-config-dirty-key="public-page">
+        <label class="active-setting public-page-active-setting"><input id="business-setting-active" type="checkbox" /><span><strong>Página pública activa</strong><small>Al desactivarla dejará de estar disponible para nuevas visitas; no elimina reservas.</small></span></label>
         <div class="section-header"><div><h3>Marca y apariencia</h3><p>Logo, carrusel, colores y plantilla de la landing.</p></div></div>
         <div class="brand-media-grid">
           <div class="brand-media-card">
@@ -280,14 +319,14 @@
           <div class="brand-media-card">
             <h4>Fotos del carrusel</h4>
             <input id="admin-gallery-file" type="file" accept="image/jpeg,image/png,image/webp" hidden />
-            <label>Texto alternativo<input id="admin-gallery-alt" maxlength="240" /></label>
+            <label>Texto alternativo<input id="admin-gallery-alt" maxlength="240" data-ignore-dirty /></label>
             <button id="upload-admin-gallery" class="btn btn-secondary" type="button">Subir foto</button>
-            <div id="admin-gallery-list" class="brand-gallery-list"></div>
+            <div id="admin-gallery-list" class="brand-gallery-list" aria-busy="true"><span class="ag-visually-hidden">Cargando galería…</span></div>
           </div>
         </div>
         <div class="business-settings-grid branding-settings">
           <label>Paleta<select id="business-setting-theme"><option value="slate_gold">Slate Gold</option><option value="rose_beauty">Rose Beauty</option><option value="emerald_clean">Emerald Clean</option><option value="blue_clinic">Blue Clinic</option><option value="amber_barber">Amber Barber</option><option value="violet_modern">Violet Modern</option><option value="custom">Personalizado</option></select></label>
-          <label>Plantilla<select id="business-setting-template"><option value="classic">Classic</option><option value="elegant">Elegant</option><option value="beauty">Beauty</option><option value="clinic">Clinic</option><option value="urban">Urban</option><option value="minimal">Minimal</option></select></label>
+          <label>Plantilla<select id="business-setting-template" aria-describedby="admin-template-description"><option value="classic">Classic</option><option value="elegant">Elegant</option><option value="beauty">Beauty</option><option value="clinic">Clinic</option><option value="urban">Urban</option><option value="minimal">Minimal</option></select></label>
           <p id="admin-template-description" class="field-wide template-description">Estructura equilibrada para cualquier negocio.</p>
           <label>Color principal<span class="color-field"><input id="business-setting-primary-color" type="color" /><input id="business-setting-primary-hex" maxlength="7" /></span></label>
           <label>Color secundario<span class="color-field"><input id="business-setting-secondary-color" type="color" /><input id="business-setting-secondary-hex" maxlength="7" /></span></label>
@@ -296,10 +335,11 @@
         </div>
         <p id="admin-brand-feedback" class="inline-feedback"></p>
       </div>
-
-      <div class="settings-actions">
-        <button id="save-business-settings" class="btn btn-primary" type="button">Guardar cambios</button>
-        <p id="business-settings-feedback" class="inline-feedback"></p>
+      <div class="configuration-save-bar">
+        <span id="public-page-save-state" class="configuration-save-state">Sin cambios</span>
+        <button id="save-public-page-settings" class="ag-button ag-button--primary" type="button">Guardar página pública</button>
+      </div>
+        </div>
       </div>
     </section>
 
@@ -320,48 +360,51 @@
       <p id="channel-onboarding-feedback" class="inline-feedback"></p>
     </section>
 
-    <section class="section admin-section services-settings-section" data-admin-section="services">
-      <div class="section-header">
-        <div>
-          <h2>Servicios</h2>
-          <p>Edita los servicios públicos, la duración utilizada por la agenda y su disponibilidad.</p>
-        </div>
-      </div>
-
-      <div class="new-service-form">
-        <label>Nombre<input id="new-service-name" type="text" /></label>
-        <label>Precio<input id="new-service-price" type="text" placeholder="Ej: 25 €" /></label>
-        <label>Duración<input id="new-service-duration" type="number" min="1" max="1440" /></label>
+    <section class="section admin-section services-settings-section configuration-category" data-admin-section="services" aria-labelledby="services-settings-title">
+      <div class="business-configuration-layout">
+        <div data-configuration-navigation></div>
+        <div class="business-configuration-content">
+      <header class="configuration-category-header"><div><p class="eyebrow">Configuración</p><h2 id="services-settings-title">Servicios</h2><p>Gestiona lo que pueden reservar tus clientes, su duración y precio visible.</p></div><span id="configuration-status-services" class="configuration-status">Comprobando…</span></header>
+      <div id="services-errors" class="configuration-error-summary" role="alert" tabindex="-1" hidden></div>
+      <fieldset class="new-service-form configuration-create-card" data-config-dirty-key="service-new">
+        <legend>Añadir servicio</legend>
+        <label>Nombre <span aria-hidden="true">*</span><input id="new-service-name" type="text" required aria-describedby="new-service-name-error" /><small id="new-service-name-error" class="ag-field-error"></small></label>
+        <label>Precio visible<input id="new-service-price" type="text" placeholder="Ej.: 25 €" /></label>
+        <label>Duración en minutos <span aria-hidden="true">*</span><input id="new-service-duration" type="number" min="1" max="1440" required aria-describedby="new-service-duration-error" /><small id="new-service-duration-error" class="ag-field-error"></small></label>
         <label class="field-wide">Descripción<textarea id="new-service-description" rows="2"></textarea></label>
         <button id="create-service" class="btn btn-primary" type="button">Crear servicio</button>
-      </div>
+      </fieldset>
 
-      <p id="services-feedback" class="inline-feedback"></p>
-      <div id="admin-services-list" class="admin-services-list">
+      <p id="services-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
+      <div id="admin-services-list" class="admin-services-list" aria-busy="true">
         <p class="empty-state">Cargando servicios...</p>
+      </div>
+        </div>
       </div>
     </section>
 
-    <section class="section admin-section staff-settings-section" data-admin-section="staff">
-      <div class="section-header">
-        <div>
-          <h2>Equipo y profesionales</h2>
-          <p>Gestiona el acceso, la visibilidad publica y el horario de cada miembro.</p>
-        </div>
-      </div>
-      <div class="new-service-form">
-        <label>Email<input id="new-staff-email" type="email" /></label>
-        <label>Rol<select id="new-staff-role"><option value="business_staff">Personal</option><option value="business_admin">Administrador</option></select></label>
-        <label>Nombre publico<input id="new-staff-public-name" type="text" /></label>
+    <section class="section admin-section staff-settings-section configuration-category" data-admin-section="staff" aria-labelledby="staff-settings-title">
+      <div class="business-configuration-layout">
+        <div data-configuration-navigation></div>
+        <div class="business-configuration-content">
+      <header class="configuration-category-header"><div><p class="eyebrow">Configuración</p><h2 id="staff-settings-title">Equipo</h2><p>Distingue el acceso al panel de la visibilidad como profesional reservable.</p></div><span id="configuration-status-staff" class="configuration-status">Comprobando…</span></header>
+      <div id="staff-errors" class="configuration-error-summary" role="alert" tabindex="-1" hidden></div>
+      <fieldset class="new-service-form configuration-create-card" data-config-dirty-key="staff-new">
+        <legend>Añadir miembro</legend>
+        <label>Email de acceso <span aria-hidden="true">*</span><input id="new-staff-email" type="email" required /></label>
+        <label>Rol de acceso<select id="new-staff-role" aria-describedby="new-staff-role-help"><option value="business_staff">Personal</option><option value="business_admin">Administrador</option></select><small id="new-staff-role-help">Controla los permisos en AutonoGrow; no es un título público.</small></label>
+        <label>Nombre público<input id="new-staff-public-name" type="text" aria-describedby="new-staff-public-name-help" /><small id="new-staff-public-name-help">Nombre que puede mostrarse durante la reserva.</small></label>
         <label class="active-setting"><input id="new-staff-bookable" type="checkbox" />Reservable</label>
         <button id="create-staff-member" class="btn btn-primary" type="button">Añadir miembro</button>
-      </div>
-      <p id="staff-feedback" class="inline-feedback"></p>
-      <div id="admin-staff-list" class="admin-services-list"><p class="empty-state">Cargando equipo...</p></div>
+      </fieldset>
+      <p id="staff-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
+      <div id="admin-staff-list" class="admin-services-list" aria-busy="true"><p class="empty-state">Cargando equipo...</p></div>
       <details id="inactive-staff-section" class="inactive-staff-section">
         <summary>Miembros inactivos <span id="inactive-staff-count">0</span></summary>
         <div id="admin-inactive-staff-list" class="inactive-staff-list"><p class="empty-state">Cargando miembros inactivos...</p></div>
       </details>
+        </div>
+      </div>
     </section>
 
     <section class="section admin-section conversations-section" data-admin-section="conversations" aria-labelledby="conversations-title">
@@ -491,12 +534,17 @@
       </div>
     </section>
 
-    <div class="admin-section schedule-sections" data-admin-section="schedule">
-    <section class="section availability-section">
+    <div class="admin-section schedule-sections configuration-category" data-admin-section="schedule" aria-labelledby="availability-settings-title">
+      <div class="business-configuration-layout">
+        <div data-configuration-navigation></div>
+        <div class="business-configuration-content">
+      <header class="configuration-category-header"><div><p class="eyebrow">Configuración</p><h2 id="availability-settings-title">Horarios y disponibilidad</h2><p>Define cuándo se puede reservar, las reglas generales y los cierres excepcionales.</p></div><span id="configuration-status-schedule" class="configuration-status">Comprobando…</span></header>
+      <div id="availability-errors" class="configuration-error-summary" role="alert" tabindex="-1" hidden></div>
+    <section class="section availability-section" data-config-dirty-key="availability">
       <div class="section-header">
         <div>
-          <h2>Horarios</h2>
-          <p>Configura los tramos de trabajo y las reglas de disponibilidad.</p>
+          <h3>Horario del negocio y reglas de reserva</h3>
+          <p>Los huecos también dependen de la duración del servicio, el profesional y las reservas existentes.</p>
         </div>
       </div>
 
@@ -504,30 +552,35 @@
         <label>
           Zona horaria
           <input type="text" id="availability-timezone" value="Europe/Madrid" />
+          <small>Zona utilizada para mostrar y calcular las reservas.</small>
         </label>
 
         <label>
-          Intervalo de slots
+          Cada cuánto puede empezar una cita
           <input type="number" id="slot-interval-minutes" min="5" max="120" step="5" />
+          <small>Minutos entre posibles horas de inicio.</small>
         </label>
 
         <label>
           Margen entre citas
           <input type="number" id="buffer-between-bookings-minutes" min="0" max="240" step="5" />
+          <small>Tiempo libre añadido después de cada reserva.</small>
         </label>
 
         <label>
           Antelación mínima
           <input type="number" id="min-notice-minutes" min="0" max="10080" step="15" />
+          <small>Cuánto tiempo antes debe reservar el cliente.</small>
         </label>
 
         <label>
-          Máximo de días reservables
+          Hasta cuándo se puede reservar
           <input type="number" id="max-days-ahead" min="1" max="365" />
+          <small>Número máximo de días hacia el futuro.</small>
         </label>
       </div>
 
-      <div id="weekly-schedule-editor" class="weekly-schedule-editor">
+      <div id="weekly-schedule-editor" class="weekly-schedule-editor" aria-busy="true">
         <p class="empty-state">Cargando horarios...</p>
       </div>
 
@@ -535,14 +588,15 @@
         <button id="save-availability-settings" class="btn btn-primary" type="button">
           Guardar horarios
         </button>
-        <p id="availability-settings-feedback" class="inline-feedback"></p>
+        <span id="availability-save-state" class="configuration-save-state">Sin cambios</span>
+        <p id="availability-settings-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
       </div>
     </section>
 
-    <section class="section availability-section">
+    <section class="section availability-section" data-config-dirty-key="exception">
       <div class="section-header">
         <div>
-          <h2>Excepciones</h2>
+          <h3>Excepciones y cierres</h3>
           <p>Cierra un día concreto o define un horario especial para una fecha.</p>
         </div>
       </div>
@@ -581,14 +635,16 @@
         <button id="save-availability-exception" class="btn btn-primary" type="button">
           Guardar excepción
         </button>
-        <p id="availability-exceptions-feedback" class="inline-feedback"></p>
+        <p id="availability-exceptions-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
       </div>
 
-      <div id="availability-exceptions-list" class="exceptions-list">
+      <div id="availability-exceptions-list" class="exceptions-list" aria-busy="true">
         <p class="empty-state">Cargando excepciones...</p>
       </div>
     </section>
 
+        </div>
+      </div>
     </div>
 
     <section class="section admin-section agenda-section" data-admin-section="bookings" aria-labelledby="agenda-title">
@@ -692,7 +748,7 @@
       <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="summary" aria-current="page"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11 12 3l9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg></span><span>Inicio</span></button>
       <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="bookings"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span><span>Agenda</span></button>
       <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="conversations"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg></span><span>Mensajes</span></button>
-      <button class="ag-mobile-nav__item" type="button" data-ag-shell-open data-ag-shell-more data-ag-shell-sections="growth,messages,services,staff,schedule,channels,business,reviews" aria-controls="admin-sidebar" aria-expanded="false"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></span><span>Más</span></button>
+      <button class="ag-mobile-nav__item" type="button" data-ag-shell-open data-ag-shell-more data-ag-shell-sections="growth,messages,configuration,services,staff,schedule,channels,business,public-page,reviews" aria-controls="admin-sidebar" aria-expanded="false"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></span><span>Más</span></button>
     </nav>
     </div>
   </main>
@@ -717,7 +773,7 @@
     </div>
   </div>
 
-  <div id="staff-removal-modal" class="modal-overlay ag-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="staff-removal-modal-title">
+  <div id="staff-removal-modal" class="modal-overlay ag-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="staff-removal-modal-title" aria-describedby="staff-removal-modal-message" aria-hidden="true">
     <div class="modal-card ag-modal ag-modal--danger">
       <div class="modal-header ag-modal__header">
         <div>
@@ -736,6 +792,6 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="admin.js?v=20260804-3"></script>
+  <script src="admin.js?v=20260804-4"></script>
 </body>
 </html>

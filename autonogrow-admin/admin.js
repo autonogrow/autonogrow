@@ -105,6 +105,20 @@ let rescheduleState = {
   dayLabel: "",
   slot: null
 };
+const CONFIGURATION_SECTIONS = new Set(["configuration", "business", "services", "staff", "schedule", "public-page"]);
+const CONFIGURATION_CATEGORIES = [
+  { id: "configuration", label: "Resumen", description: "Qué está listo y qué falta" },
+  { id: "business", label: "Información", description: "Datos públicos y contacto" },
+  { id: "services", label: "Servicios", description: "Catálogo, duración y precio" },
+  { id: "staff", label: "Equipo", description: "Acceso y profesionales" },
+  { id: "schedule", label: "Horarios", description: "Disponibilidad y reglas" },
+  { id: "public-page", label: "Página pública", description: "Publicación, tema e imágenes" }
+];
+const configurationSnapshots = new Map();
+const configurationDirtyKeys = new Set();
+const configurationMutationKeys = new Set();
+const configurationLoadState = { staff: "loading", gallery: "loading", exceptions: "loading" };
+let staffRemovalReturnFocus = null;
 
 function getBusinessSlug() {
   const params = new URLSearchParams(window.location.search);
@@ -119,11 +133,197 @@ function canManageConversationTemplates() {
   return Boolean(adminAuthUser?.is_owner || adminMembership?.role === "business_admin");
 }
 
+function configurationCategoryForKey(key) {
+  if (key === "business-info") return "business";
+  if (key === "public-page" || key.startsWith("gallery-")) return "public-page";
+  if (key.startsWith("service-")) return "services";
+  if (key.startsWith("staff-")) return "staff";
+  if (key === "availability" || key === "exception") return "schedule";
+  return null;
+}
+
+function configurationFormElement(key) {
+  return [...document.querySelectorAll("[data-config-dirty-key]")]
+    .find((element) => element.dataset.configDirtyKey === key) || null;
+}
+
+function serializeConfigurationForm(element) {
+  if (!element) return "";
+  return JSON.stringify([...element.querySelectorAll("input, select, textarea")]
+    .filter((field) => field.type !== "file" && !field.disabled && !field.hasAttribute("data-ignore-dirty") && field.closest("[data-config-dirty-key]") === element)
+    .map((field) => ({
+      key: field.id || field.name || field.className,
+      value: ["checkbox", "radio"].includes(field.type) ? field.checked : field.value
+    })));
+}
+
+function snapshotConfigurationForm(key) {
+  const element = configurationFormElement(key);
+  if (!element) return;
+  configurationSnapshots.set(key, serializeConfigurationForm(element));
+  configurationDirtyKeys.delete(key);
+  updateConfigurationDirtyUi(key);
+}
+
+function ensureConfigurationSnapshot(key) {
+  if (!configurationSnapshots.has(key)) snapshotConfigurationForm(key);
+}
+
+function snapshotConfigurationForms(selector = "[data-config-dirty-key]") {
+  document.querySelectorAll(selector).forEach((element) => {
+    snapshotConfigurationForm(element.dataset.configDirtyKey);
+  });
+}
+
+function updateConfigurationDirtyState(key) {
+  const element = configurationFormElement(key);
+  if (!element || !configurationSnapshots.has(key)) return;
+  const dirty = serializeConfigurationForm(element) !== configurationSnapshots.get(key);
+  configurationDirtyKeys[dirty ? "add" : "delete"](key);
+  updateConfigurationDirtyUi(key);
+}
+
+function updateConfigurationDirtyUi(key) {
+  const dirty = configurationDirtyKeys.has(key);
+  const element = configurationFormElement(key);
+  element?.classList.toggle("has-unsaved-changes", dirty);
+  const itemState = element?.querySelector(".configuration-item-save-state");
+  if (itemState) itemState.textContent = dirty ? "Cambios sin guardar" : "Sin cambios";
+  const stateId = key === "business-info"
+    ? "business-settings-save-state"
+    : key === "public-page" ? "public-page-save-state" : key === "availability" ? "availability-save-state" : null;
+  if (stateId) document.getElementById(stateId).textContent = dirty ? "Cambios sin guardar" : "Sin cambios";
+}
+
+function configurationSectionHasDirty(section) {
+  return [...configurationDirtyKeys].some((key) => configurationCategoryForKey(key) === section);
+}
+
+function confirmConfigurationNavigation(nextSection) {
+  const current = document.querySelector("[data-admin-section].admin-section-active")?.dataset.adminSection;
+  if (!current || current === nextSection || !CONFIGURATION_SECTIONS.has(current) || !configurationSectionHasDirty(current)) return true;
+  return window.confirm("Hay cambios sin guardar en este apartado. Puedes cambiar de sección y volver a guardarlos antes de salir de la página. ¿Continuar?");
+}
+
+function configurationState(section) {
+  if (section === "business") {
+    if (!currentBusiness) return { state: "loading", label: "Comprobando…", detail: "Cargando información" };
+    return currentBusiness.name?.trim()
+      ? { state: "complete", label: "Completo", detail: "Información básica disponible" }
+      : { state: "missing", label: "Faltan datos", detail: "Falta el nombre del negocio" };
+  }
+  if (section === "services") {
+    if (dashboardDataState.services === "error") return { state: "error", label: "Error al cargar", detail: "Reintenta cargar los servicios" };
+    if (dashboardDataState.services !== "ready") return { state: "loading", label: "Comprobando…", detail: "Cargando servicios" };
+    const active = adminServices.filter((service) => service.active).length;
+    return active
+      ? { state: "complete", label: "Completo", detail: `${active} ${active === 1 ? "servicio activo" : "servicios activos"}` }
+      : { state: "missing", label: "Faltan datos", detail: "No hay servicios activos" };
+  }
+  if (section === "staff") {
+    if (configurationLoadState.staff === "error") return { state: "error", label: "Error al cargar", detail: "Reintenta cargar el equipo" };
+    if (configurationLoadState.staff !== "ready") return { state: "loading", label: "Comprobando…", detail: "Cargando equipo" };
+    const professionals = staffMembers.filter((member) => member.active && member.bookable).length;
+    return professionals
+      ? { state: "complete", label: "Completo", detail: `${professionals} ${professionals === 1 ? "profesional reservable" : "profesionales reservables"}` }
+      : { state: "missing", label: "Faltan datos", detail: "No hay profesionales reservables" };
+  }
+  if (section === "schedule") {
+    if (dashboardDataState.availability === "error") return { state: "error", label: "Error al cargar", detail: "Reintenta cargar los horarios" };
+    if (dashboardDataState.availability !== "ready") return { state: "loading", label: "Comprobando…", detail: "Cargando horarios" };
+    const hasWindows = Object.values(availabilitySettings?.weekly_schedule || {}).some((windows) => windows.length);
+    return hasWindows
+      ? { state: "complete", label: "Completo", detail: "Horario semanal configurado" }
+      : { state: "missing", label: "Faltan datos", detail: "No hay tramos de apertura" };
+  }
+  if (section === "public-page") {
+    if (!currentBusiness || configurationLoadState.gallery === "loading") return { state: "loading", label: "Comprobando…", detail: "Cargando página pública" };
+    if (configurationLoadState.gallery === "error") return { state: "error", label: "Error al cargar", detail: "La galería necesita reintento" };
+    return currentBusiness.active
+      ? { state: "complete", label: "Completo", detail: "Página pública activa" }
+      : { state: "review", label: "Necesita revisión", detail: "La página pública está desactivada" };
+  }
+  return { state: "loading", label: "Comprobando…", detail: "" };
+}
+
+function configurationNavigationMarkup(activeSection) {
+  return `<nav class="configuration-navigation" aria-label="Apartados de configuración"><p>Configuración</p>${CONFIGURATION_CATEGORIES.map((category) => {
+    const state = category.id === "configuration" ? null : configurationState(category.id);
+    return `<button type="button" data-configuration-target="${category.id}" ${category.id === activeSection ? 'aria-current="page"' : ""}><span><strong>${category.label}</strong><small>${category.description}</small></span>${state ? `<em class="configuration-nav-state configuration-nav-state--${state.state}">${state.label}</em>` : ""}</button>`;
+  }).join("")}</nav>`;
+}
+
+function renderConfigurationOverview() {
+  if (!document.getElementById("configuration-overview-list")) return;
+  const activeSection = document.querySelector("[data-admin-section].admin-section-active")?.dataset.adminSection || "configuration";
+  document.querySelectorAll("[data-configuration-navigation]").forEach((container) => {
+    container.innerHTML = configurationNavigationMarkup(activeSection);
+  });
+  const sections = CONFIGURATION_CATEGORIES.filter((category) => category.id !== "configuration");
+  const states = sections.map((category) => ({ category, status: configurationState(category.id) }));
+  const ready = states.filter(({ status }) => status.state === "complete").length;
+  document.getElementById("configuration-business-name").textContent = currentBusiness?.name || "Negocio sin nombre";
+  document.getElementById("configuration-ready-summary").textContent = `${ready} de ${states.length} apartados preparados`;
+  document.getElementById("configuration-overview-list").innerHTML = states.map(({ category, status }) => `
+    <article class="configuration-overview-item configuration-overview-item--${status.state}">
+      <div><h3>${category.label}</h3><p>${escapeHtml(status.detail)}</p></div>
+      <span class="configuration-status configuration-status--${status.state}">${status.label}</span>
+      <button class="ag-button ag-button--secondary ag-button--small" type="button" data-configuration-target="${category.id}">Revisar</button>
+    </article>`).join("");
+  const pending = states.filter(({ status }) => !["complete", "loading"].includes(status.state));
+  document.getElementById("configuration-task-list").innerHTML = pending.length
+    ? pending.map(({ category, status }) => `<button type="button" data-configuration-target="${category.id}"><strong>${category.label}</strong><span>${escapeHtml(status.detail)}</span></button>`).join("")
+    : `<p class="configuration-all-ready">Todos los apartados disponibles están preparados.</p>`;
+  for (const { category, status } of states) {
+    const badge = document.getElementById(`configuration-status-${category.id}`);
+    if (badge) {
+      badge.className = `configuration-status configuration-status--${status.state}`;
+      badge.textContent = status.label;
+    }
+  }
+}
+
+function setupBusinessConfiguration() {
+  document.getElementById("admin-main-content").addEventListener("click", (event) => {
+    const target = event.target.closest("[data-configuration-target]");
+    if (!target) return;
+    const section = target.dataset.configurationTarget;
+    if (showAdminSection(section)) {
+      window.requestAnimationFrame(() => {
+        const heading = document.querySelector(`[data-admin-section="${section}"] h2`);
+        if (!heading) return;
+        heading.setAttribute("tabindex", "-1");
+        heading.focus({ preventScroll: true });
+      });
+    }
+  });
+  document.getElementById("admin-main-content").addEventListener("input", (event) => {
+    const form = event.target.closest("[data-config-dirty-key]");
+    if (form) updateConfigurationDirtyState(form.dataset.configDirtyKey);
+  });
+  document.getElementById("admin-main-content").addEventListener("change", (event) => {
+    const form = event.target.closest("[data-config-dirty-key]");
+    if (form) {
+      if (form.dataset.configDirtyKey === "availability" && event.target.closest("#weekly-schedule-editor")) {
+        availabilitySettings.weekly_schedule = collectWeeklySchedule();
+      }
+      updateConfigurationDirtyState(form.dataset.configDirtyKey);
+    }
+  });
+  window.addEventListener("beforeunload", (event) => {
+    if (!configurationDirtyKeys.size) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+  snapshotConfigurationForms();
+  renderConfigurationOverview();
+}
+
 function applyRoleVisibility() {
   const staffOnly = isBusinessStaff();
   const allowed = new Set(["summary", "bookings", "conversations"]);
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
-    tab.hidden = staffOnly && !allowed.has(tab.dataset.section);
+    tab.hidden = tab.classList.contains("admin-tab--legacy") || (staffOnly && !allowed.has(tab.dataset.section));
   });
   document.querySelectorAll("[data-admin-section]").forEach((section) => {
     if (staffOnly && !allowed.has(section.dataset.adminSection)) section.hidden = true;
@@ -146,10 +346,24 @@ function resolveMediaUrl(url, cacheBust = false) {
   return `${resolved}${resolved.includes("?") ? "&" : "?"}v=${Date.now()}`;
 }
 
-function showAdminSection(sectionName, updateHash = true) {
+function resolveSafeAdminMediaUrl(url, cacheBust = false) {
+  const resolved = resolveMediaUrl(url, cacheBust);
+  if (!resolved) return "";
+  try {
+    const parsed = new URL(resolved, window.location.href);
+    const apiOrigin = new URL(API_BASE_URL, window.location.href).origin;
+    if (!["https:", "http:"].includes(parsed.protocol) || ![window.location.origin, apiOrigin].includes(parsed.origin)) return "";
+    return parsed.href;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = false } = {}) {
   const availableSections = Array.from(document.querySelectorAll("[data-admin-section]"));
   const sectionExists = availableSections.some((section) => section.dataset.adminSection === sectionName);
   const targetSection = sectionExists ? sectionName : "summary";
+  if (!skipDirtyCheck && !confirmConfigurationNavigation(targetSection)) return false;
   if (targetSection !== "conversations" && conversationCustomerPanelOpen) {
     closeConversationCustomerPanel({ restoreFocus: false });
   }
@@ -159,7 +373,7 @@ function showAdminSection(sectionName, updateHash = true) {
   });
 
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
-    const isActive = tab.dataset.section === targetSection;
+    const isActive = tab.dataset.section === (CONFIGURATION_SECTIONS.has(targetSection) ? "configuration" : targetSection);
     tab.classList.toggle("admin-tab-active", isActive);
     tab.setAttribute("aria-selected", String(isActive));
   });
@@ -167,6 +381,8 @@ function showAdminSection(sectionName, updateHash = true) {
   if (updateHash) {
     window.history.replaceState(null, "", `#${targetSection}`);
   }
+  if (CONFIGURATION_SECTIONS.has(targetSection)) renderConfigurationOverview();
+  return true;
 }
 
 function setupAdminNavigation() {
@@ -1323,6 +1539,7 @@ const WEEKDAYS = [
 
 async function loadAvailabilitySettings() {
   const slug = getBusinessSlug();
+  document.getElementById("weekly-schedule-editor").setAttribute("aria-busy", "true");
   if (!availabilitySettings) setDashboardDataState("availability", "loading");
 
   try {
@@ -1339,8 +1556,10 @@ async function loadAvailabilitySettings() {
     console.error(error);
     setDashboardDataState("availability", "error");
     document.getElementById("weekly-schedule-editor").innerHTML = `
-      <p class="empty-state">No se pudieron cargar los horarios.</p>
+      <div class="configuration-partial-error" role="alert"><p>No se pudieron cargar los horarios.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadAvailabilitySettings()">Reintentar horarios</button></div>
     `;
+    document.getElementById("weekly-schedule-editor").setAttribute("aria-busy", "false");
+    renderConfigurationOverview();
   }
 }
 
@@ -1351,12 +1570,15 @@ function renderAvailabilitySettings() {
   document.getElementById("min-notice-minutes").value = availabilitySettings.min_notice_minutes || 120;
   document.getElementById("max-days-ahead").value = availabilitySettings.max_days_ahead || 30;
   renderWeeklyScheduleEditor();
+  snapshotConfigurationForm("availability");
+  renderConfigurationOverview();
 }
 
 function renderWeeklyScheduleEditor() {
   const container = document.getElementById("weekly-schedule-editor");
   const schedule = availabilitySettings.weekly_schedule || {};
   container.innerHTML = "";
+  container.setAttribute("aria-busy", "false");
 
   WEEKDAYS.forEach((day) => {
     const windows = schedule[day.value] || [];
@@ -1396,6 +1618,7 @@ function toggleDayClosed(weekday, checked) {
   schedule[weekday] = checked ? [] : [{ start: "10:00", end: "14:00" }];
   availabilitySettings.weekly_schedule = schedule;
   renderWeeklyScheduleEditor();
+  updateConfigurationDirtyState("availability");
 }
 
 function addScheduleWindow(weekday, start = "10:00", end = "14:00") {
@@ -1404,6 +1627,7 @@ function addScheduleWindow(weekday, start = "10:00", end = "14:00") {
   schedule[weekday].push({ start, end });
   availabilitySettings.weekly_schedule = schedule;
   renderWeeklyScheduleEditor();
+  updateConfigurationDirtyState("availability");
 }
 
 function appendWindowRow(containerId, start = "10:00", end = "14:00") {
@@ -1423,6 +1647,8 @@ function appendWindowRow(containerId, start = "10:00", end = "14:00") {
 
 function removeWindowRow(button) {
   button.closest(".window-row")?.remove();
+  availabilitySettings.weekly_schedule = collectWeeklySchedule();
+  updateConfigurationDirtyState("availability");
 }
 
 function collectWeeklySchedule() {
@@ -1431,20 +1657,57 @@ function collectWeeklySchedule() {
   WEEKDAYS.forEach((day) => {
     const block = document.querySelector(`.schedule-day[data-weekday="${day.value}"]`);
     const rows = Array.from(block?.querySelectorAll(".window-row") || []);
-    schedule[day.value] = rows
-      .map((row) => ({
+    schedule[day.value] = rows.map((row) => ({
         start: row.querySelector(".window-start").value,
         end: row.querySelector(".window-end").value
-      }))
-      .filter((windowItem) => windowItem.start && windowItem.end && windowItem.start < windowItem.end);
+      }));
   });
 
   return schedule;
 }
 
+function validateAvailabilityPayload(payload) {
+  const errors = [];
+  const limits = [
+    ["slot-interval-minutes", payload.slot_interval_minutes, 5, 120, "El inicio de citas debe estar entre 5 y 120 minutos."],
+    ["buffer-between-bookings-minutes", payload.buffer_between_bookings_minutes, 0, 240, "El margen entre citas debe estar entre 0 y 240 minutos."],
+    ["min-notice-minutes", payload.min_notice_minutes, 0, 10080, "La antelación mínima debe estar entre 0 y 10080 minutos."],
+    ["max-days-ahead", payload.max_days_ahead, 1, 365, "El máximo de días debe estar entre 1 y 365."]
+  ];
+  for (const [id, value, min, max, message] of limits) {
+    if (!Number.isInteger(value) || value < min || value > max) errors.push({ field: document.getElementById(id), message });
+  }
+  for (const day of WEEKDAYS) {
+    const windows = payload.weekly_schedule[day.value] || [];
+    const sorted = [...windows].sort((left, right) => left.start.localeCompare(right.start));
+    sorted.forEach((windowItem, index) => {
+      if (!windowItem.start || !windowItem.end || windowItem.start >= windowItem.end) {
+        errors.push({ field: document.querySelector(`.schedule-day[data-weekday="${day.value}"] .window-start`), message: `La hora de cierre de ${day.label} debe ser posterior a la de apertura.` });
+      } else if (index > 0 && sorted[index - 1].end > windowItem.start) {
+        errors.push({ field: document.querySelector(`.schedule-day[data-weekday="${day.value}"] .window-start`), message: `Los tramos de ${day.label} no pueden solaparse.` });
+      }
+    });
+  }
+  document.querySelectorAll("[data-config-dirty-key='availability'] [aria-invalid='true']").forEach((field) => field.removeAttribute("aria-invalid"));
+  if (errors.length) {
+    const summary = document.getElementById("availability-errors");
+    summary.hidden = false;
+    summary.textContent = errors.map((error) => error.message).join(" ");
+    errors.forEach((error) => error.field?.setAttribute("aria-invalid", "true"));
+    summary.focus();
+    errors[0].field?.focus();
+  } else {
+    document.getElementById("availability-errors").hidden = true;
+  }
+  return errors.length === 0;
+}
+
 async function saveAvailabilitySettings() {
+  const mutationKey = "availability";
+  if (configurationMutationKeys.has(mutationKey)) return;
   const slug = getBusinessSlug();
   const feedback = document.getElementById("availability-settings-feedback");
+  const button = document.getElementById("save-availability-settings");
   feedback.className = "inline-feedback";
   feedback.textContent = "Guardando...";
 
@@ -1456,6 +1719,12 @@ async function saveAvailabilitySettings() {
     max_days_ahead: Number(document.getElementById("max-days-ahead").value || 30),
     weekly_schedule: collectWeeklySchedule()
   };
+  if (!validateAvailabilityPayload(payload)) return;
+  configurationMutationKeys.add(mutationKey);
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Guardando…";
+  document.getElementById("availability-save-state").textContent = "Guardando";
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/admin/${slug}/availability-settings`, {
@@ -1466,7 +1735,7 @@ async function saveAvailabilitySettings() {
 
     if (!response.ok) {
       const error = await response.json().catch(() => null);
-      throw new Error(error?.detail || "No se pudieron guardar los horarios.");
+      throw new Error(safeConfigurationError(error, "No se pudieron guardar los horarios."));
     }
 
     const result = await response.json();
@@ -1475,15 +1744,24 @@ async function saveAvailabilitySettings() {
     renderAvailabilitySettings();
     feedback.className = "inline-feedback success";
     feedback.textContent = "Horarios guardados correctamente.";
+    document.getElementById("availability-save-state").textContent = "Guardado";
   } catch (error) {
     console.error(error);
     feedback.className = "inline-feedback error";
     feedback.textContent = error.message || "No se pudieron guardar los horarios.";
+    document.getElementById("availability-save-state").textContent = "No se pudo guardar";
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = "Guardar horarios";
   }
 }
 
 async function loadAvailabilityExceptions() {
   const slug = getBusinessSlug();
+  configurationLoadState.exceptions = "loading";
+  document.getElementById("availability-exceptions-list").setAttribute("aria-busy", "true");
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/admin/${slug}/availability-exceptions`);
@@ -1494,12 +1772,14 @@ async function loadAvailabilityExceptions() {
 
     const data = await response.json();
     availabilityExceptions = data.exceptions || [];
+    configurationLoadState.exceptions = "ready";
+    document.getElementById("availability-exceptions-list").setAttribute("aria-busy", "false");
     renderAvailabilityExceptions();
   } catch (error) {
     console.error(error);
-    document.getElementById("availability-exceptions-list").innerHTML = `
-      <p class="empty-state">No se pudieron cargar las excepciones.</p>
-    `;
+    configurationLoadState.exceptions = "error";
+    document.getElementById("availability-exceptions-list").setAttribute("aria-busy", "false");
+    document.getElementById("availability-exceptions-list").innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudieron cargar las excepciones.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadAvailabilityExceptions()">Reintentar excepciones</button></div>`;
   }
 }
 
@@ -1518,11 +1798,13 @@ function setupExceptionForm() {
 function addExceptionWindow(start = "10:00", end = "14:00") {
   exceptionDraftWindows.push({ start, end });
   renderExceptionWindows();
+  updateConfigurationDirtyState("exception");
 }
 
 function removeExceptionWindow(index) {
   exceptionDraftWindows.splice(index, 1);
   renderExceptionWindows();
+  updateConfigurationDirtyState("exception");
 }
 
 function renderExceptionWindows() {
@@ -1555,9 +1837,12 @@ function updateExceptionWindow(index, field, value) {
   }
 
   exceptionDraftWindows[index][field] = value;
+  updateConfigurationDirtyState("exception");
 }
 
 async function saveAvailabilityException() {
+  const mutationKey = "exception";
+  if (configurationMutationKeys.has(mutationKey)) return;
   const slug = getBusinessSlug();
   const feedback = document.getElementById("availability-exceptions-feedback");
   const type = document.getElementById("exception-type").value;
@@ -1580,6 +1865,11 @@ async function saveAvailabilityException() {
     return;
   }
 
+  configurationMutationKeys.add(mutationKey);
+  const button = document.getElementById("save-availability-exception");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Guardando…";
   try {
     const response = await fetch(`${API_BASE_URL}/api/admin/${slug}/availability-exceptions`, {
       method: "POST",
@@ -1594,7 +1884,7 @@ async function saveAvailabilityException() {
 
     if (!response.ok) {
       const error = await response.json().catch(() => null);
-      throw new Error(error?.detail || "No se pudo guardar la excepción.");
+      throw new Error(safeConfigurationError(error, "No se pudo guardar la excepción."));
     }
 
     feedback.className = "inline-feedback success";
@@ -1603,11 +1893,17 @@ async function saveAvailabilityException() {
     document.getElementById("exception-reason").value = "";
     exceptionDraftWindows = [];
     renderExceptionWindows();
+    snapshotConfigurationForm("exception");
     await loadAvailabilityExceptions();
   } catch (error) {
     console.error(error);
     feedback.className = "inline-feedback error";
     feedback.textContent = error.message || "No se pudo guardar la excepción.";
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = "Guardar excepción";
   }
 }
 
@@ -1615,7 +1911,7 @@ function renderAvailabilityExceptions() {
   const container = document.getElementById("availability-exceptions-list");
 
   if (!availabilityExceptions.length) {
-    container.innerHTML = `<p class="empty-state">No hay excepciones configuradas.</p>`;
+    container.innerHTML = `<div class="configuration-empty-state"><strong>Sin excepciones</strong><p>No hay cierres ni horarios especiales configurados.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="document.getElementById('exception-date').focus()">Añadir excepción</button></div>`;
     return;
   }
 
@@ -1670,7 +1966,12 @@ function applyBusinessData(business) {
   document.getElementById("business-name").textContent = business.name;
   document.getElementById("business-subtitle").textContent =
     `${business.category || "Negocio local"} · ${business.city || ""}`;
-  document.getElementById("public-page-link").href = `../autonogrow-landing/index.html?b=${getBusinessSlug()}`;
+  document.getElementById("public-page-link").href = `../autonogrow-landing/index.html?b=${encodeURIComponent(getBusinessSlug())}`;
+  const publicHref = `../autonogrow-landing/index.html?b=${encodeURIComponent(getBusinessSlug())}`;
+  for (const id of ["configuration-public-link", "public-page-preview-link"]) {
+    const link = document.getElementById(id);
+    if (link) link.href = publicHref;
+  }
   if (!allBookings.length) agendaSelectedDate = getMadridDateKey();
   renderDashboard();
 }
@@ -1701,11 +2002,89 @@ function renderBusinessSettings() {
   BRAND_COLOR_NAMES.forEach((name) => setAdminColor(name, currentBusiness[`${name}_color`] || BRAND_PALETTES.slate_gold[BRAND_COLOR_NAMES.indexOf(name)]));
   const logo = document.getElementById("admin-logo-preview");
   logo.hidden = !currentBusiness.logo_url;
-  if (currentBusiness.logo_url) logo.src = resolveMediaUrl(currentBusiness.logo_url, true);
+  if (currentBusiness.logo_url) logo.src = resolveSafeAdminMediaUrl(currentBusiness.logo_url, true);
+  document.getElementById("delete-admin-logo").disabled = !currentBusiness.logo_url;
+  document.getElementById("public-page-preview-name").textContent = currentBusiness.name || "Tu negocio";
+  document.getElementById("public-page-preview-copy").textContent = currentBusiness.headline || currentBusiness.description || "Una estructura funcional con seis estilos visuales.";
+  snapshotConfigurationForm("business-info");
+  snapshotConfigurationForm("public-page");
+  renderConfigurationOverview();
 }
 
-async function saveBusinessSettings() {
-  const feedback = document.getElementById("business-settings-feedback");
+function isSafePublicUrl(value) {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function clearBusinessSettingsErrors() {
+  const summary = document.getElementById("business-settings-errors");
+  summary.hidden = true;
+  summary.textContent = "";
+  for (const id of ["name", "maps-url", "instagram-url", "reviews-url"]) {
+    const error = document.getElementById(`business-setting-${id}-error`);
+    if (error) error.textContent = "";
+  }
+  document.querySelectorAll("#business-settings-errors ~ .business-settings-grid [aria-invalid='true']")
+    .forEach((field) => field.removeAttribute("aria-invalid"));
+}
+
+function validateBusinessSettings(payload, scope) {
+  if (scope === "public-page") {
+    const colors = ["primary_color", "secondary_color", "accent_color", "background_color"];
+    const invalid = colors.find((field) => !/^#[0-9a-f]{6}$/i.test(payload[field]));
+    const summary = document.getElementById("public-page-errors");
+    if (!invalid) {
+      summary.hidden = true;
+      return true;
+    }
+    summary.hidden = false;
+    summary.textContent = "Introduce los colores en formato hexadecimal, por ejemplo #1e90ff.";
+    summary.focus();
+    const colorName = invalid.replace("_color", "");
+    document.getElementById(`business-setting-${colorName}-hex`)?.focus();
+    return false;
+  }
+  clearBusinessSettingsErrors();
+  const errors = [];
+  if (!payload.name) errors.push({ id: "business-setting-name", message: "El nombre es obligatorio." });
+  for (const [field, label] of [["maps_url", "Google Maps"], ["instagram_url", "Instagram"], ["reviews_url", "reseñas"]]) {
+    if (!isSafePublicUrl(payload[field])) errors.push({ id: `business-setting-${field.replaceAll("_", "-")}`, message: `Introduce un enlace válido de ${label} que empiece por http:// o https://.` });
+  }
+  for (const error of errors) {
+    const field = document.getElementById(error.id);
+    field?.setAttribute("aria-invalid", "true");
+    document.getElementById(`${error.id}-error`).textContent = error.message;
+  }
+  if (errors.length) {
+    const summary = document.getElementById("business-settings-errors");
+    summary.hidden = false;
+    summary.textContent = `${errors.length === 1 ? "Revisa este campo" : `Revisa estos ${errors.length} campos`}: ${errors.map((error) => error.message).join(" ")}`;
+    summary.focus();
+    document.getElementById(errors[0].id)?.focus();
+  }
+  return errors.length === 0;
+}
+
+async function saveBusinessSettings(scope = "business") {
+  const mutationKey = "business-settings";
+  if (configurationMutationKeys.has(mutationKey)) return;
+  const isPublicPage = scope === "public-page";
+  const feedback = document.getElementById(isPublicPage ? "admin-brand-feedback" : "business-settings-feedback");
+  const button = document.getElementById(isPublicPage ? "save-public-page-settings" : "save-business-settings");
+  const state = document.getElementById(isPublicPage ? "public-page-save-state" : "business-settings-save-state");
+  const otherKey = isPublicPage ? "business-info" : "public-page";
+  if (configurationDirtyKeys.has(otherKey)) {
+    feedback.className = "inline-feedback error";
+    feedback.textContent = isPublicPage
+      ? "Hay cambios pendientes en Información. Guárdalos o revísalos antes de guardar la Página pública."
+      : "Hay cambios pendientes en Página pública. Guárdalos o revísalos antes de guardar Información.";
+    return;
+  }
   const value = (id) => document.getElementById(id).value.trim();
   const payload = {
     name: value("business-setting-name"),
@@ -1729,14 +2108,15 @@ async function saveBusinessSettings() {
     active: document.getElementById("business-setting-active").checked
   };
 
-  if (!payload.name) {
-    feedback.className = "inline-feedback error";
-    feedback.textContent = "El nombre es obligatorio.";
-    return;
-  }
+  if (!validateBusinessSettings(payload, isPublicPage ? "public-page" : "business")) return;
 
+  configurationMutationKeys.add(mutationKey);
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Guardando…";
+  state.textContent = "Guardando";
   feedback.className = "inline-feedback";
-  feedback.textContent = "Guardando...";
+  feedback.textContent = "Guardando…";
 
   try {
     const response = await fetch(
@@ -1749,18 +2129,25 @@ async function saveBusinessSettings() {
     );
     const result = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(result?.detail || "Error al guardar.");
+      throw new Error(safeConfigurationError(result, "No se han podido guardar los cambios."));
     }
 
     currentBusiness = result.settings;
     applyBusinessData(currentBusiness);
     renderBusinessSettings();
     feedback.className = "inline-feedback success";
-    feedback.textContent = "Guardado correctamente";
+    feedback.textContent = "Guardado correctamente.";
+    state.textContent = "Guardado";
   } catch (error) {
     console.error(error);
     feedback.className = "inline-feedback error";
-    feedback.textContent = error.message || "Error al guardar";
+    feedback.textContent = typeof error?.message === "string" ? error.message : "No se han podido guardar los cambios. Revísalos e inténtalo de nuevo.";
+    state.textContent = "No se pudo guardar";
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = isPublicPage ? "Guardar página pública" : "Guardar cambios";
   }
 }
 
@@ -1813,10 +2200,21 @@ async function readAdminResponseBody(response) {
   try { return JSON.parse(text); } catch { return { detail: text }; }
 }
 
+function safeConfigurationError(body, fallback) {
+  const candidate = typeof body?.message === "string"
+    ? body.message
+    : typeof body?.detail === "string" ? body.detail : "";
+  if (!candidate || candidate.length > 300 || /^[a-z0-9_]+$/i.test(candidate) || /traceback|exception|payload|sql|token/i.test(candidate)) return fallback;
+  return candidate;
+}
+
 function adminMediaError(action, response, body) {
-  const detail = typeof body?.detail === "string" ? body.detail : JSON.stringify(body?.detail || body || {});
   console.error("Error de media", { action, url: response.url, status: response.status, body });
-  return `No se pudo ${action}. Error ${response.status}: ${detail || response.statusText}`;
+  const detail = typeof body?.detail === "string" ? body.detail : "";
+  const safeDetail = /^(Solo se permiten|El archivo está vacío|La imagen supera|El contenido del archivo|Máximo 10 imágenes)/.test(detail)
+    ? ` ${detail}.`
+    : "";
+  return `No se pudo ${action}.${safeDetail}`;
 }
 
 async function reloadAdminBusiness() {
@@ -1829,15 +2227,37 @@ async function reloadAdminBusiness() {
 }
 
 async function uploadAdminMedia(kind, input) {
+  const mutationKey = `media-${kind}`;
+  if (configurationMutationKeys.has(mutationKey)) return;
+  if (kind === "logo" && ["business-info", "public-page"].some((key) => configurationDirtyKeys.has(key))) {
+    showAdminBrandFeedback("Guarda primero los cambios de Información o Página pública antes de subir el logo.", true);
+    input.value = "";
+    return;
+  }
+  if (kind === "gallery" && [...configurationDirtyKeys].some((key) => key.startsWith("gallery-"))) {
+    showAdminBrandFeedback("Guarda o revisa primero las fotos modificadas antes de subir otra.", true);
+    input.value = "";
+    return;
+  }
   const file = input.files?.[0];
   if (!file) {
     showAdminBrandFeedback("Selecciona una imagen JPG, PNG o WEBP.", true);
+    return;
+  }
+  if (!new Set(["image/jpeg", "image/png", "image/webp"]).has(file.type)) {
+    showAdminBrandFeedback("Solo se permiten imágenes JPG, PNG o WEBP.", true);
+    input.value = "";
     return;
   }
   const form = new FormData(); form.append("file", input.files[0]);
   if (kind === "gallery") form.append("alt_text", document.getElementById("admin-gallery-alt").value.trim());
   const action = kind === "logo" ? "subir el logo" : "subir la foto";
   const url = `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/media/${kind}`;
+  const button = document.getElementById(kind === "logo" ? "upload-admin-logo" : "upload-admin-gallery");
+  configurationMutationKeys.add(mutationKey);
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Subiendo…";
   showAdminBrandFeedback("Subiendo imagen...");
   sessionStorage.setItem("adminMediaPending", JSON.stringify({ slug: getBusinessSlug(), kind }));
   try {
@@ -1853,11 +2273,25 @@ async function uploadAdminMedia(kind, input) {
     sessionStorage.removeItem("adminMediaPending");
     console.error("Fallo de subida en Admin", { action, url, error });
     showAdminBrandFeedback(error.message || `No se pudo ${action}.`, true);
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = kind === "logo" ? "Subir/cambiar" : "Subir foto";
   }
 }
 
 async function deleteAdminLogo() {
+  if (configurationMutationKeys.has("media-logo-delete")) return;
+  if (["business-info", "public-page"].some((key) => configurationDirtyKeys.has(key))) {
+    showAdminBrandFeedback("Guarda primero los cambios de Información o Página pública antes de eliminar el logo.", true);
+    return;
+  }
+  if (!window.confirm("¿Eliminar el logo de la página pública?")) return;
   const url = `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/media/logo`;
+  const button = document.getElementById("delete-admin-logo");
+  configurationMutationKeys.add("media-logo-delete");
+  button.disabled = true;
   try {
     const response = await fetch(url, { method: "DELETE" });
     const body = await readAdminResponseBody(response);
@@ -1867,24 +2301,49 @@ async function deleteAdminLogo() {
   } catch (error) {
     console.error("Fallo eliminando logo en Admin", { url, error });
     showAdminBrandFeedback(error.message, true);
+  } finally {
+    configurationMutationKeys.delete("media-logo-delete");
+    button.disabled = false;
   }
 }
 
 async function loadAdminGallery() {
-  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/media/gallery`);
-  const body = await readAdminResponseBody(response);
-  if (!response.ok) {
-    showAdminBrandFeedback(adminMediaError("cargar la galería", response, body), true);
-    return;
+  configurationLoadState.gallery = "loading";
+  document.getElementById("admin-gallery-list")?.setAttribute("aria-busy", "true");
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/media/gallery`);
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(adminMediaError("cargar la galería", response, body));
+    configurationLoadState.gallery = "ready";
+    adminGallery = body.images || [];
+    const gallery = document.getElementById("admin-gallery-list");
+    gallery.setAttribute("aria-busy", "false");
+    gallery.innerHTML = adminGallery.map((image) => `<article data-config-dirty-key="gallery-${image.id}"><img src="${escapeHtml(resolveSafeAdminMediaUrl(image.url, true))}" alt="${escapeHtml(image.alt_text || "Foto")}"><label>Texto alternativo<input data-alt-id="${image.id}" value="${escapeHtml(image.alt_text || "")}"></label><label>Orden<input data-position-id="${image.id}" type="number" min="0" value="${image.position}"></label><button class="btn btn-secondary" data-toggle-image="${image.id}" data-active="${!image.active}">${image.active ? "Desactivar" : "Activar"}</button><button class="btn btn-danger" data-delete-image="${image.id}">Eliminar</button></article>`).join("") || `<div class="configuration-empty-state"><strong>Sin imágenes</strong><p>Añade una foto si quieres mostrar una galería en tu página pública.</p></div>`;
+    snapshotConfigurationForms("#admin-gallery-list [data-config-dirty-key]");
+  } catch (error) {
+    console.error(error);
+    configurationLoadState.gallery = "error";
+    document.getElementById("admin-gallery-list")?.setAttribute("aria-busy", "false");
+    showAdminBrandFeedback(error.message || "No se pudo cargar la galería.", true);
+    document.getElementById("admin-gallery-list").innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudo cargar la galería. Puedes seguir editando el resto de la página.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadAdminGallery()">Reintentar galería</button></div>`;
   }
-  adminGallery = body.images || [];
-  document.getElementById("admin-gallery-list").innerHTML = adminGallery.map((image) => `<article><img src="${escapeHtml(resolveMediaUrl(image.url, true))}" alt="${escapeHtml(image.alt_text || "Foto")}"><input data-alt-id="${image.id}" value="${escapeHtml(image.alt_text || "")}" placeholder="Texto alternativo"><input data-position-id="${image.id}" type="number" min="0" value="${image.position}"><button class="btn btn-secondary" data-toggle-image="${image.id}" data-active="${!image.active}">${image.active ? "Desactivar" : "Activar"}</button><button class="btn btn-danger" data-delete-image="${image.id}">Eliminar</button></article>`).join("") || "<p>No hay fotos.</p>";
+  renderConfigurationOverview();
 }
 
 async function updateAdminGalleryImage(event) {
   const button = event.target.closest("button"); if (!button) return;
   const id = button.dataset.toggleImage || button.dataset.deleteImage; if (!id) return;
+  const mutationKey = `gallery-${id}`;
+  if (configurationMutationKeys.has(mutationKey)) return;
+  if ([...configurationDirtyKeys].some((key) => key.startsWith("gallery-") && key !== mutationKey)) {
+    showAdminBrandFeedback("Guarda o revisa primero las otras fotos modificadas.", true);
+    return;
+  }
+  if (button.dataset.deleteImage && !window.confirm("¿Eliminar esta foto de la página pública?")) return;
   const url = `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/media/gallery/${id}`;
+  configurationMutationKeys.add(mutationKey);
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
   try {
     const response = button.dataset.deleteImage
       ? await fetch(url, { method: "DELETE" })
@@ -1896,6 +2355,12 @@ async function updateAdminGalleryImage(event) {
   } catch (error) {
     console.error("Fallo gestionando galería en Admin", { url, error });
     showAdminBrandFeedback(error.message, true);
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
+    if (button.isConnected) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
   }
 }
 
@@ -1903,6 +2368,7 @@ function showAdminBrandFeedback(message, error = false) { const el = document.ge
 
 async function loadAdminServices() {
   const container = document.getElementById("admin-services-list");
+  container.setAttribute("aria-busy", "true");
   if (!adminServices.length) setDashboardDataState("services", "loading");
   try {
     const response = await fetch(
@@ -1914,13 +2380,16 @@ async function loadAdminServices() {
     const data = await response.json();
     adminServices = data.services || [];
     setDashboardDataState("services", "ready");
+    container.setAttribute("aria-busy", "false");
     renderAdminServices();
     syncAgendaServiceFilter();
-    if (staffMembers.length) renderStaffMembers();
+    if (staffMembers.length && ![...configurationDirtyKeys].some((key) => configurationCategoryForKey(key) === "staff")) renderStaffMembers();
   } catch (error) {
     console.error(error);
     setDashboardDataState("services", "error");
-    container.innerHTML = `<p class="empty-state">No se pudieron cargar los servicios.</p>`;
+    container.setAttribute("aria-busy", "false");
+    container.innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudieron cargar los servicios.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadAdminServices()">Reintentar servicios</button></div>`;
+    renderConfigurationOverview();
   }
 }
 
@@ -1929,22 +2398,31 @@ function renderAdminServices() {
   document.getElementById("stat-services-active").textContent =
     adminServices.filter((service) => service.active).length;
   if (!adminServices.length) {
-    container.innerHTML = `<p class="empty-state">Todavía no hay servicios configurados.</p>`;
+    container.innerHTML = `<div class="configuration-empty-state"><strong>Sin servicios</strong><p>Todavía no has añadido servicios. Añade el primero para que tus clientes puedan reservar.</p><button class="ag-button ag-button--primary ag-button--small" type="button" onclick="document.getElementById('new-service-name').focus()">Añadir el primer servicio</button></div>`;
+    ensureConfigurationSnapshot("service-new");
+    renderConfigurationOverview();
     return;
   }
 
-  container.innerHTML = adminServices.map((service) => `
-    <article class="admin-service-item ${service.active ? "" : "inactive"}" data-service-id="${service.id}">
+  container.innerHTML = adminServices.map((service) => {
+    const professionals = staffMembers.filter((member) => member.active && (member.service_ids || []).includes(service.id)).length;
+    return `
+    <article class="admin-service-item ${service.active ? "" : "inactive"}" data-service-id="${service.id}" data-config-dirty-key="service-${service.id}" data-initial-active="${service.active}">
+      <header class="configuration-item-header"><div><h3>${escapeHtml(service.name)}</h3><p>${service.duration_minutes} min${service.price_text ? ` · ${escapeHtml(service.price_text)}` : ""} · ${professionals} ${professionals === 1 ? "profesional" : "profesionales"}</p></div><span class="configuration-status ${service.active ? "configuration-status--complete" : "configuration-status--review"}">${service.active ? "Activo" : "Inactivo"}</span></header>
       <div class="service-edit-grid">
-        <label>Nombre<input class="service-name" type="text" value="${escapeHtml(service.name)}" /></label>
+        <label>Nombre<input class="service-name" type="text" value="${escapeHtml(service.name)}" aria-describedby="service-${service.id}-name-error" /><small id="service-${service.id}-name-error" class="ag-field-error"></small></label>
         <label>Precio<input class="service-price" type="text" value="${escapeHtml(service.price_text || "")}" /></label>
-        <label>Duración<input class="service-duration" type="number" min="1" max="1440" value="${service.duration_minutes || ""}" /></label>
+        <label>Duración<input class="service-duration" type="number" min="1" max="1440" value="${service.duration_minutes || ""}" aria-describedby="service-${service.id}-duration-error" /><small id="service-${service.id}-duration-error" class="ag-field-error"></small></label>
         <label class="field-wide">Descripción<textarea class="service-description" rows="2">${escapeHtml(service.description || "")}</textarea></label>
         <label class="active-setting"><input class="service-active" type="checkbox" ${service.active ? "checked" : ""} />Activo</label>
       </div>
-      <button class="btn btn-small btn-secondary" type="button" onclick="saveAdminService(${service.id})">Guardar servicio</button>
+      <p class="configuration-impact-note">Al desactivar un servicio dejará de ofrecerse para nuevas reservas; las reservas existentes se conservan.</p>
+      <div class="settings-actions"><span class="configuration-item-save-state">Sin cambios</span><button class="btn btn-small btn-secondary" data-save-service type="button" onclick="saveAdminService(${service.id})">Guardar servicio</button></div>
     </article>
-  `).join("");
+  `; }).join("");
+  ensureConfigurationSnapshot("service-new");
+  snapshotConfigurationForms("#admin-services-list [data-config-dirty-key]");
+  renderConfigurationOverview();
 }
 
 function readServiceForm(container) {
@@ -1957,21 +2435,45 @@ function readServiceForm(container) {
   };
 }
 
-function validateServicePayload(payload) {
+function validateServicePayload(payload, container) {
+  container?.querySelectorAll("[aria-invalid='true']").forEach((field) => field.removeAttribute("aria-invalid"));
+  container?.querySelectorAll(".ag-field-error").forEach((error) => { error.textContent = ""; });
   if (!payload.name) {
+    const field = container?.querySelector(".service-name, #new-service-name");
+    field?.setAttribute("aria-invalid", "true");
+    const error = container?.querySelector("[id$='name-error']");
+    if (error) error.textContent = "El nombre del servicio es obligatorio.";
     throw new Error("El nombre del servicio es obligatorio.");
   }
-  if (!Number.isInteger(payload.duration_minutes) || payload.duration_minutes <= 0) {
-    throw new Error("La duración debe ser mayor que cero.");
+  if (!Number.isInteger(payload.duration_minutes) || payload.duration_minutes < 1 || payload.duration_minutes > 1440) {
+    const field = container?.querySelector(".service-duration, #new-service-duration");
+    field?.setAttribute("aria-invalid", "true");
+    const error = container?.querySelector("[id$='duration-error']");
+    if (error) error.textContent = "Introduce una duración válida entre 1 y 1440 minutos.";
+    throw new Error("Introduce una duración válida entre 1 y 1440 minutos.");
   }
 }
 
 async function saveAdminService(serviceId) {
+  const mutationKey = `service-${serviceId}`;
+  if (configurationMutationKeys.has(mutationKey)) return;
   const feedback = document.getElementById("services-feedback");
+  const otherDirtyService = [...configurationDirtyKeys].find((key) => configurationCategoryForKey(key) === "services" && key !== mutationKey);
+  if (otherDirtyService) {
+    feedback.className = "inline-feedback error";
+    feedback.textContent = "Guarda o revisa los otros cambios de Servicios antes de continuar.";
+    return;
+  }
+  const container = document.querySelector(`[data-service-id="${serviceId}"]`);
+  const button = container?.querySelector("[data-save-service]");
   try {
-    const container = document.querySelector(`[data-service-id="${serviceId}"]`);
     const payload = readServiceForm(container);
-    validateServicePayload(payload);
+    validateServicePayload(payload, container);
+    if (container.dataset.initialActive === "true" && !payload.active && !window.confirm("Este servicio dejará de ofrecerse para nuevas reservas y desaparecerá del catálogo público. Las reservas existentes se conservarán. ¿Continuar?")) return;
+    configurationMutationKeys.add(mutationKey);
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "Guardando…";
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/services/${serviceId}`,
       {
@@ -1982,7 +2484,7 @@ async function saveAdminService(serviceId) {
     );
     const result = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(result?.detail || "No se pudo guardar el servicio.");
+      throw new Error(safeConfigurationError(result, "No se pudo guardar el servicio."));
     }
     feedback.className = "inline-feedback success";
     feedback.textContent = "Servicio guardado correctamente.";
@@ -1991,11 +2493,30 @@ async function saveAdminService(serviceId) {
     console.error(error);
     feedback.className = "inline-feedback error";
     feedback.textContent = error.message || "No se pudo guardar el servicio.";
+    document.getElementById("services-errors").hidden = false;
+    document.getElementById("services-errors").textContent = feedback.textContent;
+    document.getElementById("services-errors").focus();
+    container?.querySelector("[aria-invalid='true']")?.focus();
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = "Guardar servicio";
+    }
   }
 }
 
 async function createAdminService() {
+  const mutationKey = "service-new";
+  if (configurationMutationKeys.has(mutationKey)) return;
   const feedback = document.getElementById("services-feedback");
+  if ([...configurationDirtyKeys].some((key) => configurationCategoryForKey(key) === "services" && key !== mutationKey)) {
+    feedback.className = "inline-feedback error";
+    feedback.textContent = "Guarda o revisa los servicios modificados antes de crear otro.";
+    return;
+  }
+  const button = document.getElementById("create-service");
   const payload = {
     name: document.getElementById("new-service-name").value.trim(),
     description: document.getElementById("new-service-description").value.trim(),
@@ -2005,7 +2526,11 @@ async function createAdminService() {
   };
 
   try {
-    validateServicePayload(payload);
+    validateServicePayload(payload, configurationFormElement(mutationKey));
+    configurationMutationKeys.add(mutationKey);
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "Creando…";
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/services`,
       {
@@ -2016,11 +2541,12 @@ async function createAdminService() {
     );
     const result = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(result?.detail || "No se pudo crear el servicio.");
+      throw new Error(safeConfigurationError(result, "No se pudo crear el servicio."));
     }
 
     ["new-service-name", "new-service-description", "new-service-price", "new-service-duration"]
       .forEach((id) => { document.getElementById(id).value = ""; });
+    snapshotConfigurationForm("service-new");
     feedback.className = "inline-feedback success";
     feedback.textContent = "Servicio creado correctamente.";
     await loadAdminServices();
@@ -2028,21 +2554,43 @@ async function createAdminService() {
     console.error(error);
     feedback.className = "inline-feedback error";
     feedback.textContent = error.message || "No se pudo crear el servicio.";
+    document.getElementById("services-errors").hidden = false;
+    document.getElementById("services-errors").textContent = feedback.textContent;
+    document.getElementById("services-errors").focus();
+    configurationFormElement(mutationKey)?.querySelector("[aria-invalid='true']")?.focus();
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = "Crear servicio";
   }
 }
 
 async function loadStaffMembers() {
-  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff`);
-  if (!response.ok) throw new Error("No se pudo cargar el equipo.");
-  const data = await response.json();
-  staffMembers = data.staff || [];
-  renderStaffMembers();
-  const filter = document.getElementById("booking-staff-filter");
-  filter.innerHTML = `<option value="">Todos</option>` + staffMembers
-    .filter((member) => member.active)
-    .map((member) => `<option value="${member.id}">${escapeHtml(member.public_name || member.name || member.email)}</option>`)
-    .join("");
-  filter.value = selectedStaffFilter;
+  const container = document.getElementById("admin-staff-list");
+  container.setAttribute("aria-busy", "true");
+  configurationLoadState.staff = "loading";
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff`);
+    if (!response.ok) throw new Error("No se pudo cargar el equipo.");
+    const data = await response.json();
+    staffMembers = data.staff || [];
+    configurationLoadState.staff = "ready";
+    container.setAttribute("aria-busy", "false");
+    renderStaffMembers();
+    const filter = document.getElementById("booking-staff-filter");
+    filter.innerHTML = `<option value="">Todos</option>` + staffMembers
+      .filter((member) => member.active)
+      .map((member) => `<option value="${member.id}">${escapeHtml(member.public_name || member.name || member.email)}</option>`)
+      .join("");
+    filter.value = selectedStaffFilter;
+  } catch (error) {
+    console.error(error);
+    configurationLoadState.staff = "error";
+    container.setAttribute("aria-busy", "false");
+    container.innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudo cargar el equipo. El resto de la configuración sigue disponible.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadStaffMembers()">Reintentar equipo</button></div>`;
+    renderConfigurationOverview();
+  }
 }
 
 async function loadMyStaffAvailability() {
@@ -2106,11 +2654,12 @@ function renderStaffMembers() {
         ${isOnlyActiveAdmin ? '<small class="staff-admin-protection">Añade otro administrador activo antes de eliminar este perfil.</small>' : ""}`
       : "";
     return `
-    <article class="admin-service-item staff-member-card" data-staff-id="${member.id}">
+    <article class="admin-service-item staff-member-card" data-staff-id="${member.id}" data-config-dirty-key="staff-${member.id}">
+      <header class="configuration-item-header"><div><h3>${escapeHtml(member.public_name || member.name || member.email)}</h3><p>${member.bookable ? `${(member.service_ids || []).length} servicios asignados` : "Acceso al panel, no reservable"}</p></div><span class="configuration-status configuration-status--complete">Activo</span></header>
       <div class="service-edit-grid">
         <label>Email<input value="${escapeHtml(member.email)}" disabled /></label>
-        <label>Nombre publico<input class="staff-public-name" value="${escapeHtml(member.public_name || "")}" /></label>
-        <label>Rol<select class="staff-role"><option value="business_staff" ${member.role === "business_staff" ? "selected" : ""}>Personal</option><option value="business_admin" ${member.role === "business_admin" ? "selected" : ""}>Administrador</option></select></label>
+        <label>Nombre público<input class="staff-public-name" value="${escapeHtml(member.public_name || "")}" /></label>
+        <label>Rol de acceso<select class="staff-role"><option value="business_staff" ${member.role === "business_staff" ? "selected" : ""}>Personal</option><option value="business_admin" ${member.role === "business_admin" ? "selected" : ""}>Administrador</option></select></label>
         <label class="active-setting"><input class="staff-active" type="checkbox" checked disabled />Activo</label>
         <label class="active-setting"><input class="staff-bookable" type="checkbox" ${member.bookable ? "checked" : ""} onchange="toggleStaffServiceControls(${member.id}, this.checked)" />Reservable</label>
         <label class="active-setting"><input class="staff-show-schedule" type="checkbox" ${member.show_schedule ? "checked" : ""} />Visible en agenda</label>
@@ -2131,6 +2680,7 @@ function renderStaffMembers() {
         ${member.bookable && assignedServiceIds.size === 0 ? '<span class="staff-services-warning">Sin servicios asignados</span>' : ""}
       </div>
       <div class="settings-actions">
+        <span class="configuration-item-save-state">Sin cambios</span>
         <button class="btn btn-small btn-primary" type="button" onclick="saveStaffMember(${member.id})">Guardar ficha</button>
         <button class="btn btn-small btn-secondary" type="button" onclick="editStaffSchedule(${member.id})">Editar horario</button>
         ${removeAction}
@@ -2150,6 +2700,12 @@ function renderStaffMembers() {
       ${canRemoveMembers ? `<button class="btn btn-small btn-secondary" type="button" onclick="reactivateStaffMember(${member.id})">Reactivar</button>` : ""}
     </article>
   `).join("") || `<p class="empty-state">No hay miembros inactivos.</p>`;
+  if (!activeMembers.length) {
+    container.innerHTML = `<div class="configuration-empty-state"><strong>Sin profesionales activos</strong><p>Añade un miembro si necesitas asignar servicios y horarios por profesional.</p><button class="ag-button ag-button--primary ag-button--small" type="button" onclick="document.getElementById('new-staff-email').focus()">Añadir miembro</button></div>`;
+  }
+  ensureConfigurationSnapshot("staff-new");
+  snapshotConfigurationForms("#admin-staff-list [data-config-dirty-key]");
+  renderConfigurationOverview();
 }
 
 function toggleStaffServiceControls(memberId, enabled) {
@@ -2166,7 +2722,15 @@ function formatStaffRemovedAt(value) {
 }
 
 async function createStaffMember() {
+  const mutationKey = "staff-new";
+  if (configurationMutationKeys.has(mutationKey)) return;
   const feedback = document.getElementById("staff-feedback");
+  if ([...configurationDirtyKeys].some((key) => configurationCategoryForKey(key) === "staff" && key !== mutationKey)) {
+    feedback.className = "inline-feedback error";
+    feedback.textContent = "Guarda o revisa las fichas modificadas antes de añadir otro miembro.";
+    return;
+  }
+  const button = document.getElementById("create-staff-member");
   const payload = {
     email: document.getElementById("new-staff-email").value.trim(),
     role: document.getElementById("new-staff-role").value,
@@ -2175,23 +2739,54 @@ async function createStaffMember() {
     show_schedule: true,
     active: true
   };
+  if (!/^\S+@\S+\.\S+$/.test(payload.email)) {
+    document.getElementById("staff-errors").hidden = false;
+    document.getElementById("staff-errors").textContent = "Introduce un email válido para dar acceso al miembro.";
+    document.getElementById("staff-errors").focus();
+    document.getElementById("new-staff-email").focus();
+    return;
+  }
+  configurationMutationKeys.add(mutationKey);
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Añadiendo…";
   try {
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
     });
     const result = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(result?.detail || "No se pudo añadir el miembro.");
+    if (!response.ok) throw new Error(safeConfigurationError(result, "No se pudo añadir el miembro."));
+    document.getElementById("new-staff-email").value = "";
+    document.getElementById("new-staff-public-name").value = "";
+    document.getElementById("new-staff-role").value = "business_staff";
+    document.getElementById("new-staff-bookable").checked = false;
+    snapshotConfigurationForm("staff-new");
     feedback.className = "inline-feedback success";
     feedback.textContent = "Miembro añadido.";
     await loadStaffMembers();
   } catch (error) {
     feedback.className = "inline-feedback error";
     feedback.textContent = error.message;
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = "Añadir miembro";
   }
 }
 
 async function saveStaffMember(memberId) {
+  const mutationKey = `staff-${memberId}`;
+  if (configurationMutationKeys.has(mutationKey)) return;
   const card = document.querySelector(`[data-staff-id="${memberId}"]`);
+  const otherDirtyStaff = [...configurationDirtyKeys].find((key) => configurationCategoryForKey(key) === "staff" && key !== mutationKey);
+  if (otherDirtyStaff) {
+    const feedback = document.getElementById("staff-feedback");
+    feedback.className = "inline-feedback error";
+    feedback.textContent = "Guarda o revisa las otras fichas modificadas antes de continuar.";
+    return;
+  }
+  const button = [...card.querySelectorAll("button")].find((item) => item.textContent.includes("Guardar ficha"));
   const payload = {
     public_name: card.querySelector(".staff-public-name").value.trim() || null,
     role: card.querySelector(".staff-role").value,
@@ -2201,12 +2796,16 @@ async function saveStaffMember(memberId) {
   };
   const serviceIds = [...card.querySelectorAll(".staff-service-checkbox:checked")]
     .map((input) => Number(input.value));
+  configurationMutationKeys.add(mutationKey);
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Guardando…";
   try {
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
     });
     const result = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(result?.message || result?.detail || "No se pudo guardar la ficha.");
+    if (!response.ok) throw new Error(safeConfigurationError(result, "No se pudo guardar la ficha."));
 
     if (payload.bookable) {
       const servicesResponse = await fetch(
@@ -2220,8 +2819,7 @@ async function saveStaffMember(memberId) {
       const servicesResult = await servicesResponse.json().catch(() => null);
       if (!servicesResponse.ok) {
         throw new Error(
-          servicesResult?.message || servicesResult?.detail ||
-          "La ficha se guardó, pero no se pudieron asignar los servicios."
+          safeConfigurationError(servicesResult, "La ficha se guardó, pero no se pudieron asignar los servicios.")
         );
       }
     }
@@ -2235,11 +2833,23 @@ async function saveStaffMember(memberId) {
     feedback.textContent = typeof error?.message === "string"
       ? error.message
       : "No se pudo guardar la ficha.";
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = "Guardar ficha";
+    }
   }
 }
 
 async function reactivateStaffMember(memberId) {
   const feedback = document.getElementById("staff-feedback");
+  if ([...configurationDirtyKeys].some((key) => configurationCategoryForKey(key) === "staff")) {
+    feedback.className = "inline-feedback error";
+    feedback.textContent = "Guarda o revisa los cambios pendientes del Equipo antes de reactivar un miembro.";
+    return;
+  }
   const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff/${memberId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -2248,7 +2858,7 @@ async function reactivateStaffMember(memberId) {
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     feedback.className = "inline-feedback error";
-    feedback.textContent = result?.detail || "No se pudo reactivar al miembro.";
+    feedback.textContent = safeConfigurationError(result, "No se pudo reactivar al miembro.");
     return;
   }
   await loadStaffMembers();
@@ -2260,6 +2870,12 @@ async function removeStaffMember(memberId) {
   const member = staffMembers.find((item) => item.id === memberId);
   if (!member) return;
   const displayName = member.public_name || member.name || member.email;
+  if ([...configurationDirtyKeys].some((key) => configurationCategoryForKey(key) === "staff")) {
+    const feedback = document.getElementById("staff-feedback");
+    feedback.className = "inline-feedback error";
+    feedback.textContent = "Guarda o revisa los cambios pendientes del Equipo antes de eliminar un miembro.";
+    return;
+  }
   if (!window.confirm(`¿Eliminar a ${displayName} del equipo? Perderá el acceso y dejará de estar disponible para nuevas reservas.`)) return;
 
   const feedback = document.getElementById("staff-feedback");
@@ -2275,7 +2891,7 @@ async function removeStaffMember(memberId) {
       openStaffRemovalModal(member, result);
       return;
     }
-    if (!response.ok) throw new Error(result?.message || result?.detail || "No se pudo eliminar al miembro del equipo.");
+    if (!response.ok) throw new Error(safeConfigurationError(result, "No se pudo eliminar al miembro del equipo."));
     feedback.className = "inline-feedback success";
     feedback.textContent = `${displayName} ya no forma parte del equipo.`;
     await loadStaffMembers();
@@ -2288,6 +2904,7 @@ async function removeStaffMember(memberId) {
 
 function openStaffRemovalModal(member, result) {
   const modal = document.getElementById("staff-removal-modal");
+  staffRemovalReturnFocus = document.activeElement;
   const bookings = result.bookings || [];
   document.getElementById("staff-removal-modal-title").textContent = `No se puede eliminar a ${member.public_name || member.name || member.email}`;
   document.getElementById("staff-removal-modal-message").textContent = result.message || "Gestiona primero las citas asignadas.";
@@ -2303,10 +2920,20 @@ function openStaffRemovalModal(member, result) {
     </article>
   `).join("");
   modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-scroll-locked");
+  window.requestAnimationFrame(() => modal.querySelector(".ag-modal__close")?.focus());
 }
 
 function closeStaffRemovalModal() {
-  document.getElementById("staff-removal-modal")?.classList.remove("open");
+  const modal = document.getElementById("staff-removal-modal");
+  if (!modal?.classList.contains("open")) return;
+  modal.classList.remove("open");
+  modal.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-scroll-locked");
+  const returnFocus = staffRemovalReturnFocus;
+  staffRemovalReturnFocus = null;
+  if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
 }
 
 function formatBlockingBookingDate(date, time) {
@@ -4862,6 +5489,16 @@ function closeRescheduleModal() {
 }
 
 function handleRescheduleModalKeydown(event) {
+  const staffModal = document.getElementById("staff-removal-modal");
+  if (staffModal?.classList.contains("open")) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeStaffRemovalModal();
+      return;
+    }
+    if (event.key === "Tab") trapModalFocus(event, staffModal);
+    return;
+  }
   const modal = document.getElementById("reschedule-modal");
   if (!modal?.classList.contains("open")) return;
   if (event.key === "Escape") {
@@ -4870,6 +5507,10 @@ function handleRescheduleModalKeydown(event) {
     return;
   }
   if (event.key !== "Tab") return;
+  trapModalFocus(event, modal);
+}
+
+function trapModalFocus(event, modal) {
   const focusable = Array.from(modal.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex='-1'])"))
     .filter((element) => !element.hidden && element.getClientRects().length > 0);
   if (!focusable.length) {
@@ -5055,6 +5696,7 @@ function setupConversationInterface() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  setupBusinessConfiguration();
   setupAdminNavigation();
   setupBookingViews();
   setupDashboardInteractions();
@@ -5065,7 +5707,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   document.addEventListener("visibilitychange", handleAdminVisibilityChange);
   document.getElementById("message-status-filter").addEventListener("change", renderMessageOutbox);
-  document.getElementById("save-business-settings").addEventListener("click", saveBusinessSettings);
+  document.getElementById("save-business-settings").addEventListener("click", () => saveBusinessSettings("business"));
+  document.getElementById("save-public-page-settings").addEventListener("click", () => saveBusinessSettings("public-page"));
   document.getElementById("create-service").addEventListener("click", createAdminService);
   document.getElementById("create-staff-member").addEventListener("click", createStaffMember);
   document.getElementById("toggle-conversation-create").addEventListener("click", () => {
