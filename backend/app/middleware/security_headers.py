@@ -13,7 +13,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        # Meta Embedded Signup communicates with its cross-origin OAuth popup.
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
         if settings.app_env == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response

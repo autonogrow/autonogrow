@@ -1,5 +1,14 @@
 # Inventario y revisión de endpoints de seguridad
 
+## WhatsApp Embedded Signup
+
+Los endpoints de inicio, finalización, decisión y reintento son autenticados; todos los POST
+usan el middleware CSRF y el inicio/finalización tienen rate limit específico. El state se
+guarda como SHA-256 ligado por HMAC a la cookie de sesión y se consume mediante CAS. Las
+respuestas y auditorías excluyen authorization code, tokens, App Secret, WABA/phone IDs y el
+número completo. La pertenencia Business → WABA → phone y los conflictos entre tenants se
+validan server-side antes de crear una candidatura y otra vez al aprobar.
+
 Revisión realizada contra el OpenAPI real del backend (48 paths). `business_admin` y `business_staff` comparten actualmente `require_business_access`; owner puede acceder a cualquier negocio. “CSRF cond.” significa que el endpoint público no exige token sin sesión, pero sí cuando llega la cookie de sesión.
 
 ## Autenticación y sistema

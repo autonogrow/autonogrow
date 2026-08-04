@@ -163,6 +163,9 @@ def check_required_files(reporter: Reporter) -> None:
         "scripts/generate_release_metadata.py",
         "alembic/versions/20260730_06_add_operational_state.py",
         "alembic/versions/20260803_08_add_instagram_oauth_attempts.py",
+        "alembic/versions/20260803_09_add_whatsapp_embedded_signup_attempts.py",
+        "docs/whatsapp_embedded_signup_architecture.md",
+        "docs/manual_test_whatsapp_embedded_signup.md",
         "deploy/autonogrow-operational-check.service",
         "deploy/autonogrow-operational-check.timer",
         "deploy/autonogrow-backup.service",
@@ -367,8 +370,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260803_08":
-            reporter.fail("La head operativa esperada es 20260803_08")
+        if heads[0] != "20260803_09":
+            reporter.fail("La head operativa esperada es 20260803_09")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 
@@ -844,9 +847,7 @@ def check_instagram_login_contract(reporter: Reporter) -> None:
     else:
         reporter.fail("Plantillas de entorno Instagram Login incompletas")
 
-    oauth_router = (ROOT / "backend/app/routers/instagram_oauth.py").read_text(
-        encoding="utf-8-sig"
-    )
+    oauth_router = (ROOT / "backend/app/routers/instagram_oauth.py").read_text(encoding="utf-8-sig")
     oauth_service = (ROOT / "backend/app/services/instagram_oauth_service.py").read_text(
         encoding="utf-8-sig"
     )
@@ -875,6 +876,96 @@ def check_instagram_login_contract(reporter: Reporter) -> None:
         reporter.fail("Frontend Instagram Login no cumple el contrato de secretos")
 
 
+def check_whatsapp_embedded_signup_contract(reporter: Reporter) -> None:
+    from app.models.registry import register_models
+    from app.services.whatsapp_embedded_signup_provider import (
+        WHATSAPP_EMBEDDED_SIGNUP_EVENT_TYPE,
+        WHATSAPP_EMBEDDED_SIGNUP_FINISH_EVENT,
+        WHATSAPP_EMBEDDED_SIGNUP_SDK_URL,
+    )
+
+    register_models()
+    from app.core.database import Base
+
+    table = Base.metadata.tables.get("whatsapp_embedded_signup_attempts")
+    required_columns = {
+        "state_hash",
+        "session_fingerprint_hash",
+        "candidate_waba_id",
+        "candidate_phone_number_id",
+        "candidate_encrypted_access_token",
+        "candidate_encryption_key_version",
+        "app_subscription_status",
+        "phone_registration_status",
+    }
+    if table is not None and required_columns <= set(table.columns.keys()):
+        reporter.passed("Candidatura temporal WhatsApp hasheada y cifrada registrada")
+    else:
+        reporter.fail("Modelo temporal de WhatsApp Embedded Signup incompleto")
+
+    if (
+        WHATSAPP_EMBEDDED_SIGNUP_EVENT_TYPE == "WA_EMBEDDED_SIGNUP"
+        and WHATSAPP_EMBEDDED_SIGNUP_FINISH_EVENT == "FINISH"
+        and WHATSAPP_EMBEDDED_SIGNUP_SDK_URL == "https://connect.facebook.net/en_US/sdk.js"
+    ):
+        reporter.passed("Contrato público de Meta Embedded Signup fijado explícitamente")
+    else:
+        reporter.fail("Contrato público de Meta Embedded Signup inesperado")
+
+    env_paths = (
+        "backend/.env.example",
+        "deploy/backend.env.example",
+        "deploy/staging.backend.env.example",
+    )
+    required_env = {
+        "WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false",
+        "WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID=",
+        "WHATSAPP_EMBEDDED_SIGNUP_GRAPH_API_VERSION=v26.0",
+        "WHATSAPP_EMBEDDED_SIGNUP_ATTEMPT_TTL_SECONDS=600",
+        "WHATSAPP_EMBEDDED_SIGNUP_TEST_ONLY=false",
+    }
+    if all(
+        all(marker in (ROOT / path).read_text(encoding="utf-8-sig") for marker in required_env)
+        for path in env_paths
+    ):
+        reporter.passed("Configuración de WhatsApp Embedded Signup documentada y apagada")
+    else:
+        reporter.fail("Plantillas de WhatsApp Embedded Signup incompletas")
+
+    contract = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8-sig")
+        for path in (
+            "backend/app/services/whatsapp_embedded_signup_service.py",
+            "backend/app/routers/whatsapp_embedded_signup.py",
+            "autonogrow-admin/admin.js",
+        )
+    )
+    required_markers = (
+        'WhatsAppEmbeddedSignupAttempt.status == "pending"',
+        'attempt.status = "candidate_ready"',
+        'control.connection_mode = "embedded_signup"',
+        "integrated_delivery_enabled = False",
+        "automation_enabled = False",
+        "isTrustedMetaEventOrigin",
+        "override_default_response_type: true",
+    )
+    if all(marker in contract for marker in required_markers):
+        reporter.passed("Replay, origen, candidatura y aprobación separada están protegidos")
+    else:
+        reporter.fail("Contrato seguro de WhatsApp Embedded Signup incompleto")
+
+    forbidden_frontend = (
+        "meta_app_secret",
+        "candidate_encrypted_access_token",
+        "configuration.access_token",
+    )
+    embedded_frontend = (ROOT / "autonogrow-admin/admin.js").read_text(encoding="utf-8-sig")
+    if not any(marker in embedded_frontend for marker in forbidden_frontend):
+        reporter.passed("Frontend Embedded Signup no recibe ni persiste credenciales")
+    else:
+        reporter.fail("Frontend Embedded Signup contiene marcadores sensibles")
+
+
 def main() -> int:
     reporter = Reporter()
     check_required_files(reporter)
@@ -888,6 +979,7 @@ def main() -> int:
     check_onboarding_contract(reporter)
     check_whatsapp_contract(reporter)
     check_instagram_login_contract(reporter)
+    check_whatsapp_embedded_signup_contract(reporter)
     check_tracked_secrets(reporter)
     Settings = check_application(reporter)
     if Settings is not None:

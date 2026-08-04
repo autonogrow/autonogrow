@@ -290,26 +290,37 @@ function ownerChannelControlStatusLabel(status) {
   return ({ not_allowed: "No permitido", available: "Disponible", pending_approval: "Pendiente de aprobación", approved: "Aprobado", suspended: "Suspendido", revoked: "Revocado" })[status] || status;
 }
 
+function ownerWhatsAppCandidate(candidate) {
+  const setupReady = candidate.app_subscription_status === "subscribed" && candidate.phone_registration_status === "registered";
+  return `<section class="owner-integration-warning"><h5>Cuenta de WhatsApp pendiente de revisión</h5><p><strong>${escapeHtml(candidate.candidate_verified_name || "WhatsApp Business")}</strong> · ${escapeHtml(candidate.candidate_display_phone_number_redacted || "número verificado")}</p><p>Finalidad: ${escapeHtml(candidate.purpose)} · Expira: ${escapeHtml(formatAutomationDate(candidate.expires_at))}</p><p>Suscripción: ${escapeHtml(candidate.app_subscription_status || "pendiente")} · Registro: ${escapeHtml(candidate.phone_registration_status || "pendiente")}</p>${candidate.safe_error_message ? `<p>${escapeHtml(candidate.safe_error_message)}</p>` : ""}<div class="owner-integration-actions"><button class="button button-secondary button-small" type="button" data-owner-channel-action="whatsapp-retry" data-channel="whatsapp" data-attempt-id="${candidate.id}">Reintentar verificación</button><button class="button button-primary button-small" type="button" data-owner-channel-action="whatsapp-approve" data-channel="whatsapp" data-attempt-id="${candidate.id}" ${setupReady ? "" : "disabled"}>Aprobar cuenta</button><button class="button button-danger button-small" type="button" data-owner-channel-action="whatsapp-reject" data-channel="whatsapp" data-attempt-id="${candidate.id}">Rechazar cuenta</button></div></section>`;
+}
+
 function renderOwnerChannelControls(panel, data) {
   const names = { instagram: "Instagram", whatsapp: "WhatsApp" };
-  panel.querySelector("[data-owner-channel-control-content]").innerHTML = `<p class="helper">Instagram usa el flujo oficial de Meta. WhatsApp conserva el onboarding controlado actual. Aprobar una cuenta no activa por sí solo el envío ni la automatización.</p><div class="owner-channel-control-grid">${data.channels.map((channel) => {
+  panel.querySelector("[data-owner-channel-control-content]").innerHTML = `<p class="helper">Instagram y WhatsApp usan los flujos oficiales de Meta. Aprobar una cuenta no activa por sí solo el envío ni la automatización.</p><div class="owner-channel-control-grid">${data.channels.map((channel) => {
     const policy = `<select data-owner-channel-policy="${escapeHtml(channel.channel)}"><option value="business_admin" ${channel.connector_policy === "business_admin" ? "selected" : ""}>Administrador del negocio</option><option value="owner_only" ${channel.connector_policy === "owner_only" ? "selected" : ""}>Solo Owner</option></select>`;
     let actions = `<label>Quién puede solicitar${policy}</label><button class="button button-primary button-small" type="button" data-owner-channel-action="grant" data-channel="${escapeHtml(channel.channel)}">${channel.status === "not_allowed" ? "Conceder permiso" : "Guardar permiso"}</button>`;
     if (channel.status === "available" && channel.connector_policy === "owner_only") actions += channel.channel === "instagram" ? `<button class="button button-primary button-small" type="button" data-owner-channel-action="oauth-start" data-channel="instagram">Conectar con Instagram</button>` : `<button class="button button-secondary button-small" type="button" data-owner-channel-action="request" data-channel="${escapeHtml(channel.channel)}">Iniciar conexión controlada</button>`;
-    if (channel.status === "pending_approval" && channel.channel !== "instagram") actions += `<button class="button button-primary button-small" type="button" data-owner-channel-action="approve" data-channel="${escapeHtml(channel.channel)}">Aprobar uso</button>`;
+    if (channel.status === "pending_approval" && channel.connection_mode === "simulated" && channel.channel !== "instagram") actions += `<button class="button button-primary button-small" type="button" data-owner-channel-action="approve" data-channel="${escapeHtml(channel.channel)}">Aprobar uso</button>`;
     if (channel.status === "approved") actions += `<label class="checkbox-row"><input type="checkbox" data-owner-channel-delivery="${escapeHtml(channel.channel)}" ${channel.integrated_delivery_enabled ? "checked" : ""}> Envío integrado</label><label class="checkbox-row"><input type="checkbox" data-owner-channel-automation="${escapeHtml(channel.channel)}" ${channel.automation_enabled ? "checked" : ""}> Automatización</label><button class="button button-primary button-small" type="button" data-owner-channel-action="capabilities" data-channel="${escapeHtml(channel.channel)}">Guardar activaciones</button>`;
     if (!["not_allowed", "revoked"].includes(channel.status)) actions += `<button class="button button-danger button-small" type="button" data-owner-channel-action="suspend" data-channel="${escapeHtml(channel.channel)}">Suspender</button><button class="button button-danger button-small" type="button" data-owner-channel-action="revoke" data-channel="${escapeHtml(channel.channel)}">Revocar</button>`;
-    return `<article class="owner-channel-control-card"><div class="owner-integration-heading"><h4>${escapeHtml(names[channel.channel])}</h4><span class="state-badge ${channel.status === "approved" ? "active" : "inactive"}">${escapeHtml(ownerChannelControlStatusLabel(channel.status))}</span></div><div class="owner-channel-control-actions">${actions}</div></article>`;
+    const candidates = channel.channel === "whatsapp" ? (data.whatsapp_candidates || []).map(ownerWhatsAppCandidate).join("") : "";
+    return `<article class="owner-channel-control-card"><div class="owner-integration-heading"><h4>${escapeHtml(names[channel.channel])}</h4><span class="state-badge ${channel.status === "approved" ? "active" : "inactive"}">${escapeHtml(ownerChannelControlStatusLabel(channel.status))}</span></div>${candidates}<div class="owner-channel-control-actions">${actions}</div></article>`;
   }).join("")}</div><p data-owner-channel-feedback class="status-text"></p>`;
 }
 
 async function loadOwnerChannelControls(panel) {
-  const response = await fetch(`${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerChannelControlId}/channel-controls`);
+  const businessId = panel.dataset.ownerChannelControlId;
+  const [response, candidateResponse] = await Promise.all([
+    fetch(`${API_BASE_URL}/api/owner/businesses/${businessId}/channel-controls`),
+    fetch(`${API_BASE_URL}/api/owner/businesses/${businessId}/integrations/whatsapp/embedded-signup/candidates`)
+  ]);
   const body = await readResponseBody(response);
   if (!response.ok) {
     panel.querySelector("[data-owner-channel-control-content]").innerHTML = `<p class="error-box">${escapeHtml(body.detail || "No se pudieron cargar los controles")}</p>`;
     return;
   }
+  body.whatsapp_candidates = candidateResponse.ok ? await candidateResponse.json() : [];
   renderOwnerChannelControls(panel, body);
 }
 
@@ -321,7 +332,17 @@ async function handleOwnerChannelControlAction(button) {
   let url = `${base}/${action}`;
   let method = "POST";
   let payload = {};
-  if (action === "oauth-start") {
+  if (["whatsapp-approve", "whatsapp-reject", "whatsapp-retry"].includes(action)) {
+    const signupBase = `${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerChannelControlId}/integrations/whatsapp/embedded-signup/candidates/${encodeURIComponent(button.dataset.attemptId)}`;
+    if (action === "whatsapp-retry") {
+      url = `${signupBase}/setup/retry`;
+    } else {
+      const reason = window.prompt("Motivo obligatorio de la decisión Owner:");
+      if (!reason || reason.trim().length < 3) return;
+      url = `${signupBase}/${action === "whatsapp-approve" ? "approve" : "reject"}`;
+      payload = { reason: reason.trim() };
+    }
+  } else if (action === "oauth-start") {
     url = `${API_BASE_URL}/api/owner/businesses/${panel.dataset.ownerChannelControlId}/integrations/instagram/oauth/start`;
     payload = { purpose: null };
   } else if (action === "request") {

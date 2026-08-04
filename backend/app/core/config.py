@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = ""
     whatsapp_require_signature: bool = True
     whatsapp_customer_service_window_hours: int = 24
+    whatsapp_embedded_signup_enabled: bool = False
+    whatsapp_embedded_signup_config_id: str = ""
+    whatsapp_embedded_signup_graph_api_version: str = ""
+    whatsapp_embedded_signup_attempt_ttl_seconds: int = 600
+    whatsapp_embedded_signup_test_only: bool = False
     integration_encryption_keys_json: str = ""
     integration_encryption_active_key_version: str = "v1"
     incident_alerts_enabled: bool = False
@@ -346,6 +351,15 @@ class Settings(BaseSettings):
             raise ValueError("WEBHOOK_MAX_PAYLOAD_BYTES debe estar entre 1024 y 10485760")
         if not 1 <= self.whatsapp_customer_service_window_hours <= 24:
             raise ValueError("WHATSAPP_CUSTOMER_SERVICE_WINDOW_HOURS debe estar entre 1 y 24")
+        if not 300 <= self.whatsapp_embedded_signup_attempt_ttl_seconds <= 1800:
+            raise ValueError(
+                "WHATSAPP_EMBEDDED_SIGNUP_ATTEMPT_TTL_SECONDS debe estar entre 300 y 1800"
+            )
+        signup_version = self.whatsapp_embedded_signup_graph_api_version.strip()
+        if signup_version and not re.fullmatch(r"v\d+\.\d+", signup_version):
+            raise ValueError("WHATSAPP_EMBEDDED_SIGNUP_GRAPH_API_VERSION no es válida")
+        if self.whatsapp_embedded_signup_test_only and self.app_env != "test":
+            raise ValueError("WHATSAPP_EMBEDDED_SIGNUP_TEST_ONLY solo se permite en test")
         if not 300 <= self.instagram_oauth_attempt_ttl_seconds <= 1800:
             raise ValueError("INSTAGRAM_OAUTH_ATTEMPT_TTL_SECONDS debe estar entre 300 y 1800")
         if not 1 <= self.instagram_candidate_review_ttl_hours <= 168:
@@ -561,6 +575,34 @@ class Settings(BaseSettings):
             ]
             if missing_whatsapp:
                 errors.append("Configuración WhatsApp incompleta: " + ", ".join(missing_whatsapp))
+        if self.whatsapp_embedded_signup_enabled:
+            signup_required = {
+                "META_APP_ID": self.meta_app_id,
+                "META_APP_SECRET": self.meta_app_secret,
+                "WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID": self.whatsapp_embedded_signup_config_id,
+                "WHATSAPP_EMBEDDED_SIGNUP_GRAPH_API_VERSION": (
+                    self.whatsapp_embedded_signup_graph_api_version
+                ),
+                "INTEGRATION_ENCRYPTION_KEYS_JSON": self.integration_encryption_keys_json,
+            }
+            missing_signup = [
+                name
+                for name, value in signup_required.items()
+                if not value.strip()
+                or any(
+                    marker in value.strip().lower()
+                    for marker in ("change_me", "change-me", "placeholder", "example.com")
+                )
+            ]
+            if missing_signup:
+                errors.append(
+                    "Configuración WhatsApp Embedded Signup incompleta: "
+                    + ", ".join(missing_signup)
+                )
+            if not self.whatsapp_webhook_enabled:
+                errors.append(
+                    "WHATSAPP_EMBEDDED_SIGNUP_ENABLED requiere WHATSAPP_WEBHOOK_ENABLED=true"
+                )
         if errors:
             raise ValueError("Configuración de producción insegura: " + "; ".join(errors))
         return self

@@ -1,5 +1,12 @@
 # Arquitectura de onboarding multiempresa
 
+## Incorporación de canales Meta
+
+Instagram Login y WhatsApp Embedded Signup producen candidaturas temporales cifradas. El
+onboarding del negocio solo concede quién puede iniciar el flujo; no acredita activos, no
+crea tokens y no sustituye la aprobación Owner. Para WhatsApp, consulta
+[WhatsApp Embedded Signup](whatsapp_embedded_signup_architecture.md).
+
 El owner crea un `Business` en `draft`, abre una única sesión activa y lo mueve a `onboarding`. La configuración se escribe en tablas de dominio; la sesión solo conserva progreso, resúmenes seguros, versión de pasos y actor/fecha.
 
 Los 15 identificadores estables son `template`, `business_identity`, `contact_and_location`, `services`, `staff`, `schedules`, `booking_rules`, `branding`, `landing_content`, `automations`, `integrations`, `credits_and_plan`, `readiness_review`, `preview` y `activation`.

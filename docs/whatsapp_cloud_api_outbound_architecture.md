@@ -1,5 +1,10 @@
 # Envío mediante WhatsApp Cloud API
 
+> Embedded Signup no habilita el envío por sí solo. Tras promover la candidatura, el Owner
+> debe activar por separado `integrated_delivery_enabled`; la automatización conserva su
+> control independiente. Véase
+> [WhatsApp Embedded Signup](whatsapp_embedded_signup_architecture.md).
+
 ## Sender oficial
 
 `send_whatsapp_text_message` implementa el contrato `ProviderSendResult` y realiza:

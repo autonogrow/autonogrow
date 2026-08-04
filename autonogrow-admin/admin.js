@@ -441,7 +441,11 @@ function renderBusinessChannelOnboarding() {
       action = '<p class="channel-guidance">No necesitas hacer nada más. El Owner revisará la solicitud.</p>';
     }
     const account = channel.channel === "instagram" && channel.connected_account_name ? `<p class="channel-guidance">Cuenta: <strong>@${escapeHtml(String(channel.connected_account_name).replace(/^@/, ""))}</strong></p>` : "";
-    const precheck = channel.channel === "instagram" && channel.can_request ? `<ul class="channel-capability-list"><li>Usa una cuenta profesional Business o Creator.</li><li>Debes tener acceso a esa cuenta.</li><li>Mantén esta ventana abierta durante la autorización.</li><li>AutonoGrow nunca te pedirá tu contraseña de Instagram.</li></ul><p class="channel-guidance">AutonoGrow necesita estos permisos para recibir y responder mensajes de tu cuenta profesional.</p>` : "";
+    const precheck = channel.can_request
+      ? (channel.channel === "instagram"
+        ? `<ul class="channel-capability-list"><li>Usa una cuenta profesional Business o Creator.</li><li>Debes tener acceso a esa cuenta.</li><li>Mantén esta ventana abierta durante la autorización.</li><li>AutonoGrow nunca te pedirá tu contraseña de Instagram.</li></ul><p class="channel-guidance">AutonoGrow necesita estos permisos para recibir y responder mensajes de tu cuenta profesional.</p>`
+        : `<ul class="channel-capability-list"><li>Debes administrar el portfolio empresarial y la cuenta de WhatsApp Business.</li><li>Meta abrirá su flujo oficial en una ventana emergente.</li><li>La cuenta quedará pendiente de revisión Owner.</li><li>AutonoGrow no pedirá ni guardará tu PIN.</li></ul><p class="channel-guidance">El envío integrado y la automatización seguirán desactivados tras la aprobación.</p>`)
+      : "";
     return `<article class="channel-onboarding-card">
       <div class="channel-onboarding-heading"><h3>${escapeHtml(names[channel.channel])}</h3><span class="channel-status channel-status-${escapeHtml(channel.status)}">${escapeHtml(channelOnboardingStatusLabel(channel.status))}</span></div>
       <p>${channel.channel === "instagram" ? "Prepara tu cuenta profesional de Instagram." : "Prepara el acceso administrador de tu cuenta de WhatsApp Business."}</p>
@@ -463,6 +467,109 @@ async function loadBusinessChannelOnboarding() {
   renderBusinessChannelOnboarding();
 }
 
+let metaSdkPromise = null;
+
+function isTrustedMetaEventOrigin(origin) {
+  try {
+    const url = new URL(origin);
+    return url.protocol === "https:" && (url.hostname === "facebook.com" || url.hostname.endsWith(".facebook.com"));
+  } catch (_error) {
+    return false;
+  }
+}
+
+function loadMetaEmbeddedSignupSdk(configuration) {
+  if (configuration.sdk_url !== "https://connect.facebook.net/en_US/sdk.js") throw new Error("Configuración pública de Meta no válida.");
+  if (metaSdkPromise) return metaSdkPromise;
+  metaSdkPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-meta-embedded-signup="true"]');
+    if (existing && window.FB) { resolve(window.FB); return; }
+    const script = existing || document.createElement("script");
+    script.async = true;
+    script.defer = true;
+    script.crossOrigin = "anonymous";
+    script.dataset.metaEmbeddedSignup = "true";
+    script.src = configuration.sdk_url;
+    script.onload = () => window.FB ? resolve(window.FB) : reject(new Error("El SDK oficial de Meta no está disponible."));
+    script.onerror = () => reject(new Error("No se pudo cargar el SDK oficial de Meta."));
+    if (!existing) document.head.appendChild(script);
+  });
+  return metaSdkPromise;
+}
+
+async function completeWhatsAppEmbeddedSignup(start, eventPayload, authorizationCode) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/integrations/whatsapp/embedded-signup/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      state: start.state,
+      code: authorizationCode || null,
+      event_type: eventPayload.type,
+      event_name: eventPayload.event,
+      meta_business_id: eventPayload.data?.business_id || null,
+      waba_id: eventPayload.data?.waba_id || null,
+      phone_number_id: eventPayload.data?.phone_number_id || null
+    })
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || "No se pudo verificar la conexión con Meta.");
+  return body;
+}
+
+async function launchWhatsAppEmbeddedSignup() {
+  const startResponse = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/integrations/whatsapp/embedded-signup/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ purpose: null })
+  });
+  const start = await startResponse.json().catch(() => ({}));
+  if (!startResponse.ok) throw new Error(start.detail || "No se pudo iniciar WhatsApp Embedded Signup.");
+  const configuration = start.public_configuration || {};
+  if (!/^\d{6,40}$/.test(String(configuration.app_id || "")) || !/^\d{6,40}$/.test(String(configuration.config_id || "")) || !/^v\d+\.\d+$/.test(String(configuration.graph_api_version || "")) || configuration.event_type !== "WA_EMBEDDED_SIGNUP" || configuration.finish_event !== "FINISH") throw new Error("Configuración pública de Meta no válida.");
+  const FB = await loadMetaEmbeddedSignupSdk(configuration);
+  FB.init({ appId: configuration.app_id, autoLogAppEvents: true, xfbml: true, version: configuration.graph_api_version });
+  return new Promise((resolve, reject) => {
+    let authorizationCode = null;
+    let signupEvent = null;
+    let loginCompleted = false;
+    let finished = false;
+    const cleanup = () => { window.clearTimeout(timeout); window.removeEventListener("message", onMessage); };
+    const finish = async (error) => {
+      if (finished) return;
+      if (error) { finished = true; cleanup(); reject(error); return; }
+      if (!signupEvent) return;
+      if (signupEvent.event === "FINISH" && !authorizationCode) {
+        if (loginCompleted) finish(new Error("Meta no devolvió el código de autorización."));
+        return;
+      }
+      finished = true;
+      cleanup();
+      try { resolve(await completeWhatsAppEmbeddedSignup(start, signupEvent, authorizationCode)); }
+      catch (completionError) { reject(completionError); }
+    };
+    const onMessage = (message) => {
+      if (!isTrustedMetaEventOrigin(message.origin)) return;
+      let payload = message.data;
+      if (typeof payload === "string") { try { payload = JSON.parse(payload); } catch (_error) { return; } }
+      if (!payload || payload.type !== configuration.event_type || !["FINISH", "CANCEL"].includes(payload.event)) return;
+      signupEvent = payload;
+      finish();
+    };
+    const timeout = window.setTimeout(() => finish(new Error("El flujo de Meta tardó demasiado. Inicia un intento nuevo.")), 10 * 60 * 1000);
+    window.addEventListener("message", onMessage);
+    FB.login((response) => {
+      loginCompleted = true;
+      authorizationCode = response?.authResponse?.code || null;
+      finish();
+    }, {
+      config_id: configuration.config_id,
+      response_type: "code",
+      override_default_response_type: true,
+      extras: { setup: {} }
+    });
+  });
+}
+
 async function requestBusinessChannelConnection(channel, button) {
   const feedback = document.getElementById("channel-onboarding-feedback");
   const confirmed = window.confirm("Confirmo que soy administrador autorizado de los activos de Meta del negocio.");
@@ -480,6 +587,15 @@ async function requestBusinessChannelConnection(channel, button) {
       if (!response.ok) throw new Error(body.detail || "No se pudo iniciar Instagram Login.");
       if (!String(body.authorization_url || "").startsWith("https://www.instagram.com/oauth/authorize?")) throw new Error("Meta devolvió una URL de autorización no válida.");
       window.location.assign(body.authorization_url);
+      return;
+    }
+    if (channel === "whatsapp") {
+      feedback.textContent = "Abriendo el flujo oficial de Meta...";
+      const result = await launchWhatsAppEmbeddedSignup();
+      feedback.textContent = result.status === "candidate_ready"
+        ? "Cuenta verificada. Queda pendiente de revisión por el Owner."
+        : (result.safe_error_message || "La conexión no se completó. Inicia un intento nuevo.");
+      await loadBusinessChannelOnboarding();
       return;
     }
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channel-onboarding/${encodeURIComponent(channel)}/request`, {

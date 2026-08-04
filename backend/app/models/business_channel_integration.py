@@ -59,6 +59,7 @@ class BusinessChannelIntegration(Base):
     channel: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     provider: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     external_account_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    provider_account_id: Mapped[str | None] = mapped_column(String(255), index=True)
     external_account_name: Mapped[str | None] = mapped_column(String(255))
     encrypted_access_token: Mapped[str | None] = mapped_column(Text)
     encryption_key_version: Mapped[str | None] = mapped_column(String(60), index=True)

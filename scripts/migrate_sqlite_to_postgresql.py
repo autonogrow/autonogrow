@@ -60,6 +60,7 @@ COPY_ORDER = (
     "business_channel_integrations",
     "business_channel_controls",
     "instagram_oauth_attempts",
+    "whatsapp_embedded_signup_attempts",
     "system_incidents",
     "audit_logs",
     "business_gallery_images",
@@ -81,6 +82,7 @@ OPTIONAL_SOURCE_TABLES = (
     "business_staff_profile_services",
     "business_channel_controls",
     "instagram_oauth_attempts",
+    "whatsapp_embedded_signup_attempts",
     "operational_states",
     "backup_records",
 )
@@ -95,6 +97,9 @@ DESTINATION_ONLY_TABLES = ("alembic_version",)
 # Values are safe expected values after PostgreSQL applies its explicit default,
 # or None when omission is intentionally represented as SQL NULL.
 ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
+    "business_channel_integrations": {
+        "provider_account_id": {"action": "omit_as_null", "expected_value": None},
+    },
     "businesses": {
         "whatsapp_phone": {"action": "omit_as_null", "expected_value": None},
         "public_email": {"action": "omit_as_null", "expected_value": None},
@@ -221,6 +226,15 @@ CRITICAL_CHECKSUM_COLUMNS = {
             "purpose",
             "candidate_encryption_key_version",
             "candidate_external_account_id",
+        }
+    ),
+    "whatsapp_embedded_signup_attempts": frozenset(
+        {
+            "status",
+            "purpose",
+            "candidate_encryption_key_version",
+            "candidate_waba_id",
+            "candidate_phone_number_id",
         }
     ),
     "webhook_inbox_events": frozenset({"idempotency_key", "payload_hash", "status"}),

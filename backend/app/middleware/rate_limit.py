@@ -20,6 +20,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return ("instagram-oauth-callback", 30, 60)
         if path.endswith("/integrations/instagram/oauth/start"):
             return ("instagram-oauth-start", 10, 60)
+        if path.endswith("/integrations/whatsapp/embedded-signup/start"):
+            return ("whatsapp-signup-start", 10, 60)
+        if path.endswith("/integrations/whatsapp/embedded-signup/complete"):
+            return ("whatsapp-signup-complete", 20, 60)
         if path.startswith("/api/auth/"):
             return ("auth", 30, 60)
         if method == "POST" and path.endswith(("/bookings", "/booking-requests")):

@@ -131,6 +131,8 @@ def grant_channel_access(
     control.updated_by_user_id = actor.id
     if normalized == "instagram":
         control.connection_mode = "oauth"
+    elif normalized == "whatsapp" and get_settings().whatsapp_embedded_signup_enabled:
+        control.connection_mode = "embedded_signup"
     control.last_reason = reason
     db.flush()
     return control, previous_status
@@ -151,6 +153,15 @@ def request_simulated_connection(
         raise HTTPException(
             status_code=410,
             detail="Instagram simulation is disabled; use Instagram Login",
+        )
+    if (
+        control.channel == "whatsapp"
+        and settings.whatsapp_embedded_signup_enabled
+        and not (settings.app_env == "test" and settings.whatsapp_embedded_signup_test_only)
+    ):
+        raise HTTPException(
+            status_code=410,
+            detail="WhatsApp simulation is disabled; use Embedded Signup",
         )
     if control.status == "pending_approval" and control.requested_by_user_id == actor.id:
         return False

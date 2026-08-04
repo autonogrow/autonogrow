@@ -41,6 +41,7 @@ from app.models.service import BusinessService
 from app.models.sync_job import SyncJob
 from app.models.system_incident import SystemIncident
 from app.models.user import User
+from app.models.whatsapp_embedded_signup_attempt import WhatsAppEmbeddedSignupAttempt
 
 __all__ = [
     "Business",
@@ -56,6 +57,7 @@ __all__ = [
     "BusinessUserAvailabilityException",
     "GoogleIntegration",
     "InstagramOAuthAttempt",
+    "WhatsAppEmbeddedSignupAttempt",
     "SyncJob",
     "ReviewRequest",
     "MessageOutbox",

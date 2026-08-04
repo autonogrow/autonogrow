@@ -51,6 +51,12 @@ from app.routers.staff import (
 from app.routers.staff import (
     public_router as public_staff_router,
 )
+from app.routers.whatsapp_embedded_signup import (
+    admin_router as whatsapp_embedded_signup_admin_router,
+)
+from app.routers.whatsapp_embedded_signup import (
+    owner_router as whatsapp_embedded_signup_owner_router,
+)
 from app.routers.whatsapp_webhook import router as whatsapp_webhook_router
 
 
@@ -140,3 +146,5 @@ app.include_router(instagram_oauth_callback_router)
 app.include_router(instagram_oauth_admin_router)
 app.include_router(instagram_oauth_owner_router)
 app.include_router(whatsapp_webhook_router)
+app.include_router(whatsapp_embedded_signup_admin_router)
+app.include_router(whatsapp_embedded_signup_owner_router)

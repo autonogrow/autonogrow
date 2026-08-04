@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.config import Settings, get_settings
-from app.models import Business, BusinessChannelIntegration, InstagramOAuthAttempt
+from app.models import (
+    Business,
+    BusinessChannelIntegration,
+    InstagramOAuthAttempt,
+    WhatsAppEmbeddedSignupAttempt,
+)
 from app.services.incident_service import report_incident, resolve_related_incidents
 from app.services.instagram_provider import (
     InstagramVerificationResult,
@@ -558,12 +563,17 @@ def validate_persisted_integration_secrets(
         .filter(BusinessChannelIntegration.encrypted_access_token.is_not(None))
         .all()
     )
-    candidates = (
+    instagram_candidates = (
         db.query(InstagramOAuthAttempt)
         .filter(InstagramOAuthAttempt.candidate_encrypted_access_token.is_not(None))
         .all()
     )
-    if not rows and not candidates:
+    whatsapp_candidates = (
+        db.query(WhatsAppEmbeddedSignupAttempt)
+        .filter(WhatsAppEmbeddedSignupAttempt.candidate_encrypted_access_token.is_not(None))
+        .all()
+    )
+    if not rows and not instagram_candidates and not whatsapp_candidates:
         return
     configuration = load_encryption_configuration(settings, required=True)
     for integration in rows:
@@ -577,7 +587,7 @@ def validate_persisted_integration_secrets(
             version,
             settings=settings,
         )
-    for candidate in candidates:
+    for candidate in instagram_candidates:
         version = candidate.candidate_encryption_key_version
         if not version or version not in configuration.keys:
             raise IntegrationCryptoError(
@@ -585,6 +595,17 @@ def validate_persisted_integration_secrets(
             )
         decrypt_secret(
             candidate.candidate_encrypted_access_token or "",
+            version,
+            settings=settings,
+        )
+    for whatsapp_candidate in whatsapp_candidates:
+        version = whatsapp_candidate.candidate_encryption_key_version
+        if not version or version not in configuration.keys:
+            raise IntegrationCryptoError(
+                "A stored WhatsApp candidate uses an unavailable encryption key version"
+            )
+        decrypt_secret(
+            whatsapp_candidate.candidate_encrypted_access_token or "",
             version,
             settings=settings,
         )

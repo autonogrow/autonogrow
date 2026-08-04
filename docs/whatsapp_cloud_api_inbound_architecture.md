@@ -1,5 +1,9 @@
 # Recepción persistente de WhatsApp Cloud API
 
+> La incorporación real de WABA y número se realiza mediante la candidatura Owner descrita
+> en [WhatsApp Embedded Signup](whatsapp_embedded_signup_architecture.md). Un candidato no
+> puede resolver inbox: solo una integración promovida y conectada participa en el routing.
+
 ## Flujo y autenticidad
 
 `GET /api/webhooks/whatsapp` implementa la verificación de Meta. Sólo acepta

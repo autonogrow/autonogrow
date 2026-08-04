@@ -28,6 +28,9 @@ from app.services.channel_control_service import (
     validate_controlled_channel,
 )
 from app.services.instagram_oauth_service import invalidate_instagram_oauth_attempts
+from app.services.whatsapp_embedded_signup_service import (
+    invalidate_whatsapp_signup_attempts,
+)
 
 admin_router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}/channel-onboarding",
@@ -340,6 +343,11 @@ def approve_owner_channel_connection(
             status_code=409,
             detail="Approve the reviewed Instagram OAuth candidate instead",
         )
+    if control.channel == "whatsapp" and control.connection_mode == "embedded_signup":
+        raise HTTPException(
+            status_code=409,
+            detail="Approve the reviewed WhatsApp Embedded Signup candidate instead",
+        )
     old_status = control.status
     approve_channel_connection(db, control=control, actor=actor, reason=payload.reason)
     _audit(
@@ -443,6 +451,12 @@ def stop_owner_channel_access(
     cancelled_attempts = 0
     if control.channel == "instagram":
         cancelled_attempts = invalidate_instagram_oauth_attempts(
+            db,
+            business_id=business_id,
+            safe_code=f"channel_{action}",
+        )
+    elif control.channel == "whatsapp":
+        cancelled_attempts = invalidate_whatsapp_signup_attempts(
             db,
             business_id=business_id,
             safe_code=f"channel_{action}",
