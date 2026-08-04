@@ -1,0 +1,94 @@
+body.ag-body,
+.ag-app {
+  font-family: var(--ag-font-interface);
+  color: var(--ag-color-text);
+}
+
+body.ag-body {
+  min-width: 20rem;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--ag-color-canvas);
+  line-height: var(--ag-line-height-body);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.ag-body *,
+body.ag-body *::before,
+body.ag-body *::after {
+  box-sizing: border-box;
+}
+
+.ag-app :where(h1, h2, h3, h4, h5, h6) {
+  color: var(--ag-color-text);
+  font-family: var(--ag-font-heading);
+  font-weight: var(--ag-font-weight-bold);
+  line-height: var(--ag-line-height-tight);
+  letter-spacing: var(--ag-tracking-heading);
+}
+
+.ag-app :where(p, ul, ol) {
+  margin-block-start: 0;
+}
+
+.ag-app :where(a) {
+  color: var(--ag-color-blue-700);
+  text-underline-offset: 0.16em;
+}
+
+.ag-app :where(img, svg) {
+  max-width: 100%;
+}
+
+.ag-app :where(button, input, select, textarea) {
+  font: inherit;
+}
+
+.ag-app :where(button) {
+  touch-action: manipulation;
+}
+
+.ag-app :where(input, select, textarea) {
+  max-width: 100%;
+}
+
+.ag-app :where(textarea) {
+  resize: vertical;
+}
+
+.ag-app :where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ag-font-size-sm);
+}
+
+.ag-app :where(th, td) {
+  padding: var(--ag-space-3) var(--ag-space-4);
+  border-bottom: 1px solid var(--ag-color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.ag-app :where(th) {
+  color: var(--ag-color-text-muted);
+  font-size: var(--ag-font-size-xs);
+  letter-spacing: var(--ag-tracking-label);
+  text-transform: uppercase;
+}
+
+.ag-app :where(hr) {
+  height: 1px;
+  margin-block: var(--ag-space-6);
+  border: 0;
+  background: var(--ag-color-border);
+}
+
+body.ag-body [hidden] {
+  display: none !important;
+}
+
+body.ag-body ::selection {
+  color: var(--ag-color-ink);
+  background: rgba(30, 144, 255, 0.28);
+}

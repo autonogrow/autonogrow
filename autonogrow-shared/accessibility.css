@@ -1,0 +1,54 @@
+.ag-skip-link {
+  position: fixed;
+  top: var(--ag-space-3);
+  left: var(--ag-space-3);
+  z-index: calc(var(--ag-z-toast) + 1);
+  padding: var(--ag-space-3) var(--ag-space-4);
+  border-radius: var(--ag-radius-md);
+  color: var(--ag-color-text-inverse);
+  background: var(--ag-color-blue-800);
+  box-shadow: var(--ag-shadow-lg);
+  font-weight: var(--ag-font-weight-bold);
+  text-decoration: none;
+  transform: translateY(-160%);
+  transition: transform var(--ag-duration-fast) var(--ag-ease-standard);
+}
+.ag-skip-link:focus { transform: translateY(0); }
+
+.ag-visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+body.ag-body :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--ag-color-focus);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 2px var(--ag-color-surface);
+}
+
+body.ag-body :where(input, select, textarea):focus-visible {
+  border-color: var(--ag-color-blue-700);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.ag-body *, body.ag-body *::before, body.ag-body *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .ag-sidebar :is(.admin-tab.admin-tab-active, .tab.active),
+  .ag-mobile-nav__item[aria-current="page"],
+  .ag-badge,
+  .ag-alert { border: 2px solid currentColor; }
+}

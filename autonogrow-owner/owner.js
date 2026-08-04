@@ -216,7 +216,7 @@ async function updateIncident(incidentId, action, button) {
 }
 
 function healthBadge(label, healthy) {
-  return `<span class="health-badge ${healthy ? "healthy" : "missing"}">${label}${healthy ? "" : " pendiente"}</span>`;
+  return `<span class="health-badge ag-badge ${healthy ? "healthy ag-badge--success" : "missing ag-badge--warning"}">${label}${healthy ? "" : " pendiente"}</span>`;
 }
 
 function businessCard(business) {
@@ -227,7 +227,7 @@ function businessCard(business) {
     <article class="business-card">
       <div class="business-card-header">
         <div class="owner-brand-title">${business.logo_url ? `<img src="${escapeHtml(resolveMediaUrl(business.logo_url, true))}" alt="${escapeHtml(business.logo_alt || business.name)}">` : `<span>${escapeHtml((business.name || "?").slice(0,2).toUpperCase())}</span>`}<div><p class="business-category">${escapeHtml(business.category || "Sin categoría")}</p><h3>${escapeHtml(business.name)}</h3><p>${escapeHtml(business.city || "Sin ciudad")} · <code>${escapeHtml(business.slug)}</code></p></div></div>
-        <span class="state-badge ${business.active ? "active" : "inactive"}">${business.active ? "Activo" : "Inactivo"}</span>
+        <span class="state-badge ag-badge ${business.active ? "active ag-badge--success" : "inactive ag-badge--neutral"}">${business.active ? "Activo" : "Inactivo"}</span>
       </div>
       <div class="health-row">
         ${healthBadge("Datos", health.has_basic_info)}
@@ -309,7 +309,7 @@ function renderOwnerChannelControls(panel, data) {
     if (health) actions += `<button class="button button-secondary button-small" type="button" data-owner-channel-action="health-check" data-channel="${escapeHtml(channel.channel)}">Comprobar ahora</button>${health.subscription_status === "missing" ? `<button class="button button-secondary button-small" type="button" data-owner-channel-action="retry-subscription" data-channel="${escapeHtml(channel.channel)}">Reintentar suscripción</button>` : ""}${health.reconnection_required && channel.channel === "instagram" ? `<button class="button button-primary button-small" type="button" data-owner-channel-action="health-reconnect" data-channel="instagram">Reconectar</button>` : ""}${health.reconnection_required && channel.channel === "whatsapp" ? `<a class="button button-primary button-small" href="../autonogrow-admin/index.html?b=${escapeHtml(data.business.slug)}#channels">Abrir onboarding</a>` : ""}`;
     const candidates = channel.channel === "whatsapp" ? (data.whatsapp_candidates || []).map(ownerWhatsAppCandidate).join("") : "";
     const healthPanel = health ? `<div class="owner-integration-health state-${escapeHtml(health.health_status)}"><p><strong>Salud: ${escapeHtml(health.health_status)}</strong></p><p>Última: ${escapeHtml(formatAutomationDate(health.last_health_check_at))} · Próxima: ${escapeHtml(formatAutomationDate(health.next_health_check_at))}</p><p>Token: ${escapeHtml(health.token_expiry_status)} · Suscripción: ${escapeHtml(health.subscription_status)} · Activo: ${escapeHtml(health.asset_status)}</p><p>Fallos consecutivos: ${Number(health.consecutive_health_failures || 0)}</p>${health.safe_error_message ? `<p>${escapeHtml(health.safe_error_message)}</p>` : ""}</div>` : `<p class="helper">Sin integración operativa.</p>`;
-    return `<article class="owner-channel-control-card"><div class="owner-integration-heading"><h4>${escapeHtml(names[channel.channel])}</h4><span class="state-badge ${channel.status === "approved" ? "active" : "inactive"}">${escapeHtml(ownerChannelControlStatusLabel(channel.status))}</span></div>${healthPanel}${candidates}<div class="owner-channel-control-actions">${actions}</div></article>`;
+    return `<article class="owner-channel-control-card"><div class="owner-integration-heading"><h4>${escapeHtml(names[channel.channel])}</h4><span class="state-badge ag-badge ${channel.status === "approved" ? "active ag-badge--success" : "inactive ag-badge--neutral"}">${escapeHtml(ownerChannelControlStatusLabel(channel.status))}</span></div>${healthPanel}${candidates}<div class="owner-channel-control-actions">${actions}</div></article>`;
   }).join("")}</div><p data-owner-channel-feedback class="status-text"></p>`;
 }
 
@@ -427,7 +427,7 @@ function renderOwnerIntegration(panel, integration, candidates = []) {
     return;
   }
   content.innerHTML = `<article class="owner-integration-card">
-    <div class="owner-integration-heading"><h4>Instagram</h4><span class="state-badge ${integration.integration_status === "connected" ? "active" : "inactive"}">${escapeHtml(ownerIntegrationStatusLabel(integration.integration_status))}</span></div>${candidateHtml}
+    <div class="owner-integration-heading"><h4>Instagram</h4><span class="state-badge ag-badge ${integration.integration_status === "connected" ? "active ag-badge--success" : "inactive ag-badge--neutral"}">${escapeHtml(ownerIntegrationStatusLabel(integration.integration_status))}</span></div>${candidateHtml}
     <div class="owner-integration-summary"><span><strong>${escapeHtml(integration.external_account_id_masked || "—")}</strong>Cuenta</span><span><strong>${escapeHtml(integration.external_account_name || "—")}</strong>Nombre</span><span><strong>${escapeHtml(formatAutomationDate(integration.connected_at))}</strong>Conectado desde</span><span><strong>${escapeHtml(formatAutomationDate(integration.last_verified_at))}</strong>Última verificación</span><span><strong>${escapeHtml(formatAutomationDate(integration.last_success_at))}</strong>Último éxito</span><span><strong>${escapeHtml(formatAutomationDate(integration.token_expires_at))}</strong>Caducidad</span></div>
     ${integration.expires_soon ? `<p class="owner-integration-warning">El token caduca próximamente (${integration.days_remaining} días).</p>` : ""}
     ${integration.safe_error_message ? `<p class="owner-integration-warning">${escapeHtml(integration.safe_error_message)}</p>` : ""}

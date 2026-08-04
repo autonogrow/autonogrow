@@ -1,0 +1,105 @@
+:root {
+  color-scheme: light;
+
+  --ag-color-blue-500: #1e90ff;
+  --ag-color-blue-600: #087acc;
+  --ag-color-blue-700: #0069b8;
+  --ag-color-blue-800: #00558f;
+  --ag-color-coral-500: #ff6f61;
+  --ag-color-green-500: #2ecc71;
+  --ag-color-ink: #1a1a1a;
+  --ag-color-canvas: #f5f5f5;
+  --ag-color-surface: #ffffff;
+  --ag-color-surface-subtle: #f8fafc;
+  --ag-color-surface-raised: #ffffff;
+  --ag-color-text: #1a1a1a;
+  --ag-color-text-muted: #5e6878;
+  --ag-color-text-inverse: #ffffff;
+  --ag-color-border: #d9e0e8;
+  --ag-color-border-strong: #aeb9c7;
+  --ag-color-focus: #1e90ff;
+  --ag-color-disabled-bg: #e8ecf1;
+  --ag-color-disabled-text: #727d8d;
+  --ag-color-overlay: rgba(15, 23, 42, 0.58);
+
+  --ag-color-info: #0069b8;
+  --ag-color-info-bg: #e7f4ff;
+  --ag-color-success: #147a3f;
+  --ag-color-success-bg: #e8f8ef;
+  --ag-color-warning: #8a4b08;
+  --ag-color-warning-bg: #fff4d6;
+  --ag-color-danger: #b42318;
+  --ag-color-danger-bg: #fff0ee;
+
+  --ag-color-sidebar: #111827;
+  --ag-color-sidebar-raised: #1f2937;
+  --ag-color-sidebar-text: #f8fafc;
+  --ag-color-sidebar-muted: #c7d0dc;
+  --ag-color-sidebar-border: rgba(255, 255, 255, 0.11);
+
+  --ag-font-interface: "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --ag-font-heading: "Montserrat", "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --ag-font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  --ag-font-weight-regular: 400;
+  --ag-font-weight-medium: 500;
+  --ag-font-weight-semibold: 600;
+  --ag-font-weight-bold: 700;
+  --ag-font-weight-extrabold: 800;
+  --ag-font-size-xs: 0.75rem;
+  --ag-font-size-sm: 0.875rem;
+  --ag-font-size-md: 1rem;
+  --ag-font-size-lg: 1.125rem;
+  --ag-font-size-xl: 1.375rem;
+  --ag-font-size-2xl: clamp(1.6rem, 2.4vw, 2.15rem);
+  --ag-font-size-3xl: clamp(2rem, 4vw, 3rem);
+  --ag-line-height-tight: 1.18;
+  --ag-line-height-body: 1.55;
+  --ag-line-height-loose: 1.7;
+  --ag-tracking-heading: -0.025em;
+  --ag-tracking-label: 0.025em;
+
+  --ag-space-1: 0.25rem;
+  --ag-space-2: 0.5rem;
+  --ag-space-3: 0.75rem;
+  --ag-space-4: 1rem;
+  --ag-space-5: 1.25rem;
+  --ag-space-6: 1.5rem;
+  --ag-space-8: 2rem;
+  --ag-space-10: 2.5rem;
+  --ag-space-12: 3rem;
+  --ag-space-16: 4rem;
+
+  --ag-radius-sm: 0.5rem;
+  --ag-radius-md: 0.75rem;
+  --ag-radius-lg: 1rem;
+  --ag-radius-xl: 1.25rem;
+  --ag-radius-pill: 999px;
+  --ag-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.08);
+  --ag-shadow-md: 0 10px 30px rgba(15, 23, 42, 0.09);
+  --ag-shadow-lg: 0 24px 70px rgba(15, 23, 42, 0.18);
+
+  --ag-control-height: 2.75rem;
+  --ag-control-height-small: 2.25rem;
+  --ag-control-height-large: 3.25rem;
+  --ag-touch-target: 2.75rem;
+  --ag-sidebar-width: 17rem;
+  --ag-topbar-min-height: 5.25rem;
+  --ag-mobile-nav-height: 4.25rem;
+  --ag-content-max: 80rem;
+
+  --ag-z-base: 0;
+  --ag-z-sticky: 20;
+  --ag-z-drawer-backdrop: 80;
+  --ag-z-drawer: 90;
+  --ag-z-mobile-nav: 70;
+  --ag-z-modal: 100;
+  --ag-z-toast: 120;
+
+  --ag-duration-fast: 120ms;
+  --ag-duration-normal: 200ms;
+  --ag-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Referencia documental: tablet 640px; desktop 1024px. */
+  --ag-breakpoint-tablet: 640px;
+  --ag-breakpoint-desktop: 1024px;
+}

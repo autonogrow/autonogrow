@@ -7,17 +7,41 @@
   <title>AutonoGrow Admin</title>
 
   <link rel="stylesheet" href="styles.css?v=20260727-2" />
+  <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
+  <link rel="stylesheet" href="../autonogrow-shared/base.css" />
+  <link rel="stylesheet" href="../autonogrow-shared/components.css" />
+  <link rel="stylesheet" href="../autonogrow-shared/layout.css" />
+  <link rel="stylesheet" href="../autonogrow-shared/responsive.css" />
+  <link rel="stylesheet" href="../autonogrow-shared/accessibility.css" />
   <link rel="stylesheet" href="../autonogrow-shared/auth.css" />
 </head>
-<body>
+<body class="ag-body ag-admin-app">
+  <a class="ag-skip-link" href="#admin-main-content">Saltar al contenido</a>
   <section id="admin-auth-gate" class="auth-gate" hidden>
     <h1>Acceso del negocio</h1><p id="admin-auth-message">Inicia sesión con la cuenta asignada al negocio.</p>
     <div id="admin-google-button" class="auth-google-button"></div>
     <button id="admin-gate-logout" class="btn btn-secondary" type="button" hidden>Salir</button>
   </section>
-  <main id="admin-app" class="admin-page" hidden>
-    <header class="admin-header">
-      <div>
+  <main id="admin-app" class="admin-page ag-app ag-shell ag-admin-shell" data-ag-shell hidden>
+    <button class="ag-shell__backdrop" type="button" data-ag-shell-backdrop aria-label="Cerrar menú" hidden></button>
+    <aside id="admin-sidebar" class="ag-shell__sidebar ag-sidebar" data-ag-shell-sidebar aria-label="Navegación principal">
+      <div class="ag-shell__brand">
+        <span class="ag-shell__brand-mark" aria-hidden="true">AG</span>
+        <span class="ag-shell__brand-copy"><strong>AutonoGrow</strong><span>Panel del negocio</span></span>
+        <button class="ag-button ag-button--icon ag-shell__sidebar-close" type="button" data-ag-shell-close aria-label="Cerrar menú">
+          <span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></span>
+        </button>
+      </div>
+      <p class="ag-shell__nav-label">Gestionar</p>
+      <div data-ag-shell-nav-slot></div>
+      <div class="ag-shell__sidebar-footer"><strong>Área del negocio</strong><span>Reservas, clientes y configuración</span></div>
+    </aside>
+    <div class="ag-shell__main">
+    <header class="admin-header ag-topbar">
+      <button class="ag-button ag-button--secondary ag-button--icon ag-shell__menu-button" type="button" data-ag-shell-open aria-controls="admin-sidebar" aria-expanded="false" aria-label="Abrir menú">
+        <span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></svg></span>
+      </button>
+      <div class="ag-topbar__title">
         <p class="eyebrow">Panel del negocio</p>
         <h1 id="business-name">Cargando...</h1>
         <p id="business-subtitle">Reservas, solicitudes y fotos adjuntas.</p>
@@ -29,31 +53,33 @@
           <span id="admin-sync-status-label" class="admin-sync-status-label">Conectado</span>
           <time id="admin-sync-last-updated">Sincronizando...</time>
         </div>
-        <div class="auth-user"><span id="admin-auth-user"></span><button id="admin-logout" class="btn btn-secondary" type="button">Salir</button></div>
-        <a id="public-page-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+        <div class="auth-user"><span id="admin-auth-user"></span><button id="admin-logout" class="btn btn-secondary ag-button ag-button--secondary" type="button">Salir</button></div>
+        <a id="public-page-link" class="btn btn-secondary ag-button ag-button--secondary" target="_blank" rel="noopener noreferrer">
           Ver página pública
         </a>
 
-        <button id="refresh-button" class="btn btn-primary" type="button">
+        <button id="refresh-button" class="btn btn-primary ag-button ag-button--primary" type="button">
           Actualizar
         </button>
       </div>
     </header>
 
-    <nav class="admin-navigation" aria-label="Secciones del panel">
-      <button class="admin-tab admin-tab-active" type="button" data-section="summary" aria-selected="true">Resumen</button>
-      <button class="admin-tab" type="button" data-section="growth" aria-selected="false">Crecimiento</button>
-      <button class="admin-tab" type="button" data-section="bookings" aria-selected="false">Reservas</button>
-      <button class="admin-tab" type="button" data-section="conversations" aria-selected="false">Conversaciones</button>
-      <button class="admin-tab" type="button" data-section="messages" aria-selected="false">Mensajes automáticos</button>
-      <button class="admin-tab" type="button" data-section="services" aria-selected="false">Servicios</button>
-      <button class="admin-tab" type="button" data-section="staff" aria-selected="false">Equipo</button>
-      <button class="admin-tab" type="button" data-section="schedule" aria-selected="false">Horarios</button>
-      <button class="admin-tab" type="button" data-section="channels" aria-selected="false">Canales</button>
-      <button class="admin-tab" type="button" data-section="business" aria-selected="false">Datos del negocio</button>
-      <button class="admin-tab" type="button" data-section="reviews" aria-selected="false">Reseñas</button>
+    <nav class="admin-navigation" data-ag-shell-nav aria-label="Secciones del panel">
+      <button class="admin-tab admin-tab-active" type="button" data-section="summary" aria-selected="true" aria-current="page"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>Resumen</button>
+      <button class="admin-tab" type="button" data-section="growth" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 18 10 12l4 4 6-9"/><path d="M15 7h5v5"/></svg></span>Crecimiento</button>
+      <button class="admin-tab" type="button" data-section="bookings" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span>Reservas</button>
+      <button class="admin-tab" type="button" data-section="conversations" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg></span>Conversaciones</button>
+      <button class="admin-tab" type="button" data-section="messages" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8Z"/><path d="m11 13 4-4"/></svg></span>Mensajes automáticos</button>
+      <button class="admin-tab" type="button" data-section="services" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8h14l1 13H4Z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg></span>Servicios</button>
+      <button class="admin-tab" type="button" data-section="staff" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 4a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5"/></svg></span>Equipo</button>
+      <button class="admin-tab" type="button" data-section="schedule" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>Horarios</button>
+      <button class="admin-tab" type="button" data-section="channels" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2"/></svg></span>Canales</button>
+      <button class="admin-tab" type="button" data-section="business" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5l8-3 8 3v16"/><path d="M9 21v-5h6v5M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span>Datos del negocio</button>
+      <button class="admin-tab" type="button" data-section="reviews" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg></span>Reseñas</button>
     </nav>
 
+    <div id="admin-main-content" class="ag-shell__content" tabindex="-1">
+    <div class="ag-content-container">
     <section class="admin-section admin-section-active" data-admin-section="summary">
       <div class="section-header summary-header">
         <div>
@@ -63,7 +89,7 @@
       </div>
 
       <div class="stats-grid">
-      <article class="stat-card">
+      <article class="stat-card ag-card">
         <span class="stat-label">Solicitudes</span>
         <strong id="stat-total">0</strong>
       </article>
@@ -115,11 +141,11 @@
       </article>
       <article class="stat-card">
         <span class="stat-label">Estado del negocio</span>
-        <strong id="stat-business-status" class="stat-status">--</strong>
+        <strong id="stat-business-status" class="stat-status ag-badge ag-badge--neutral">--</strong>
       </article>
       </div>
 
-      <article class="growth-summary-card">
+      <article class="growth-summary-card ag-card ag-card--interactive">
         <div class="growth-summary-copy">
           <span class="stat-label">Crecimiento de hoy</span>
           <strong id="growth-summary-count">0/0 tareas completadas</strong>
@@ -170,7 +196,7 @@
       </div>
 
       <div class="business-settings-grid">
-        <label>Nombre<input id="business-setting-name" type="text" required /></label>
+        <label class="ag-field ag-label">Nombre<input id="business-setting-name" class="ag-input" type="text" required /></label>
         <label>Categoría<input id="business-setting-category" type="text" /></label>
         <label class="field-wide">Titular<input id="business-setting-headline" type="text" /></label>
         <label class="field-wide">Descripción<textarea id="business-setting-description" rows="4"></textarea></label>
@@ -230,9 +256,9 @@
           <p>Solicita Instagram o WhatsApp en un proceso guiado y revisado por AutonoGrow.</p>
         </div>
       </div>
-      <div class="channel-onboarding-notice">
-        <strong>Conexión de prueba controlada</strong>
-        <p>En esta fase no se solicitan contraseñas, tokens ni datos técnicos de Meta. La solicitud quedará pendiente de aprobación.</p>
+      <div class="channel-onboarding-notice ag-alert ag-alert--info">
+        <div><strong>Conexión de prueba controlada</strong>
+        <p>En esta fase no se solicitan contraseñas, tokens ni datos técnicos de Meta. La solicitud quedará pendiente de aprobación.</p></div>
       </div>
       <div id="channel-onboarding-list" class="channel-onboarding-grid">
         <p class="empty-state">Cargando canales...</p>
@@ -536,37 +562,47 @@
         </div>
       </div>
     </section>
+    </div>
+    </div>
+
+    <nav class="ag-mobile-nav" data-ag-mobile-nav aria-label="Navegación móvil">
+      <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="summary" aria-current="page"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11 12 3l9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg></span><span>Inicio</span></button>
+      <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="bookings"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span><span>Agenda</span></button>
+      <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="conversations"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg></span><span>Mensajes</span></button>
+      <button class="ag-mobile-nav__item" type="button" data-ag-shell-open data-ag-shell-more data-ag-shell-sections="growth,messages,services,staff,schedule,channels,business,reviews" aria-controls="admin-sidebar" aria-expanded="false"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></span><span>Más</span></button>
+    </nav>
+    </div>
   </main>
 
-  <div id="reschedule-modal" class="modal-overlay">
-    <div class="modal-card">
-      <div class="modal-header">
+  <div id="reschedule-modal" class="modal-overlay ag-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="reschedule-modal-title">
+    <div class="modal-card ag-modal">
+      <div class="modal-header ag-modal__header">
         <div>
           <p class="eyebrow">Reagendar</p>
           <h2 id="reschedule-modal-title">Reagendar cita</h2>
         </div>
 
-        <button class="modal-close" type="button" onclick="closeRescheduleModal()">
+        <button class="modal-close ag-button ag-button--ghost ag-button--icon ag-modal__close" type="button" onclick="closeRescheduleModal()" aria-label="Cerrar">
           x
         </button>
       </div>
 
-      <div id="reschedule-modal-content" class="modal-content">
+      <div id="reschedule-modal-content" class="modal-content ag-modal__body">
         <p class="empty-state">Cargando huecos disponibles...</p>
       </div>
     </div>
   </div>
 
-  <div id="staff-removal-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="staff-removal-modal-title">
-    <div class="modal-card">
-      <div class="modal-header">
+  <div id="staff-removal-modal" class="modal-overlay ag-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="staff-removal-modal-title">
+    <div class="modal-card ag-modal ag-modal--danger">
+      <div class="modal-header ag-modal__header">
         <div>
           <p class="eyebrow">Citas pendientes</p>
           <h2 id="staff-removal-modal-title">No se puede eliminar este miembro</h2>
         </div>
-        <button class="modal-close" type="button" onclick="closeStaffRemovalModal()" aria-label="Cerrar">x</button>
+        <button class="modal-close ag-button ag-button--ghost ag-button--icon ag-modal__close" type="button" onclick="closeStaffRemovalModal()" aria-label="Cerrar">x</button>
       </div>
-      <div class="modal-content">
+      <div class="modal-content ag-modal__body">
         <p id="staff-removal-modal-message"></p>
         <div id="staff-removal-bookings" class="staff-removal-bookings"></div>
       </div>
@@ -575,6 +611,7 @@
 
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
+  <script src="../autonogrow-shared/app-shell.js"></script>
   <script src="admin.js?v=20260727-2"></script>
 </body>
 </html>
