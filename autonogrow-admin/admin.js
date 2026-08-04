@@ -22,7 +22,11 @@ let adminServices = [];
 let availabilitySettings = null;
 let availabilityExceptions = [];
 let exceptionDraftWindows = [];
-let currentBookingView = "pending";
+let currentBookingView = "today";
+let agendaSelectedDate = "";
+let selectedBookingStatusFilter = "";
+let selectedBookingServiceFilter = "";
+let bookingCustomerSearch = "";
 let previousGrowthTaskStates = null;
 let previousGrowthAllComplete = null;
 let adminGallery = [];
@@ -48,6 +52,11 @@ let conversationAutomationLoadVersion = 0;
 let conversationListFingerprint = "";
 let conversationDetailFingerprint = "";
 let bookingsFingerprint = "";
+let bookingsLoadVersion = 0;
+let rescheduleSlotsLoadVersion = 0;
+let rescheduleReturnFocus = null;
+let rescheduleSubmitting = false;
+const bookingMutationIds = new Set();
 let messageOutboxFingerprint = "";
 const ADMIN_POLL_INTERVALS = {
   conversationThread: { visible: 5000, hidden: 15000 },
@@ -160,23 +169,124 @@ function setupAdminNavigation() {
 }
 
 function setupBookingViews() {
+  agendaSelectedDate = getMadridDateKey();
   document.querySelectorAll("[data-booking-view]").forEach((tab) => {
     tab.addEventListener("click", () => {
-      currentBookingView = tab.dataset.bookingView;
+      setBookingView(tab.dataset.bookingView);
+    });
+    tab.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const tabs = Array.from(document.querySelectorAll("[data-booking-view]"));
+      const currentIndex = tabs.indexOf(tab);
+      const nextIndex = event.key === "Home" ? 0
+        : event.key === "End" ? tabs.length - 1
+          : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      tabs[nextIndex].focus();
+      setBookingView(tabs[nextIndex].dataset.bookingView);
+    });
+  });
+  document.querySelectorAll("[data-agenda-nav]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const step = Number(button.dataset.agendaNav);
+      agendaSelectedDate = addDaysToDateKey(agendaSelectedDate, step * (currentBookingView === "week" ? 7 : 1));
       const url = new URL(window.location.href);
       url.searchParams.delete("booking");
       window.history.replaceState(null, "", `${url.pathname}${url.search}#bookings`);
-      document.querySelectorAll("[data-booking-view]").forEach((item) => {
-        item.classList.toggle("booking-view-tab-active", item === tab);
-      });
       renderBookings();
     });
   });
+  document.getElementById("agenda-today-button")?.addEventListener("click", () => {
+    agendaSelectedDate = getMadridDateKey();
+    renderBookings();
+  });
+  document.getElementById("agenda-week-days")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-agenda-date]");
+    if (!button) return;
+    agendaSelectedDate = button.dataset.agendaDate;
+    renderBookings();
+  });
+  document.getElementById("agenda-status-filter")?.addEventListener("change", (event) => {
+    selectedBookingStatusFilter = event.target.value;
+    renderBookings();
+  });
+  document.getElementById("agenda-service-filter")?.addEventListener("change", (event) => {
+    selectedBookingServiceFilter = event.target.value;
+    renderBookings();
+  });
+  document.getElementById("agenda-customer-search")?.addEventListener("input", (event) => {
+    bookingCustomerSearch = event.target.value.trim().toLocaleLowerCase("es");
+    renderBookings();
+  });
+  document.getElementById("agenda-reset-filters")?.addEventListener("click", () => resetAgendaFilters());
+  if (window.matchMedia("(max-width: 639px)").matches) {
+    document.getElementById("agenda-filter-panel")?.removeAttribute("open");
+  }
+  document.addEventListener("keydown", handleRescheduleModalKeydown);
+  document.getElementById("reschedule-modal")?.addEventListener("mousedown", (event) => {
+    if (event.target === event.currentTarget) closeRescheduleModal();
+  });
+}
+
+function setBookingView(view, { clearDeepLink = true } = {}) {
+  const normalizedView = ["today", "pending", "week"].includes(view) ? view : "today";
+  if (view === "tomorrow") agendaSelectedDate = addDaysToDateKey(getMadridDateKey(), 1);
+  if (view === "upcoming") agendaSelectedDate = addDaysToDateKey(getMadridDateKey(), 2);
+  if (view === "history") agendaSelectedDate = getMadridDateKey();
+  currentBookingView = normalizedView;
+  if (clearDeepLink) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("booking");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}#bookings`);
+  }
+  updateBookingViewTabs();
+  renderBookings();
+}
+
+function getBusinessTimeZone() {
+  const candidate = availabilitySettings?.timezone || currentBusiness?.timezone || "Europe/Madrid";
+  try {
+    new Intl.DateTimeFormat("es-ES", { timeZone: candidate }).format();
+    return candidate;
+  } catch (error) {
+    console.warn("Zona horaria no válida; se usa Europe/Madrid.", { timezone: candidate });
+    return "Europe/Madrid";
+  }
+}
+
+function updateBookingViewTabs() {
+  document.querySelectorAll("[data-booking-view]").forEach((tab) => {
+    const active = tab.dataset.bookingView === currentBookingView;
+    tab.classList.toggle("booking-view-tab-active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  const list = document.getElementById("bookings-list");
+  const activeTab = document.querySelector(`[data-booking-view="${currentBookingView}"]`);
+  if (list && activeTab?.id) list.setAttribute("aria-labelledby", activeTab.id);
+}
+
+function resetAgendaFilters({ render = true } = {}) {
+  selectedStaffFilter = "";
+  selectedBookingStatusFilter = "";
+  selectedBookingServiceFilter = "";
+  bookingCustomerSearch = "";
+  const values = {
+    "booking-staff-filter": "",
+    "agenda-status-filter": "",
+    "agenda-service-filter": "",
+    "agenda-customer-search": ""
+  };
+  Object.entries(values).forEach(([id, value]) => {
+    const field = document.getElementById(id);
+    if (field) field.value = value;
+  });
+  if (render) renderBookings();
 }
 
 function getMadridDateKey(value = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Madrid",
+    timeZone: getBusinessTimeZone(),
     year: "numeric",
     month: "2-digit",
     day: "2-digit"
@@ -667,10 +777,8 @@ function navigateFromDashboard(button) {
   const bookingView = button.dataset.dashboardBookingView;
   if (section === "bookings" && bookingView) {
     currentBookingView = bookingView;
-    document.querySelectorAll("[data-booking-view]").forEach((tab) => {
-      tab.classList.toggle("booking-view-tab-active", tab.dataset.bookingView === bookingView);
-    });
-    renderBookings();
+    if (bookingView === "today") agendaSelectedDate = getMadridDateKey();
+    setBookingView(bookingView, { clearDeepLink: false });
   }
   if (section) {
     showAdminSection(section);
@@ -1554,6 +1662,7 @@ function applyBusinessData(business) {
   document.getElementById("business-subtitle").textContent =
     `${business.category || "Negocio local"} · ${business.city || ""}`;
   document.getElementById("public-page-link").href = `../autonogrow-landing/index.html?b=${getBusinessSlug()}`;
+  if (!allBookings.length) agendaSelectedDate = getMadridDateKey();
   renderDashboard();
 }
 
@@ -1797,6 +1906,7 @@ async function loadAdminServices() {
     adminServices = data.services || [];
     setDashboardDataState("services", "ready");
     renderAdminServices();
+    syncAgendaServiceFilter();
     if (staffMembers.length) renderStaffMembers();
   } catch (error) {
     console.error(error);
@@ -1923,6 +2033,7 @@ async function loadStaffMembers() {
     .filter((member) => member.active)
     .map((member) => `<option value="${member.id}">${escapeHtml(member.public_name || member.name || member.email)}</option>`)
     .join("");
+  filter.value = selectedStaffFilter;
 }
 
 async function loadMyStaffAvailability() {
@@ -2264,9 +2375,11 @@ function restoreBookingEditorState(state) {
 async function loadBookings({ background = false } = {}) {
   const slug = getBusinessSlug();
   const list = document.getElementById("bookings-list");
+  const loadVersion = ++bookingsLoadVersion;
   if (!background && !allBookings.length) {
     setDashboardDataState("bookings", "loading");
-    list.innerHTML = `<p class="empty-state">Cargando reservas...</p>`;
+    list.setAttribute("aria-busy", "true");
+    list.innerHTML = `<div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando reservas.</span>`;
   }
 
   try {
@@ -2275,6 +2388,7 @@ async function loadBookings({ background = false } = {}) {
     if (!response.ok) throw new Error("No se pudieron cargar las reservas.");
 
     const data = await response.json();
+    if (loadVersion !== bookingsLoadVersion) return;
     const previousBookings = new Map(allBookings.map((booking) => [booking.id, booking]));
     allBookings = (data.bookings || []).map((booking) => ({
       ...booking,
@@ -2290,12 +2404,14 @@ async function loadBookings({ background = false } = {}) {
     } else if (!background) {
       await Promise.all([enrichBookingsWithAttachments(), loadReviewRequests()]);
     }
+    if (loadVersion !== bookingsLoadVersion) return;
     const nextFingerprint = JSON.stringify(allBookings);
     const changed = nextFingerprint !== bookingsFingerprint;
     bookingsFingerprint = nextFingerprint;
     growthDataReady.bookings = true;
     if (!changed && background) return;
     const editorState = background ? captureBookingEditorState() : null;
+    syncAgendaServiceFilter();
     renderStats(allBookings);
     renderReviewStats();
     renderReviewRequests();
@@ -2307,11 +2423,13 @@ async function loadBookings({ background = false } = {}) {
     restoreBookingEditorState(editorState);
     if (!isBusinessStaff()) renderGrowth();
   } catch (error) {
+    if (loadVersion !== bookingsLoadVersion) return;
     console.error(error);
     if (background) throw error;
     if (!allBookings.length) {
       setDashboardDataState("bookings", "error");
-      list.innerHTML = `<p class="empty-state">Error conectando con el backend.</p>`;
+      list.setAttribute("aria-busy", "false");
+      list.innerHTML = `<div class="agenda-state agenda-state--error" role="alert"><strong>No pudimos cargar la agenda.</strong><p>Comprueba la conexión y vuelve a intentarlo.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadBookings()">Reintentar</button></div>`;
     }
   }
 }
@@ -3620,120 +3738,282 @@ function renderReviewSummaryCard(reviewRequest) {
   `;
 }
 
-function getBookingsForView(view) {
-  const today = getMadridDateKey();
-  const tomorrow = addDaysToDateKey(today, 1);
-  const isPending = (booking) => ["requested", "pending"].includes(booking.status);
-  const isClosed = (booking) => ["completed", "rejected", "cancelled", "no_show"].includes(booking.status);
-  const bookingDate = (booking) => getBookingDateKey(booking);
+function getAgendaWeekStart(dateKey = agendaSelectedDate) {
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  const weekday = date.getUTCDay();
+  return addDaysToDateKey(dateKey, weekday === 0 ? -6 : 1 - weekday);
+}
+
+function getAgendaWeekDates(dateKey = agendaSelectedDate) {
+  const start = getAgendaWeekStart(dateKey);
+  return Array.from({ length: 7 }, (_, index) => addDaysToDateKey(start, index));
+}
+
+function formatAgendaDate(dateKey, options = {}) {
+  if (!dateKey) return "Fecha sin indicar";
+  return new Intl.DateTimeFormat("es-ES", { timeZone: "UTC", ...options })
+    .format(new Date(`${dateKey}T12:00:00Z`));
+}
+
+function getBookingSortValue(booking) {
+  const date = getBookingDateKey(booking) || "9999-12-31";
+  const time = booking.start_datetime?.slice(11, 16) || booking.preferred_time || "23:59";
+  return `${date}T${time}`;
+}
+
+function sortBookingsChronologically(bookings) {
+  return [...bookings].sort((first, second) =>
+    getBookingSortValue(first).localeCompare(getBookingSortValue(second)) ||
+    String(first.created_at || "").localeCompare(String(second.created_at || ""))
+  );
+}
+
+function filterAgendaBookings(bookings) {
+  return bookings.filter((booking) => {
+    if (selectedStaffFilter && String(booking.staff_business_user_id || "") !== selectedStaffFilter) return false;
+    if (selectedBookingStatusFilter && booking.status !== selectedBookingStatusFilter) return false;
+    if (selectedBookingServiceFilter && String(booking.service_id || "") !== selectedBookingServiceFilter) return false;
+    if (bookingCustomerSearch && !String(booking.customer_name || "").toLocaleLowerCase("es").includes(bookingCustomerSearch)) return false;
+    return true;
+  });
+}
+
+function getAgendaPeriodBookings(view = currentBookingView, { selectedDayOnly = true } = {}) {
   let bookings;
-
   if (view === "pending") {
-    bookings = allBookings.filter(isPending);
-  } else if (view === "today") {
-    bookings = allBookings.filter((booking) => !isPending(booking) && !isClosed(booking) && bookingDate(booking) === today);
-  } else if (view === "tomorrow") {
-    bookings = allBookings.filter((booking) => !isPending(booking) && !isClosed(booking) && bookingDate(booking) === tomorrow);
-  } else if (view === "upcoming") {
-    bookings = allBookings.filter((booking) =>
-      !isPending(booking) && !isClosed(booking) && (!bookingDate(booking) || bookingDate(booking) > tomorrow)
-    );
+    bookings = allBookings.filter((booking) => ["requested", "pending"].includes(booking.status));
+  } else if (view === "week") {
+    const weekDates = getAgendaWeekDates();
+    bookings = allBookings.filter((booking) => weekDates.includes(getBookingDateKey(booking)));
+    if (selectedDayOnly) bookings = bookings.filter((booking) => getBookingDateKey(booking) === agendaSelectedDate);
   } else {
-    bookings = allBookings.filter((booking) =>
-      !isPending(booking) && (isClosed(booking) || (bookingDate(booking) && bookingDate(booking) < today))
-    );
+    bookings = allBookings.filter((booking) => getBookingDateKey(booking) === agendaSelectedDate);
   }
+  return sortBookingsChronologically(filterAgendaBookings(bookings));
+}
 
-  if (selectedStaffFilter) {
-    bookings = bookings.filter((booking) => String(booking.staff_business_user_id || "") === selectedStaffFilter);
+function getBookingsForView(view) {
+  return getAgendaPeriodBookings(view);
+}
+
+function syncAgendaServiceFilter() {
+  const filter = document.getElementById("agenda-service-filter");
+  if (!filter) return;
+  const services = new Map();
+  adminServices.forEach((service) => services.set(String(service.id), service.name));
+  allBookings.forEach((booking) => {
+    if (booking.service_id && booking.service_name) services.set(String(booking.service_id), booking.service_name);
+  });
+  filter.innerHTML = `<option value="">Todos</option>` + Array.from(services.entries())
+    .sort((first, second) => first[1].localeCompare(second[1], "es"))
+    .map(([id, name]) => `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`)
+    .join("");
+  filter.value = selectedBookingServiceFilter;
+}
+
+function renderAgendaHeaderAndSummary() {
+  const dateLabel = document.getElementById("agenda-date-label");
+  const context = document.getElementById("agenda-context-summary");
+  const navigation = document.querySelector(".agenda-date-navigation");
+  const weekDays = document.getElementById("agenda-week-days");
+  const periodBookings = getAgendaPeriodBookings(currentBookingView, { selectedDayOnly: currentBookingView !== "week" });
+  const pendingCount = periodBookings.filter((booking) => ["requested", "pending"].includes(booking.status)).length;
+  const label = currentBookingView === "pending"
+    ? "Solicitudes por revisar"
+    : currentBookingView === "week"
+      ? `${formatAgendaDate(getAgendaWeekDates()[0], { day: "numeric", month: "short" })} – ${formatAgendaDate(getAgendaWeekDates()[6], { day: "numeric", month: "short", year: "numeric" })}`
+      : formatAgendaDate(agendaSelectedDate, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  dateLabel.textContent = label;
+  context.textContent = `${periodBookings.length} cita${periodBookings.length === 1 ? "" : "s"} · ${pendingCount} por confirmar`;
+  navigation.hidden = currentBookingView === "pending";
+  weekDays.hidden = currentBookingView !== "week";
+
+  const metrics = {
+    "agenda-stat-total": periodBookings.length,
+    "agenda-stat-pending": pendingCount,
+    "agenda-stat-confirmed": periodBookings.filter((booking) => booking.status === "confirmed").length,
+    "agenda-stat-completed": periodBookings.filter((booking) => booking.status === "completed").length
+  };
+  Object.entries(metrics).forEach(([id, value]) => { document.getElementById(id).textContent = value; });
+}
+
+function renderAgendaFiltersSummary() {
+  const labels = [];
+  const staff = document.getElementById("booking-staff-filter");
+  const status = document.getElementById("agenda-status-filter");
+  const service = document.getElementById("agenda-service-filter");
+  if (!isBusinessStaff() && selectedStaffFilter) labels.push(`Profesional: ${staff?.selectedOptions[0]?.textContent || "seleccionado"}`);
+  if (selectedBookingStatusFilter) labels.push(`Estado: ${status?.selectedOptions[0]?.textContent || "seleccionado"}`);
+  if (selectedBookingServiceFilter) labels.push(`Servicio: ${service?.selectedOptions[0]?.textContent || "seleccionado"}`);
+  if (bookingCustomerSearch) labels.push("Búsqueda por cliente");
+  document.getElementById("agenda-filter-count").textContent = `${labels.length} activo${labels.length === 1 ? "" : "s"}`;
+  document.getElementById("agenda-active-filters").textContent = labels.length ? labels.join(" · ") : "Sin filtros adicionales.";
+}
+
+function renderAgendaWeekDays() {
+  const container = document.getElementById("agenda-week-days");
+  if (!container || currentBookingView !== "week") return;
+  const filteredWeek = getAgendaPeriodBookings("week", { selectedDayOnly: false });
+  container.innerHTML = getAgendaWeekDates().map((dateKey) => {
+    const count = filteredWeek.filter((booking) => getBookingDateKey(booking) === dateKey).length;
+    const active = dateKey === agendaSelectedDate;
+    return `<button class="agenda-week-day${active ? " agenda-week-day--active" : ""}" type="button" data-agenda-date="${dateKey}" aria-pressed="${active}"><span>${escapeHtml(formatAgendaDate(dateKey, { weekday: "short" }))}</span><strong>${escapeHtml(formatAgendaDate(dateKey, { day: "numeric" }))}</strong><small>${count} cita${count === 1 ? "" : "s"}</small></button>`;
+  }).join("");
+}
+
+function getBookingTimeRange(booking) {
+  const start = booking.start_datetime?.slice(11, 16) || booking.preferred_time || "Hora pendiente";
+  let end = booking.end_datetime?.slice(11, 16) || "";
+  if (!end && /^\d{2}:\d{2}$/.test(start) && booking.duration_minutes) {
+    const [hours, minutes] = start.split(":").map(Number);
+    const endMinutes = hours * 60 + minutes + Number(booking.duration_minutes);
+    end = `${String(Math.floor(endMinutes / 60) % 24).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
   }
+  return end ? `${start}–${end}` : start;
+}
 
-  if (["today", "tomorrow", "upcoming"].includes(view)) {
-    return bookings.sort((first, second) =>
-      (first.start_datetime || first.preferred_date || "").localeCompare(second.start_datetime || second.preferred_date || "")
-    );
+function parseBusinessCivilDateTime(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return Number.NaN;
+  return Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6] || 0)
+  );
+}
+
+function getBusinessNowCivilTime() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: getBusinessTimeZone(),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return Date.UTC(
+    Number(values.year),
+    Number(values.month) - 1,
+    Number(values.day),
+    Number(values.hour),
+    Number(values.minute),
+    Number(values.second)
+  );
+}
+
+function bookingHasStarted(booking) {
+  if (getBookingDateKey(booking) !== getMadridDateKey() || !booking.start_datetime) return false;
+  const start = parseBusinessCivilDateTime(booking.start_datetime);
+  const end = booking.end_datetime
+    ? parseBusinessCivilDateTime(booking.end_datetime)
+    : start + Number(booking.duration_minutes || 30) * 60000;
+  const now = getBusinessNowCivilTime();
+  return Number.isFinite(start) && Number.isFinite(end) && now >= start && now < end;
+}
+
+function formatRequestAge(createdAt) {
+  if (!createdAt) return "";
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(createdAt) ? createdAt : `${createdAt}Z`;
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(normalized).getTime()) / 60000));
+  if (!Number.isFinite(elapsedMinutes)) return "";
+  if (elapsedMinutes < 60) return `Hace ${elapsedMinutes} min`;
+  if (elapsedMinutes < 1440) return `Hace ${Math.floor(elapsedMinutes / 60)} h`;
+  return `Hace ${Math.floor(elapsedMinutes / 1440)} d`;
+}
+
+function renderAgendaEmptyState() {
+  const hasFilters = Boolean(selectedStaffFilter || selectedBookingStatusFilter || selectedBookingServiceFilter || bookingCustomerSearch);
+  if (hasFilters) {
+    return `<div class="agenda-state"><strong>No hay citas con estos filtros.</strong><p>Prueba otra combinación o restablece los filtros.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="resetAgendaFilters()">Restablecer filtros</button></div>`;
   }
+  if (currentBookingView === "pending") {
+    return `<div class="agenda-state"><strong>Todo está revisado</strong><p>No hay solicitudes esperando confirmación.</p></div>`;
+  }
+  const changeDay = `<button class="ag-button ag-button--ghost ag-button--small" type="button" onclick="navigateAgendaDate(1)">Ver día siguiente</button>`;
+  const settings = isBusinessStaff() ? "" : `<button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="showAdminSection('schedule')">Revisar disponibilidad</button>`;
+  return `<div class="agenda-state"><strong>No tienes citas para este día.</strong><p>${currentBookingView === "week" ? "Selecciona otro día de la semana o cambia de semana." : "La agenda está libre en la fecha seleccionada."}</p><div class="agenda-state__actions">${changeDay}${settings}</div></div>`;
+}
 
-  return bookings;
+function navigateAgendaDate(days) {
+  agendaSelectedDate = addDaysToDateKey(agendaSelectedDate, days);
+  renderBookings();
+}
+
+function renderBookingCard(booking, nextBookingId) {
+  const bookingId = Number(booking.id);
+  if (!Number.isInteger(bookingId) || bookingId <= 0) return "";
+  const isPending = ["requested", "pending"].includes(booking.status);
+  const isStarted = bookingHasStarted(booking) && !["completed", "rejected", "cancelled", "no_show"].includes(booking.status);
+  const isNext = bookingId === nextBookingId;
+  const emphasis = isPending ? " booking-card--attention" : isStarted ? " booking-card--started" : isNext ? " booking-card--next" : "";
+  const marker = isPending ? "Requiere decisión" : isStarted ? "En curso" : isNext ? "Próxima cita" : "";
+  const requestAge = currentBookingView === "pending" ? formatRequestAge(booking.created_at) : "";
+  const duration = booking.duration_minutes ? `${Number(booking.duration_minutes)} min` : "Duración no indicada";
+  const contact = booking.customer_phone ? `<p><span>Contacto</span><strong>${escapeHtml(booking.customer_phone)}</strong></p>` : "";
+  return `
+    <article class="booking-card agenda-booking-row${emphasis}" id="booking-${bookingId}" data-booking-id="${bookingId}">
+      <div class="agenda-booking-time">
+        <strong>${escapeHtml(getBookingTimeRange(booking))}</strong>
+        <span>${escapeHtml(formatAgendaDate(getBookingDateKey(booking), { day: "numeric", month: "short" }))}</span>
+      </div>
+      <div class="agenda-booking-main">
+        <div class="booking-top">
+          <div class="booking-title">
+            ${marker ? `<span class="agenda-booking-marker">${marker}</span>` : ""}
+            <h3>${escapeHtml(booking.customer_name || "Cliente sin nombre")}</h3>
+            <p>${escapeHtml(booking.service_name || "Servicio sin indicar")} · ${escapeHtml(duration)}</p>
+            <p class="agenda-booking-staff">Con ${escapeHtml(booking.staff_display_name || "profesional sin asignar")}${requestAge ? ` · ${escapeHtml(requestAge)}` : ""}</p>
+          </div>
+          <span class="status-pill ${getStatusClass(booking.status)}">${escapeHtml(getStatusLabel(booking.status))}</span>
+        </div>
+        ${renderBookingActions(booking)}
+        <details class="agenda-booking-details">
+          <summary>Contacto y notas</summary>
+          <div class="agenda-booking-details__grid">
+            ${contact}
+            <p><span>Fecha y hora</span><strong>${escapeHtml(formatBookingSlot(booking))}</strong></p>
+            <p><span>Profesional</span><strong>${escapeHtml(booking.staff_display_name || "Sin asignar")}</strong></p>
+          </div>
+          ${renderNotes(booking.notes)}
+          <div class="booking-notes internal-notes-editor">
+            <label>Notas internas<textarea data-internal-notes="${bookingId}" rows="2">${escapeHtml(booking.internal_notes || "")}</textarea></label>
+            <button class="btn btn-small btn-secondary" type="button" onclick="saveInternalNotes(${bookingId})">Guardar notas</button>
+          </div>
+          ${renderAttachments(booking.attachments || [])}
+        </details>
+        ${renderReviewRequest(booking)}
+      </div>
+    </article>`;
 }
 
 function renderBookings() {
   const list = document.getElementById("bookings-list");
+  if (!list) return;
+  updateBookingViewTabs();
+  renderAgendaHeaderAndSummary();
+  renderAgendaFiltersSummary();
+  renderAgendaWeekDays();
   const bookings = getBookingsForView(currentBookingView);
-  const emptyMessages = {
-    pending: "No hay citas pendientes.",
-    today: "No tienes citas para hoy.",
-    tomorrow: "No tienes citas para mañana.",
-    upcoming: "No hay próximas citas.",
-    history: "Todavía no hay historial."
-  };
-
-  if (!bookings.length) {
-    list.innerHTML = `<p class="empty-state">${emptyMessages[currentBookingView]}</p>`;
-    return;
-  }
-
-  list.innerHTML = "";
-
-  bookings.forEach((booking) => {
-    const card = document.createElement("article");
-    card.className = "booking-card";
-    card.id = `booking-${booking.id}`;
-    card.dataset.bookingId = booking.id;
-    card.innerHTML = `
-      <div class="booking-top">
-        <div class="booking-title">
-          <h3>${escapeHtml(booking.customer_name)}</h3>
-          <p>${escapeHtml(booking.service_name)}</p>
-        </div>
-        <span class="status-pill ${getStatusClass(booking.status)}">${getStatusLabel(booking.status)}</span>
-      </div>
-      <div class="booking-grid">
-        <div class="booking-field">
-          <span>Teléfono</span>
-          <strong>${escapeHtml(booking.customer_phone || "No indicado")}</strong>
-        </div>
-        <div class="booking-field">
-          <span>Fecha y hora</span>
-          <strong>${escapeHtml(formatBookingSlot(booking))}</strong>
-        </div>
-        <div class="booking-field">
-          <span>Duración</span>
-          <strong>${booking.duration_minutes ? `${booking.duration_minutes} min` : "No indicada"}</strong>
-        </div>
-        <div class="booking-field">
-          <span>Creada</span>
-          <strong>${formatDateTime(booking.created_at)}</strong>
-        </div>
-        <div class="booking-field">
-          <span>Profesional</span>
-          <strong>${escapeHtml(booking.staff_display_name || "Sin asignar")}</strong>
-        </div>
-      </div>
-      ${renderNotes(booking.notes)}
-      <div class="booking-notes internal-notes-editor">
-        <label>Notas internas<textarea data-internal-notes="${booking.id}" rows="2">${escapeHtml(booking.internal_notes || "")}</textarea></label>
-        <button class="btn btn-small btn-secondary" type="button" onclick="saveInternalNotes(${booking.id})">Guardar notas</button>
-      </div>
-      ${renderBookingActions(booking)}
-      ${renderReviewRequest(booking)}
-      ${renderAttachments(booking.attachments || [])}
-    `;
-
-    list.appendChild(card);
+  const businessNow = getBusinessNowCivilTime();
+  const nextBooking = bookings.find((booking) => {
+    if (!booking.start_datetime || ["completed", "rejected", "cancelled", "no_show"].includes(booking.status)) return false;
+    return parseBusinessCivilDateTime(booking.start_datetime) > businessNow;
   });
+  list.setAttribute("aria-busy", "false");
+  list.innerHTML = bookings.length
+    ? bookings.map((booking) => renderBookingCard(booking, Number(nextBooking?.id))).join("")
+    : renderAgendaEmptyState();
 }
 
 function getViewForBooking(booking) {
   if (["requested", "pending"].includes(booking.status)) return "pending";
-  const isClosed = ["completed", "rejected", "cancelled", "no_show"].includes(booking.status);
-  const date = getBookingDateKey(booking);
-  const today = getMadridDateKey();
-  const tomorrow = addDaysToDateKey(today, 1);
-  if (isClosed || (date && date < today)) return "history";
-  if (date === today) return "today";
-  if (date === tomorrow) return "tomorrow";
-  return "upcoming";
+  return "today";
 }
 
 function goToBooking(bookingId, updateUrl = true) {
@@ -3746,12 +4026,10 @@ function goToBooking(bookingId, updateUrl = true) {
   }
 
   closeStaffRemovalModal();
-  selectedStaffFilter = "";
-  document.getElementById("booking-staff-filter").value = "";
+  resetAgendaFilters({ render: false });
+  agendaSelectedDate = getBookingDateKey(booking) || getMadridDateKey();
   currentBookingView = getViewForBooking(booking);
-  document.querySelectorAll("[data-booking-view]").forEach((tab) => {
-    tab.classList.toggle("booking-view-tab-active", tab.dataset.bookingView === currentBookingView);
-  });
+  updateBookingViewTabs();
   if (updateUrl) {
     const url = new URL(window.location.href);
     url.searchParams.set("booking", bookingId);
@@ -4004,34 +4282,37 @@ function renderAttachments(attachments) {
 }
 
 function renderBookingActions(booking) {
-  const isCompleted = booking.status === "completed";
-  const isRejected = booking.status === "rejected";
-  const isCancelled = booking.status === "cancelled";
-  const isNoShow = booking.status === "no_show";
-  const isClosed = isCompleted || isRejected || isCancelled || isNoShow;
+  const bookingId = Number(booking.id);
+  const busy = bookingMutationIds.has(bookingId);
+  const button = (label, action, className, handler, description = "") => `
+    <button class="ag-button ag-button--small ${className}" type="button" data-booking-action="${action}" data-booking-id="${bookingId}" data-action-allowed="true" onclick="${handler}" ${busy ? "disabled aria-busy=\"true\"" : ""}${description ? ` title="${escapeHtml(description)}"` : ""}>${label}</button>`;
+  let actions = [];
 
-  return `
-    <div class="booking-actions">
-      <button class="btn btn-small btn-success" type="button" onclick="updateBookingStatus(${booking.id}, 'confirmed')" ${booking.status === "confirmed" || isClosed ? "disabled" : ""}>
-        Confirmar
-      </button>
-      <button class="btn btn-small btn-warning" type="button" onclick="rescheduleBooking(${booking.id})" ${isClosed || !booking.service_id ? "disabled" : ""}>
-        Reagendar
-      </button>
-      <button class="btn btn-small btn-danger" type="button" onclick="updateBookingStatus(${booking.id}, 'rejected')" ${booking.status === "rejected" || isCompleted || isCancelled ? "disabled" : ""}>
-        Rechazar
-      </button>
-      <button class="btn btn-small btn-danger" type="button" onclick="updateBookingStatus(${booking.id}, 'cancelled')" ${isClosed ? "disabled" : ""}>
-        Cancelar
-      </button>
-      <button class="btn btn-small btn-secondary" type="button" onclick="updateBookingStatus(${booking.id}, 'completed')" ${booking.status === "completed" || isRejected || isCancelled ? "disabled" : ""}>
-        Completada
-      </button>
-      <button class="btn btn-small btn-secondary" type="button" onclick="updateBookingStatus(${booking.id}, 'no_show')" ${isClosed ? "disabled" : ""}>
-        No presentado
-      </button>
-    </div>
-  `;
+  if (["requested", "pending"].includes(booking.status)) {
+    actions = [
+      button("Confirmar", "confirmed", "ag-button--primary", `updateBookingStatus(${bookingId}, 'confirmed')`),
+      ...(booking.service_id ? [button("Reagendar", "reschedule", "ag-button--secondary", `rescheduleBooking(${bookingId})`, "Muestra únicamente huecos disponibles")] : []),
+      button("Rechazar", "rejected", "ag-button--danger-ghost", `updateBookingStatus(${bookingId}, 'rejected')`)
+    ];
+  } else if (booking.status === "confirmed") {
+    actions = [
+      button("Completar", "completed", "ag-button--primary", `updateBookingStatus(${bookingId}, 'completed')`),
+      ...(booking.service_id ? [button("Reagendar", "reschedule", "ag-button--secondary", `rescheduleBooking(${bookingId})`, "Muestra únicamente huecos disponibles")] : []),
+      button("Cancelar", "cancelled", "ag-button--danger-ghost", `updateBookingStatus(${bookingId}, 'cancelled')`),
+      button("No presentado", "no_show", "ag-button--ghost", `updateBookingStatus(${bookingId}, 'no_show')`)
+    ];
+  }
+
+  return actions.length ? `<div class="booking-actions" aria-label="Acciones de la reserva">${actions.join("")}</div>` : "";
+}
+
+function setBookingMutationBusy(bookingId, busy) {
+  if (busy) bookingMutationIds.add(bookingId);
+  else bookingMutationIds.delete(bookingId);
+  document.querySelectorAll(`[data-booking-id="${bookingId}"][data-booking-action]`).forEach((button) => {
+    button.disabled = busy || button.dataset.actionAllowed !== "true";
+    button.toggleAttribute("aria-busy", busy);
+  });
 }
 
 async function saveInternalNotes(bookingId) {
@@ -4049,6 +4330,7 @@ async function saveInternalNotes(bookingId) {
 }
 
 function rescheduleBooking(bookingId) {
+  if (bookingMutationIds.has(bookingId)) return;
   const booking = allBookings.find((item) => item.id === bookingId);
 
   if (!booking) {
@@ -4068,6 +4350,9 @@ function openRescheduleModal(booking) {
   const modal = document.getElementById("reschedule-modal");
   const modalTitle = document.getElementById("reschedule-modal-title");
   const modalContent = document.getElementById("reschedule-modal-content");
+  rescheduleReturnFocus = document.activeElement;
+  rescheduleSubmitting = false;
+  rescheduleSlotsLoadVersion += 1;
 
   rescheduleState = {
     booking,
@@ -4081,6 +4366,8 @@ function openRescheduleModal(booking) {
     <div class="reschedule-summary">
       <p><strong>Servicio actual:</strong> ${escapeHtml(booking.service_name)}</p>
       <p><strong>Cita actual:</strong> ${escapeHtml(formatBookingSlot(booking))}</p>
+      <p><strong>Duración:</strong> ${booking.duration_minutes ? `${Number(booking.duration_minutes)} min` : "No indicada"}</p>
+      <p><strong>Profesional:</strong> ${escapeHtml(booking.staff_display_name || "Sin asignar")}</p>
     </div>
     <div>
       <p class="calendar-title">1. Elige un día</p>
@@ -4088,18 +4375,23 @@ function openRescheduleModal(booking) {
     </div>
     <div>
       <p class="calendar-title">2. Elige un hueco disponible</p>
-      <div id="reschedule-slots" class="reschedule-slots">
+      <div id="reschedule-slots" class="reschedule-slots" aria-live="polite" aria-busy="false">
         <p class="empty-state">Selecciona primero un día.</p>
       </div>
     </div>
+    <div id="reschedule-selection-summary" class="reschedule-selection-summary" hidden></div>
+    <p id="reschedule-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
     <button id="confirm-reschedule-button" class="btn btn-primary btn-full" type="button" disabled>
       Confirmar cambio
     </button>
   `;
 
   modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-scroll-locked");
   renderRescheduleDays();
   document.getElementById("confirm-reschedule-button").addEventListener("click", confirmSelectedReschedule);
+  window.requestAnimationFrame(() => modal.querySelector(".ag-modal__close")?.focus());
 }
 
 function renderRescheduleDays() {
@@ -4110,6 +4402,7 @@ function renderRescheduleDays() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "calendar-day";
+    button.setAttribute("aria-pressed", "false");
 
     const firstPart = day.day_label.split(" ")[0];
     const secondPart = day.day_label.replace(`${firstPart} `, "");
@@ -4124,8 +4417,14 @@ function renderRescheduleDays() {
       rescheduleState.dayLabel = day.day_label;
       rescheduleState.slot = null;
       document.getElementById("confirm-reschedule-button").disabled = true;
-      document.querySelectorAll("#reschedule-days .calendar-day").forEach((item) => item.classList.remove("active"));
+      document.getElementById("reschedule-selection-summary").hidden = true;
+      document.getElementById("reschedule-feedback").textContent = "";
+      document.querySelectorAll("#reschedule-days .calendar-day").forEach((item) => {
+        item.classList.remove("active");
+        item.setAttribute("aria-pressed", "false");
+      });
       button.classList.add("active");
+      button.setAttribute("aria-pressed", "true");
       await loadRescheduleSlots();
     });
 
@@ -4136,6 +4435,9 @@ function renderRescheduleDays() {
 async function loadRescheduleSlots() {
   const container = document.getElementById("reschedule-slots");
   const booking = rescheduleState.booking;
+  const requestedDate = rescheduleState.date;
+  const loadVersion = ++rescheduleSlotsLoadVersion;
+  container.setAttribute("aria-busy", "true");
   container.innerHTML = `<p class="empty-state">Cargando huecos disponibles...</p>`;
 
   try {
@@ -4152,10 +4454,14 @@ async function loadRescheduleSlots() {
     }
 
     const data = await response.json();
+    if (loadVersion !== rescheduleSlotsLoadVersion || requestedDate !== rescheduleState.date) return;
+    container.setAttribute("aria-busy", "false");
     renderRescheduleSlots(data.slots || []);
   } catch (error) {
+    if (loadVersion !== rescheduleSlotsLoadVersion) return;
     console.error(error);
-    container.innerHTML = `<p class="empty-state">No se pudo cargar la disponibilidad.</p>`;
+    container.setAttribute("aria-busy", "false");
+    container.innerHTML = `<div class="agenda-state agenda-state--error" role="alert"><strong>No pudimos cargar los huecos.</strong><p>Vuelve a intentarlo para consultar la disponibilidad real.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadRescheduleSlots()">Reintentar</button></div>`;
   }
 }
 
@@ -4173,32 +4479,54 @@ function renderRescheduleSlots(slots) {
     button.className = "time-slot";
     button.type = "button";
     button.textContent = slot.label;
+    button.setAttribute("aria-pressed", "false");
 
     button.addEventListener("click", () => {
       rescheduleState.slot = slot;
-      document.querySelectorAll("#reschedule-slots .time-slot").forEach((item) => item.classList.remove("active"));
+      document.querySelectorAll("#reschedule-slots .time-slot").forEach((item) => {
+        item.classList.remove("active");
+        item.setAttribute("aria-pressed", "false");
+      });
       button.classList.add("active");
+      button.setAttribute("aria-pressed", "true");
       document.getElementById("confirm-reschedule-button").disabled = false;
+      renderRescheduleSelectionSummary();
     });
 
     container.appendChild(button);
   });
 }
 
+function renderRescheduleSelectionSummary() {
+  const summary = document.getElementById("reschedule-selection-summary");
+  if (!summary || !rescheduleState.slot) return;
+  summary.hidden = false;
+  summary.innerHTML = `<strong>Revisa el cambio</strong><p>${escapeHtml(rescheduleState.dayLabel)} a las ${escapeHtml(rescheduleState.slot.label)}</p>`;
+}
+
 async function confirmSelectedReschedule() {
   const { booking, slot, dayLabel } = rescheduleState;
 
+  if (rescheduleSubmitting) return;
   if (!booking || !slot) {
     alert("Selecciona un hueco disponible.");
     return;
   }
 
-  const confirmed = window.confirm(`¿Reagendar esta cita a ${dayLabel} a las ${slot.label}?`);
+  const confirmed = window.confirm(`Confirmar cambio de horario\n\n${booking.customer_name} · ${booking.service_name}\n${dayLabel} a las ${slot.label}\n\nLa cita conservará su duración y el hueco anterior volverá a estar disponible.`);
 
   if (!confirmed) {
     return;
   }
 
+  rescheduleSubmitting = true;
+  setBookingMutationBusy(Number(booking.id), true);
+  const confirmButton = document.getElementById("confirm-reschedule-button");
+  const feedback = document.getElementById("reschedule-feedback");
+  confirmButton.disabled = true;
+  confirmButton.setAttribute("aria-busy", "true");
+  confirmButton.textContent = "Guardando cambio...";
+  feedback.textContent = "Guardando el nuevo horario...";
   const whatsappWindow = openBlankWhatsAppWindow();
 
   try {
@@ -4215,7 +4543,12 @@ async function confirmSelectedReschedule() {
       const error = await response.json().catch(() => null);
       whatsappWindow?.close();
       console.error("Error reagendando cita:", error);
-      alert(error?.detail || "Ese hueco ya no está disponible");
+      feedback.className = "inline-feedback error";
+      feedback.textContent = response.status === 409
+        ? "Ese hueco acaba de dejar de estar disponible. Selecciona otro horario."
+        : "No se pudo guardar el cambio. Revisa la disponibilidad y vuelve a intentarlo.";
+      rescheduleState.slot = null;
+      document.getElementById("reschedule-selection-summary").hidden = true;
       await loadRescheduleSlots();
       return;
     }
@@ -4228,24 +4561,28 @@ async function confirmSelectedReschedule() {
   } catch (error) {
     whatsappWindow?.close();
     console.error(error);
-    alert("No se pudo conectar con el backend.");
+    feedback.className = "inline-feedback error";
+    feedback.textContent = "No se pudo guardar el cambio. Comprueba la conexión y vuelve a intentarlo.";
+  } finally {
+    rescheduleSubmitting = false;
+    setBookingMutationBusy(Number(booking.id), false);
+    if (confirmButton?.isConnected) {
+      confirmButton.removeAttribute("aria-busy");
+      confirmButton.textContent = "Confirmar cambio";
+      confirmButton.disabled = !rescheduleState.slot;
+    }
   }
 }
 
 function getNextDays(count) {
-  const formatter = new Intl.DateTimeFormat("es-ES", {
-    weekday: "short",
-    day: "2-digit",
-    month: "short"
-  });
   const days = [];
+  const today = getMadridDateKey();
 
   for (let index = 0; index < count; index += 1) {
-    const value = new Date();
-    value.setDate(value.getDate() + index);
+    const date = addDaysToDateKey(today, index);
     days.push({
-      date: value.toISOString().slice(0, 10),
-      day_label: formatter.format(value).replace(",", "")
+      date,
+      day_label: formatAgendaDate(date, { weekday: "short", day: "2-digit", month: "short" }).replace(",", "")
     });
   }
 
@@ -4253,22 +4590,64 @@ function getNextDays(count) {
 }
 
 function closeRescheduleModal() {
-  document.getElementById("reschedule-modal")?.classList.remove("open");
+  const modal = document.getElementById("reschedule-modal");
+  if (!modal?.classList.contains("open")) return;
+  rescheduleSlotsLoadVersion += 1;
+  modal.classList.remove("open");
+  modal.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-scroll-locked");
+  const returnFocus = rescheduleReturnFocus;
+  rescheduleReturnFocus = null;
+  if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+}
+
+function handleRescheduleModalKeydown(event) {
+  const modal = document.getElementById("reschedule-modal");
+  if (!modal?.classList.contains("open")) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeRescheduleModal();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = Array.from(modal.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex='-1'])"))
+    .filter((element) => !element.hidden && element.getClientRects().length > 0);
+  if (!focusable.length) {
+    event.preventDefault();
+    modal.querySelector(".ag-modal")?.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 async function updateBookingStatus(bookingId, status) {
+  if (bookingMutationIds.has(bookingId)) return;
   const slug = getBusinessSlug();
+  const booking = allBookings.find((item) => item.id === bookingId);
+  if (!booking) return alert("No se encontró la reserva.");
+  const bookingDescription = `${booking.customer_name} · ${booking.service_name}\n${formatBookingSlot(booking)}`;
   const confirmMessages = {
-    confirmed: "¿Confirmar esta cita?",
-    rejected: "¿Rechazar esta cita?",
-    completed: "¿Marcar esta cita como completada?"
+    confirmed: `Confirmar reserva\n\n${bookingDescription}\n\nSe preparará la confirmación para el cliente.`,
+    rejected: `Rechazar reserva\n\n${bookingDescription}\n\nLa solicitud quedará rechazada y el hueco volverá a estar disponible.`,
+    cancelled: `Cancelar cita\n\n${bookingDescription}\n\nLa cita quedará cancelada y el hueco volverá a estar disponible.`,
+    completed: `Marcar como completada\n\n${bookingDescription}\n\nLa cita pasará al historial y podrá continuar el flujo de reseña.`,
+    no_show: `Marcar como no presentado\n\n${bookingDescription}\n\nLa cita se cerrará como no presentada.`
   };
-  const confirmed = window.confirm(confirmMessages[status] || "¿Cambiar estado?");
+  const confirmed = window.confirm(confirmMessages[status] || `Cambiar estado de la reserva\n\n${bookingDescription}`);
 
   if (!confirmed) {
     return;
   }
 
+  setBookingMutationBusy(bookingId, true);
   const shouldOpenWhatsApp = ["confirmed", "rejected", "completed"].includes(status);
   const whatsappWindow = shouldOpenWhatsApp ? openBlankWhatsAppWindow() : null;
 
@@ -4299,6 +4678,8 @@ async function updateBookingStatus(bookingId, status) {
     whatsappWindow?.close();
     console.error(error);
     alert(error.message || "No se pudo conectar con el backend.");
+  } finally {
+    setBookingMutationBusy(bookingId, false);
   }
 }
 
@@ -4318,8 +4699,8 @@ function getStatusClass(status) {
 
 function getStatusLabel(status) {
   const labels = {
-    requested: "Pendiente",
-    pending: "Pendiente",
+    requested: "Solicitud nueva",
+    pending: "Por confirmar",
     confirmed: "Confirmada",
     completed: "Completada",
     rejected: "Rechazada",

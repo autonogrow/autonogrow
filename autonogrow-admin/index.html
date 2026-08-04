@@ -6,7 +6,7 @@
 
   <title>AutonoGrow Admin</title>
 
-  <link rel="stylesheet" href="styles.css?v=20260804-1" />
+  <link rel="stylesheet" href="styles.css?v=20260804-2" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -67,7 +67,7 @@
     <nav class="admin-navigation" data-ag-shell-nav aria-label="Secciones del panel">
       <button class="admin-tab admin-tab-active" type="button" data-section="summary" aria-selected="true" aria-current="page"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>Resumen</button>
       <button class="admin-tab" type="button" data-section="growth" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 18 10 12l4 4 6-9"/><path d="M15 7h5v5"/></svg></span>Crecimiento</button>
-      <button class="admin-tab" type="button" data-section="bookings" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span>Reservas</button>
+      <button class="admin-tab" type="button" data-section="bookings" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span>Agenda</button>
       <button class="admin-tab" type="button" data-section="conversations" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg></span>Conversaciones</button>
       <button class="admin-tab" type="button" data-section="messages" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8Z"/><path d="m11 13 4-4"/></svg></span>Mensajes automáticos</button>
       <button class="admin-tab" type="button" data-section="services" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8h14l1 13H4Z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg></span>Servicios</button>
@@ -562,29 +562,69 @@
 
     </div>
 
-    <section class="section admin-section" data-admin-section="bookings">
-      <div class="section-header">
-        <div>
-          <h2>Reservas</h2>
-          <p>Solicitudes recibidas desde la página del negocio.</p>
+    <section class="section admin-section agenda-section" data-admin-section="bookings" aria-labelledby="agenda-title">
+      <header class="agenda-header">
+        <div class="agenda-heading">
+          <p class="eyebrow">Reservas</p>
+          <h2 id="agenda-title">Agenda</h2>
+          <p id="agenda-date-label" class="agenda-date-label">Hoy</p>
+          <p id="agenda-context-summary" class="agenda-context-summary">Cargando resumen...</p>
         </div>
 
-      </div>
+        <div class="agenda-date-navigation" aria-label="Navegar por fechas">
+          <button class="ag-button ag-button--ghost ag-button--icon" type="button" data-agenda-nav="-1" aria-label="Periodo anterior">&larr;</button>
+          <button id="agenda-today-button" class="ag-button ag-button--secondary ag-button--small" type="button">Hoy</button>
+          <button class="ag-button ag-button--ghost ag-button--icon" type="button" data-agenda-nav="1" aria-label="Periodo siguiente">&rarr;</button>
+        </div>
+      </header>
 
-      <label id="booking-staff-filter-field">Profesional
-        <select id="booking-staff-filter"><option value="">Todos</option></select>
-      </label>
-
-      <nav class="booking-view-tabs" aria-label="Vistas de reservas">
-        <button class="booking-view-tab booking-view-tab-active" type="button" data-booking-view="pending">Pendientes</button>
-        <button class="booking-view-tab" type="button" data-booking-view="today">Hoy</button>
-        <button class="booking-view-tab" type="button" data-booking-view="tomorrow">Mañana</button>
-        <button class="booking-view-tab" type="button" data-booking-view="upcoming">Próximas</button>
-        <button class="booking-view-tab" type="button" data-booking-view="history">Historial</button>
+      <nav class="booking-view-tabs" role="tablist" aria-label="Vistas de Agenda">
+        <button id="agenda-tab-today" class="booking-view-tab booking-view-tab-active" type="button" role="tab" aria-controls="bookings-list" aria-selected="true" data-booking-view="today">Hoy</button>
+        <button id="agenda-tab-pending" class="booking-view-tab" type="button" role="tab" aria-controls="bookings-list" aria-selected="false" data-booking-view="pending">Pendientes</button>
+        <button id="agenda-tab-week" class="booking-view-tab" type="button" role="tab" aria-controls="bookings-list" aria-selected="false" data-booking-view="week">Semana</button>
       </nav>
 
-      <div id="bookings-list" class="bookings-list">
-        <p class="empty-state">Cargando reservas...</p>
+      <div id="agenda-summary" class="agenda-summary" aria-label="Resumen del periodo">
+        <div class="agenda-summary-item"><span>Total</span><strong id="agenda-stat-total">0</strong></div>
+        <div class="agenda-summary-item"><span>Por confirmar</span><strong id="agenda-stat-pending">0</strong></div>
+        <div class="agenda-summary-item"><span>Confirmadas</span><strong id="agenda-stat-confirmed">0</strong></div>
+        <div class="agenda-summary-item"><span>Completadas</span><strong id="agenda-stat-completed">0</strong></div>
+      </div>
+
+      <details id="agenda-filter-panel" class="agenda-filter-panel" open>
+        <summary>Filtros de agenda <span id="agenda-filter-count" class="ag-badge ag-badge--neutral">0 activos</span></summary>
+        <div class="agenda-filters">
+          <label id="booking-staff-filter-field" class="ag-field ag-label">Profesional
+            <select id="booking-staff-filter" class="ag-select"><option value="">Todos</option></select>
+          </label>
+          <label class="ag-field ag-label">Estado
+            <select id="agenda-status-filter" class="ag-select">
+              <option value="">Todos</option>
+              <option value="requested">Solicitud nueva</option>
+              <option value="pending">Por confirmar</option>
+              <option value="confirmed">Confirmada</option>
+              <option value="completed">Completada</option>
+              <option value="cancelled">Cancelada</option>
+              <option value="rejected">Rechazada</option>
+              <option value="no_show">No presentado</option>
+            </select>
+          </label>
+          <label class="ag-field ag-label">Servicio
+            <select id="agenda-service-filter" class="ag-select"><option value="">Todos</option></select>
+          </label>
+          <label class="ag-field ag-label">Buscar cliente
+            <input id="agenda-customer-search" class="ag-input" type="search" autocomplete="off" placeholder="Nombre del cliente" />
+          </label>
+          <button id="agenda-reset-filters" class="ag-button ag-button--ghost ag-button--small" type="button">Restablecer</button>
+        </div>
+        <p id="agenda-active-filters" class="agenda-active-filters">Sin filtros adicionales.</p>
+      </details>
+
+      <div id="agenda-week-days" class="agenda-week-days" aria-label="Días de la semana" hidden></div>
+      <p id="agenda-live-region" class="ag-visually-hidden" aria-live="polite"></p>
+      <div id="bookings-list" class="bookings-list" role="tabpanel" aria-labelledby="agenda-tab-today" aria-live="polite" aria-busy="true">
+        <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div>
+        <span class="ag-visually-hidden">Cargando reservas.</span>
       </div>
     </section>
 
@@ -628,12 +668,13 @@
     </div>
   </main>
 
-  <div id="reschedule-modal" class="modal-overlay ag-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="reschedule-modal-title">
-    <div class="modal-card ag-modal">
+  <div id="reschedule-modal" class="modal-overlay ag-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="reschedule-modal-title" aria-describedby="reschedule-modal-description" aria-hidden="true">
+    <div class="modal-card ag-modal" tabindex="-1">
       <div class="modal-header ag-modal__header">
         <div>
           <p class="eyebrow">Reagendar</p>
           <h2 id="reschedule-modal-title">Reagendar cita</h2>
+          <p id="reschedule-modal-description">Selecciona un día y uno de los huecos disponibles.</p>
         </div>
 
         <button class="modal-close ag-button ag-button--ghost ag-button--icon ag-modal__close" type="button" onclick="closeRescheduleModal()" aria-label="Cerrar">
@@ -666,6 +707,6 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="admin.js?v=20260804-1"></script>
+  <script src="admin.js?v=20260804-2"></script>
 </body>
 </html>
