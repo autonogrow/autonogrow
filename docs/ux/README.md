@@ -50,6 +50,7 @@ No había Chrome, Edge, Firefox, Playwright ni Selenium ejecutables en el entorn
 14. [Shell responsive](14_shell_responsive.md)
 15. [Dashboard operativo del Business Admin](15_admin_dashboard.md)
 16. [Agenda y gestión de reservas del Business Admin](16_admin_agenda.md)
+17. [Clientes y conversaciones del Business Admin](17_admin_conversations.md)
 
 ## Principios de implementación
 

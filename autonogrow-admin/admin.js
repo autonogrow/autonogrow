@@ -45,7 +45,13 @@ let selectedConversationSuggestionId = null;
 let conversationSuggestionNotice = null;
 const sendingConversationSuggestionIds = new Set();
 let selectedConversationId = null;
+let selectedConversation = null;
 let conversationSearchTimer = null;
+let conversationReplySending = false;
+let conversationAssistedOpening = false;
+let conversationStatusUpdating = false;
+let conversationCustomerPanelOpen = false;
+let conversationCustomerReturnFocus = null;
 let conversationLoadVersion = 0;
 let conversationDetailVersion = 0;
 let conversationAutomationLoadVersion = 0;
@@ -144,6 +150,9 @@ function showAdminSection(sectionName, updateHash = true) {
   const availableSections = Array.from(document.querySelectorAll("[data-admin-section]"));
   const sectionExists = availableSections.some((section) => section.dataset.adminSection === sectionName);
   const targetSection = sectionExists ? sectionName : "summary";
+  if (targetSection !== "conversations" && conversationCustomerPanelOpen) {
+    closeConversationCustomerPanel({ restoreFocus: false });
+  }
 
   availableSections.forEach((section) => {
     section.classList.toggle("admin-section-active", section.dataset.adminSection === targetSection);
@@ -2416,6 +2425,7 @@ async function loadBookings({ background = false } = {}) {
     renderReviewStats();
     renderReviewRequests();
     renderBookings();
+    if (selectedConversation) renderConversationCustomerPanel(selectedConversation);
     const requestedBookingId = Number(new URLSearchParams(window.location.search).get("booking"));
     if (!background && Number.isInteger(requestedBookingId) && requestedBookingId > 0) {
       goToBooking(requestedBookingId, false);
@@ -2453,11 +2463,9 @@ async function loadReviewRequests() {
 }
 
 function conversationErrorMessage(body, fallback) {
-  if (typeof body === "string") return body;
   if (typeof body?.message === "string") return body.message;
   if (typeof body?.detail === "string") return body.detail;
   if (typeof body?.detail?.message === "string") return body.detail.message;
-  if (body?.detail) return JSON.stringify(body.detail);
   return fallback;
 }
 
@@ -2472,7 +2480,7 @@ function conversationDisplayName(item) {
 }
 
 function conversationStatusLabel(status) {
-  return { pending: "Pendiente", replied: "Respondida", closed: "Cerrada" }[status] || status;
+  return { pending: "Necesita respuesta", replied: "Respondida", closed: "Cerrada" }[status] || "Estado sin identificar";
 }
 
 function conversationChannelLabel(channel) {
@@ -2502,38 +2510,33 @@ function conversationIntentBadge(item) {
 
 function conversationDeliveryLabel(status) {
   return {
-    queued: "En cola",
+    queued: "Preparando",
     processing: "Enviando",
     sent: "Enviado",
     delivered: "Entregado",
     read: "Leído",
-    retry: "Error temporal",
-    blocked: "No enviado por conexión",
-    failed: "Error definitivo",
-    cancelled: "Error definitivo",
-    simulated: "Modo interno",
+    retry: "Reintentando",
+    blocked: "No entregado",
+    failed: "No entregado",
+    cancelled: "No entregado",
+    simulated: "Registrado",
     pending: "Pendiente"
-  }[status] || status;
+  }[status] || "Estado pendiente";
 }
 
 function conversationProviderBadge(conversation) {
-  if (conversation.channel === "instagram") {
-    return conversation.instagram_provider_configured
-      ? `<span class="conversation-provider conversation-provider-connected">Instagram conectado</span>`
-      : `<span class="conversation-provider conversation-provider-internal">Instagram no conectado · modo interno</span>`;
+  if (!["instagram", "whatsapp"].includes(conversation.channel)) return "";
+  if (conversation.provider_configured && conversation.delivery_supported) {
+    const health = businessChannelHealth.find((item) => item.channel === conversation.channel);
+    const state = health?.reconnection_required || conversation.integration_status === "degraded"
+      ? "Necesita tu atención"
+      : conversation.integration_status === "connected" ? "Conectado" : "Revisión necesaria";
+    return `<span class="conversation-provider conversation-provider-connected">${escapeHtml(conversationChannelLabel(conversation.channel))} · ${state}</span>`;
   }
-  if (conversation.channel === "whatsapp") {
-    if (
-      conversation.provider_configured
-      && ["connected", "degraded"].includes(conversation.integration_status)
-    ) {
-      return `<span class="conversation-provider conversation-provider-connected">WhatsApp conectado</span>`;
-    }
-    return conversation.assisted_delivery_available
-      ? `<span class="conversation-provider conversation-provider-internal">Envío asistido</span>`
-      : `<span class="conversation-provider conversation-provider-internal">WhatsApp no disponible</span>`;
+  if (conversation.assisted_delivery_available) {
+    return `<span class="conversation-provider conversation-provider-assisted">Respuesta asistida</span>`;
   }
-  return "";
+  return `<span class="conversation-provider conversation-provider-internal">Canal no disponible</span>`;
 }
 
 function formatConversationDate(value) {
@@ -2541,6 +2544,12 @@ function formatConversationDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
+}
+
+function formatConversationMessageTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Hora sin identificar";
+  return date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 }
 
 function conversationAutomationLabel(automation) {
@@ -2561,6 +2570,47 @@ function conversationAutomationReason(automation) {
   return `Pausada por respuesta humana hasta las ${until.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}.`;
 }
 
+function prioritizeConversations(items) {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftPriority = left.item.status === "pending" || Number(left.item.unread_count) > 0 ? 0 : 1;
+      const rightPriority = right.item.status === "pending" || Number(right.item.unread_count) > 0 ? 0 : 1;
+      return leftPriority - rightPriority || left.index - right.index;
+    })
+    .map(({ item }) => item);
+}
+
+function updateConversationFilterSummary() {
+  const status = document.getElementById("conversation-status-filter")?.value || "";
+  const channel = document.getElementById("conversation-channel-filter")?.value || "";
+  const query = document.getElementById("conversation-search")?.value.trim() || "";
+  const parts = [];
+  if (status) parts.push(conversationStatusLabel(status));
+  if (channel) parts.push(conversationChannelLabel(channel));
+  if (query) parts.push(`“${query}”`);
+  const summary = document.getElementById("conversation-filter-summary");
+  if (summary) summary.textContent = parts.length ? parts.join(" · ") : "Sin filtros adicionales";
+  document.querySelectorAll("[data-conversation-quick-filter]").forEach((button) => {
+    const value = button.dataset.conversationQuickFilter;
+    const active = value === "all"
+      ? !status && !channel
+      : value === status || value === channel;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
+function updateConversationInboxSummary() {
+  const pending = dashboardConversations.filter((item) => item.status === "pending" || Number(item.unread_count) > 0).length;
+  const summary = document.getElementById("conversation-inbox-summary");
+  if (summary) {
+    summary.textContent = pending
+      ? `${pending} ${pending === 1 ? "conversación necesita" : "conversaciones necesitan"} respuesta.`
+      : "Todo atendido. Las conversaciones nuevas aparecerán aquí.";
+  }
+}
+
 async function loadConversations({ background = false, refreshDetail = true } = {}) {
   const requestVersion = ++conversationLoadVersion;
   const container = document.getElementById("conversation-list");
@@ -2573,7 +2623,8 @@ async function loadConversations({ background = false, refreshDetail = true } = 
   if (query) params.set("q", query);
   if (!background && !conversations.length) {
     if (!dashboardConversations.length) setDashboardDataState("conversations", "loading");
-    container.innerHTML = `<p class="empty-state">Cargando conversaciones...</p>`;
+    container.setAttribute("aria-busy", "true");
+    container.innerHTML = `<div class="conversation-list-skeleton" aria-hidden="true"><span></span><span></span><span></span></div><span class="ag-visually-hidden">Cargando conversaciones…</span>`;
   }
   try {
     const response = await fetch(
@@ -2582,25 +2633,32 @@ async function loadConversations({ background = false, refreshDetail = true } = 
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudieron cargar las conversaciones."));
     if (requestVersion !== conversationLoadVersion) return;
-    const nextConversations = body.conversations || [];
+    const rawConversations = body.conversations || [];
+    const nextConversations = prioritizeConversations(rawConversations);
     const nextFingerprint = JSON.stringify(nextConversations);
     const changed = nextFingerprint !== conversationListFingerprint;
     conversations = nextConversations;
     conversationListFingerprint = nextFingerprint;
     if (!status && !channel && !query) {
-      dashboardConversations = nextConversations;
+      dashboardConversations = rawConversations;
       setDashboardDataState("conversations", "ready");
+      updateConversationInboxSummary();
     }
     if (changed || !background) renderConversationList();
     if (selectedConversationId && conversations.some((item) => item.id === selectedConversationId)) {
-      if (refreshDetail) await selectConversation(selectedConversationId, false, { background });
+      if (refreshDetail) await selectConversation(selectedConversationId, false, { background, focusDetail: false });
     } else if (selectedConversationId && background) {
       return;
     } else if (conversations.length) {
-      await selectConversation(conversations[0].id, false, { background });
+      await selectConversation(conversations[0].id, false, { background, focusDetail: false });
     } else {
       selectedConversationId = null;
-      document.getElementById("conversation-detail").innerHTML = `<p class="empty-state">Todavía no hay conversaciones.</p>`;
+      selectedConversation = null;
+      const hasFilters = Boolean(status || channel || query);
+      document.getElementById("conversation-detail").innerHTML = hasFilters
+        ? `<div class="conversation-state"><strong>No hay conversaciones con estos filtros</strong><p>Prueba a limpiar la búsqueda.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="resetConversationFilters()">Limpiar filtros</button></div>`
+        : `<div class="conversation-state"><strong>Todavía no hay conversaciones</strong><p>Los mensajes de Instagram y WhatsApp aparecerán aquí.</p></div>`;
+      renderConversationCustomerPanel(null);
     }
   } catch (error) {
     if (requestVersion !== conversationLoadVersion) return;
@@ -2608,7 +2666,8 @@ async function loadConversations({ background = false, refreshDetail = true } = 
     if (background) throw error;
     if (!conversations.length) {
       if (!dashboardConversations.length) setDashboardDataState("conversations", "error");
-      container.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+      container.setAttribute("aria-busy", "false");
+      container.innerHTML = `<div class="conversation-state conversation-state--error" role="alert"><strong>No pudimos cargar las conversaciones</strong><p>Comprueba la conexión y vuelve a intentarlo.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadConversations()">Reintentar</button></div>`;
     }
   }
 }
@@ -2616,12 +2675,23 @@ async function loadConversations({ background = false, refreshDetail = true } = 
 function renderConversationList() {
   const container = document.getElementById("conversation-list");
   const previousScrollTop = container.scrollTop;
+  container.setAttribute("aria-busy", "false");
+  const count = document.getElementById("conversation-result-count");
+  if (count) count.textContent = `${conversations.length} ${conversations.length === 1 ? "resultado" : "resultados"}`;
+  updateConversationFilterSummary();
   if (!conversations.length) {
-    container.innerHTML = `<p class="empty-state">Todavía no hay conversaciones.</p>`;
+    const hasFilters = Boolean(
+      document.getElementById("conversation-status-filter")?.value
+      || document.getElementById("conversation-channel-filter")?.value
+      || document.getElementById("conversation-search")?.value.trim()
+    );
+    container.innerHTML = hasFilters
+      ? `<div class="conversation-state conversation-state--compact"><strong>Sin resultados</strong><p>No hay conversaciones que coincidan con estos filtros.</p></div>`
+      : `<div class="conversation-state conversation-state--compact"><strong>Todavía no hay conversaciones</strong><p>Los mensajes de Instagram y WhatsApp aparecerán aquí.</p></div>`;
     return;
   }
   container.innerHTML = conversations.map((item) => `
-    <button class="conversation-list-item ${item.id === selectedConversationId ? "active" : ""}" type="button" onclick="selectConversation(${item.id})">
+    <button id="conversation-list-item-${item.id}" class="conversation-list-item ${item.id === selectedConversationId ? "active" : ""}" type="button" role="option" aria-selected="${item.id === selectedConversationId}" onclick="selectConversation(${item.id})">
       <span class="conversation-list-head">
         <strong>${escapeHtml(conversationDisplayName(item))}</strong>
         <span class="conversation-status conversation-status-${item.status}">${escapeHtml(conversationStatusLabel(item.status))}</span>
@@ -2630,7 +2700,7 @@ function renderConversationList() {
       ${conversationProviderBadge(item)}
       ${conversationIntentBadge(item)}
       <p>${escapeHtml(item.last_message_text || "Sin mensajes")}</p>
-      <small>${escapeHtml(formatConversationDate(item.last_message_at))}${item.unread_count ? ` · ${item.unread_count} sin responder` : ""}</small>
+      <small>${escapeHtml(formatConversationDate(item.last_message_at))}${item.unread_count ? ` · ${item.unread_count} ${item.unread_count === 1 ? "mensaje pendiente" : "mensajes pendientes"}` : ""}</small>
     </button>
   `).join("");
   container.scrollTop = previousScrollTop;
@@ -2669,7 +2739,7 @@ function scrollConversationThreadToBottom() {
   document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");
 }
 
-async function selectConversation(conversationId, showLoading = true, { background = false } = {}) {
+async function selectConversation(conversationId, showLoading = true, { background = false, focusDetail = true } = {}) {
   const requestVersion = ++conversationDetailVersion;
   const uiState = captureConversationUiState(conversationId);
   const selectionChanged = selectedConversationId !== Number(conversationId);
@@ -2678,6 +2748,9 @@ async function selectConversation(conversationId, showLoading = true, { backgrou
     conversationDetailFingerprint = "";
   }
   selectedConversationId = Number(conversationId);
+  if (focusDetail && !background) {
+    document.getElementById("conversation-center")?.classList.add("conversation-mobile-detail-open");
+  }
   if (selectionChanged) renderConversationList();
   const detail = document.getElementById("conversation-detail");
   if (showLoading && !background) detail.innerHTML = `<p class="empty-state">Cargando conversación...</p>`;
@@ -2691,10 +2764,11 @@ async function selectConversation(conversationId, showLoading = true, { backgrou
       readAdminResponseBody(suggestionsResponse)
     ]);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cargar la conversación."));
-    if (!suggestionsResponse.ok) throw new Error(conversationErrorMessage(suggestionsBody, "No se pudieron cargar las sugerencias."));
     if (requestVersion !== conversationDetailVersion || selectedConversationId !== Number(conversationId)) return;
-    conversationSuggestions = suggestionsBody.suggestions || [];
-    conversationSuggestionNotice = suggestionsBody.notice || null;
+    conversationSuggestions = suggestionsResponse.ok ? (suggestionsBody.suggestions || []) : [];
+    conversationSuggestionNotice = suggestionsResponse.ok
+      ? (suggestionsBody.notice || null)
+      : "Las sugerencias no están disponibles ahora. Puedes seguir revisando la conversación.";
     if (!conversationSuggestions.some((item) => item.id === selectedConversationSuggestionId && item.status === "pending")) {
       selectedConversationSuggestionId = null;
     }
@@ -2705,49 +2779,143 @@ async function selectConversation(conversationId, showLoading = true, { backgrou
     });
     if (background && nextFingerprint === conversationDetailFingerprint) return;
     conversationDetailFingerprint = nextFingerprint;
+    selectedConversation = body.conversation;
     renderConversationDetail(body.conversation, uiState);
+    renderConversationCustomerPanel(body.conversation);
+    if (selectionChanged && focusDetail && !background) {
+      document.getElementById("conversation-detail-title")?.focus({ preventScroll: true });
+    }
   } catch (error) {
     if (requestVersion !== conversationDetailVersion) return;
     console.error(error);
     if (background) throw error;
-    detail.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+    detail.innerHTML = `<div class="conversation-state conversation-state--error" role="alert"><strong>No pudimos abrir esta conversación</strong><p>El historial sigue intacto. Vuelve a intentarlo.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="selectConversation(${Number(conversationId)})">Reintentar</button></div>`;
   }
+}
+
+function conversationMessageKind(message) {
+  if (["failed", "blocked", "cancelled"].includes(message.delivery_status)) return "error";
+  if (message.direction === "inbound") return "inbound";
+  if (message.sender_type === "automation") return "automation";
+  if (message.direction === "outbound") return "manual";
+  return "system";
+}
+
+function conversationMessageLabel(message) {
+  return {
+    inbound: "Entrante · Cliente",
+    manual: "Saliente manual",
+    automation: "Saliente automático",
+    system: "Sistema",
+    error: "Error de entrega"
+  }[conversationMessageKind(message)];
+}
+
+function conversationDayLabel(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Fecha sin identificar";
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const key = date.toLocaleDateString("en-CA");
+  if (key === today.toLocaleDateString("en-CA")) return "Hoy";
+  if (key === yesterday.toLocaleDateString("en-CA")) return "Ayer";
+  return date.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+}
+
+function renderConversationMessages(messages) {
+  let previousDay = "";
+  return [...messages]
+    .sort((left, right) => new Date(left.created_at) - new Date(right.created_at) || Number(left.id) - Number(right.id))
+    .map((message) => {
+      const day = conversationDayLabel(message.created_at);
+      const separator = day !== previousDay
+        ? `<div class="conversation-date-separator" role="separator"><span>${escapeHtml(day)}</span></div>`
+        : "";
+      previousDay = day;
+      const kind = conversationMessageKind(message);
+      const delivery = message.delivery_status
+        ? ` · <span class="conversation-delivery conversation-delivery-${escapeHtml(message.delivery_status)}">${escapeHtml(conversationDeliveryLabel(message.delivery_status))}</span>`
+        : "";
+      return `${separator}<div class="conversation-message conversation-message-${escapeHtml(message.direction)} conversation-message--${kind}"><span>${escapeHtml(message.body)}</span><small>${escapeHtml(conversationMessageLabel(message))} · ${escapeHtml(formatConversationMessageTime(message.created_at))}${delivery}</small></div>`;
+    })
+    .join("");
+}
+
+function conversationComposerModel(conversation) {
+  if (conversation.channel === "manual") {
+    return { canCompose: true, canSend: true, assisted: false, notice: "La respuesta quedará registrada en el historial del negocio.", action: "Registrar respuesta" };
+  }
+  if (conversation.integrated_delivery_available) {
+    return { canCompose: true, canSend: true, assisted: false, notice: `Se enviará mediante ${conversationChannelLabel(conversation.channel)}.`, action: "Enviar respuesta" };
+  }
+  if (conversation.channel === "whatsapp" && conversation.assisted_delivery_available) {
+    const closedWindow = conversation.delivery_unavailable_reason === "whatsapp_template_required" || conversation.customer_service_window_open === false;
+    return {
+      canCompose: true,
+      canSend: false,
+      assisted: true,
+      notice: closedWindow
+        ? "La ventana de atención de 24 horas está cerrada. Para volver a escribir desde AutonoGrow necesitas una plantilla aprobada, o puedes continuar desde WhatsApp. AutonoGrow no marcará el mensaje como enviado."
+        : "El envío integrado no está disponible. Continúa en WhatsApp; AutonoGrow no marcará el mensaje como enviado.",
+      action: "Abrir en WhatsApp"
+    };
+  }
+  const reconnect = businessChannelHealth.find((item) => item.channel === conversation.channel)?.reconnection_required;
+  return {
+    canCompose: false,
+    canSend: false,
+    assisted: false,
+    notice: reconnect
+      ? "Este canal necesita reconectarse. Puedes consultar el historial mientras se recupera."
+      : "Este canal no está disponible para responder. Puedes consultar el historial.",
+    action: ""
+  };
+}
+
+function renderConversationComposer(conversation, quickReplies) {
+  const model = conversationComposerModel(conversation);
+  if (!model.canCompose) {
+    return `<div class="conversation-reply conversation-reply--unavailable" role="status"><strong>Respuesta no disponible</strong><p>${escapeHtml(model.notice)}</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="showAdminSection('channels')">Revisar canal</button></div>`;
+  }
+  return `<div class="conversation-reply" aria-label="Responder a la conversación">
+    <div class="conversation-quick-replies">${quickReplies || `<small>No hay respuestas rápidas activas.</small>`}</div>
+    <label class="ag-visually-hidden" for="conversation-reply-body">Respuesta</label>
+    <textarea id="conversation-reply-body" placeholder="Escribe una respuesta…" maxlength="4000"></textarea>
+    <div class="conversation-composer-actions">
+      <small>${escapeHtml(model.notice)}</small>
+      <div>
+        ${model.canSend ? `<button id="conversation-send-button" class="ag-button ag-button--primary" type="button" onclick="sendConversationReply()">${escapeHtml(model.action)}</button>` : ""}
+        ${model.assisted ? `<button id="conversation-whatsapp-button" class="btn btn-whatsapp" type="button" onclick="openConversationWhatsApp()">${escapeHtml(model.action)}</button>` : ""}
+      </div>
+    </div>
+  </div>`;
 }
 
 function renderConversationDetail(conversation, uiState = null) {
   const detail = document.getElementById("conversation-detail");
   const contactParts = [conversation.customer_username ? `@${conversation.customer_username}` : null, conversation.customer_phone].filter(Boolean);
   const messages = conversation.messages || [];
+  const composer = conversationComposerModel(conversation);
   const quickReplies = conversationTemplates.filter((item) => item.active).map((template) => `
-    <button class="btn btn-secondary" type="button" onclick="fillConversationReply(${template.id})">${escapeHtml(template.name)}</button>
+    <button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="fillConversationReply(${template.id})">${escapeHtml(template.name)}</button>
   `).join("");
   const pendingSuggestions = conversationSuggestions.filter((item) => item.status === "pending");
   const automation = conversation.automation || { mode: "automatic", is_active: true };
   const automationDuration = uiState?.automationDuration || "60";
   const automationReason = conversationAutomationReason(automation);
-  const deliveryNotice = conversation.channel === "instagram"
-    ? (conversation.instagram_provider_configured
-      ? "El mensaje se enviará mediante Instagram."
-      : "Instagram real no está conectado; este mensaje solo se registra internamente.")
-    : conversation.channel === "whatsapp"
-      ? (conversation.integrated_delivery_available
-        ? "Envío integrado disponible mediante WhatsApp Cloud API."
-        : conversation.delivery_unavailable_reason === "whatsapp_template_required"
-          ? "Se requiere una plantilla aprobada de WhatsApp para iniciar de nuevo la conversación."
-          : "El envío se completará fuera de AutonoGrow mediante Abrir en WhatsApp.")
-      : "El mensaje se registra como enviado sin contactar a un proveedor externo.";
   const suggestionsMarkup = pendingSuggestions.length || conversationSuggestionNotice ? `
     <div class="conversation-suggestions">
       ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
       ${pendingSuggestions.map((suggestion) => `
         <article class="conversation-suggestion">
           <strong>Respuesta sugerida</strong>
-          <span class="conversation-intent-badge">${escapeHtml(suggestion.intent_label)} · ${suggestion.confidence}%</span>
+          <span class="conversation-intent-badge">${escapeHtml(suggestion.intent_label)} · ${Number(suggestion.confidence)}%</span>
           <p>${escapeHtml(suggestion.body)}</p>
           <div class="conversation-suggestion-actions">
-            <button class="btn btn-primary btn-small" type="button" onclick="sendConversationSuggestion(${suggestion.id})">Enviar sugerencia</button>
-            <button class="btn btn-secondary btn-small" type="button" onclick="modifyConversationSuggestion(${suggestion.id})">Modificar</button>
-            <button class="btn btn-secondary btn-small" type="button" onclick="dismissConversationSuggestion(${suggestion.id})">Descartar</button>
+            ${composer.canSend ? `<button class="ag-button ag-button--primary ag-button--small" type="button" onclick="sendConversationSuggestion(${Number(suggestion.id)})">Enviar sugerencia</button>` : ""}
+            ${composer.canCompose ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="modifyConversationSuggestion(${Number(suggestion.id)})">Modificar</button>` : ""}
+            <button class="ag-button ag-button--ghost ag-button--small" type="button" onclick="dismissConversationSuggestion(${Number(suggestion.id)})">Descartar</button>
           </div>
         </article>
       `).join("")}
@@ -2755,54 +2923,32 @@ function renderConversationDetail(conversation, uiState = null) {
   ` : "";
   detail.innerHTML = `
     <header class="conversation-detail-header">
+      <button class="conversation-mobile-back ag-button ag-button--ghost ag-button--small" type="button" onclick="closeConversationMobileDetail()">← Conversaciones</button>
       <div class="conversation-detail-header-copy">
-        <strong>${escapeHtml(conversationDisplayName(conversation))}</strong>
-        <span>${escapeHtml(contactParts.join(" · ") || "Sin datos adicionales")}</span>
-        <span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>
-        ${conversationProviderBadge(conversation)}
-        ${conversationIntentBadge(conversation)}
+        <h3 id="conversation-detail-title" tabindex="-1">${escapeHtml(conversationDisplayName(conversation))}</h3>
+        <span>${escapeHtml(contactParts.join(" · ") || "Sin datos de contacto adicionales")}</span>
+        <div class="conversation-detail-badges"><span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>${conversationProviderBadge(conversation)}${conversationIntentBadge(conversation)}</div>
       </div>
       <div class="conversation-detail-actions">
+        <button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" onclick="openConversationCustomerPanel(this)" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Ver cliente</button>
         <span class="conversation-status conversation-status-${conversation.status}">${escapeHtml(conversationStatusLabel(conversation.status))}</span>
         ${conversation.status === "closed"
-          ? `<button class="btn btn-small btn-secondary" type="button" onclick="changeConversationStatus('pending')">Reabrir</button>`
-          : `<button class="btn btn-small btn-secondary" type="button" onclick="changeConversationStatus('pending')">Marcar pendiente</button><button class="btn btn-small btn-danger" type="button" onclick="changeConversationStatus('closed')">Marcar cerrada</button>`}
+          ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="changeConversationStatus('pending')">Reabrir</button>`
+          : `<button class="ag-button ag-button--ghost ag-button--small" type="button" onclick="changeConversationStatus('pending')">Marcar pendiente</button><button class="ag-button ag-button--ghost ag-button--small" type="button" onclick="changeConversationStatus('closed')">Cerrar</button>`}
       </div>
       <div class="conversation-automation-controls">
-        <div class="conversation-automation-state-copy">
-          <span class="conversation-automation-state ${automation.is_active ? "is-active" : "is-paused"}">${escapeHtml(conversationAutomationLabel(automation))}</span>
-          ${automationReason ? `<small>${escapeHtml(automationReason)}</small>` : ""}
-        </div>
-        <select id="conversation-automation-duration" aria-label="Duración de la pausa">
-          <option value="15" ${automationDuration === "15" ? "selected" : ""}>15 min</option>
-          <option value="60" ${automationDuration === "60" ? "selected" : ""}>1 h</option>
-          <option value="240" ${automationDuration === "240" ? "selected" : ""}>4 h</option>
-          <option value="-1" ${automationDuration === "-1" ? "selected" : ""}>Hasta reactivarla</option>
-        </select>
-        <button id="conversation-automation-toggle" class="btn btn-small ${automation.is_active ? "btn-secondary" : "btn-primary"}" type="button" onclick="toggleConversationAutomation(${automation.is_active ? "true" : "false"})">${automation.is_active ? "Pausar automatización" : "Activar automatización"}</button>
+        <div class="conversation-automation-state-copy"><span class="conversation-automation-state ${automation.is_active ? "is-active" : "is-paused"}">${escapeHtml(conversationAutomationLabel(automation))}</span>${automationReason ? `<small>${escapeHtml(automationReason)}</small>` : ""}</div>
+        <select id="conversation-automation-duration" aria-label="Duración de la pausa"><option value="15" ${automationDuration === "15" ? "selected" : ""}>15 min</option><option value="60" ${automationDuration === "60" ? "selected" : ""}>1 h</option><option value="240" ${automationDuration === "240" ? "selected" : ""}>4 h</option><option value="-1" ${automationDuration === "-1" ? "selected" : ""}>Hasta reactivarla</option></select>
+        <button id="conversation-automation-toggle" class="ag-button ag-button--small ${automation.is_active ? "ag-button--secondary" : "ag-button--primary"}" type="button" onclick="toggleConversationAutomation(${automation.is_active ? "true" : "false"})">${automation.is_active ? "Pausar automatización" : "Activar automatización"}</button>
         <small class="conversation-automation-suggestion-note">Las sugerencias pueden seguir apareciendo durante la pausa.</small>
       </div>
     </header>
     <div id="conversation-thread" class="conversation-thread" data-last-message-id="${messages.at(-1)?.id || ""}" data-message-count="${messages.length}">
-      ${messages.length ? messages.map((message) => `
-        <div class="conversation-message conversation-message-${message.direction}">
-          <span>${escapeHtml(message.body)}</span>
-          <small>${message.sender_type === "automation" ? "Automatización" : (message.direction === "outbound" ? "Negocio" : "Cliente")} · ${escapeHtml(formatConversationDate(message.created_at))}${message.delivery_status ? ` · <span class="conversation-delivery conversation-delivery-${escapeHtml(message.delivery_status)}">${escapeHtml(conversationDeliveryLabel(message.delivery_status))}</span>` : ""}</small>
-        </div>
-      `).join("") : `<p class="empty-state">Todavía no hay mensajes.</p>`}
-      <button id="conversation-new-messages" class="btn btn-primary btn-small conversation-new-messages" type="button" onclick="scrollConversationThreadToBottom()" hidden>Hay mensajes nuevos</button>
+      ${messages.length ? renderConversationMessages(messages) : `<div class="conversation-state conversation-state--compact"><p>Todavía no hay mensajes.</p></div>`}
+      <button id="conversation-new-messages" class="ag-button ag-button--primary ag-button--small conversation-new-messages" type="button" onclick="scrollConversationThreadToBottom()" hidden>Hay mensajes nuevos</button>
     </div>
     ${suggestionsMarkup}
-    <div class="conversation-reply">
-      <div class="conversation-quick-replies">${quickReplies || `<small>No hay respuestas rápidas activas.</small>`}</div>
-      <textarea id="conversation-reply-body" placeholder="Escribe una respuesta..."></textarea>
-      <div class="conversation-composer-actions">
-        <small>${escapeHtml(deliveryNotice)}</small>
-        ${conversation.channel === "whatsapp"
-          ? `<button class="btn btn-primary" type="button" onclick="sendConversationReply()" ${conversation.integrated_delivery_available ? "" : "disabled"}>Enviar desde AutonoGrow</button>${conversation.assisted_delivery_available ? `<button class="btn btn-whatsapp" type="button" onclick="openConversationWhatsApp()">Abrir en WhatsApp</button>` : ""}`
-          : `<button class="btn btn-primary" type="button" onclick="sendConversationReply()">Enviar</button>`}
-      </div>
-    </div>
+    ${renderConversationComposer(conversation, quickReplies)}
   `;
   const thread = document.getElementById("conversation-thread");
   const textarea = document.getElementById("conversation-reply-body");
@@ -2813,30 +2959,106 @@ function renderConversationDetail(conversation, uiState = null) {
       textarea.setSelectionRange(uiState.selectionStart, uiState.selectionEnd);
     }
   }
-  if (uiState?.automationControlFocusId) {
-    document.getElementById(uiState.automationControlFocusId)?.focus({ preventScroll: true });
-  }
+  if (uiState?.automationControlFocusId) document.getElementById(uiState.automationControlFocusId)?.focus({ preventScroll: true });
   if (thread) {
     const lastMessageId = String(messages.at(-1)?.id || "");
-    const hasNewMessages = Boolean(
-      uiState &&
-      (messages.length > uiState.messageCount || (uiState.lastMessageId && lastMessageId !== uiState.lastMessageId))
-    );
-    if (!uiState || uiState.threadNearBottom) {
-      thread.scrollTop = thread.scrollHeight;
-    } else {
+    const hasNewMessages = Boolean(uiState && (messages.length > uiState.messageCount || (uiState.lastMessageId && lastMessageId !== uiState.lastMessageId)));
+    if (!uiState || uiState.threadNearBottom) thread.scrollTop = thread.scrollHeight;
+    else {
       thread.scrollTop = uiState.threadScrollTop;
-      if (hasNewMessages || uiState.newMessagesVisible) {
-        document.getElementById("conversation-new-messages")?.removeAttribute("hidden");
-      }
+      if (hasNewMessages || uiState.newMessagesVisible) document.getElementById("conversation-new-messages")?.removeAttribute("hidden");
     }
-    thread.addEventListener("scroll", () => {
-      const distanceFromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
-      if (distanceFromBottom <= 80) {
-        document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");
-      }
-    });
   }
+}
+
+function normalizedConversationPhone(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length >= 7 ? digits : "";
+}
+
+function customerBookingsForConversation(conversation) {
+  const phone = normalizedConversationPhone(conversation?.customer_phone);
+  if (!phone) return [];
+  return allBookings
+    .filter((booking) => normalizedConversationPhone(booking.customer_phone) === phone)
+    .sort((left, right) => new Date(right.start_datetime || right.created_at) - new Date(left.start_datetime || left.created_at));
+}
+
+function renderConversationCustomerPanel(conversation) {
+  const content = document.getElementById("conversation-customer-content");
+  if (!content) return;
+  if (!conversation) {
+    content.innerHTML = `<div class="conversation-state conversation-state--compact"><p>Selecciona una conversación para ver la información disponible.</p></div>`;
+    return;
+  }
+  const bookings = customerBookingsForConversation(conversation);
+  const now = new Date();
+  const upcoming = [...bookings].reverse().find((booking) => booking.start_datetime && new Date(booking.start_datetime) >= now && !["cancelled", "rejected", "completed", "no_show"].includes(booking.status));
+  const previous = bookings.find((booking) => booking !== upcoming && booking.start_datetime && new Date(booking.start_datetime) < now);
+  const contact = [conversation.customer_phone, conversation.customer_username ? `@${conversation.customer_username}` : null].filter(Boolean);
+  const bookingCard = (booking, label) => booking ? `<article class="conversation-customer-booking"><span>${label}</span><strong>${escapeHtml(booking.service_name || "Servicio sin indicar")}</strong><p>${escapeHtml(formatBookingSlot(booking))}</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="goToBooking(${Number(booking.id)})">Ver en agenda</button></article>` : "";
+  content.innerHTML = `
+    <section class="conversation-customer-summary">
+      <div class="conversation-customer-avatar" aria-hidden="true">${escapeHtml(conversationDisplayName(conversation).charAt(0).toUpperCase())}</div>
+      <h4>${escapeHtml(conversationDisplayName(conversation))}</h4>
+      <p>${escapeHtml(contact.join(" · ") || "Sin más datos de contacto")}</p>
+      <span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>
+    </section>
+    <dl class="conversation-customer-stats">
+      <div><dt>Reservas vinculadas</dt><dd>${bookings.length}</dd></div>
+      <div><dt>Última actividad</dt><dd>${escapeHtml(formatConversationDate(conversation.last_message_at))}</dd></div>
+    </dl>
+    ${bookingCard(upcoming, "Próxima reserva")}
+    ${bookingCard(previous, "Última reserva")}
+    ${bookings.length ? "" : `<div class="conversation-state conversation-state--compact"><p>No hay reservas vinculadas de forma fiable. Solo se relacionan teléfonos coincidentes.</p></div>`}
+  `;
+}
+
+function openConversationCustomerPanel(trigger) {
+  conversationCustomerPanelOpen = true;
+  conversationCustomerReturnFocus = trigger || document.activeElement;
+  const panel = document.getElementById("conversation-customer-panel");
+  const backdrop = document.getElementById("conversation-customer-backdrop");
+  panel?.classList.add("is-open");
+  panel?.setAttribute("aria-hidden", "false");
+  document.querySelectorAll(".conversation-customer-open").forEach((button) => button.setAttribute("aria-expanded", "true"));
+  if (window.matchMedia("(max-width: 1199px)").matches) {
+    backdrop?.removeAttribute("hidden");
+    document.body.classList.add("conversation-drawer-open");
+    document.getElementById("conversation-customer-title")?.focus?.({ preventScroll: true });
+  }
+}
+
+function closeConversationCustomerPanel({ restoreFocus = true } = {}) {
+  conversationCustomerPanelOpen = false;
+  document.getElementById("conversation-customer-panel")?.classList.remove("is-open");
+  document.getElementById("conversation-customer-backdrop")?.setAttribute("hidden", "");
+  document.body.classList.remove("conversation-drawer-open");
+  document.querySelectorAll(".conversation-customer-open").forEach((button) => button.setAttribute("aria-expanded", "false"));
+  syncConversationCustomerPanelMode();
+  if (restoreFocus) conversationCustomerReturnFocus?.focus?.({ preventScroll: true });
+  conversationCustomerReturnFocus = null;
+}
+
+function closeConversationMobileDetail() {
+  closeConversationCustomerPanel({ restoreFocus: false });
+  document.getElementById("conversation-center")?.classList.remove("conversation-mobile-detail-open");
+  document.getElementById(`conversation-list-item-${selectedConversationId}`)?.focus({ preventScroll: true });
+}
+
+function resetConversationFilters() {
+  document.getElementById("conversation-status-filter").value = "";
+  document.getElementById("conversation-channel-filter").value = "";
+  document.getElementById("conversation-search").value = "";
+  updateConversationFilterSummary();
+  loadConversations({ background: false });
+}
+
+function applyConversationQuickFilter(value) {
+  document.getElementById("conversation-status-filter").value = value === "pending" ? "pending" : "";
+  document.getElementById("conversation-channel-filter").value = ["whatsapp", "instagram"].includes(value) ? value : "";
+  updateConversationFilterSummary();
+  loadConversations({ background: false });
 }
 
 async function toggleConversationAutomation(isCurrentlyActive) {
@@ -2873,10 +3095,17 @@ function fillConversationReply(templateId) {
 }
 
 async function sendConversationReply() {
-  if (!selectedConversationId) return;
+  if (!selectedConversationId || conversationReplySending) return;
   const textarea = document.getElementById("conversation-reply-body");
   const bodyText = textarea?.value.trim();
   if (!bodyText) return showConversationFeedback("Escribe un mensaje antes de enviarlo.", true);
+  const button = document.getElementById("conversation-send-button");
+  conversationReplySending = true;
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "Enviando…";
+  }
   try {
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}/messages`,
@@ -2890,20 +3119,42 @@ async function sendConversationReply() {
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar el mensaje."));
     selectedConversationSuggestionId = null;
     if (textarea) textarea.value = "";
-    showConversationFeedback(body.message?.delivery_status === "queued" ? "Respuesta en cola." : "Respuesta registrada correctamente.");
+    showConversationFeedback(body.message?.delivery_status === "queued" ? "Respuesta en preparación." : "Respuesta registrada correctamente.");
     await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
   } catch (error) {
     showConversationFeedback(error.message, true);
     if (selectedConversationId) await requestAdminRefresh(["conversationList", "conversationThread"]);
+  } finally {
+    conversationReplySending = false;
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = selectedConversation?.channel === "manual" ? "Registrar respuesta" : "Enviar respuesta";
+    }
+  }
+}
+
+function isSafeWhatsAppUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "wa.me" && !url.username && !url.password;
+  } catch (_error) {
+    return false;
   }
 }
 
 async function openConversationWhatsApp() {
-  if (!selectedConversationId) return;
+  if (!selectedConversationId || conversationAssistedOpening) return;
   const textarea = document.getElementById("conversation-reply-body");
   const bodyText = textarea?.value.trim();
   if (!bodyText) return showConversationFeedback("Escribe un mensaje antes de abrir WhatsApp.", true);
   const whatsappWindow = openBlankWhatsAppWindow();
+  const button = document.getElementById("conversation-whatsapp-button");
+  conversationAssistedOpening = true;
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+  }
   try {
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}/assisted-delivery`,
@@ -2914,13 +3165,19 @@ async function openConversationWhatsApp() {
       }
     );
     const body = await readAdminResponseBody(response);
-    if (!response.ok || !body.whatsapp_url) throw new Error(conversationErrorMessage(body, "No se pudo abrir WhatsApp."));
+    if (!response.ok || !isSafeWhatsAppUrl(body.whatsapp_url)) throw new Error(conversationErrorMessage(body, "No se pudo abrir WhatsApp de forma segura."));
     if (!whatsappWindow) throw new Error("El navegador bloqueó la nueva ventana de WhatsApp.");
     whatsappWindow.location.href = body.whatsapp_url;
     showConversationFeedback("WhatsApp abierto. El mensaje aún no se considera enviado.");
   } catch (error) {
     whatsappWindow?.close();
     showConversationFeedback(error.message, true);
+  } finally {
+    conversationAssistedOpening = false;
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
   }
 }
 
@@ -2977,7 +3234,8 @@ async function dismissConversationSuggestion(suggestionId) {
 }
 
 async function changeConversationStatus(status) {
-  if (!selectedConversationId) return;
+  if (!selectedConversationId || conversationStatusUpdating) return;
+  conversationStatusUpdating = true;
   try {
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}/status`,
@@ -2989,6 +3247,8 @@ async function changeConversationStatus(status) {
     await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
   } catch (error) {
     showConversationFeedback(error.message, true);
+  } finally {
+    conversationStatusUpdating = false;
   }
 }
 
@@ -4743,10 +5003,62 @@ function renderError(message) {
   `;
 }
 
+function syncConversationCustomerPanelMode() {
+  const panel = document.getElementById("conversation-customer-panel");
+  const backdrop = document.getElementById("conversation-customer-backdrop");
+  if (!panel) return;
+  const drawerMode = window.matchMedia("(max-width: 1199px)").matches;
+  panel.setAttribute("aria-hidden", String(drawerMode && !conversationCustomerPanelOpen));
+  if (!drawerMode) {
+    backdrop?.setAttribute("hidden", "");
+    document.body.classList.remove("conversation-drawer-open");
+  } else if (conversationCustomerPanelOpen) {
+    backdrop?.removeAttribute("hidden");
+    document.body.classList.add("conversation-drawer-open");
+  }
+}
+
+function setupConversationInterface() {
+  document.querySelectorAll("[data-conversation-quick-filter]").forEach((button) => {
+    button.addEventListener("click", () => applyConversationQuickFilter(button.dataset.conversationQuickFilter));
+  });
+  document.getElementById("conversation-reset-filters").addEventListener("click", resetConversationFilters);
+  document.getElementById("conversation-customer-close").addEventListener("click", () => closeConversationCustomerPanel());
+  document.getElementById("conversation-customer-backdrop").addEventListener("click", () => closeConversationCustomerPanel());
+  document.getElementById("conversation-detail").addEventListener("scroll", (event) => {
+    if (event.target.id !== "conversation-thread") return;
+    const distanceFromBottom = event.target.scrollHeight - event.target.scrollTop - event.target.clientHeight;
+    if (distanceFromBottom <= 80) document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && conversationCustomerPanelOpen) {
+      event.preventDefault();
+      closeConversationCustomerPanel();
+      return;
+    }
+    if (event.key !== "Tab" || !conversationCustomerPanelOpen || !window.matchMedia("(max-width: 1199px)").matches) return;
+    const panel = document.getElementById("conversation-customer-panel");
+    const focusable = [...panel.querySelectorAll("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")];
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  window.addEventListener("resize", syncConversationCustomerPanelMode);
+  syncConversationCustomerPanelMode();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   setupAdminNavigation();
   setupBookingViews();
   setupDashboardInteractions();
+  setupConversationInterface();
   renderDashboard();
   document.getElementById("refresh-button").addEventListener("click", () => {
     refreshOperationalData({ includeAutomation: true });
@@ -4759,20 +5071,24 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("toggle-conversation-create").addEventListener("click", () => {
     const panel = document.getElementById("conversation-create-panel");
     panel.hidden = !panel.hidden;
+    document.getElementById("toggle-conversation-create").setAttribute("aria-expanded", String(!panel.hidden));
   });
   document.getElementById("create-conversation").addEventListener("click", createConversation);
   document.getElementById("create-conversation-template").addEventListener("click", createConversationTemplate);
   document.getElementById("conversation-status-filter").addEventListener("change", () => {
-    requestAdminRefresh(["conversationList", "conversationThread"]);
+    updateConversationFilterSummary();
+    loadConversations({ background: false });
   });
   document.getElementById("conversation-channel-filter").addEventListener("change", () => {
-    requestAdminRefresh(["conversationList", "conversationThread"]);
+    updateConversationFilterSummary();
+    loadConversations({ background: false });
   });
   document.getElementById("conversation-search").addEventListener("input", () => {
+    updateConversationFilterSummary();
     clearTimeout(conversationSearchTimer);
     conversationSearchTimer = setTimeout(
-      () => requestAdminRefresh(["conversationList", "conversationThread"]),
-      250
+      () => loadConversations({ background: false }),
+      350
     );
   });
   document.getElementById("booking-staff-filter").addEventListener("change", (event) => {

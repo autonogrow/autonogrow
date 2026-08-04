@@ -6,7 +6,7 @@
 
   <title>AutonoGrow Admin</title>
 
-  <link rel="stylesheet" href="styles.css?v=20260804-2" />
+  <link rel="stylesheet" href="styles.css?v=20260804-3" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -68,7 +68,7 @@
       <button class="admin-tab admin-tab-active" type="button" data-section="summary" aria-selected="true" aria-current="page"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>Resumen</button>
       <button class="admin-tab" type="button" data-section="growth" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 18 10 12l4 4 6-9"/><path d="M15 7h5v5"/></svg></span>Crecimiento</button>
       <button class="admin-tab" type="button" data-section="bookings" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span>Agenda</button>
-      <button class="admin-tab" type="button" data-section="conversations" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg></span>Conversaciones</button>
+      <button class="admin-tab" type="button" data-section="conversations" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg></span>Clientes y mensajes</button>
       <button class="admin-tab" type="button" data-section="messages" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8Z"/><path d="m11 13 4-4"/></svg></span>Mensajes automáticos</button>
       <button class="admin-tab" type="button" data-section="services" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8h14l1 13H4Z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg></span>Servicios</button>
       <button class="admin-tab" type="button" data-section="staff" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 4a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5"/></svg></span>Equipo</button>
@@ -364,14 +364,15 @@
       </details>
     </section>
 
-    <section class="section admin-section conversations-section" data-admin-section="conversations">
-      <div class="section-header">
-        <div>
-          <h2>Centro de conversaciones</h2>
-          <p>Centraliza consultas manuales, de WhatsApp e Instagram antes de conectarlas a proveedores reales.</p>
+    <section class="section admin-section conversations-section" data-admin-section="conversations" aria-labelledby="conversations-title">
+      <header class="conversations-header">
+        <div class="conversations-heading">
+          <p class="eyebrow">Bandeja del negocio</p>
+          <h2 id="conversations-title">Clientes y mensajes</h2>
+          <p id="conversation-inbox-summary">Revisa las consultas y responde desde el canal disponible.</p>
         </div>
-        <button id="toggle-conversation-create" class="btn btn-primary" type="button" data-conversation-admin-only>Crear conversación de prueba</button>
-      </div>
+        <button id="toggle-conversation-create" class="ag-button ag-button--secondary ag-button--small" type="button" data-conversation-admin-only aria-controls="conversation-create-panel" aria-expanded="false">Crear conversación de prueba</button>
+      </header>
 
       <div id="conversation-create-panel" class="conversation-create-panel" hidden data-conversation-admin-only>
         <label>Canal<select id="conversation-create-channel"><option value="manual">Manual</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option></select></label>
@@ -382,21 +383,49 @@
         <button id="create-conversation" class="btn btn-primary" type="button">Crear</button>
       </div>
 
-      <div class="conversation-filters">
-        <label>Estado<select id="conversation-status-filter"><option value="">Todas</option><option value="pending">Pendientes</option><option value="replied">Respondidas</option><option value="closed">Cerradas</option></select></label>
-        <label>Canal<select id="conversation-channel-filter"><option value="">Todos</option><option value="manual">Manual</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option></select></label>
-        <label class="conversation-search">Buscar<input id="conversation-search" type="search" placeholder="Nombre, teléfono, usuario o mensaje" /></label>
+      <div class="conversation-quick-filters" role="group" aria-label="Filtros rápidos">
+        <button class="conversation-filter-chip is-active" type="button" data-conversation-quick-filter="all" aria-pressed="true">Todas</button>
+        <button class="conversation-filter-chip" type="button" data-conversation-quick-filter="pending" aria-pressed="false">Necesitan respuesta</button>
+        <button class="conversation-filter-chip" type="button" data-conversation-quick-filter="whatsapp" aria-pressed="false">WhatsApp</button>
+        <button class="conversation-filter-chip" type="button" data-conversation-quick-filter="instagram" aria-pressed="false">Instagram</button>
       </div>
-      <p id="conversation-feedback" class="inline-feedback"></p>
 
-      <div class="conversation-center">
-        <aside id="conversation-list" class="conversation-list" aria-label="Conversaciones">
-          <p class="empty-state">Cargando conversaciones...</p>
+      <details id="conversation-filter-panel" class="conversation-filter-panel" open>
+        <summary>Buscar y filtrar <span id="conversation-filter-summary">Sin filtros adicionales</span></summary>
+        <div class="conversation-filters">
+          <label class="ag-field conversation-search">Buscar<input id="conversation-search" type="search" placeholder="Nombre, teléfono, usuario o mensaje" autocomplete="off" /></label>
+          <label class="ag-field">Estado<select id="conversation-status-filter"><option value="">Todas</option><option value="pending">Necesitan respuesta</option><option value="replied">Respondidas</option><option value="closed">Cerradas</option></select></label>
+          <label class="ag-field">Canal<select id="conversation-channel-filter"><option value="">Todos</option><option value="manual">Manual</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option></select></label>
+          <button id="conversation-reset-filters" class="ag-button ag-button--ghost ag-button--small" type="button">Limpiar filtros</button>
+        </div>
+      </details>
+      <p id="conversation-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
+
+      <div id="conversation-center" class="conversation-center">
+        <aside class="conversation-list-panel" aria-labelledby="conversation-list-title">
+          <div class="conversation-panel-heading">
+            <h3 id="conversation-list-title">Conversaciones</h3>
+            <span id="conversation-result-count" aria-live="polite">Cargando…</span>
+          </div>
+          <div id="conversation-list" class="conversation-list" role="listbox" aria-label="Conversaciones" aria-busy="true">
+            <div class="conversation-list-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>
+            <span class="ag-visually-hidden">Cargando conversaciones…</span>
+          </div>
         </aside>
         <article id="conversation-detail" class="conversation-detail">
-          <p class="empty-state">Selecciona una conversación.</p>
+          <div class="conversation-state"><strong>Selecciona una conversación</strong><p>Podrás revisar el historial y responder sin perder el contexto del cliente.</p></div>
         </article>
+        <aside id="conversation-customer-panel" class="conversation-customer-panel" aria-labelledby="conversation-customer-title" aria-hidden="false">
+          <div class="conversation-customer-panel__header">
+            <h3 id="conversation-customer-title" tabindex="-1">Información del cliente</h3>
+            <button id="conversation-customer-close" class="ag-button ag-button--ghost ag-button--icon" type="button" aria-label="Cerrar información del cliente">×</button>
+          </div>
+          <div id="conversation-customer-content" class="conversation-customer-content">
+            <div class="conversation-state conversation-state--compact"><p>Selecciona una conversación para ver la información disponible.</p></div>
+          </div>
+        </aside>
       </div>
+      <button id="conversation-customer-backdrop" class="conversation-customer-backdrop" type="button" aria-label="Cerrar información del cliente" hidden></button>
 
       <details id="conversation-templates-panel" class="conversation-templates-panel" data-conversation-admin-only>
         <summary>Gestionar plantillas</summary>
@@ -707,6 +736,6 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="admin.js?v=20260804-2"></script>
+  <script src="admin.js?v=20260804-3"></script>
 </body>
 </html>

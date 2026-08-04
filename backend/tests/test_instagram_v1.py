@@ -850,9 +850,15 @@ class InstagramV1Test(unittest.TestCase):
             Path(__file__).resolve().parents[2] / "autonogrow-admin" / "styles.css"
         ).read_text(encoding="utf-8")
         self.assertIn("Instagram conectado", admin_js)
-        self.assertIn("Instagram no conectado · modo interno", admin_js)
+        self.assertIn("Canal no disponible", admin_js)
         self.assertIn("conversation-delivery-failed", admin_styles)
-        self.assertIn("Instagram real no está conectado", admin_js)
+        self.assertIn("integrated_delivery_available", admin_js)
+        provider_block = admin_js.split("function conversationProviderBadge", 1)[1].split(
+            "function formatConversationDate", 1
+        )[0]
+        self.assertIn("provider_configured", provider_block)
+        self.assertIn("delivery_supported", provider_block)
+        self.assertNotIn("instagram_provider_configured", provider_block)
 
 
 if __name__ == "__main__":
