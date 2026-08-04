@@ -6,7 +6,7 @@
 
   <title>AutonoGrow Admin</title>
 
-  <link rel="stylesheet" href="styles.css?v=20260727-2" />
+  <link rel="stylesheet" href="styles.css?v=20260804-1" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -18,7 +18,7 @@
 <body class="ag-body ag-admin-app">
   <a class="ag-skip-link" href="#admin-main-content">Saltar al contenido</a>
   <section id="admin-auth-gate" class="auth-gate" hidden>
-    <h1>Acceso del negocio</h1><p id="admin-auth-message">Inicia sesión con la cuenta asignada al negocio.</p>
+    <h2>Acceso del negocio</h2><p id="admin-auth-message">Inicia sesión con la cuenta asignada al negocio.</p>
     <div id="admin-google-button" class="auth-google-button"></div>
     <button id="admin-gate-logout" class="btn btn-secondary" type="button" hidden>Salir</button>
   </section>
@@ -80,69 +80,116 @@
 
     <div id="admin-main-content" class="ag-shell__content" tabindex="-1">
     <div class="ag-content-container">
-    <section class="admin-section admin-section-active" data-admin-section="summary">
-      <div class="section-header summary-header">
-        <div>
-          <h2>Resumen</h2>
-          <p>Estado actual de la actividad y de las tareas pendientes.</p>
+    <section class="admin-section admin-section-active dashboard-section" data-admin-section="summary" aria-labelledby="dashboard-title">
+      <header class="dashboard-hero">
+        <div class="dashboard-hero__copy">
+          <p id="dashboard-date" class="dashboard-date">Cargando fecha...</p>
+          <h2 id="dashboard-title">Buenos días</h2>
+          <p id="dashboard-summary-copy">Estamos preparando el estado de tu negocio.</p>
         </div>
-      </div>
+        <button class="btn btn-primary ag-button ag-button--primary" type="button" data-dashboard-section="bookings" data-dashboard-booking-view="today">
+          Ver agenda de hoy
+        </button>
+      </header>
 
-      <div class="stats-grid">
-      <article class="stat-card ag-card">
-        <span class="stat-label">Solicitudes</span>
-        <strong id="stat-total">0</strong>
-      </article>
+      <p id="dashboard-live-region" class="ag-visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
 
-      <article class="stat-card">
-        <span class="stat-label">Pendientes</span>
-        <strong id="stat-requested">0</strong>
-      </article>
+      <section class="dashboard-metrics" aria-label="Indicadores principales" aria-busy="true">
+        <article class="dashboard-metric ag-card">
+          <span class="dashboard-metric__icon" aria-hidden="true">01</span>
+          <div>
+            <span class="dashboard-metric__label">Citas de hoy</span>
+            <strong id="dashboard-stat-today" class="dashboard-metric__value"><span class="ag-skeleton dashboard-value-skeleton"></span></strong>
+            <p id="dashboard-stat-today-context">Preparando tu agenda.</p>
+          </div>
+        </article>
+        <article class="dashboard-metric ag-card">
+          <span class="dashboard-metric__icon dashboard-metric__icon--warning" aria-hidden="true">02</span>
+          <div>
+            <span class="dashboard-metric__label">Por confirmar</span>
+            <strong id="dashboard-stat-pending" class="dashboard-metric__value"><span class="ag-skeleton dashboard-value-skeleton"></span></strong>
+            <p id="dashboard-stat-pending-context">Revisando solicitudes.</p>
+          </div>
+        </article>
+        <article class="dashboard-metric ag-card">
+          <span class="dashboard-metric__icon dashboard-metric__icon--coral" aria-hidden="true">03</span>
+          <div>
+            <span class="dashboard-metric__label">Mensajes sin responder</span>
+            <strong id="dashboard-stat-messages" class="dashboard-metric__value"><span class="ag-skeleton dashboard-value-skeleton"></span></strong>
+            <p id="dashboard-stat-messages-context">Comprobando conversaciones.</p>
+          </div>
+        </article>
+        <article class="dashboard-metric ag-card">
+          <span class="dashboard-metric__icon dashboard-metric__icon--success" aria-hidden="true">04</span>
+          <div>
+            <span class="dashboard-metric__label">Estado del negocio</span>
+            <strong id="stat-business-status" class="stat-status ag-badge ag-badge--neutral">Comprobando</strong>
+            <p id="dashboard-business-status-context">Revisando la configuración.</p>
+          </div>
+        </article>
+      </section>
 
-      <article class="stat-card">
-        <span class="stat-label">Confirmadas</span>
-        <strong id="stat-confirmed">0</strong>
-      </article>
+      <div class="dashboard-grid">
+        <section class="dashboard-panel dashboard-panel--attention ag-card" aria-labelledby="dashboard-attention-title">
+          <div class="dashboard-panel__header">
+            <div>
+              <span class="dashboard-panel__eyebrow">Prioridad</span>
+              <h3 id="dashboard-attention-title">Necesita tu atención</h3>
+            </div>
+          </div>
+          <div id="dashboard-attention-list" class="dashboard-attention-list" aria-busy="true">
+            <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div>
+            <span class="ag-visually-hidden">Cargando tareas pendientes.</span>
+          </div>
+        </section>
 
-      <article class="stat-card">
-        <span class="stat-label">Completadas</span>
-        <strong id="stat-completed">0</strong>
-      </article>
+        <section class="dashboard-panel dashboard-panel--next ag-card" aria-labelledby="dashboard-next-title">
+          <div class="dashboard-panel__header">
+            <h3 id="dashboard-next-title">Próxima cita</h3>
+          </div>
+          <div id="dashboard-next-booking" aria-busy="true">
+            <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div>
+            <span class="ag-visually-hidden">Cargando la próxima cita.</span>
+          </div>
+        </section>
 
-      <article class="stat-card">
-        <span class="stat-label">Reseñas pendientes</span>
-        <strong id="stat-reviews-pending">0</strong>
-      </article>
+        <section class="dashboard-panel dashboard-panel--agenda ag-card" aria-labelledby="dashboard-agenda-title">
+          <div class="dashboard-panel__header">
+            <div>
+              <span class="dashboard-panel__eyebrow">Hoy</span>
+              <h3 id="dashboard-agenda-title">Agenda de hoy</h3>
+            </div>
+            <button class="ag-button ag-button--ghost ag-button--small" type="button" data-dashboard-section="bookings" data-dashboard-booking-view="today">Ver agenda completa</button>
+          </div>
+          <div id="dashboard-today-bookings" class="dashboard-booking-list" role="list" aria-busy="true">
+            <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div>
+            <span class="ag-visually-hidden">Cargando la agenda de hoy.</span>
+          </div>
+        </section>
 
-      <article class="stat-card">
-        <span class="stat-label">Reseñas copiadas</span>
-        <strong id="stat-reviews-copied">0</strong>
-      </article>
+        <section class="dashboard-panel dashboard-panel--messages ag-card" aria-labelledby="dashboard-messages-title">
+          <div class="dashboard-panel__header">
+            <h3 id="dashboard-messages-title">Mensajes recientes</h3>
+            <button class="ag-button ag-button--ghost ag-button--small" type="button" data-dashboard-section="conversations">Ir a mensajes</button>
+          </div>
+          <div id="dashboard-message-summary" class="dashboard-message-list" aria-busy="true">
+            <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div>
+            <span class="ag-visually-hidden">Cargando mensajes recientes.</span>
+          </div>
+        </section>
 
-      <article class="stat-card">
-        <span class="stat-label">Reseñas enviadas</span>
-        <strong id="stat-reviews-sent">0</strong>
-      </article>
-      <article class="stat-card">
-        <span class="stat-label">Mensajes pendientes</span>
-        <strong id="stat-messages-pending">0</strong>
-      </article>
-      <article class="stat-card">
-        <span class="stat-label">Mensajes preparados</span>
-        <strong id="stat-messages-opened">0</strong>
-      </article>
-      <article class="stat-card">
-        <span class="stat-label">Mensajes enviados</span>
-        <strong id="stat-messages-sent">0</strong>
-      </article>
-      <article class="stat-card">
-        <span class="stat-label">Servicios activos</span>
-        <strong id="stat-services-active">0</strong>
-      </article>
-      <article class="stat-card">
-        <span class="stat-label">Estado del negocio</span>
-        <strong id="stat-business-status" class="stat-status ag-badge ag-badge--neutral">--</strong>
-      </article>
+        <section class="dashboard-panel dashboard-panel--activity ag-card" aria-labelledby="dashboard-activity-title">
+          <div class="dashboard-panel__header">
+            <div>
+              <span class="dashboard-panel__eyebrow">Últimos 7 días</span>
+              <h3 id="dashboard-activity-title">Actividad reciente</h3>
+            </div>
+          </div>
+          <div id="dashboard-weekly-activity" aria-busy="true">
+            <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div>
+            <span class="ag-visually-hidden">Cargando actividad reciente.</span>
+          </div>
+        </section>
       </div>
 
       <article class="growth-summary-card ag-card ag-card--interactive">
@@ -156,6 +203,13 @@
         </div>
         <button class="btn btn-primary" type="button" onclick="showAdminSection('growth')">Ver tareas</button>
       </article>
+
+      <div hidden aria-hidden="true">
+        <span id="stat-total">0</span><span id="stat-requested">0</span><span id="stat-confirmed">0</span><span id="stat-completed">0</span>
+        <span id="stat-reviews-pending">0</span><span id="stat-reviews-copied">0</span><span id="stat-reviews-sent">0</span>
+        <span id="stat-messages-pending">0</span><span id="stat-messages-opened">0</span><span id="stat-messages-sent">0</span>
+        <span id="stat-services-active">0</span>
+      </div>
     </section>
 
     <section class="section admin-section growth-section" data-admin-section="growth">
@@ -612,6 +666,6 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="admin.js?v=20260727-2"></script>
+  <script src="admin.js?v=20260804-1"></script>
 </body>
 </html>

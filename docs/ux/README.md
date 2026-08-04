@@ -48,6 +48,7 @@ No había Chrome, Edge, Firefox, Playwright ni Selenium ejecutables en el entorn
 12. [Roadmap de rediseño](12_redesign_roadmap.md)
 13. [Sistema visual compartido](13_design_system.md)
 14. [Shell responsive](14_shell_responsive.md)
+15. [Dashboard operativo del Business Admin](15_admin_dashboard.md)
 
 ## Principios de implementación
 

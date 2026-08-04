@@ -30,6 +30,7 @@ let adminMembership = null;
 let staffMembers = [];
 let selectedStaffFilter = "";
 let conversations = [];
+let dashboardConversations = [];
 let conversationTemplates = [];
 let conversationAutomation = null;
 let businessIntegrationStatus = null;
@@ -73,6 +74,16 @@ const growthDataReady = {
   messages: false,
   reviews: false
 };
+const dashboardDataState = {
+  business: "loading",
+  bookings: "loading",
+  conversations: "loading",
+  services: "loading",
+  availability: "loading",
+  channels: "loading"
+};
+let dashboardAnnouncementFingerprint = "";
+const dashboardRetryInFlight = new Set();
 let rescheduleState = {
   booking: null,
   date: "",
@@ -190,6 +201,520 @@ function getTimestampDateKey(value) {
   }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : getMadridDateKey(date);
+}
+
+function setDashboardDataState(source, status) {
+  if (!(source in dashboardDataState)) return;
+  dashboardDataState[source] = status;
+  renderDashboard();
+}
+
+function getMadridTimeKey(value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Madrid",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(value);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.hour}:${values.minute}`;
+}
+
+function formatDashboardDate(value = new Date()) {
+  const formatted = new Intl.DateTimeFormat("es-ES", {
+    timeZone: "Europe/Madrid",
+    weekday: "long",
+    day: "numeric",
+    month: "long"
+  }).format(value);
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+}
+
+function getDashboardGreeting(value = new Date()) {
+  const hour = Number(getMadridTimeKey(value).slice(0, 2));
+  if (hour < 13) return "Buenos días";
+  if (hour < 20) return "Buenas tardes";
+  return "Buenas noches";
+}
+
+function getDashboardTodayBookings() {
+  const today = getMadridDateKey();
+  return allBookings
+    .filter((booking) => getBookingDateKey(booking) === today && !["rejected", "cancelled"].includes(booking.status))
+    .sort(compareDashboardBookings);
+}
+
+function getDashboardPendingBookings() {
+  return allBookings.filter((booking) => ["requested", "pending"].includes(booking.status));
+}
+
+function getDashboardPendingConversations() {
+  return dashboardConversations.filter((conversation) =>
+    conversation.status === "pending" || Number(conversation.unread_count || 0) > 0
+  );
+}
+
+function dashboardBookingSortKey(booking) {
+  if (booking.start_datetime) return booking.start_datetime;
+  return `${booking.preferred_date || "9999-12-31"}T${booking.preferred_time || "23:59"}`;
+}
+
+function compareDashboardBookings(first, second) {
+  return dashboardBookingSortKey(first).localeCompare(dashboardBookingSortKey(second));
+}
+
+function isDashboardUpcomingBooking(booking) {
+  if (["completed", "rejected", "cancelled", "no_show"].includes(booking.status)) return false;
+  const dateKey = getBookingDateKey(booking);
+  const today = getMadridDateKey();
+  if (!dateKey || dateKey < today) return false;
+  if (dateKey > today) return true;
+  if (booking.start_datetime) {
+    const startsAt = new Date(booking.start_datetime);
+    return Number.isNaN(startsAt.getTime()) || startsAt.getTime() >= Date.now();
+  }
+  return !booking.preferred_time || booking.preferred_time >= getMadridTimeKey();
+}
+
+function getDashboardNextBooking() {
+  return allBookings.filter(isDashboardUpcomingBooking).sort(compareDashboardBookings)[0] || null;
+}
+
+function getDashboardBookingStatusLabel(status) {
+  return ({
+    requested: "Por confirmar",
+    pending: "Pendiente",
+    confirmed: "Confirmada",
+    completed: "Completada",
+    cancelled: "Cancelada",
+    rejected: "Rechazada",
+    no_show: "No presentado"
+  })[status] || "Estado pendiente";
+}
+
+function getDashboardStatusVariant(status) {
+  if (status === "confirmed") return "success";
+  if (status === "completed") return "info";
+  if (["rejected", "cancelled", "no_show"].includes(status)) return "danger";
+  return "warning";
+}
+
+function formatDashboardBookingTime(booking) {
+  if (booking.start_datetime) {
+    const value = new Date(booking.start_datetime);
+    if (!Number.isNaN(value.getTime())) {
+      return value.toLocaleTimeString("es-ES", {
+        timeZone: "Europe/Madrid",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+  }
+  return booking.preferred_time || "Hora pendiente";
+}
+
+function formatDashboardBookingDay(booking) {
+  const dateKey = getBookingDateKey(booking);
+  const today = getMadridDateKey();
+  if (dateKey === today) return "Hoy";
+  if (dateKey === addDaysToDateKey(today, 1)) return "Mañana";
+  if (!dateKey) return "Fecha pendiente";
+  const value = new Date(`${dateKey}T12:00:00Z`);
+  return Number.isNaN(value.getTime())
+    ? dateKey
+    : new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", timeZone: "UTC" }).format(value);
+}
+
+function truncateDashboardText(value, maxLength = 88) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1).trimEnd()}…` : normalized;
+}
+
+function renderDashboardHeader() {
+  const title = document.getElementById("dashboard-title");
+  const date = document.getElementById("dashboard-date");
+  const summary = document.getElementById("dashboard-summary-copy");
+  if (!title || !date || !summary) return;
+  const firstName = String(adminAuthUser?.name || "").trim().split(/\s+/)[0];
+  title.textContent = `${getDashboardGreeting()}${firstName ? `, ${firstName}` : ""}`;
+  date.textContent = formatDashboardDate();
+  if (dashboardDataState.bookings === "ready") {
+    const todayCount = getDashboardTodayBookings().length;
+    const pendingCount = getDashboardPendingBookings().length;
+    summary.textContent = todayCount || pendingCount
+      ? `Hoy tienes ${todayCount} cita${todayCount === 1 ? "" : "s"} y ${pendingCount} solicitud${pendingCount === 1 ? "" : "es"} por revisar.`
+      : "Tu agenda está tranquila y no hay solicitudes por confirmar.";
+  } else if (dashboardDataState.bookings === "error") {
+    summary.textContent = "No hemos podido cargar la actividad de hoy. Puedes reintentar sin salir de Inicio.";
+  } else {
+    summary.textContent = "Estamos preparando el estado de tu negocio.";
+  }
+}
+
+function dashboardHasConfiguredAvailability() {
+  const schedule = availabilitySettings?.weekly_schedule || {};
+  return Object.values(schedule).some((windows) => Array.isArray(windows) && windows.length > 0);
+}
+
+function getDashboardBusinessStatus() {
+  if (dashboardDataState.business === "loading") {
+    return { label: "Comprobando", context: "Revisando la configuración.", variant: "neutral" };
+  }
+  if (!currentBusiness?.active) {
+    return { label: "No está activo", context: "Revisa la publicación del negocio.", variant: "danger" };
+  }
+  if (!isBusinessStaff() && dashboardDataState.channels === "ready") {
+    const affectedChannel = businessChannelHealth.find((channel) =>
+      channel.reconnection_required || !["healthy", "unknown"].includes(channel.health_status)
+    );
+    if (affectedChannel) {
+      const name = affectedChannel.channel === "whatsapp" ? "WhatsApp" : "Instagram";
+      return { label: "Revisa un canal", context: `${name} necesita atención.`, variant: "warning" };
+    }
+  }
+  if (!isBusinessStaff() && dashboardDataState.services === "ready" && !adminServices.some((service) => service.active)) {
+    return { label: "Configuración pendiente", context: "Activa al menos un servicio.", variant: "warning" };
+  }
+  if (!isBusinessStaff() && dashboardDataState.availability === "ready" && !dashboardHasConfiguredAvailability()) {
+    return { label: "Configuración pendiente", context: "Define los horarios del negocio.", variant: "warning" };
+  }
+  const relevantStates = isBusinessStaff()
+    ? [dashboardDataState.bookings, dashboardDataState.conversations]
+    : [dashboardDataState.bookings, dashboardDataState.conversations, dashboardDataState.services, dashboardDataState.availability, dashboardDataState.channels];
+  if (relevantStates.some((state) => state === "loading")) {
+    return { label: "Comprobando", context: "Terminando de revisar la actividad.", variant: "neutral" };
+  }
+  if (relevantStates.some((state) => state === "error")) {
+    return { label: "Revisión pendiente", context: "Hay información que no hemos podido comprobar.", variant: "warning" };
+  }
+  return { label: "Todo funciona", context: "No vemos bloqueos operativos.", variant: "success" };
+}
+
+function setDashboardMetric(id, contextId, value, context) {
+  const metric = document.getElementById(id);
+  const contextElement = document.getElementById(contextId);
+  if (metric) metric.textContent = value;
+  if (contextElement) contextElement.textContent = context;
+}
+
+function renderDashboardMetrics() {
+  const metrics = document.querySelector(".dashboard-metrics");
+  if (!metrics) return;
+  const bookingsReady = dashboardDataState.bookings === "ready";
+  const conversationsReady = dashboardDataState.conversations === "ready";
+  if (bookingsReady) {
+    const todayCount = getDashboardTodayBookings().length;
+    const pendingCount = getDashboardPendingBookings().length;
+    setDashboardMetric("dashboard-stat-today", "dashboard-stat-today-context", String(todayCount), todayCount === 1 ? "Una cita prevista para hoy." : `${todayCount} citas previstas para hoy.`);
+    setDashboardMetric("dashboard-stat-pending", "dashboard-stat-pending-context", String(pendingCount), pendingCount ? "Solicitudes que esperan respuesta." : "No hay solicitudes pendientes.");
+  } else if (dashboardDataState.bookings === "error") {
+    setDashboardMetric("dashboard-stat-today", "dashboard-stat-today-context", "—", "No se pudieron cargar las citas.");
+    setDashboardMetric("dashboard-stat-pending", "dashboard-stat-pending-context", "—", "No se pudieron cargar las solicitudes.");
+  }
+  if (conversationsReady) {
+    const pendingMessages = getDashboardPendingConversations().length;
+    setDashboardMetric("dashboard-stat-messages", "dashboard-stat-messages-context", String(pendingMessages), pendingMessages ? "Conversaciones que requieren respuesta." : "No hay conversaciones pendientes.");
+  } else if (dashboardDataState.conversations === "error") {
+    setDashboardMetric("dashboard-stat-messages", "dashboard-stat-messages-context", "—", "No se pudieron cargar los mensajes.");
+  }
+  const businessStatus = getDashboardBusinessStatus();
+  const status = document.getElementById("stat-business-status");
+  if (status) {
+    status.textContent = businessStatus.label;
+    status.className = `stat-status ag-badge ag-badge--${businessStatus.variant}`;
+  }
+  const statusContext = document.getElementById("dashboard-business-status-context");
+  if (statusContext) statusContext.textContent = businessStatus.context;
+  metrics.setAttribute("aria-busy", String(
+    dashboardDataState.bookings === "loading" || dashboardDataState.conversations === "loading"
+  ));
+}
+
+function renderDashboardBlockError(container, message, retrySource, announce = false) {
+  container.setAttribute("aria-busy", "false");
+  container.innerHTML = `
+    <div class="dashboard-block-state dashboard-block-state--error" role="${announce ? "alert" : "group"}">
+      <strong>No hemos podido cargar este bloque</strong>
+      <p>${escapeHtml(message)}</p>
+      <button class="ag-button ag-button--secondary ag-button--small" type="button" data-dashboard-retry="${escapeHtml(retrySource)}">Reintentar</button>
+    </div>`;
+}
+
+function renderDashboardEmptyState(container, title, description, action = null) {
+  container.setAttribute("aria-busy", "false");
+  container.innerHTML = `
+    <div class="dashboard-block-state dashboard-block-state--empty">
+      <span class="dashboard-state-mark" aria-hidden="true">✓</span>
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(description)}</p>
+      ${action ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-dashboard-section="${escapeHtml(action.section)}"${action.view ? ` data-dashboard-booking-view="${escapeHtml(action.view)}"` : ""}>${escapeHtml(action.label)}</button>` : ""}
+    </div>`;
+}
+
+function renderTodayBookings() {
+  const container = document.getElementById("dashboard-today-bookings");
+  if (!container) return;
+  if (dashboardDataState.bookings === "loading") return;
+  if (dashboardDataState.bookings === "error") {
+    renderDashboardBlockError(container, "No hemos podido cargar la agenda de hoy.", "bookings", true);
+    return;
+  }
+  const todayBookings = getDashboardTodayBookings();
+  if (!todayBookings.length) {
+    renderDashboardEmptyState(container, "No tienes citas para hoy", "Puedes revisar próximas reservas o la disponibilidad.", { section: "bookings", view: "upcoming", label: "Ver próximas citas" });
+    return;
+  }
+  container.setAttribute("aria-busy", "false");
+  container.innerHTML = todayBookings.slice(0, 5).map((booking) => {
+    const bookingId = Number(booking.id);
+    const professional = booking.staff_display_name ? `<span>${escapeHtml(booking.staff_display_name)}</span>` : "";
+    return `
+      <article class="dashboard-booking-row" role="listitem">
+        <time class="dashboard-booking-row__time">${escapeHtml(formatDashboardBookingTime(booking))}</time>
+        <div class="dashboard-booking-row__copy">
+          <strong>${escapeHtml(booking.customer_name || "Cliente sin nombre")}</strong>
+          <span>${escapeHtml(booking.service_name || "Servicio sin indicar")}</span>
+          ${professional}
+        </div>
+        <span class="ag-badge ag-badge--${getDashboardStatusVariant(booking.status)}">${escapeHtml(getDashboardBookingStatusLabel(booking.status))}</span>
+        ${Number.isInteger(bookingId) && bookingId > 0 ? `<button class="ag-button ag-button--ghost ag-button--small" type="button" data-dashboard-booking-id="${bookingId}">Ver</button>` : ""}
+      </article>`;
+  }).join("");
+}
+
+function renderNextBooking() {
+  const container = document.getElementById("dashboard-next-booking");
+  if (!container) return;
+  if (dashboardDataState.bookings === "loading") return;
+  if (dashboardDataState.bookings === "error") {
+    renderDashboardBlockError(container, "No hemos podido identificar la próxima cita.", "bookings");
+    return;
+  }
+  const booking = getDashboardNextBooking();
+  if (!booking) {
+    renderDashboardEmptyState(container, "No hay una próxima cita", "La agenda no tiene citas futuras pendientes.", { section: "bookings", view: "upcoming", label: "Revisar agenda" });
+    return;
+  }
+  const bookingId = Number(booking.id);
+  container.setAttribute("aria-busy", "false");
+  container.innerHTML = `
+    <div class="dashboard-next-booking">
+      <p class="dashboard-next-booking__time"><span>${escapeHtml(formatDashboardBookingDay(booking))}</span><strong>${escapeHtml(formatDashboardBookingTime(booking))}</strong></p>
+      <div class="dashboard-next-booking__copy">
+        <h4>${escapeHtml(booking.customer_name || "Cliente sin nombre")}</h4>
+        <p>${escapeHtml(booking.service_name || "Servicio sin indicar")}</p>
+        <p>${escapeHtml(booking.staff_display_name || "Profesional sin asignar")}</p>
+      </div>
+      <span class="ag-badge ag-badge--${getDashboardStatusVariant(booking.status)}">${escapeHtml(getDashboardBookingStatusLabel(booking.status))}</span>
+      ${Number.isInteger(bookingId) && bookingId > 0 ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-dashboard-booking-id="${bookingId}">Ver reserva</button>` : ""}
+    </div>`;
+}
+
+function getDashboardAttentionItems() {
+  const items = [];
+  if (dashboardDataState.bookings === "ready") {
+    const pending = getDashboardPendingBookings().length;
+    if (pending) items.push({ severity: "warning", title: `${pending} reserva${pending === 1 ? "" : "s"} necesita${pending === 1 ? "" : "n"} confirmación`, description: "Revisa las solicitudes que esperan respuesta.", section: "bookings", view: "pending", action: "Revisar" });
+  } else if (dashboardDataState.bookings === "error") {
+    items.push({ severity: "danger", title: "No pudimos comprobar las reservas", description: "Reintenta para conocer las solicitudes pendientes.", retry: "bookings", action: "Reintentar" });
+  }
+  if (dashboardDataState.conversations === "ready") {
+    const pending = getDashboardPendingConversations().length;
+    if (pending) items.push({ severity: "info", title: `${pending} conversación${pending === 1 ? "" : "es"} requiere${pending === 1 ? "" : "n"} respuesta`, description: "Abre Mensajes para continuar la conversación.", section: "conversations", action: "Responder" });
+  } else if (dashboardDataState.conversations === "error") {
+    items.push({ severity: "danger", title: "No pudimos comprobar los mensajes", description: "Reintenta para revisar las conversaciones pendientes.", retry: "conversations", action: "Reintentar" });
+  }
+  if (!isBusinessStaff()) {
+    if (!currentBusiness?.active && dashboardDataState.business === "ready") {
+      items.push({ severity: "danger", title: "El negocio no está activo", description: "Revisa su estado antes de compartir la página pública.", section: "business", action: "Revisar" });
+    }
+    if (dashboardDataState.services === "ready" && !adminServices.some((service) => service.active)) {
+      items.push({ severity: "warning", title: "Activa al menos un servicio", description: "Los clientes necesitan un servicio disponible para reservar.", section: "services", action: "Configurar" });
+    } else if (dashboardDataState.services === "error") {
+      items.push({ severity: "danger", title: "No pudimos comprobar los servicios", description: "Reintenta para revisar la configuración.", retry: "services", action: "Reintentar" });
+    }
+    if (dashboardDataState.availability === "ready" && !dashboardHasConfiguredAvailability()) {
+      items.push({ severity: "warning", title: "Configura los horarios", description: "Define cuándo pueden reservar tus clientes.", section: "schedule", action: "Configurar" });
+    } else if (dashboardDataState.availability === "error") {
+      items.push({ severity: "danger", title: "No pudimos comprobar los horarios", description: "Reintenta para revisar la disponibilidad.", retry: "availability", action: "Reintentar" });
+    }
+    if (dashboardDataState.channels === "ready") {
+      businessChannelHealth.filter((channel) => channel.reconnection_required || !["healthy", "unknown"].includes(channel.health_status)).slice(0, 2).forEach((channel) => {
+        const name = channel.channel === "whatsapp" ? "WhatsApp" : "Instagram";
+        items.push({ severity: channel.reconnection_required ? "danger" : "warning", title: `${name} necesita atención`, description: channel.reconnection_required ? "Vuelve a conectar el canal para recuperar la mensajería." : "Revisa el estado del canal.", section: "channels", action: channel.reconnection_required ? "Volver a conectar" : "Revisar" });
+      });
+    } else if (dashboardDataState.channels === "error") {
+      items.push({ severity: "danger", title: "No pudimos comprobar los canales", description: "Reintenta para revisar su estado.", retry: "channels", action: "Reintentar" });
+    }
+  }
+  return items;
+}
+
+function renderAttentionItems() {
+  const container = document.getElementById("dashboard-attention-list");
+  if (!container) return;
+  const relevantStates = isBusinessStaff()
+    ? [dashboardDataState.bookings, dashboardDataState.conversations]
+    : [dashboardDataState.bookings, dashboardDataState.conversations, dashboardDataState.services, dashboardDataState.availability, dashboardDataState.channels];
+  const items = getDashboardAttentionItems();
+  if (!items.length && relevantStates.some((state) => state === "loading")) return;
+  if (!items.length) {
+    renderDashboardEmptyState(container, "Todo está al día", "No hay tareas urgentes en este momento.");
+    return;
+  }
+  container.setAttribute("aria-busy", "false");
+  container.innerHTML = items.slice(0, 5).map((item) => `
+    <article class="dashboard-attention-item dashboard-attention-item--${escapeHtml(item.severity)}">
+      <span class="dashboard-attention-item__mark" aria-hidden="true">${item.severity === "danger" ? "!" : "•"}</span>
+      <div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(item.description)}</p></div>
+      <button class="ag-button ag-button--ghost ag-button--small" type="button" ${item.retry ? `data-dashboard-retry="${escapeHtml(item.retry)}"` : `data-dashboard-section="${escapeHtml(item.section)}"${item.view ? ` data-dashboard-booking-view="${escapeHtml(item.view)}"` : ""}`}>${escapeHtml(item.action)}</button>
+    </article>`).join("");
+}
+
+function renderMessageSummary() {
+  const container = document.getElementById("dashboard-message-summary");
+  if (!container) return;
+  if (dashboardDataState.conversations === "loading") return;
+  if (dashboardDataState.conversations === "error") {
+    renderDashboardBlockError(container, "No hemos podido cargar los mensajes recientes.", "conversations", true);
+    return;
+  }
+  const pending = getDashboardPendingConversations().sort((first, second) =>
+    String(second.last_message_at || "").localeCompare(String(first.last_message_at || ""))
+  );
+  if (!pending.length) {
+    renderDashboardEmptyState(container, "No hay mensajes pendientes", "Las conversaciones están al día.", { section: "conversations", label: "Ver conversaciones" });
+    return;
+  }
+  container.setAttribute("aria-busy", "false");
+  container.innerHTML = pending.slice(0, 4).map((conversation) => `
+    <article class="dashboard-message-row">
+      <div class="dashboard-message-row__header">
+        <strong>${escapeHtml(conversationDisplayName(conversation))}</strong>
+        <span>${escapeHtml(conversationChannelLabel(conversation.channel))}</span>
+      </div>
+      <p>${escapeHtml(truncateDashboardText(conversation.last_message_text || "Conversación pendiente de respuesta."))}</p>
+      <small>${escapeHtml(formatConversationDate(conversation.last_message_at))} · Pendiente de respuesta</small>
+    </article>`).join("");
+}
+
+function renderRecentActivity() {
+  const container = document.getElementById("dashboard-weekly-activity");
+  if (!container) return;
+  if (dashboardDataState.bookings === "loading") return;
+  if (dashboardDataState.bookings === "error") {
+    renderDashboardBlockError(container, "No hemos podido calcular la actividad reciente.", "bookings");
+    return;
+  }
+  const today = getMadridDateKey();
+  const firstDay = addDaysToDateKey(today, -6);
+  const inRange = (dateKey) => Boolean(dateKey && dateKey >= firstDay && dateKey <= today);
+  const created = allBookings.filter((booking) => inRange(getTimestampDateKey(booking.created_at))).length;
+  const completed = allBookings.filter((booking) => booking.status === "completed" && inRange(getBookingDateKey(booking))).length;
+  const cancelled = allBookings.filter((booking) => ["cancelled", "rejected"].includes(booking.status) && inRange(getBookingDateKey(booking))).length;
+  if (!created && !completed && !cancelled) {
+    renderDashboardEmptyState(container, "Aún no hay actividad reciente", "Las reservas de los últimos siete días aparecerán aquí.");
+    return;
+  }
+  container.setAttribute("aria-busy", "false");
+  container.innerHTML = `
+    <dl class="dashboard-activity-list">
+      <div><dt>Reservas recibidas</dt><dd>${created}</dd></div>
+      <div><dt>Citas completadas</dt><dd>${completed}</dd></div>
+      <div><dt>Canceladas o rechazadas</dt><dd>${cancelled}</dd></div>
+    </dl>`;
+}
+
+function announceDashboardUpdate() {
+  const liveRegion = document.getElementById("dashboard-live-region");
+  const failedSources = Object.entries(dashboardDataState)
+    .filter(([, state]) => state === "error")
+    .map(([source]) => source);
+  if (failedSources.length) {
+    const errorFingerprint = `error:${failedSources.sort().join(",")}`;
+    if (liveRegion && errorFingerprint !== dashboardAnnouncementFingerprint) {
+      liveRegion.textContent = "Hay información de Inicio que no hemos podido cargar. Revisa los avisos para reintentar.";
+    }
+    dashboardAnnouncementFingerprint = errorFingerprint;
+    return;
+  }
+  if (dashboardDataState.bookings !== "ready" || dashboardDataState.conversations !== "ready") return;
+  const fingerprint = `${getDashboardTodayBookings().length}:${getDashboardPendingBookings().length}:${getDashboardPendingConversations().length}`;
+  if (fingerprint === dashboardAnnouncementFingerprint) return;
+  if (liveRegion && dashboardAnnouncementFingerprint) liveRegion.textContent = "La información de Inicio se ha actualizado.";
+  dashboardAnnouncementFingerprint = fingerprint;
+}
+
+function renderDashboard() {
+  if (!document.getElementById("dashboard-title")) return;
+  renderDashboardHeader();
+  renderDashboardMetrics();
+  renderTodayBookings();
+  renderNextBooking();
+  renderAttentionItems();
+  renderMessageSummary();
+  renderRecentActivity();
+  announceDashboardUpdate();
+}
+
+function navigateFromDashboard(button) {
+  const bookingId = Number(button.dataset.dashboardBookingId);
+  if (Number.isInteger(bookingId) && bookingId > 0) {
+    goToBooking(bookingId);
+    return;
+  }
+  const section = button.dataset.dashboardSection;
+  const bookingView = button.dataset.dashboardBookingView;
+  if (section === "bookings" && bookingView) {
+    currentBookingView = bookingView;
+    document.querySelectorAll("[data-booking-view]").forEach((tab) => {
+      tab.classList.toggle("booking-view-tab-active", tab.dataset.bookingView === bookingView);
+    });
+    renderBookings();
+  }
+  if (section) {
+    showAdminSection(section);
+    document.getElementById("admin-main-content")?.focus({ preventScroll: true });
+  }
+}
+
+async function retryDashboardSource(source, button) {
+  if (dashboardRetryInFlight.has(source)) return;
+  const loaders = {
+    bookings: () => loadBookings(),
+    conversations: () => loadConversations(),
+    services: () => loadAdminServices(),
+    availability: () => loadAvailabilitySettings(),
+    channels: () => loadBusinessChannelOnboarding()
+  };
+  if (!loaders[source]) return;
+  dashboardRetryInFlight.add(source);
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  setDashboardDataState(source, "loading");
+  try {
+    await loaders[source]();
+  } finally {
+    dashboardRetryInFlight.delete(source);
+    if (button.isConnected) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }
+}
+
+function setupDashboardInteractions() {
+  const dashboard = document.querySelector('[data-admin-section="summary"]');
+  if (!dashboard) return;
+  dashboard.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button || !dashboard.contains(button)) return;
+    if (button.dataset.dashboardRetry) {
+      retryDashboardSource(button.dataset.dashboardRetry, button);
+      return;
+    }
+    if (button.dataset.dashboardSection || button.dataset.dashboardBookingId) navigateFromDashboard(button);
+  });
 }
 
 function calculateGrowthTasks() {
@@ -366,10 +891,14 @@ async function loadAdminPanel() {
 
   try {
     if (isBusinessStaff()) {
+      dashboardDataState.services = "not_applicable";
+      dashboardDataState.availability = "not_applicable";
+      dashboardDataState.channels = "not_applicable";
       const panelResponse = await fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/panel`);
       if (!panelResponse.ok) throw new Error("No se pudo cargar tu agenda.");
       const panel = await panelResponse.json();
       currentBusiness = { ...panel.business, active: panel.business.status === "active" };
+      dashboardDataState.business = "ready";
       applyBusinessData(currentBusiness);
       document.getElementById("business-subtitle").textContent = "Mi agenda y reservas asignadas";
       await Promise.all([
@@ -390,6 +919,7 @@ async function loadAdminPanel() {
     }
 
     currentBusiness = await businessResponse.json();
+    dashboardDataState.business = "ready";
     applyBusinessData(currentBusiness);
     renderBusinessSettings();
     await Promise.all([
@@ -466,18 +996,24 @@ function renderBusinessChannelOnboarding() {
 async function loadBusinessChannelOnboarding() {
   const container = document.getElementById("channel-onboarding-list");
   if (!container) return;
-  const [response, healthResponse] = await Promise.all([
-    fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channel-onboarding`),
-    fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channels/health`)
-  ]);
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    container.innerHTML = `<p class="empty-state">${escapeHtml(body.detail || "No se pudieron cargar los canales.")}</p>`;
-    return;
+  if (!businessChannelOnboarding) setDashboardDataState("channels", "loading");
+  try {
+    const [response, healthResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channel-onboarding`),
+      fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channels/health`)
+    ]);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error("No se pudieron cargar los canales.");
+    businessChannelOnboarding = body;
+    const healthBody = healthResponse.ok ? await healthResponse.json() : {};
+    businessChannelHealth = Array.isArray(healthBody.channels) ? healthBody.channels : [];
+    setDashboardDataState("channels", healthResponse.ok ? "ready" : "error");
+    renderBusinessChannelOnboarding();
+  } catch (error) {
+    console.error(error);
+    setDashboardDataState("channels", "error");
+    container.innerHTML = `<p class="empty-state">No se pudieron cargar los canales.</p>`;
   }
-  businessChannelOnboarding = body;
-  businessChannelHealth = healthResponse.ok ? (await healthResponse.json()).channels : [];
-  renderBusinessChannelOnboarding();
 }
 
 let metaSdkPromise = null;
@@ -670,6 +1206,7 @@ const WEEKDAYS = [
 
 async function loadAvailabilitySettings() {
   const slug = getBusinessSlug();
+  if (!availabilitySettings) setDashboardDataState("availability", "loading");
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/admin/${slug}/availability-settings`);
@@ -679,9 +1216,11 @@ async function loadAvailabilitySettings() {
     }
 
     availabilitySettings = await response.json();
+    setDashboardDataState("availability", "ready");
     renderAvailabilitySettings();
   } catch (error) {
     console.error(error);
+    setDashboardDataState("availability", "error");
     document.getElementById("weekly-schedule-editor").innerHTML = `
       <p class="empty-state">No se pudieron cargar los horarios.</p>
     `;
@@ -815,6 +1354,7 @@ async function saveAvailabilitySettings() {
 
     const result = await response.json();
     availabilitySettings = result.settings;
+    setDashboardDataState("availability", "ready");
     renderAvailabilitySettings();
     feedback.className = "inline-feedback success";
     feedback.textContent = "Horarios guardados correctamente.";
@@ -1014,9 +1554,7 @@ function applyBusinessData(business) {
   document.getElementById("business-subtitle").textContent =
     `${business.category || "Negocio local"} · ${business.city || ""}`;
   document.getElementById("public-page-link").href = `../autonogrow-landing/index.html?b=${getBusinessSlug()}`;
-  const status = document.getElementById("stat-business-status");
-  status.textContent = business.active ? "Activo" : "Inactivo";
-  status.classList.toggle("stat-status-inactive", !business.active);
+  renderDashboard();
 }
 
 function renderBusinessSettings() {
@@ -1247,6 +1785,7 @@ function showAdminBrandFeedback(message, error = false) { const el = document.ge
 
 async function loadAdminServices() {
   const container = document.getElementById("admin-services-list");
+  if (!adminServices.length) setDashboardDataState("services", "loading");
   try {
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/services`
@@ -1256,10 +1795,12 @@ async function loadAdminServices() {
     }
     const data = await response.json();
     adminServices = data.services || [];
+    setDashboardDataState("services", "ready");
     renderAdminServices();
     if (staffMembers.length) renderStaffMembers();
   } catch (error) {
     console.error(error);
+    setDashboardDataState("services", "error");
     container.innerHTML = `<p class="empty-state">No se pudieron cargar los servicios.</p>`;
   }
 }
@@ -1393,7 +1934,7 @@ async function loadMyStaffAvailability() {
     panel = document.createElement("article");
     panel.id = "my-staff-availability";
     panel.className = "growth-summary-card my-staff-availability";
-    document.querySelector('[data-admin-section="summary"] .stats-grid').after(panel);
+    document.querySelector('[data-admin-section="summary"] .dashboard-metrics')?.after(panel);
   }
   panel.hidden = false;
   panel.innerHTML = `
@@ -1724,6 +2265,7 @@ async function loadBookings({ background = false } = {}) {
   const slug = getBusinessSlug();
   const list = document.getElementById("bookings-list");
   if (!background && !allBookings.length) {
+    setDashboardDataState("bookings", "loading");
     list.innerHTML = `<p class="empty-state">Cargando reservas...</p>`;
   }
 
@@ -1740,6 +2282,7 @@ async function loadBookings({ background = false } = {}) {
         ? (previousBookings.get(booking.id)?.attachments || [])
         : (booking.attachments || [])
     }));
+    setDashboardDataState("bookings", "ready");
 
     if (!background && isBusinessStaff()) {
       reviewRequestsByBooking = new Map();
@@ -1767,6 +2310,7 @@ async function loadBookings({ background = false } = {}) {
     console.error(error);
     if (background) throw error;
     if (!allBookings.length) {
+      setDashboardDataState("bookings", "error");
       list.innerHTML = `<p class="empty-state">Error conectando con el backend.</p>`;
     }
   }
@@ -1787,6 +2331,7 @@ async function loadReviewRequests() {
     (data.review_requests || []).map((reviewRequest) => [reviewRequest.booking_id, reviewRequest])
   );
   growthDataReady.reviews = true;
+  renderDashboard();
 }
 
 function conversationErrorMessage(body, fallback) {
@@ -1909,6 +2454,7 @@ async function loadConversations({ background = false, refreshDetail = true } = 
   if (channel) params.set("channel", channel);
   if (query) params.set("q", query);
   if (!background && !conversations.length) {
+    if (!dashboardConversations.length) setDashboardDataState("conversations", "loading");
     container.innerHTML = `<p class="empty-state">Cargando conversaciones...</p>`;
   }
   try {
@@ -1923,6 +2469,10 @@ async function loadConversations({ background = false, refreshDetail = true } = 
     const changed = nextFingerprint !== conversationListFingerprint;
     conversations = nextConversations;
     conversationListFingerprint = nextFingerprint;
+    if (!status && !channel && !query) {
+      dashboardConversations = nextConversations;
+      setDashboardDataState("conversations", "ready");
+    }
     if (changed || !background) renderConversationList();
     if (selectedConversationId && conversations.some((item) => item.id === selectedConversationId)) {
       if (refreshDetail) await selectConversation(selectedConversationId, false, { background });
@@ -1939,6 +2489,7 @@ async function loadConversations({ background = false, refreshDetail = true } = 
     console.error(error);
     if (background) throw error;
     if (!conversations.length) {
+      if (!dashboardConversations.length) setDashboardDataState("conversations", "error");
       container.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
     }
   }
@@ -3814,6 +4365,8 @@ function renderError(message) {
 document.addEventListener("DOMContentLoaded", () => {
   setupAdminNavigation();
   setupBookingViews();
+  setupDashboardInteractions();
+  renderDashboard();
   document.getElementById("refresh-button").addEventListener("click", () => {
     refreshOperationalData({ includeAutomation: true });
   });
