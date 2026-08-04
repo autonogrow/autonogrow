@@ -147,4 +147,3 @@ No había sesión autenticada ni escenarios reproducibles proporcionados para ca
 - No existe reintento dedicado de outbox fallido ni descarte persistente de oportunidades.
 - No existe enlace directo fiable desde una solicitud a una ficha de cliente.
 - Los estados `sent` de solicitud y outbox se mantienen según sus contratos heredados independientes.
-
