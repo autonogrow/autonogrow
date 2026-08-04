@@ -6,7 +6,7 @@
 
   <title>AutonoGrow Admin</title>
 
-  <link rel="stylesheet" href="styles.css?v=20260804-4" />
+  <link rel="stylesheet" href="styles.css?v=20260804-5" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -70,11 +70,11 @@
       <button class="admin-tab" type="button" data-section="bookings" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span>Agenda</button>
       <button class="admin-tab" type="button" data-section="conversations" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg></span>Clientes y mensajes</button>
       <button class="admin-tab" type="button" data-section="configuration" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.37a1.7 1.7 0 0 0-1 .63 1.7 1.7 0 0 0-.37 1.06V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.23 15a1.7 1.7 0 0 0-.63-1 1.7 1.7 0 0 0-1.06-.37H2.5v-4h.09A1.7 1.7 0 0 0 4.1 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.5 4.23a1.7 1.7 0 0 0 1-.63 1.7 1.7 0 0 0 .37-1.06V2.5h4v.09A1.7 1.7 0 0 0 14.9 4.1a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.27 8.5c.13.39.35.73.63 1 .3.28.67.4 1.06.4H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg></span>Configuración</button>
-      <button class="admin-tab" type="button" data-section="messages" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8Z"/><path d="m11 13 4-4"/></svg></span>Mensajes automáticos</button>
+      <button class="admin-tab admin-tab--legacy" type="button" data-section="messages" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8Z"/><path d="m11 13 4-4"/></svg></span>Mensajes automáticos</button>
       <button class="admin-tab admin-tab--legacy" type="button" data-section="services" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8h14l1 13H4Z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg></span>Servicios</button>
       <button class="admin-tab admin-tab--legacy" type="button" data-section="staff" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 4a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5"/></svg></span>Equipo</button>
       <button class="admin-tab admin-tab--legacy" type="button" data-section="schedule" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>Horarios</button>
-      <button class="admin-tab" type="button" data-section="channels" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2"/></svg></span>Canales</button>
+      <button class="admin-tab" type="button" data-section="channels" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2"/></svg></span>Canales y automatizaciones</button>
       <button class="admin-tab admin-tab--legacy" type="button" data-section="business" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5l8-3 8 3v16"/><path d="M9 21v-5h6v5M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span>Datos del negocio</button>
       <button class="admin-tab" type="button" data-section="reviews" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg></span>Reseñas</button>
     </nav>
@@ -343,21 +343,45 @@
       </div>
     </section>
 
-    <section class="section admin-section channel-onboarding-section" data-admin-section="channels">
-      <div class="section-header">
-        <div>
-          <h2>Conecta tus canales</h2>
-          <p>Solicita Instagram o WhatsApp en un proceso guiado y revisado por AutonoGrow.</p>
+    <section class="section admin-section channel-hub-overview" data-admin-section="channels" aria-labelledby="channel-hub-title">
+      <div class="channel-hub-layout">
+        <div data-channel-hub-navigation></div>
+        <div class="channel-hub-content">
+          <header class="channel-hub-hero">
+            <div><p class="eyebrow">Configuración de mensajes</p><h2 id="channel-hub-title">Canales y automatizaciones</h2><p>Comprueba qué está conectado, qué puede enviar AutonoGrow y qué necesita atención.</p></div>
+          </header>
+          <div class="channel-onboarding-notice ag-alert ag-alert--info">
+            <div><strong>Conexiones oficiales y revisión separada</strong><p>Conectar una cuenta no la activa automáticamente. AutonoGrow revisará la conexión antes de habilitar el envío o las respuestas automáticas.</p></div>
+          </div>
+          <div id="channel-overview-attention" class="channel-attention-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Comprobando acciones pendientes.</span></div>
+          <div id="channel-onboarding-list" class="channel-overview-grid" aria-busy="true">
+            <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando canales.</span>
+          </div>
+          <p id="channel-onboarding-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
         </div>
       </div>
-      <div class="channel-onboarding-notice ag-alert ag-alert--info">
-        <div><strong>Conexión de prueba controlada</strong>
-        <p>En esta fase no se solicitan contraseñas, tokens ni datos técnicos de Meta. La solicitud quedará pendiente de aprobación.</p></div>
+    </section>
+
+    <section class="section admin-section channel-hub-category" data-admin-section="channel-instagram" aria-labelledby="channel-instagram-title">
+      <div class="channel-hub-layout">
+        <div data-channel-hub-navigation></div>
+        <div class="channel-hub-content">
+          <header class="channel-category-header"><div><p class="eyebrow">Canal</p><h2 id="channel-instagram-title">Instagram</h2><p>Conexión, revisión, capacidades y diagnóstico de tu cuenta profesional.</p></div><span id="channel-instagram-status" class="channel-human-status">Comprobando…</span></header>
+          <div id="channel-instagram-content" class="channel-detail-content" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando Instagram.</span></div>
+          <p id="channel-instagram-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
+        </div>
       </div>
-      <div id="channel-onboarding-list" class="channel-onboarding-grid">
-        <p class="empty-state">Cargando canales...</p>
+    </section>
+
+    <section class="section admin-section channel-hub-category" data-admin-section="channel-whatsapp" aria-labelledby="channel-whatsapp-title">
+      <div class="channel-hub-layout">
+        <div data-channel-hub-navigation></div>
+        <div class="channel-hub-content">
+          <header class="channel-category-header"><div><p class="eyebrow">Canal</p><h2 id="channel-whatsapp-title">WhatsApp</h2><p>Conexión, revisión, entrega directa y apertura asistida en WhatsApp.</p></div><span id="channel-whatsapp-status" class="channel-human-status">Comprobando…</span></header>
+          <div id="channel-whatsapp-content" class="channel-detail-content" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando WhatsApp.</span></div>
+          <p id="channel-whatsapp-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
+        </div>
       </div>
-      <p id="channel-onboarding-feedback" class="inline-feedback"></p>
     </section>
 
     <section class="section admin-section services-settings-section configuration-category" data-admin-section="services" aria-labelledby="services-settings-title">
@@ -470,66 +494,44 @@
       </div>
       <button id="conversation-customer-backdrop" class="conversation-customer-backdrop" type="button" aria-label="Cerrar información del cliente" hidden></button>
 
-      <details id="conversation-templates-panel" class="conversation-templates-panel" data-conversation-admin-only>
-        <summary>Gestionar plantillas</summary>
-        <div class="conversation-template-create">
-          <input id="conversation-template-name" type="text" placeholder="Nombre de plantilla" />
-          <textarea id="conversation-template-body" rows="3" placeholder="Texto con variables como {business_name} o {public_booking_url}"></textarea>
-          <button id="create-conversation-template" class="btn btn-secondary" type="button">Crear plantilla</button>
-        </div>
-        <div id="conversation-template-list" class="conversation-template-list"></div>
-      </details>
-
-      <details id="conversation-automation-panel" class="conversation-automation-panel" data-conversation-admin-only>
-        <summary>Automatización</summary>
-        <div id="conversation-automation-content">
-          <p class="empty-state">Cargando configuración...</p>
-        </div>
-      </details>
+      <aside class="conversation-automation-shortcut" data-conversation-admin-only>
+        <div><strong>Respuestas automáticas</strong><p>Las reglas y plantillas se configuran ahora junto a los canales.</p></div>
+        <button class="ag-button ag-button--secondary ag-button--small" type="button" data-channel-hub-target="messages">Configurar</button>
+      </aside>
     </section>
 
-    <section class="section admin-section message-outbox-section" data-admin-section="messages">
-      <div class="section-header">
-        <div>
-          <h2>Mensajes automáticos de WhatsApp</h2>
-          <p>Prepara conversaciones de WhatsApp y confirma manualmente su envío.</p>
-        </div>
+    <section class="section admin-section message-outbox-section channel-hub-category" data-admin-section="messages" aria-labelledby="channel-automations-title">
+      <div class="channel-hub-layout">
+        <div data-channel-hub-navigation></div>
+        <div class="channel-hub-content">
+          <header class="channel-category-header"><div><p class="eyebrow">Canales y automatizaciones</p><h2 id="channel-automations-title">Respuestas automáticas</h2><p>Configura las reglas permitidas, sus mensajes y el comportamiento cuando se agotan los créditos.</p></div><span id="channel-automations-status" class="channel-human-status">Comprobando…</span></header>
+          <div id="channel-automations-errors" class="configuration-error-summary" role="alert" tabindex="-1" hidden></div>
 
-        <select id="message-status-filter">
-          <option value="active">Pendientes y preparados</option>
-          <option value="all">Todos</option>
-          <option value="pending">Pendientes</option>
-          <option value="opened">Preparados</option>
-          <option value="sent">Enviados</option>
-          <option value="skipped">Omitidos</option>
-          <option value="failed">Con error</option>
-        </select>
-      </div>
+          <section id="conversation-automation-panel" class="conversation-automation-panel channel-automation-card" data-conversation-admin-only aria-labelledby="automation-settings-title">
+            <div class="section-header"><div><h3 id="automation-settings-title">Reglas de respuesta</h3><p>La autorización de AutonoGrow y el estado de cada canal siempre tienen prioridad.</p></div></div>
+            <div id="conversation-automation-content" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando configuración.</span></div>
+          </section>
 
-      <div class="message-metrics" aria-label="Resumen de mensajes">
-        <span>Pendientes <strong id="message-count-pending">0</strong></span>
-        <span>Preparados <strong id="message-count-opened">0</strong></span>
-        <span>Enviados <strong id="message-count-sent">0</strong></span>
-        <span>Omitidos <strong id="message-count-skipped">0</strong></span>
-      </div>
+          <section id="conversation-templates-panel" class="conversation-templates-panel channel-automation-card" data-conversation-admin-only aria-labelledby="conversation-templates-title">
+            <div class="section-header"><div><h3 id="conversation-templates-title">Plantillas</h3><p>Textos reutilizables para sugerencias y respuestas permitidas.</p></div></div>
+            <div class="template-variable-help" aria-label="Variables disponibles"><strong>Variables reales disponibles</strong><code>{business_name}</code><span>nombre del negocio</span><code>{business_slug}</code><span>identificador público del negocio</span><code>{public_booking_url}</code><span>enlace público de reserva</span><code>{business_phone}</code><span>teléfono del negocio</span><code>{business_address}</code><span>dirección del negocio</span></div>
+            <div class="conversation-template-create" data-config-dirty-key="template-new">
+              <label class="ag-field" for="conversation-template-name">Nombre<input id="conversation-template-name" type="text" maxlength="160" autocomplete="off" aria-describedby="conversation-template-name-error" /><small id="conversation-template-name-error" class="field-error"></small></label>
+              <label class="ag-field" for="conversation-template-body">Contenido<textarea id="conversation-template-body" rows="4" maxlength="10000" aria-describedby="conversation-template-body-help conversation-template-body-error"></textarea><small id="conversation-template-body-help">Usa únicamente las variables indicadas arriba.</small><small id="conversation-template-body-error" class="field-error"></small></label>
+              <div class="template-preview"><strong>Vista previa</strong><p id="conversation-template-preview">Escribe un mensaje para ver una muestra.</p></div>
+              <div class="settings-actions"><button id="create-conversation-template" class="btn btn-secondary" type="button">Crear plantilla</button><span class="configuration-item-save-state">Sin cambios</span></div>
+            </div>
+            <div id="conversation-template-list" class="conversation-template-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando plantillas.</span></div>
+          </section>
 
-      <div class="history-group">
-        <div class="history-group-header">
-          <h3>Pendientes y preparados</h3>
-          <p>Mensajes que todavía requieren una acción.</p>
-        </div>
-        <div id="message-outbox-list" class="message-outbox-list">
-          <p class="empty-state">Cargando mensajes...</p>
-        </div>
-      </div>
-
-      <div class="history-group">
-        <div class="history-group-header">
-          <h3>Historial enviados y omitidos</h3>
-          <p>Mensajes ya cerrados para que sigan siendo consultables.</p>
-        </div>
-        <div id="message-outbox-history-list" class="message-outbox-list">
-          <p class="empty-state">Cargando historial...</p>
+          <details class="channel-assisted-outbox">
+            <summary>Seguimientos asistidos de WhatsApp</summary>
+            <p>AutonoGrow prepara el texto; una persona confirma y completa el envío desde WhatsApp.</p>
+            <label class="ag-field" for="message-status-filter">Estado<select id="message-status-filter"><option value="active">Pendientes y preparados</option><option value="all">Todos</option><option value="pending">Pendientes</option><option value="opened">Preparados</option><option value="sent">Enviados</option><option value="skipped">Omitidos</option><option value="failed">Con error</option></select></label>
+            <div class="message-metrics" aria-label="Resumen de seguimientos"><span>Pendientes <strong id="message-count-pending">0</strong></span><span>Preparados <strong id="message-count-opened">0</strong></span><span>Enviados <strong id="message-count-sent">0</strong></span><span>Omitidos <strong id="message-count-skipped">0</strong></span></div>
+            <div class="history-group"><div class="history-group-header"><h3>Pendientes y preparados</h3><p>Seguimientos que todavía requieren una acción.</p></div><div id="message-outbox-list" class="message-outbox-list"><p class="empty-state">Cargando mensajes...</p></div></div>
+            <div class="history-group"><div class="history-group-header"><h3>Historial enviados y omitidos</h3><p>Seguimientos ya cerrados para que sigan siendo consultables.</p></div><div id="message-outbox-history-list" class="message-outbox-list"><p class="empty-state">Cargando historial...</p></div></div>
+          </details>
         </div>
       </div>
     </section>
@@ -748,7 +750,7 @@
       <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="summary" aria-current="page"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11 12 3l9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg></span><span>Inicio</span></button>
       <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="bookings"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></span><span>Agenda</span></button>
       <button class="ag-mobile-nav__item" type="button" data-ag-shell-section="conversations"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/></svg></span><span>Mensajes</span></button>
-      <button class="ag-mobile-nav__item" type="button" data-ag-shell-open data-ag-shell-more data-ag-shell-sections="growth,messages,configuration,services,staff,schedule,channels,business,public-page,reviews" aria-controls="admin-sidebar" aria-expanded="false"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></span><span>Más</span></button>
+      <button class="ag-mobile-nav__item" type="button" data-ag-shell-open data-ag-shell-more data-ag-shell-sections="growth,messages,configuration,services,staff,schedule,channels,channel-instagram,channel-whatsapp,business,public-page,reviews" aria-controls="admin-sidebar" aria-expanded="false"><span class="ag-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></span><span>Más</span></button>
     </nav>
     </div>
   </main>

@@ -55,6 +55,8 @@ let conversationCustomerReturnFocus = null;
 let conversationLoadVersion = 0;
 let conversationDetailVersion = 0;
 let conversationAutomationLoadVersion = 0;
+let conversationTemplatesLoadVersion = 0;
+let channelOnboardingLoadVersion = 0;
 let conversationListFingerprint = "";
 let conversationDetailFingerprint = "";
 let bookingsFingerprint = "";
@@ -106,6 +108,13 @@ let rescheduleState = {
   slot: null
 };
 const CONFIGURATION_SECTIONS = new Set(["configuration", "business", "services", "staff", "schedule", "public-page"]);
+const CHANNEL_HUB_SECTIONS = new Set(["channels", "channel-instagram", "channel-whatsapp", "messages"]);
+const CHANNEL_HUB_CATEGORIES = [
+  { id: "channels", label: "Resumen", description: "Estado de los canales" },
+  { id: "channel-instagram", label: "Instagram", description: "Conexión y diagnóstico" },
+  { id: "channel-whatsapp", label: "WhatsApp", description: "Entrega y diagnóstico" },
+  { id: "messages", label: "Respuestas automáticas", description: "Reglas, plantillas y créditos" }
+];
 const CONFIGURATION_CATEGORIES = [
   { id: "configuration", label: "Resumen", description: "Qué está listo y qué falta" },
   { id: "business", label: "Información", description: "Datos públicos y contacto" },
@@ -117,6 +126,8 @@ const CONFIGURATION_CATEGORIES = [
 const configurationSnapshots = new Map();
 const configurationDirtyKeys = new Set();
 const configurationMutationKeys = new Set();
+const channelActionKeys = new Set();
+const channelHubLoadState = { onboarding: "loading", health: "loading", automation: "loading", templates: "loading" };
 const configurationLoadState = { staff: "loading", gallery: "loading", exceptions: "loading" };
 let staffRemovalReturnFocus = null;
 
@@ -139,6 +150,7 @@ function configurationCategoryForKey(key) {
   if (key.startsWith("service-")) return "services";
   if (key.startsWith("staff-")) return "staff";
   if (key === "availability" || key === "exception") return "schedule";
+  if (key === "template-new" || key.startsWith("template-") || key === "automation-settings" || key.startsWith("automation-rule-")) return "messages";
   return null;
 }
 
@@ -201,7 +213,8 @@ function configurationSectionHasDirty(section) {
 
 function confirmConfigurationNavigation(nextSection) {
   const current = document.querySelector("[data-admin-section].admin-section-active")?.dataset.adminSection;
-  if (!current || current === nextSection || !CONFIGURATION_SECTIONS.has(current) || !configurationSectionHasDirty(current)) return true;
+  const guardedSections = new Set([...CONFIGURATION_SECTIONS, ...CHANNEL_HUB_SECTIONS]);
+  if (!current || current === nextSection || !guardedSections.has(current) || !configurationSectionHasDirty(current)) return true;
   return window.confirm("Hay cambios sin guardar en este apartado. Puedes cambiar de sección y volver a guardarlos antes de salir de la página. ¿Continuar?");
 }
 
@@ -281,6 +294,42 @@ function renderConfigurationOverview() {
       badge.textContent = status.label;
     }
   }
+}
+
+function setupChannelHub() {
+  const main = document.getElementById("admin-main-content");
+  main.addEventListener("click", (event) => {
+    const navigation = event.target.closest("[data-channel-hub-target]");
+    if (navigation) {
+      const section = navigation.dataset.channelHubTarget;
+      if (showAdminSection(section)) {
+        window.requestAnimationFrame(() => {
+          const heading = document.querySelector(`[data-admin-section="${section}"] h2`);
+          heading?.setAttribute("tabindex", "-1");
+          heading?.focus({ preventScroll: true });
+        });
+      }
+      return;
+    }
+    const requestButton = event.target.closest("[data-channel-request]");
+    if (requestButton) { requestBusinessChannelConnection(requestButton.dataset.channelRequest, requestButton); return; }
+    const healthButton = event.target.closest("[data-channel-health-action]");
+    if (healthButton) { handleChannelHealthAction(healthButton); return; }
+    const retryButton = event.target.closest("[data-channel-retry]");
+    if (!retryButton) return;
+    if (retryButton.dataset.channelRetry === "onboarding") loadBusinessChannelOnboarding();
+    if (retryButton.dataset.channelRetry === "automation") loadConversationAutomation();
+    if (retryButton.dataset.channelRetry === "templates") loadConversationTemplates();
+  });
+  main.addEventListener("input", (event) => {
+    if (event.target.id === "conversation-template-body") renderNewTemplatePreview();
+    const item = event.target.closest("[data-conversation-template-id]");
+    if (item && event.target.classList.contains("conversation-template-item-body")) {
+      const preview = item.querySelector(".conversation-template-item-preview");
+      if (preview) preview.textContent = templatePreviewText(event.target.value);
+    }
+  });
+  renderChannelHubNavigation();
 }
 
 function setupBusinessConfiguration() {
@@ -373,7 +422,8 @@ function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = fal
   });
 
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
-    const isActive = tab.dataset.section === (CONFIGURATION_SECTIONS.has(targetSection) ? "configuration" : targetSection);
+    const primarySection = CONFIGURATION_SECTIONS.has(targetSection) ? "configuration" : CHANNEL_HUB_SECTIONS.has(targetSection) ? "channels" : targetSection;
+    const isActive = tab.dataset.section === primarySection;
     tab.classList.toggle("admin-tab-active", isActive);
     tab.setAttribute("aria-selected", String(isActive));
   });
@@ -382,6 +432,7 @@ function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = fal
     window.history.replaceState(null, "", `#${targetSection}`);
   }
   if (CONFIGURATION_SECTIONS.has(targetSection)) renderConfigurationOverview();
+  if (CHANNEL_HUB_SECTIONS.has(targetSection)) renderChannelHubNavigation();
   return true;
 }
 
@@ -1276,77 +1327,170 @@ async function loadAdminPanel() {
 }
 
 function channelOnboardingStatusLabel(status) {
+  return ({ not_allowed: "No disponible", available: "Disponible", pending_approval: "Pendiente de revisión", approved: "Aprobado", suspended: "Suspendido", revoked: "Revocado" })[status] || "Estado no disponible";
+}
+
+function channelHealthStatus(status) {
   return ({
-    not_allowed: "Aún no disponible",
-    available: "Listo para solicitar",
-    pending_approval: "Pendiente de revisión",
-    approved: "Aprobado",
-    suspended: "Suspendido",
-    revoked: "Revocado"
-  })[status] || status;
+    unknown: { label: "Aún no comprobado", tone: "neutral", message: "Todavía no hay una comprobación fiable de esta conexión." },
+    healthy: { label: "Funciona correctamente", tone: "success", message: "La última comprobación no detectó problemas." },
+    warning: { label: "Puede necesitar atención", tone: "warning", message: "La conexión funciona, pero conviene revisarla." },
+    degraded: { label: "Funciona con problemas", tone: "warning", message: "Algunas funciones pueden no estar disponibles temporalmente." },
+    action_required: { label: "Necesita tu atención", tone: "danger", message: "Comprueba la conexión o vuelve a conectarla para recuperar el servicio." },
+    revoked: { label: "Debes volver a conectar", tone: "danger", message: "La autorización ya no es válida." },
+    suspended: { label: "Canal suspendido", tone: "warning", message: "AutonoGrow ha suspendido temporalmente este canal." },
+    error: { label: "No se ha podido comprobar", tone: "danger", message: "Reintenta la comprobación más tarde." }
+  })[status] || { label: "Aún no comprobado", tone: "neutral", message: "Todavía no hay una comprobación fiable de esta conexión." };
+}
+
+function channelHubNavigationMarkup(activeSection) {
+  return `<nav class="channel-hub-navigation" aria-label="Canales y automatizaciones"><p>Canales</p>${CHANNEL_HUB_CATEGORIES.map((category) => `<button type="button" data-channel-hub-target="${category.id}" ${category.id === activeSection ? 'aria-current="page"' : ""}><span><strong>${category.label}</strong><small>${category.description}</small></span></button>`).join("")}</nav>`;
+}
+
+function renderChannelHubNavigation() {
+  const active = document.querySelector("[data-admin-section].admin-section-active")?.dataset.adminSection || "channels";
+  document.querySelectorAll("[data-channel-hub-navigation]").forEach((container) => { container.innerHTML = channelHubNavigationMarkup(active); });
+}
+
+function channelRecord(name) {
+  return businessChannelOnboarding?.channels?.find((channel) => channel.channel === name) || null;
+}
+
+function channelHealthRecord(name) {
+  return businessChannelHealth.find((health) => health.channel === name) || null;
+}
+
+function channelConnectionLabel(channel, health) {
+  if (!channel) return "No se ha podido comprobar";
+  if (health?.reconnection_required || channel.status === "revoked") return "Necesita reconexión";
+  if (["pending_approval", "approved"].includes(channel.status)) return "Conectado";
+  return "Pendiente de conexión";
+}
+
+function channelApprovalLabel(channel) {
+  if (!channel) return "No se ha podido comprobar";
+  if (channel.status === "pending_approval") return "Pendiente de revisión";
+  if (channel.status === "approved") return "Aprobado";
+  if (channel.status === "revoked") return "Revocado";
+  if (channel.status === "suspended") return "Suspendido";
+  return "No solicitada";
+}
+
+function channelCapabilityLabel(channel, capability) {
+  if (!channel || channel.status === "not_allowed") return "No disponible";
+  if (channel.status === "pending_approval") return "Pendiente de revisión";
+  if (["suspended", "revoked"].includes(channel.status)) return "Bloqueado temporalmente";
+  return channel.status === "approved" && channel[capability] ? "Activado" : "Desactivado";
+}
+
+function channelStateRows(channel, health, { compact = false } = {}) {
+  const state = channelHealthStatus(health?.health_status || "unknown");
+  const rows = [
+    ["Disponibilidad", channelOnboardingStatusLabel(channel?.status)],
+    ["Conexión", channelConnectionLabel(channel, health)],
+    ["Aprobación", channelApprovalLabel(channel)],
+    ["Envío desde AutonoGrow", channelCapabilityLabel(channel, "integrated_delivery_enabled")],
+    ["Respuestas automáticas", channelCapabilityLabel(channel, "automation_enabled")],
+    ["Salud", channelHubLoadState.health === "error" ? "No se ha podido comprobar" : state.label]
+  ];
+  return `<dl class="channel-state-list${compact ? " channel-state-list--compact" : ""}">${rows.map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
+}
+
+function channelActionMarkup(channel, health, name) {
+  if (!channel) return `<button class="ag-button ag-button--secondary" type="button" data-channel-retry="onboarding">Reintentar</button>`;
+  const label = name === "instagram" ? "Instagram" : "WhatsApp";
+  const actions = [];
+  const needsReconnect = health?.reconnection_required || channel.status === "revoked";
+  if (channel.can_request && !needsReconnect) actions.push(`<button class="ag-button ag-button--primary" type="button" data-channel-request="${name}">Conectar ${label}</button>`);
+  if (channel.status === "approved") actions.push(`<button class="ag-button ag-button--secondary" type="button" data-channel-health-action="check" data-channel="${name}">Comprobar ahora</button>`);
+  if (needsReconnect) actions.push(`<button class="ag-button ag-button--primary" type="button" data-channel-health-action="reconnect" data-channel="${name}">Volver a conectar</button>`);
+  return actions.length ? `<div class="channel-actions">${actions.join("")}</div>` : "";
+}
+
+function renderChannelOverviewCard(name) {
+  const channel = channelRecord(name);
+  const health = channelHealthRecord(name);
+  const title = name === "instagram" ? "Instagram" : "WhatsApp";
+  const attention = health?.reconnection_required || ["revoked", "suspended"].includes(channel?.status);
+  return `<article class="channel-overview-card${attention ? " channel-overview-card--attention" : ""}"><div class="channel-overview-card__heading"><div><p>Canal</p><h3>${title}</h3></div><span class="channel-status-text">${escapeHtml(channelConnectionLabel(channel, health))}</span></div>${channelStateRows(channel, health, { compact: true })}<button class="ag-button ag-button--secondary ag-button--small" type="button" data-channel-hub-target="channel-${name}">Ver ${title}</button></article>`;
+}
+
+function renderChannelDetail(name) {
+  const container = document.getElementById(`channel-${name}-content`);
+  const status = document.getElementById(`channel-${name}-status`);
+  if (!container || !status) return;
+  const title = name === "instagram" ? "Instagram" : "WhatsApp";
+  const channel = channelRecord(name);
+  const health = channelHealthRecord(name);
+  if (!channel && channelHubLoadState.onboarding === "error") {
+    status.textContent = "Error al cargar";
+    container.innerHTML = `<div class="channel-partial-error"><strong>No se pudo cargar ${title}.</strong><p>El resto de apartados sigue disponible.</p><button class="ag-button ag-button--secondary" type="button" data-channel-retry="onboarding">Reintentar</button></div>`;
+    return;
+  }
+  const healthState = channelHealthStatus(health?.health_status || "unknown");
+  status.textContent = channelConnectionLabel(channel, health);
+  const account = name === "instagram" && channel?.connected_account_name
+    ? `<p class="channel-safe-identity">Cuenta conectada: <strong>@${escapeHtml(String(channel.connected_account_name).replace(/^@/, ""))}</strong></p>`
+    : name === "whatsapp" && health?.display_phone_number_redacted ? `<p class="channel-safe-identity">Número terminado en <strong>${escapeHtml(health.display_phone_number_redacted)}</strong></p>` : "";
+  const onboardingHelp = channel?.can_request ? (name === "instagram"
+    ? `<div class="ag-alert ag-alert--info"><div><strong>Antes de empezar</strong><p>Usa una cuenta profesional Business o Creator que puedas administrar. Meta realizará el inicio de sesión oficial; AutonoGrow nunca te pedirá la contraseña.</p></div></div>`
+    : `<div class="ag-alert ag-alert--info"><div><strong>Antes de empezar</strong><p>Debes administrar el portfolio empresarial y la cuenta de WhatsApp Business. Meta abrirá su flujo oficial. AutonoGrow no te pedirá ni guardará ningún PIN.</p></div></div>`) : "";
+  const availabilityHelp = channel?.status === "not_allowed"
+    ? `<div class="ag-alert ag-alert--warning"><div><strong>Canal no disponible</strong><p>Contacta con AutonoGrow si necesitas habilitarlo para este negocio.</p></div></div>`
+    : channel?.status === "available" && channel.connector_policy === "owner_only"
+      ? `<div class="ag-alert ag-alert--info"><div><strong>Conexión gestionada por AutonoGrow</strong><p>Tu configuración comercial actual no permite iniciar este flujo desde el Business Admin.</p></div></div>` : "";
+  const approval = channel?.status === "pending_approval" ? `<div class="ag-alert ag-alert--info"><div><strong>Conectado, pendiente de revisión</strong><p>No necesitas hacer nada más. Conectar una cuenta no activa el envío ni las respuestas automáticas; AutonoGrow revisará la conexión.</p></div></div>` : "";
+  const healthMarkup = `<article class="channel-health-card channel-health-card--${healthState.tone}"><div><p>Salud de la conexión</p><h3>${channelHubLoadState.health === "error" ? "No se ha podido comprobar" : healthState.label}</h3><p>${channelHubLoadState.health === "error" ? "Instagram y WhatsApp se cargan de forma independiente. Reintenta solo este diagnóstico." : healthState.message}</p>${health?.last_health_check_at ? `<small>Última comprobación: ${escapeHtml(new Date(health.last_health_check_at).toLocaleString("es-ES"))}</small>` : ""}</div></article>`;
+  const delivery = name === "whatsapp" ? `<article class="channel-delivery-help"><h3>Cómo puedes responder</h3><p><strong>Envío desde AutonoGrow:</strong> ${escapeHtml(channelCapabilityLabel(channel, "integrated_delivery_enabled"))}.</p><p><strong>Modo asistido:</strong> disponible cuando la conversación tiene teléfono. “Abrir en WhatsApp” prepara el texto, pero la persona completa el envío fuera de AutonoGrow.</p><p>WhatsApp permite respuestas libres durante 24 horas desde el último mensaje del cliente.</p></article>` : "";
+  const reconnect = health?.reconnection_required || channel?.status === "revoked" ? `<div class="ag-alert ag-alert--warning"><div><strong>Vuelve a conectar ${title}</strong><p>Volverás a iniciar sesión con Meta. La conexión actual seguirá funcionando hasta que la nueva conexión sea revisada y aprobada.</p></div></div>` : "";
+  container.innerHTML = `${availabilityHelp}${onboardingHelp}${approval}${reconnect}<article class="channel-detail-card"><div class="section-header"><div><h3>Estado y capacidades</h3><p>La conexión, la aprobación y cada capacidad se gestionan por separado.</p></div></div>${account}${channelStateRows(channel, health)}</article>${healthMarkup}${delivery}${channelActionMarkup(channel, health, name)}`;
+  container.setAttribute("aria-busy", "false");
 }
 
 function renderBusinessChannelOnboarding() {
+  renderChannelHubNavigation();
   const container = document.getElementById("channel-onboarding-list");
-  if (!container || !businessChannelOnboarding) return;
-  const names = { instagram: "Instagram", whatsapp: "WhatsApp" };
-  const healthByChannel = Object.fromEntries(businessChannelHealth.map((item) => [item.channel, item]));
-  container.innerHTML = businessChannelOnboarding.channels.map((channel) => {
-    const health = healthByChannel[channel.channel];
-    const capabilities = channel.status === "approved"
-      ? `<ul class="channel-capability-list"><li>Envío integrado: <strong>${channel.integrated_delivery_enabled ? "activo" : "pendiente de activación"}</strong></li><li>Automatización: <strong>${channel.automation_enabled ? "activa" : "pendiente de activación"}</strong></li></ul>`
-      : "";
-    let action = "";
-    if (channel.can_request) {
-      action = `<button class="btn btn-primary" type="button" data-channel-request="${escapeHtml(channel.channel)}">Conectar ${escapeHtml(names[channel.channel])}</button>`;
-    } else if (channel.status === "available" && channel.connector_policy === "owner_only") {
-      action = '<p class="channel-guidance">La conexión debe realizarla el Owner de AutonoGrow.</p>';
-    } else if (channel.status === "not_allowed") {
-      action = '<p class="channel-guidance">Contacta con AutonoGrow para habilitar este canal.</p>';
-    } else if (channel.status === "pending_approval") {
-      action = '<p class="channel-guidance">No necesitas hacer nada más. El Owner revisará la solicitud.</p>';
-    }
-    if (health) {
-      const message = health.health_status === "healthy"
-        ? `${names[channel.channel]} conectado. Última comprobación: ${health.last_health_check_at ? new Date(health.last_health_check_at).toLocaleString("es-ES") : "pendiente"}.`
-        : (health.reconnection_required ? `Necesitas volver a conectar ${names[channel.channel]}.` : `No pudimos verificar completamente la conexión con ${names[channel.channel]}.`);
-      action += `<div class="channel-health state-${escapeHtml(health.health_status)}"><p><strong>${escapeHtml(message)}</strong></p>${health.display_phone_number_redacted ? `<p>Número terminado en ${escapeHtml(health.display_phone_number_redacted)}</p>` : ""}${health.safe_error_message ? `<p>${escapeHtml(health.safe_error_message)}</p>` : ""}<button class="btn btn-secondary" type="button" data-channel-health-action="check" data-channel="${escapeHtml(channel.channel)}">Comprobar estado</button>${health.reconnection_required ? `<button class="btn btn-primary" type="button" data-channel-health-action="reconnect" data-channel="${escapeHtml(channel.channel)}">Volver a conectar</button>` : ""}</div>`;
-    }
-    const account = channel.channel === "instagram" && channel.connected_account_name ? `<p class="channel-guidance">Cuenta: <strong>@${escapeHtml(String(channel.connected_account_name).replace(/^@/, ""))}</strong></p>` : "";
-    const precheck = channel.can_request
-      ? (channel.channel === "instagram"
-        ? `<ul class="channel-capability-list"><li>Usa una cuenta profesional Business o Creator.</li><li>Debes tener acceso a esa cuenta.</li><li>Mantén esta ventana abierta durante la autorización.</li><li>AutonoGrow nunca te pedirá tu contraseña de Instagram.</li></ul><p class="channel-guidance">AutonoGrow necesita estos permisos para recibir y responder mensajes de tu cuenta profesional.</p>`
-        : `<ul class="channel-capability-list"><li>Debes administrar el portfolio empresarial y la cuenta de WhatsApp Business.</li><li>Meta abrirá su flujo oficial en una ventana emergente.</li><li>La cuenta quedará pendiente de revisión Owner.</li><li>AutonoGrow no pedirá ni guardará tu PIN.</li></ul><p class="channel-guidance">El envío integrado y la automatización seguirán desactivados tras la aprobación.</p>`)
-      : "";
-    return `<article class="channel-onboarding-card">
-      <div class="channel-onboarding-heading"><h3>${escapeHtml(names[channel.channel])}</h3><span class="channel-status channel-status-${escapeHtml(channel.status)}">${escapeHtml(channelOnboardingStatusLabel(channel.status))}</span></div>
-      <p>${channel.channel === "instagram" ? "Prepara tu cuenta profesional de Instagram." : "Prepara el acceso administrador de tu cuenta de WhatsApp Business."}</p>
-      ${account}${capabilities}${precheck}${action}
-    </article>`;
-  }).join("");
+  if (container) {
+    container.setAttribute("aria-busy", "false");
+    container.innerHTML = channelHubLoadState.onboarding === "error" && !businessChannelOnboarding
+      ? `<div class="channel-partial-error"><strong>No se pudieron cargar los canales.</strong><button class="ag-button ag-button--secondary" type="button" data-channel-retry="onboarding">Reintentar</button></div>`
+      : ["instagram", "whatsapp"].map(renderChannelOverviewCard).join("");
+  }
+  const attention = document.getElementById("channel-overview-attention");
+  if (attention) {
+    const pending = ["instagram", "whatsapp"].flatMap((name) => {
+      const channel = channelRecord(name); const health = channelHealthRecord(name); const title = name === "instagram" ? "Instagram" : "WhatsApp";
+      if (health?.reconnection_required || channel?.status === "revoked") return [`${title} necesita reconexión.`];
+      if (channel?.status === "pending_approval") return [`${title} está pendiente de revisión por AutonoGrow.`];
+      return [];
+    });
+    attention.setAttribute("aria-busy", "false");
+    attention.innerHTML = pending.length ? `<div class="ag-alert ag-alert--warning"><div><strong>Requiere atención</strong><ul>${pending.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div></div>` : `<div class="ag-alert ag-alert--success"><div><strong>Sin acciones pendientes</strong><p>Esto no implica que el envío o las respuestas automáticas estén activados; consulta cada capacidad por separado.</p></div></div>`;
+  }
+  renderChannelDetail("instagram");
+  renderChannelDetail("whatsapp");
 }
 
-async function loadBusinessChannelOnboarding() {
-  const container = document.getElementById("channel-onboarding-list");
-  if (!container) return;
+async function loadBusinessChannelOnboarding({ background = false } = {}) {
+  if (!document.getElementById("channel-onboarding-list")) return;
+  const requestVersion = ++channelOnboardingLoadVersion;
   if (!businessChannelOnboarding) setDashboardDataState("channels", "loading");
-  try {
-    const [response, healthResponse] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channel-onboarding`),
-      fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channels/health`)
-    ]);
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error("No se pudieron cargar los canales.");
-    businessChannelOnboarding = body;
-    const healthBody = healthResponse.ok ? await healthResponse.json() : {};
-    businessChannelHealth = Array.isArray(healthBody.channels) ? healthBody.channels : [];
-    setDashboardDataState("channels", healthResponse.ok ? "ready" : "error");
-    renderBusinessChannelOnboarding();
-  } catch (error) {
-    console.error(error);
-    setDashboardDataState("channels", "error");
-    container.innerHTML = `<p class="empty-state">No se pudieron cargar los canales.</p>`;
-  }
+  const onboardingRequest = fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channel-onboarding`);
+  const healthRequest = fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channels/health`);
+  const [onboardingResult, healthResult] = await Promise.allSettled([onboardingRequest, healthRequest]);
+  if (requestVersion !== channelOnboardingLoadVersion) return;
+  const nextOnboarding = onboardingResult.status === "fulfilled" && onboardingResult.value.ok
+    ? await onboardingResult.value.json().catch(() => null) : null;
+  const nextHealth = healthResult.status === "fulfilled" && healthResult.value.ok
+    ? await healthResult.value.json().catch(() => null) : null;
+  if (requestVersion !== channelOnboardingLoadVersion) return;
+  if (nextOnboarding) businessChannelOnboarding = nextOnboarding;
+  if (Array.isArray(nextHealth?.channels)) businessChannelHealth = nextHealth.channels;
+  channelHubLoadState.onboarding = nextOnboarding ? "ready" : "error";
+  channelHubLoadState.health = Array.isArray(nextHealth?.channels) ? "ready" : "error";
+  setDashboardDataState("channels", channelHubLoadState.onboarding === "ready" ? "ready" : "error");
+  renderBusinessChannelOnboarding();
+  if (conversationAutomation && (!background || !configurationSectionHasDirty("messages"))) renderConversationAutomation();
 }
 
 let metaSdkPromise = null;
@@ -1358,6 +1502,26 @@ function isTrustedMetaEventOrigin(origin) {
   } catch (_error) {
     return false;
   }
+}
+
+function isSafeInstagramAuthorizationUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "www.instagram.com" && url.pathname === "/oauth/authorize" && !url.username && !url.password;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function channelFeedbackElement(channel) {
+  return document.getElementById(`channel-${channel}-feedback`) || document.getElementById("channel-onboarding-feedback");
+}
+
+function safeChannelActionError(channel, action) {
+  const title = channel === "instagram" ? "Instagram" : "WhatsApp";
+  if (action === "check") return `No se pudo comprobar ${title}. Reinténtalo más tarde.`;
+  if (action === "reconnect") return `No se pudo iniciar la reconexión de ${title}. Reinténtalo más tarde.`;
+  return `No se pudo iniciar la conexión de ${title}. Reinténtalo más tarde.`;
 }
 
 function loadMetaEmbeddedSignupSdk(configuration) {
@@ -1453,11 +1617,14 @@ async function launchWhatsAppEmbeddedSignup(purpose = null) {
 }
 
 async function requestBusinessChannelConnection(channel, button) {
-  const feedback = document.getElementById("channel-onboarding-feedback");
+  const feedback = channelFeedbackElement(channel);
   const confirmed = window.confirm("Confirmo que soy administrador autorizado de los activos de Meta del negocio.");
   if (!confirmed) return;
-  button.disabled = true;
-  feedback.textContent = "Enviando solicitud...";
+  const actionKey = `${channel}:connect`;
+  if (channelActionKeys.has(actionKey)) return;
+  channelActionKeys.add(actionKey);
+  document.querySelectorAll(`[data-channel-request="${channel}"]`).forEach((action) => { action.disabled = true; });
+  feedback.textContent = "Estamos preparando la conexión oficial…";
   try {
     if (channel === "instagram") {
       const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/integrations/instagram/oauth/start`, {
@@ -1466,17 +1633,15 @@ async function requestBusinessChannelConnection(channel, button) {
         body: JSON.stringify({ purpose: null })
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.detail || "No se pudo iniciar Instagram Login.");
-      if (!String(body.authorization_url || "").startsWith("https://www.instagram.com/oauth/authorize?")) throw new Error("Meta devolvió una URL de autorización no válida.");
+      if (!response.ok) throw new Error("instagram_start_failed");
+      if (!isSafeInstagramAuthorizationUrl(body.authorization_url)) throw new Error("instagram_url_invalid");
       window.location.assign(body.authorization_url);
       return;
     }
     if (channel === "whatsapp") {
       feedback.textContent = "Abriendo el flujo oficial de Meta...";
       const result = await launchWhatsAppEmbeddedSignup();
-      feedback.textContent = result.status === "candidate_ready"
-        ? "Cuenta verificada. Queda pendiente de revisión por el Owner."
-        : (result.safe_error_message || "La conexión no se completó. Inicia un intento nuevo.");
+      feedback.textContent = result.status === "candidate_ready" ? "Cuenta verificada. Queda pendiente de revisión por AutonoGrow." : "La conexión no se completó. Inicia un intento nuevo.";
       await loadBusinessChannelOnboarding();
       return;
     }
@@ -1486,44 +1651,53 @@ async function requestBusinessChannelConnection(channel, button) {
       body: JSON.stringify({ confirm_meta_authority: true })
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.detail || "No se pudo solicitar la conexión.");
-    feedback.textContent = "Solicitud registrada. Queda pendiente de revisión por el Owner.";
+    if (!response.ok) throw new Error("channel_request_failed");
+    feedback.textContent = "Solicitud registrada. Queda pendiente de revisión por AutonoGrow.";
     await loadBusinessChannelOnboarding();
-  } catch (error) {
-    feedback.textContent = error.message;
-    button.disabled = false;
+  } catch (_error) {
+    feedback.textContent = safeChannelActionError(channel, "connect");
+  } finally {
+    channelActionKeys.delete(actionKey);
+    document.querySelectorAll(`[data-channel-request="${channel}"]`).forEach((action) => { action.disabled = false; });
   }
 }
 
 async function handleChannelHealthAction(button) {
   const channel = button.dataset.channel;
   const action = button.dataset.channelHealthAction;
-  const feedback = document.getElementById("channel-onboarding-feedback");
-  button.disabled = true;
+  const feedback = channelFeedbackElement(channel);
+  const actionKey = `${channel}:${action}`;
+  if (channelActionKeys.has(actionKey)) return;
+  channelActionKeys.add(actionKey);
+  document.querySelectorAll(`[data-channel="${channel}"][data-channel-health-action]`).forEach((control) => { control.disabled = true; });
+  feedback.textContent = action === "check" ? "Estamos comprobando la conexión…" : "Estamos preparando la reconexión oficial…";
   try {
     if (action === "reconnect" && channel === "instagram") {
       const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channels/instagram/reconnect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.detail || "No se pudo iniciar la reconexión.");
-      if (!String(body.authorization_url || "").startsWith("https://www.instagram.com/oauth/authorize?")) throw new Error("Meta devolvió una URL no válida.");
+      if (!response.ok) throw new Error("instagram_reconnect_failed");
+      if (!isSafeInstagramAuthorizationUrl(body.authorization_url)) throw new Error("instagram_url_invalid");
       window.location.assign(body.authorization_url);
       return;
     }
     if (action === "reconnect" && channel === "whatsapp") {
       feedback.textContent = "Abriendo el flujo oficial de Meta...";
       const result = await launchWhatsAppEmbeddedSignup("reconnect");
-      feedback.textContent = result.status === "candidate_ready" ? "Nueva candidatura pendiente de aprobación Owner." : (result.safe_error_message || "Reconexión incompleta.");
+      feedback.textContent = result.status === "candidate_ready" ? "Nueva conexión pendiente de revisión por AutonoGrow. La anterior no se sustituirá todavía." : "La reconexión no se completó. Inicia un intento nuevo.";
       await loadBusinessChannelOnboarding();
       return;
     }
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/channels/${encodeURIComponent(channel)}/health-check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.detail || "No se pudo encolar la comprobación.");
-    feedback.textContent = body.created ? "Comprobación encolada." : "Ya existe una comprobación en curso.";
+    if (!response.ok) throw new Error("health_check_failed");
+    feedback.textContent = body.created ? "Comprobación solicitada. El estado se actualizará cuando termine." : "Ya existe una comprobación en curso.";
     await loadBusinessChannelOnboarding();
-  } catch (error) {
-    feedback.textContent = error.message;
-    button.disabled = false;
+    await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
+  } catch (_error) {
+    feedback.textContent = safeChannelActionError(channel, action);
+  } finally {
+    channelActionKeys.delete(actionKey);
+    document.querySelectorAll(`[data-channel="${channel}"][data-channel-health-action]`).forEach((control) => { control.disabled = false; });
   }
 }
 
@@ -3905,34 +4079,102 @@ async function createConversation() {
   }
 }
 
-async function loadConversationTemplates() {
+const CONVERSATION_TEMPLATE_VARIABLES = new Set(["business_name", "business_slug", "public_booking_url", "business_phone", "business_address"]);
+
+function showChannelAutomationFeedback(message, isError = false) {
+  const summary = document.getElementById("channel-automations-errors");
+  const status = document.getElementById("channel-automations-status");
+  if (status) status.textContent = isError ? "Necesita revisión" : "Actualizado";
+  if (!summary) return;
+  summary.hidden = !message;
+  summary.textContent = message || "";
+  summary.classList.toggle("is-success", !isError);
+  if (isError) summary.focus({ preventScroll: true });
+}
+
+function templateValidation(name, body) {
+  const errors = {};
+  if (!name.trim()) errors.name = "Escribe un nombre.";
+  else if (name.length > 160) errors.name = "El nombre no puede superar 160 caracteres.";
+  if (!body.trim()) errors.body = "Escribe el contenido de la plantilla.";
+  else if (body.length > 10000) errors.body = "El contenido no puede superar 10.000 caracteres.";
+  else {
+    const variables = [...body.matchAll(/\{([^{}]+)\}/g)].map((match) => match[1]);
+    const unknown = variables.find((variable) => !CONVERSATION_TEMPLATE_VARIABLES.has(variable));
+    const withoutVariables = body.replace(/\{[^{}]+\}/g, "");
+    if (unknown) errors.body = `La variable {${unknown}} no está disponible.`;
+    else if (/[{}]/.test(withoutVariables)) errors.body = "Hay una variable sin cerrar correctamente.";
+  }
+  return errors;
+}
+
+function templatePreviewText(body) {
+  const values = {
+    business_name: currentBusiness?.name || "Tu negocio",
+    business_slug: currentBusiness?.slug || getBusinessSlug(),
+    public_booking_url: currentBusiness?.public_booking_url || "Enlace público de reserva",
+    business_phone: currentBusiness?.phone || "Teléfono del negocio",
+    business_address: currentBusiness?.address || "Dirección del negocio"
+  };
+  return body.replace(/\{([^{}]+)\}/g, (match, variable) => Object.hasOwn(values, variable) ? values[variable] : match);
+}
+
+function renderNewTemplatePreview() {
+  const body = document.getElementById("conversation-template-body")?.value || "";
+  const preview = document.getElementById("conversation-template-preview");
+  if (preview) preview.textContent = body.trim() ? templatePreviewText(body) : "Escribe un mensaje para ver una muestra.";
+}
+
+function canSaveChannelConfiguration(key) {
+  const otherChanges = [...configurationDirtyKeys].filter((dirtyKey) => configurationCategoryForKey(dirtyKey) === "messages" && dirtyKey !== key);
+  if (!otherChanges.length) return true;
+  showChannelAutomationFeedback("Guarda o descarta los otros cambios pendientes antes de actualizar este bloque.", true);
+  return false;
+}
+
+async function loadConversationTemplates({ background = false } = {}) {
+  const requestVersion = ++conversationTemplatesLoadVersion;
   try {
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-templates`
     );
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudieron cargar las plantillas."));
+    if (requestVersion !== conversationTemplatesLoadVersion) return;
     conversationTemplates = body.templates || [];
-    renderConversationTemplates();
-    if (selectedConversationId) await selectConversation(selectedConversationId, false);
+    channelHubLoadState.templates = "ready";
+    if (!background || !configurationSectionHasDirty("messages")) renderConversationTemplates();
+    if (!background && selectedConversationId) await selectConversation(selectedConversationId, false);
   } catch (error) {
+    if (requestVersion !== conversationTemplatesLoadVersion) return;
     console.error(error);
-    conversationTemplates = [];
-    renderConversationTemplates();
+    channelHubLoadState.templates = "error";
+    if (!background && !conversationTemplates.length) renderConversationTemplates();
   }
 }
 
 function renderConversationTemplates() {
   const container = document.getElementById("conversation-template-list");
   if (!container || !canManageConversationTemplates()) return;
+  container.setAttribute("aria-busy", "false");
+  if (channelHubLoadState.templates === "error" && !conversationTemplates.length) {
+    container.innerHTML = `<div class="channel-partial-error"><strong>No se pudieron cargar las plantillas.</strong><button class="ag-button ag-button--secondary" type="button" data-channel-retry="templates">Reintentar</button></div>`;
+    return;
+  }
   container.innerHTML = conversationTemplates.map((template) => `
-    <article class="conversation-template-item" data-conversation-template-id="${template.id}">
-      <input class="conversation-template-item-name" value="${escapeHtml(template.name)}" />
-      <textarea class="conversation-template-item-body" rows="3">${escapeHtml(template.body)}</textarea>
-      <label class="active-setting"><input class="conversation-template-item-active" type="checkbox" ${template.active ? "checked" : ""} />Activa</label>
-      <span><button class="btn btn-small btn-secondary" type="button" onclick="saveConversationTemplate(${template.id})">Guardar</button> <button class="btn btn-small btn-danger" type="button" onclick="deleteConversationTemplate(${template.id})">Eliminar</button></span>
+    <article class="conversation-template-item" data-conversation-template-id="${template.id}" data-config-dirty-key="template-${template.id}">
+      <div class="conversation-template-heading"><div><p>Plantilla</p><h4>${escapeHtml(template.name)}</h4></div><span>${template.active ? "Activa" : "Desactivada"}</span></div>
+      <label class="ag-field">Nombre<input class="conversation-template-item-name" maxlength="160" value="${escapeHtml(template.name)}" /></label>
+      <label class="ag-field">Contenido<textarea class="conversation-template-item-body" maxlength="10000" rows="4">${escapeHtml(template.body)}</textarea></label>
+      <p><strong>Aplicación:</strong> canales con automatización autorizada.</p>
+      <div class="template-preview"><strong>Vista previa</strong><p class="conversation-template-item-preview">${escapeHtml(templatePreviewText(template.body))}</p></div>
+      <label class="active-setting"><input class="conversation-template-item-active" type="checkbox" ${template.active ? "checked" : ""} />Plantilla activa</label>
+      <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" onclick="saveConversationTemplate(${template.id})">Guardar</button><button class="btn btn-small btn-danger" type="button" onclick="deleteConversationTemplate(${template.id})">Eliminar</button><span class="configuration-item-save-state">Sin cambios</span></div>
     </article>
-  `).join("") || `<p class="empty-state">No hay plantillas.</p>`;
+  `).join("") || `<div class="empty-state"><strong>Aún no hay plantillas</strong><p>Crea la primera con las variables disponibles.</p></div>`;
+  snapshotConfigurationForms("#conversation-templates-panel [data-config-dirty-key]");
+  ensureConfigurationSnapshot("template-new");
+  renderNewTemplatePreview();
 }
 
 async function createConversationTemplate() {
@@ -3941,7 +4183,15 @@ async function createConversationTemplate() {
     body: document.getElementById("conversation-template-body").value.trim(),
     active: true
   };
-  if (!payload.name || !payload.body) return showConversationFeedback("Completa nombre y texto de la plantilla.", true);
+  if (!canSaveChannelConfiguration("template-new")) return;
+  const errors = templateValidation(payload.name, payload.body);
+  document.getElementById("conversation-template-name-error").textContent = errors.name || "";
+  document.getElementById("conversation-template-body-error").textContent = errors.body || "";
+  if (Object.keys(errors).length) {
+    showChannelAutomationFeedback("Revisa los campos indicados antes de crear la plantilla.", true);
+    document.getElementById(errors.name ? "conversation-template-name" : "conversation-template-body").focus();
+    return;
+  }
   const saved = await mutateConversationTemplate(
     `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-templates`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
@@ -3949,18 +4199,25 @@ async function createConversationTemplate() {
   if (!saved) return;
   document.getElementById("conversation-template-name").value = "";
   document.getElementById("conversation-template-body").value = "";
+  renderNewTemplatePreview();
+  snapshotConfigurationForm("template-new");
 }
 
 async function saveConversationTemplate(templateId) {
   const row = document.querySelector(`[data-conversation-template-id="${templateId}"]`);
+  if (!row || !canSaveChannelConfiguration(`template-${templateId}`)) return;
+  const name = row.querySelector(".conversation-template-item-name").value.trim();
+  const body = row.querySelector(".conversation-template-item-body").value.trim();
+  const errors = templateValidation(name, body);
+  if (Object.keys(errors).length) return showChannelAutomationFeedback(Object.values(errors)[0], true);
   await mutateConversationTemplate(
     `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-templates/${templateId}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: row.querySelector(".conversation-template-item-name").value.trim(),
-        body: row.querySelector(".conversation-template-item-body").value.trim(),
+        name,
+        body,
         active: row.querySelector(".conversation-template-item-active").checked
       })
     }
@@ -3968,6 +4225,7 @@ async function saveConversationTemplate(templateId) {
 }
 
 async function deleteConversationTemplate(templateId) {
+  if (!canSaveChannelConfiguration(`template-${templateId}`)) return;
   if (!window.confirm("¿Eliminar esta plantilla?")) return;
   await mutateConversationTemplate(
     `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-templates/${templateId}`,
@@ -3976,17 +4234,22 @@ async function deleteConversationTemplate(templateId) {
 }
 
 async function mutateConversationTemplate(url, options) {
+  const mutationKey = `template:${url}`;
+  if (configurationMutationKeys.has(mutationKey)) return false;
+  configurationMutationKeys.add(mutationKey);
   try {
     const response = await fetch(url, options);
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar la plantilla."));
-    showConversationFeedback("Plantillas actualizadas.");
+    showChannelAutomationFeedback("Plantillas actualizadas.");
     await Promise.all([loadConversationTemplates(), loadConversationAutomation()]);
     if (selectedConversationId) await selectConversation(selectedConversationId, false);
     return true;
   } catch (error) {
-    showConversationFeedback(error.message, true);
+    showChannelAutomationFeedback("No se pudo guardar la plantilla. Revisa los datos e inténtalo de nuevo.", true);
     return false;
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
   }
 }
 
@@ -4000,20 +4263,31 @@ async function loadConversationAutomation({ background = false } = {}) {
       fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/integrations/status`, { cache: "no-store" })
     ]);
     const body = await readAdminResponseBody(response);
-    const integrationBody = await readAdminResponseBody(integrationResponse);
+    const integrationBody = integrationResponse.ok ? await readAdminResponseBody(integrationResponse) : null;
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cargar la automatización."));
     if (requestVersion !== conversationAutomationLoadVersion) return;
     conversationAutomation = body;
-    businessIntegrationStatus = integrationResponse.ok ? integrationBody : null;
-    renderConversationAutomation();
+    businessIntegrationStatus = integrationBody;
+    channelHubLoadState.automation = "ready";
+    if (!background || !configurationSectionHasDirty("messages")) renderConversationAutomation();
   } catch (error) {
     if (requestVersion !== conversationAutomationLoadVersion) return;
     console.error(error);
+    channelHubLoadState.automation = "error";
     if (background) throw error;
     if (!conversationAutomation) {
-      container.innerHTML = `<p class="empty-state">${escapeHtml(error.message)}</p>`;
+      container.innerHTML = `<div class="channel-partial-error"><strong>No se pudieron cargar las respuestas automáticas.</strong><p>Los estados de Instagram y WhatsApp siguen disponibles.</p><button class="ag-button ag-button--secondary" type="button" data-channel-retry="automation">Reintentar</button></div>`;
+      container.setAttribute("aria-busy", "false");
     }
   }
+}
+
+function automationAuthorizedChannels() {
+  return ["instagram", "whatsapp"].filter((name) => {
+    const channel = channelRecord(name);
+    const health = channelHealthRecord(name);
+    return channel?.status === "approved" && channel.automation_enabled && !health?.reconnection_required && !["revoked", "suspended", "action_required"].includes(health?.health_status);
+  });
 }
 
 function renderConversationAutomation() {
@@ -4046,17 +4320,26 @@ function renderConversationAutomation() {
       <option value="${template.id}" ${template.id === selectedId ? "selected" : ""}>${escapeHtml(template.name)}${template.active ? "" : " (inactiva)"}</option>
     `).join("")}
   `;
+  const authorizedChannels = automationAuthorizedChannels();
+  const periodAvailable = usage.period_status === "active";
+  const ownerAllowsAutomation = Boolean(settings.automation_feature_enabled);
+  const canEnableAutomation = ownerAllowsAutomation && periodAvailable && authorizedChannels.length > 0;
+  const automationBlockMessage = !ownerAllowsAutomation
+    ? "AutonoGrow todavía no ha habilitado esta capacidad para el negocio."
+    : !periodAvailable ? "El periodo de automatización no está activo."
+      : !authorizedChannels.length ? "Ningún canal aprobado tiene las respuestas automáticas habilitadas y saludables." : "";
   container.innerHTML = `
-    <article class="conversation-integration-status state-${escapeHtml(businessIntegrationStatus?.state || "disconnected")}"><div><p>Integración de canal</p><strong>${escapeHtml(businessIntegrationStatus?.message || "Instagram no está conectado.")}</strong></div>${businessIntegrationStatus?.token_expires_at ? `<span>Caducidad: ${escapeHtml(new Date(businessIntegrationStatus.token_expires_at).toLocaleString("es-ES"))}</span>` : ""}</article>
-    <div class="conversation-automation-settings">
-      <label class="active-setting"><input id="conversation-automation-enabled" type="checkbox" ${settings.automation_enabled ? "checked" : ""} ${settings.automation_feature_enabled ? "" : "disabled"} />Activar automatización</label>
+    <div class="conversation-automation-settings" data-config-dirty-key="automation-settings">
+      <div class="conversation-automation-heading"><div><p>Estado general</p><h3>${settings.automation_enabled ? "Respuestas automáticas activadas" : "Respuestas automáticas desactivadas"}</h3></div><span>${canEnableAutomation || settings.automation_enabled ? "Configurable" : "Bloqueada"}</span></div>
+      ${automationBlockMessage ? `<div class="ag-alert ag-alert--warning"><div><strong>No se puede activar ahora</strong><p>${escapeHtml(automationBlockMessage)}</p></div></div>` : `<p class="channel-guidance">Canales autorizados: ${authorizedChannels.map((name) => name === "instagram" ? "Instagram" : "WhatsApp").join(" y ")}.</p>`}
+      <label class="active-setting"><input id="conversation-automation-enabled" type="checkbox" ${settings.automation_enabled ? "checked" : ""} ${canEnableAutomation || settings.automation_enabled ? "" : "disabled"} />Activar respuestas automáticas</label>
       <label>Umbral automático (%)<input id="conversation-automation-threshold" type="number" min="0" max="100" value="${settings.auto_threshold}" /></label>
       <label>Al alcanzar el límite<select id="conversation-automation-limit-mode" ${allowedLimitBehaviors.length === 1 ? "disabled" : ""}>${allowedLimitBehaviors.map((value) => `<option value="${value}" ${settings.on_limit_reached === value ? "selected" : ""}>${limitBehaviorLabels[value]}</option>`).join("")}</select></label>
       <label>Pausa tras respuesta humana<select id="conversation-human-reply-pause"><option value="0" ${settings.human_reply_pause_minutes === 0 ? "selected" : ""}>No pausar</option><option value="15" ${settings.human_reply_pause_minutes === 15 ? "selected" : ""}>15 minutos</option><option value="60" ${settings.human_reply_pause_minutes === 60 ? "selected" : ""}>1 hora</option><option value="240" ${settings.human_reply_pause_minutes === 240 ? "selected" : ""}>4 horas</option><option value="-1" ${settings.human_reply_pause_minutes === -1 ? "selected" : ""}>Hasta reactivarla</option></select></label>
-      <button class="btn btn-primary" type="button" onclick="saveConversationAutomationSettings()">Guardar configuración</button>
+      <div class="settings-actions"><button class="btn btn-primary" type="button" onclick="saveConversationAutomationSettings()">Guardar configuración</button><span class="configuration-item-save-state">Sin cambios</span></div>
     </div>
     <article class="conversation-automation-usage-card">
-      <div><p>Créditos de automatización</p><strong>${usage.total_available} disponibles</strong><span class="conversation-automation-usage-state state-${escapeHtml(usage.status)}">${usageStatusLabels[usage.status] || usage.status}</span></div>
+      <div><p>Créditos de automatización</p><strong>${usage.total_available} disponibles</strong><span class="conversation-automation-usage-state state-${escapeHtml(usage.status)}">${usageStatusLabels[usage.status] || "Estado no disponible"}</span></div>
       <div class="conversation-credit-breakdown"><span><strong>${usage.included_credits_remaining} de ${usage.included_credits_per_period}</strong>Incluidos disponibles</span><span><strong>${usage.additional_credits_balance}</strong>Créditos adicionales acumulados</span><span><strong>${usage.total_available}</strong>Total disponible</span></div>
       <div class="conversation-automation-quota-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${usage.percentage}"><span style="width:${usage.percentage}%"></span></div>
       <p>${usage.percentage}% utilizado · ${escapeHtml(periodSummary)}</p>
@@ -4064,34 +4347,45 @@ function renderConversationAutomation() {
       ${usage.included_credits_remaining === 0 && usage.additional_credits_balance > 0 ? "<p>Has utilizado los mensajes incluidos en tu plan. A partir de ahora se utilizarán tus créditos adicionales.</p>" : ""}
       ${usage.total_available === 0 ? "<p class=\"conversation-automation-warning\">No quedan créditos de automatización disponibles. El equipo de AutonoGrow gestionará la ampliación del servicio.</p>" : ""}
       ${settings.automation_feature_enabled ? "" : "<p class=\"conversation-automation-warning\">La automatización está pausada por AutonoGrow para este negocio.</p>"}
+      <p><strong>Qué afectan:</strong> únicamente a respuestas generadas automáticamente. La salud del canal se comprueba por separado.</p>
     </article>
     ${usage.limit_reached ? `<p class="conversation-automation-warning">${settings.on_limit_reached === "semi_automatic" ? "Sin créditos disponibles. Las respuestas automáticas pasan a modo sugerencia." : "Sin créditos disponibles. No se enviarán más respuestas automáticas."}</p>` : ""}
     <div class="conversation-automation-rules">
       <h3>Modo por intención</h3>
       ${(conversationAutomation.rules || []).map((rule) => `
-        <article class="conversation-automation-rule" data-automation-intent="${escapeHtml(rule.intent)}">
-          <strong>${escapeHtml(rule.intent_label)}</strong>
+        <article class="conversation-automation-rule" data-automation-intent="${escapeHtml(rule.intent)}" data-config-dirty-key="automation-rule-${escapeHtml(rule.intent)}">
+          <div><p>Regla</p><h4>${escapeHtml(rule.intent_label)}</h4><small>Se evalúa cuando el sistema reconoce esta intención en un canal autorizado.</small></div>
+          <p><strong>Canal:</strong> ${authorizedChannels.length ? authorizedChannels.map((name) => name === "instagram" ? "Instagram" : "WhatsApp").join(" y ") : "Bloqueada por el canal"}</p>
           <select class="conversation-automation-rule-mode">
             <option value="disabled" ${rule.mode === "disabled" ? "selected" : ""}>Desactivado</option>
             <option value="semi_automatic" ${rule.mode === "semi_automatic" ? "selected" : ""}>Sugerir</option>
-            <option value="automatic" ${rule.mode === "automatic" ? "selected" : ""}>Automático seguro</option>
+            <option value="automatic" ${rule.mode === "automatic" ? "selected" : ""} ${canEnableAutomation || rule.mode === "automatic" ? "" : "disabled"}>Automático seguro</option>
           </select>
           <select class="conversation-automation-rule-template">${templateOptions(rule.template_id)}</select>
-          <label class="active-setting"><input class="conversation-automation-rule-active" type="checkbox" ${rule.active ? "checked" : ""} />Activa</label>
-          <button class="btn btn-small btn-secondary" type="button" onclick="saveConversationAutomationRule('${rule.intent}')">Guardar</button>
+          <label class="active-setting"><input class="conversation-automation-rule-active" type="checkbox" ${rule.active ? "checked" : ""} ${canEnableAutomation || rule.active ? "" : "disabled"} />Activa</label>
+          <p class="automation-message-excerpt">${escapeHtml((templates.find((template) => template.id === rule.template_id)?.body || "Se usará la plantilla recomendada.").slice(0, 180))}</p>
+          <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" onclick="saveConversationAutomationRule('${rule.intent}')">Guardar</button><span class="configuration-item-save-state">Sin cambios</span></div>
         </article>
       `).join("")}
     </div>
   `;
+  container.setAttribute("aria-busy", "false");
+  document.getElementById("channel-automations-status").textContent = settings.automation_enabled ? "Activadas" : "Desactivadas";
+  snapshotConfigurationForms("#conversation-automation-content [data-config-dirty-key]");
 }
 
 async function saveConversationAutomationSettings() {
+  if (!canSaveChannelConfiguration("automation-settings")) return;
   const payload = {
     automation_enabled: document.getElementById("conversation-automation-enabled").checked,
     auto_threshold: Number(document.getElementById("conversation-automation-threshold").value),
     on_limit_reached: document.getElementById("conversation-automation-limit-mode").value,
     human_reply_pause_minutes: Number(document.getElementById("conversation-human-reply-pause").value)
   };
+  if (payload.automation_enabled && !automationAuthorizedChannels().length) {
+    showChannelAutomationFeedback("No puedes activar respuestas automáticas hasta que un canal aprobado tenga esta capacidad disponible.", true);
+    return;
+  }
   await mutateConversationAutomation(
     `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation/settings`,
     payload,
@@ -4101,13 +4395,20 @@ async function saveConversationAutomationSettings() {
 
 async function saveConversationAutomationRule(intent) {
   const row = document.querySelector(`[data-automation-intent="${intent}"]`);
-  if (!row) return;
+  if (!row || !canSaveChannelConfiguration(`automation-rule-${intent}`)) return;
   const templateValue = row.querySelector(".conversation-automation-rule-template").value;
   const payload = {
     mode: row.querySelector(".conversation-automation-rule-mode").value,
     template_id: templateValue ? Number(templateValue) : null,
     active: row.querySelector(".conversation-automation-rule-active").checked
   };
+  const mutationKey = `automation-rule:${intent}`;
+  if (configurationMutationKeys.has(mutationKey)) return;
+  if ((payload.active || payload.mode === "automatic") && !automationAuthorizedChannels().length) {
+    showChannelAutomationFeedback("Esta regla está bloqueada porque ningún canal autorizado puede automatizar respuestas.", true);
+    return;
+  }
+  configurationMutationKeys.add(mutationKey);
   try {
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversation-automation/rules/${intent}`,
@@ -4124,13 +4425,18 @@ async function saveConversationAutomationRule(intent) {
     await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
     const persistedRule = conversationAutomation?.rules?.find((rule) => rule.intent === intent);
     if (persistedRule?.mode !== payload.mode) throw new Error("La regla no se recargó con el modo guardado.");
-    showConversationFeedback(`Regla de ${conversationIntentLabel(intent)} actualizada.`);
-  } catch (error) {
-    showConversationFeedback(error.message, true);
+    showChannelAutomationFeedback(`Regla de ${conversationIntentLabel(intent)} actualizada.`);
+  } catch (_error) {
+    showChannelAutomationFeedback("No se pudo guardar la regla. Revisa la configuración e inténtalo de nuevo.", true);
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
   }
 }
 
 async function mutateConversationAutomation(url, payload, successMessage) {
+  const mutationKey = `automation:${url}`;
+  if (configurationMutationKeys.has(mutationKey)) return false;
+  configurationMutationKeys.add(mutationKey);
   try {
     const response = await fetch(url, {
       method: "PATCH",
@@ -4139,13 +4445,16 @@ async function mutateConversationAutomation(url, payload, successMessage) {
     });
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar la automatización."));
-    showConversationFeedback(successMessage);
+    showChannelAutomationFeedback(successMessage);
     await loadConversationAutomation();
+    await loadBusinessChannelOnboarding({ background: true });
     await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
     return true;
-  } catch (error) {
-    showConversationFeedback(error.message, true);
+  } catch (_error) {
+    showChannelAutomationFeedback("No se pudo guardar la automatización. Revisa los datos e inténtalo de nuevo.", true);
     return false;
+  } finally {
+    configurationMutationKeys.delete(mutationKey);
   }
 }
 
@@ -4532,6 +4841,8 @@ async function refreshOperationalData({ includeAutomation = false } = {}) {
   ];
   if (includeAutomation && canManageConversationTemplates()) {
     requests.push(loadConversationAutomation({ background: true }));
+    requests.push(loadConversationTemplates({ background: true }));
+    requests.push(loadBusinessChannelOnboarding({ background: true }));
   }
   await Promise.allSettled(requests);
 }
@@ -5697,6 +6008,7 @@ function setupConversationInterface() {
 
 document.addEventListener("DOMContentLoaded", () => {
   setupBusinessConfiguration();
+  setupChannelHub();
   setupAdminNavigation();
   setupBookingViews();
   setupDashboardInteractions();
@@ -5742,12 +6054,6 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("save-availability-exception").addEventListener("click", saveAvailabilityException);
   setupExceptionForm();
   setupAdminBranding();
-  document.getElementById("channel-onboarding-list").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-channel-request]");
-    if (button) requestBusinessChannelConnection(button.dataset.channelRequest, button);
-    const healthButton = event.target.closest("[data-channel-health-action]");
-    if (healthButton) handleChannelHealthAction(healthButton);
-  });
   document.getElementById("admin-logout").addEventListener("click", adminLogout);
   document.getElementById("admin-gate-logout").addEventListener("click", adminLogout);
   bootstrapAdminAuth();
@@ -5781,7 +6087,7 @@ async function bootstrapAdminAuth() {
     const oauthResult = new URLSearchParams(window.location.search).get("instagram_oauth");
     if (oauthResult) {
       const feedback = document.getElementById("channel-onboarding-feedback");
-      if (feedback) feedback.textContent = oauthResult === "pending_review" ? "Instagram conectado. La cuenta queda pendiente de revisión por el Owner." : "No se pudo completar Instagram Login. Inicia un nuevo intento.";
+      if (feedback) feedback.textContent = oauthResult === "pending_review" ? "Instagram conectado. La cuenta queda pendiente de revisión por AutonoGrow." : "No se pudo completar Instagram Login. Inicia un nuevo intento.";
     }
     await loadAdminPanel();
     if (currentBusiness) startAdminPolling();
