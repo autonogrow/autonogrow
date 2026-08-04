@@ -48,7 +48,7 @@
       </div>
 
       <div class="header-actions">
-        <div id="admin-sync-status" class="admin-sync-status admin-sync-connected" role="status" aria-live="polite">
+        <div id="admin-sync-status" class="admin-sync-status admin-sync-connected">
           <span class="admin-sync-dot" aria-hidden="true"></span>
           <span id="admin-sync-status-label" class="admin-sync-status-label">Conectado</span>
           <time id="admin-sync-last-updated">Sincronizando...</time>
@@ -467,7 +467,7 @@
         <aside class="conversation-list-panel" aria-labelledby="conversation-list-title">
           <div class="conversation-panel-heading">
             <h3 id="conversation-list-title">Conversaciones</h3>
-            <span id="conversation-result-count" aria-live="polite">Cargando…</span>
+            <span id="conversation-result-count">Cargando…</span>
           </div>
           <div id="conversation-list" class="conversation-list" role="listbox" aria-label="Conversaciones" aria-busy="true">
             <div class="conversation-list-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -704,7 +704,7 @@
 
       <div id="agenda-week-days" class="agenda-week-days" aria-label="Días de la semana" hidden></div>
       <p id="agenda-live-region" class="ag-visually-hidden" aria-live="polite"></p>
-      <div id="bookings-list" class="bookings-list" role="tabpanel" aria-labelledby="agenda-tab-today" aria-live="polite" aria-busy="true">
+      <div id="bookings-list" class="bookings-list" role="tabpanel" aria-labelledby="agenda-tab-today" aria-busy="true">
         <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div>
         <span class="ag-visually-hidden">Cargando reservas.</span>
       </div>
@@ -787,6 +787,6 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="admin.js?v=20260804-4"></script>
+  <script src="admin.js?v=20260805-1"></script>
 </body>
 </html>

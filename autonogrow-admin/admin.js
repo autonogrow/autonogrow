@@ -483,16 +483,18 @@ function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = fal
     section.classList.toggle("admin-section-active", section.dataset.adminSection === targetSection);
   });
 
+  const primarySection = CONFIGURATION_SECTIONS.has(targetSection) ? "configuration"
+    : CHANNEL_HUB_SECTIONS.has(targetSection) ? "channels"
+      : GROWTH_HUB_SECTIONS.has(targetSection) ? "growth" : targetSection;
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
-    const primarySection = CONFIGURATION_SECTIONS.has(targetSection) ? "configuration"
-      : CHANNEL_HUB_SECTIONS.has(targetSection) ? "channels"
-        : GROWTH_HUB_SECTIONS.has(targetSection) ? "growth" : targetSection;
     const isActive = tab.dataset.section === primarySection;
     tab.classList.toggle("admin-tab-active", isActive);
     tab.setAttribute("aria-selected", String(isActive));
+    if (isActive) tab.setAttribute("aria-current", "page");
+    else tab.removeAttribute("aria-current");
   });
 
-  if (updateHash) {
+  if (updateHash || (sectionName && !sectionExists)) {
     window.history.replaceState(null, "", `#${targetSection}`);
   }
   if (CONFIGURATION_SECTIONS.has(targetSection)) renderConfigurationOverview();
@@ -2538,7 +2540,7 @@ function safeConfigurationError(body, fallback) {
 }
 
 function adminMediaError(action, response, body) {
-  console.error("Error de media", { action, url: response.url, status: response.status, body });
+  console.error("Error de media", { action, status: response.status });
   const detail = typeof body?.detail === "string" ? body.detail : "";
   const safeDetail = /^(Solo se permiten|El archivo está vacío|La imagen supera|El contenido del archivo|Máximo 10 imágenes)/.test(detail)
     ? ` ${detail}.`
@@ -3241,9 +3243,8 @@ function openStaffRemovalModal(member, result) {
     <article class="staff-removal-booking">
       <div>
         <strong>${escapeHtml(formatBlockingBookingDate(booking.date, booking.start_time))}</strong>
-        <span>${escapeHtml(booking.customer_name)}${booking.customer_phone ? ` · ${escapeHtml(booking.customer_phone)}` : ""}</span>
+        <span>${escapeHtml(booking.customer_name)}</span>
         <span>${escapeHtml(booking.service_name)} · ${escapeHtml(getStatusLabel(booking.status))}</span>
-        <small>Reserva #${booking.id}</small>
       </div>
       <button class="btn btn-small btn-primary" type="button" onclick="goToBooking(${booking.id})">Ir a la cita</button>
     </article>
@@ -3434,10 +3435,10 @@ async function loadReviewRequests({ background = false } = {}) {
 }
 
 function conversationErrorMessage(body, fallback) {
-  if (typeof body?.message === "string") return body.message;
-  if (typeof body?.detail === "string") return body.detail;
-  if (typeof body?.detail?.message === "string") return body.detail.message;
-  return fallback;
+  const normalized = typeof body?.detail?.message === "string"
+    ? { message: body.detail.message }
+    : body;
+  return safeConfigurationError(normalized, fallback);
 }
 
 function showConversationFeedback(message, isError = false) {
@@ -4821,7 +4822,7 @@ async function openPreparedWhatsAppMessage(message, whatsappWindow) {
     const result = await response.json().catch(() => null);
 
     if (!response.ok) {
-      throw new Error(result?.detail || "No se pudo preparar el mensaje.");
+      throw new Error(safeConfigurationError(result, "No se pudo preparar el mensaje."));
     }
 
     replaceOutboxMessage(result.message);
@@ -4850,7 +4851,7 @@ async function updateOutboxStatus(messageId, status) {
     const result = await response.json().catch(() => null);
 
     if (!response.ok) {
-      throw new Error(result?.detail || "No se pudo actualizar el mensaje.");
+      throw new Error(safeConfigurationError(result, "No se pudo actualizar el mensaje."));
     }
 
     replaceOutboxMessage(result.message);
@@ -5420,7 +5421,7 @@ function goToBooking(bookingId, updateUrl = true) {
   // un endpoint para cambiar el profesional de una reserva.
   const booking = allBookings.find((item) => item.id === bookingId);
   if (!booking) {
-    alert(`No se encontró la reserva #${bookingId}.`);
+    alert("No se encontró la reserva solicitada.");
     return;
   }
 
@@ -5755,7 +5756,7 @@ async function saveInternalNotes(bookingId) {
     body: JSON.stringify({ internal_notes: field.value.trim() || null })
   });
   const result = await response.json().catch(() => null);
-  if (!response.ok) return alert(result?.detail || "No se pudieron guardar las notas.");
+  if (!response.ok) return alert(safeConfigurationError(result, "No se pudieron guardar las notas."));
   const index = allBookings.findIndex((item) => item.id === bookingId);
   if (index >= 0) allBookings[index] = { ...allBookings[index], ...result.booking };
   alert("Notas internas guardadas.");
@@ -6107,7 +6108,7 @@ async function updateBookingStatus(bookingId, status) {
     const result = await response.json().catch(() => null);
 
     if (!response.ok) {
-      throw new Error(result?.detail || "No se pudo cambiar el estado de la cita.");
+      throw new Error(safeConfigurationError(result, "No se pudo cambiar el estado de la cita."));
     }
 
     if (shouldOpenWhatsApp) {
@@ -6115,7 +6116,10 @@ async function updateBookingStatus(bookingId, status) {
         await openPreparedWhatsAppMessage(result.outbox_message, whatsappWindow);
       } else {
         whatsappWindow?.close();
-        alert(result?.review_request_warning || "No se pudo preparar el mensaje de WhatsApp.");
+        alert(safeConfigurationError(
+          { detail: result?.review_request_warning },
+          "No se pudo preparar el mensaje de WhatsApp."
+        ));
       }
     }
 
