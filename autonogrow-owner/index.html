@@ -41,38 +41,98 @@
       </button>
       <div class="ag-topbar__title">
         <p class="eyebrow">Control interno AutonoGrow</p>
-        <h1>Panel AutonoGrow</h1>
-        <p class="subtitle">Tus clientes, su actividad y lo que falta para ponerlos en marcha.</p>
+        <h1 id="owner-page-title">Resumen operativo</h1>
+        <p id="owner-page-subtitle" class="subtitle">Supervisa negocios, aprobaciones, integraciones e incidencias de AutonoGrow.</p>
       </div>
-      <button id="refresh-button" class="button button-secondary ag-button ag-button--secondary" type="button">Actualizar</button>
+      <div class="owner-header-actions">
+        <span id="owner-sync-status" class="owner-sync-status" role="status">Pendiente de actualizar</span>
+        <button id="refresh-button" class="button button-secondary ag-button ag-button--secondary" type="button">Actualizar</button>
+      </div>
       <div class="auth-user"><span id="owner-auth-user"></span><button id="owner-logout" class="button button-secondary ag-button ag-button--secondary" type="button">Salir</button></div>
     </header>
 
     <div id="owner-main-content" class="ag-shell__content" tabindex="-1">
     <div class="ag-content-container">
 
-    <section class="summary-grid" aria-label="Resumen global">
-      <article class="summary-card ag-card"><span>Total negocios</span><strong id="total-businesses">—</strong></article>
-      <article class="summary-card"><span>Negocios activos</span><strong id="active-businesses">—</strong></article>
-      <article class="summary-card"><span>Reservas pendientes</span><strong id="pending-bookings">—</strong></article>
-      <article class="summary-card"><span>Mensajes pendientes</span><strong id="pending-messages">—</strong></article>
-      <article class="summary-card"><span>Reseñas pendientes</span><strong id="pending-reviews">—</strong></article>
-      <article class="summary-card"><span>Incidencias abiertas</span><strong id="open-incidents">—</strong></article>
-    </section>
-
     <nav class="tabs" data-ag-shell-nav aria-label="Secciones del panel">
-      <button class="tab active" type="button" data-tab="businesses" aria-current="page"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5l8-3 8 3v16"/><path d="M9 21v-5h6v5M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span>Negocios</button>
+      <button class="tab active" type="button" data-tab="overview" aria-current="page"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-3H4zM14 7h6V4h-6z"/></svg></span>Resumen</button>
+      <button class="tab" type="button" data-tab="businesses"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5l8-3 8 3v16"/><path d="M9 21v-5h6v5M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span>Negocios</button>
       <button class="tab" type="button" data-tab="new-business"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>Nuevo negocio</button>
       <button class="tab" type="button" data-tab="incidents"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 2.5 20h19Z"/><path d="M12 9v4M12 17h.01"/></svg></span>Incidencias</button>
       <button class="tab" type="button" data-tab="queues"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="5" rx="1"/><rect x="4" y="15" width="16" height="5" rx="1"/><path d="M8 9v6M16 9v6"/></svg></span>Colas y worker</button>
       <button class="tab" type="button" data-tab="operations"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg></span>Operaciones</button>
     </nav>
 
-    <section id="businesses-section" class="panel active" data-panel="businesses">
+    <section id="owner-overview" class="panel owner-dashboard active" data-panel="overview" aria-labelledby="owner-dashboard-title">
+      <header class="owner-dashboard-hero">
+        <div>
+          <p class="eyebrow">Supervisión por excepción</p>
+          <h2 id="owner-dashboard-title">Qué requiere atención</h2>
+          <p>Prioriza decisiones, incidencias y bloqueos con datos de las fuentes operativas existentes.</p>
+        </div>
+        <p id="owner-dashboard-date" class="owner-dashboard-date"></p>
+      </header>
+
+      <section id="owner-dashboard-metrics" class="owner-dashboard-metrics" aria-label="Indicadores operativos" aria-busy="true">
+        <article class="owner-dashboard-metric ag-card"><span>Negocios activos</span><strong id="owner-metric-active">—</strong><button class="owner-metric-link" type="button" data-owner-navigate="businesses">Ver negocios</button></article>
+        <article class="owner-dashboard-metric ag-card"><span>Altas pendientes</span><strong id="owner-metric-pending-businesses">—</strong><button class="owner-metric-link" type="button" data-owner-navigate="new-business">Revisar altas</button></article>
+        <article class="owner-dashboard-metric ag-card"><span>Decisiones pendientes</span><strong id="owner-metric-decisions">—</strong><button class="owner-metric-link" type="button" data-owner-focus-block="owner-dashboard-decisions">Ver decisiones</button></article>
+        <article class="owner-dashboard-metric ag-card"><span>Integraciones con problemas</span><strong id="owner-metric-integrations">—</strong><button class="owner-metric-link" type="button" data-owner-focus-block="owner-dashboard-integrations">Ver integraciones</button></article>
+        <article class="owner-dashboard-metric ag-card"><span>Incidencias abiertas</span><strong id="owner-metric-incidents">—</strong><button class="owner-metric-link" type="button" data-owner-navigate="incidents">Ver incidencias</button></article>
+        <article class="owner-dashboard-metric ag-card"><span>Problemas de mensajes</span><strong id="owner-metric-messages">—</strong><button class="owner-metric-link" type="button" data-owner-navigate="queues">Ver procesamiento</button></article>
+      </section>
+
+      <div class="owner-dashboard-layout">
+        <section id="owner-dashboard-decisions" class="owner-dashboard-block owner-dashboard-block--priority ag-card" aria-labelledby="owner-dashboard-decisions-title" aria-busy="true" tabindex="-1">
+          <header><div><p class="owner-dashboard-kicker">Prioridad 1</p><h2 id="owner-dashboard-decisions-title">Necesita tu decisión</h2></div><button class="button button-secondary button-small" type="button" data-owner-retry="channels">Reintentar</button></header>
+          <div data-owner-dashboard-content><div class="owner-dashboard-loading"><span class="ag-loader" aria-hidden="true"></span><span>Cargando decisiones…</span></div></div>
+        </section>
+
+        <section id="owner-dashboard-integrations" class="owner-dashboard-block ag-card" aria-labelledby="owner-dashboard-integrations-title" aria-busy="true" tabindex="-1">
+          <header><div><p class="owner-dashboard-kicker">Canales</p><h2 id="owner-dashboard-integrations-title">Integraciones que necesitan atención</h2></div><button class="button button-secondary button-small" type="button" data-owner-retry="channels">Reintentar</button></header>
+          <div data-owner-dashboard-content><div class="owner-dashboard-loading"><span class="ag-loader" aria-hidden="true"></span><span>Cargando integraciones…</span></div></div>
+        </section>
+
+        <section id="owner-dashboard-incidents" class="owner-dashboard-block ag-card" aria-labelledby="owner-dashboard-incidents-title" aria-busy="true">
+          <header><div><p class="owner-dashboard-kicker">Seguimiento</p><h2 id="owner-dashboard-incidents-title">Incidencias</h2></div><button class="button button-secondary button-small" type="button" data-owner-retry="incidents">Reintentar</button></header>
+          <div data-owner-dashboard-content><div class="owner-dashboard-loading"><span class="ag-loader" aria-hidden="true"></span><span>Cargando incidencias…</span></div></div>
+        </section>
+
+        <section id="owner-dashboard-operations" class="owner-dashboard-block ag-card" aria-labelledby="owner-dashboard-operations-title" aria-busy="true">
+          <header><div><p class="owner-dashboard-kicker">Mensajes</p><h2 id="owner-dashboard-operations-title">Procesamiento</h2></div><button class="button button-secondary button-small" type="button" data-owner-retry="queue">Reintentar</button></header>
+          <div data-owner-dashboard-content><div class="owner-dashboard-loading"><span class="ag-loader" aria-hidden="true"></span><span>Comprobando procesamiento…</span></div></div>
+        </section>
+
+        <section id="owner-dashboard-businesses" class="owner-dashboard-block ag-card" aria-labelledby="owner-dashboard-businesses-title" aria-busy="true">
+          <header><div><p class="owner-dashboard-kicker">Cuentas</p><h2 id="owner-dashboard-businesses-title">Negocios que necesitan atención</h2></div><button class="button button-secondary button-small" type="button" data-owner-retry="businesses">Reintentar</button></header>
+          <div data-owner-dashboard-content><div class="owner-dashboard-loading"><span class="ag-loader" aria-hidden="true"></span><span>Cargando negocios…</span></div></div>
+        </section>
+
+        <section id="owner-dashboard-platform" class="owner-dashboard-block ag-card" aria-labelledby="owner-dashboard-platform-title" aria-busy="true">
+          <header><div><p class="owner-dashboard-kicker">Plataforma</p><h2 id="owner-dashboard-platform-title">Estado general</h2></div><button class="button button-secondary button-small" type="button" data-owner-retry="platform">Reintentar</button></header>
+          <div data-owner-dashboard-content><div class="owner-dashboard-loading"><span class="ag-loader" aria-hidden="true"></span><span>Comprobando plataforma…</span></div></div>
+        </section>
+
+        <section id="owner-dashboard-activity" class="owner-dashboard-block ag-card" aria-labelledby="owner-dashboard-activity-title" aria-busy="true">
+          <header><div><p class="owner-dashboard-kicker">Últimos cambios</p><h2 id="owner-dashboard-activity-title">Actividad reciente</h2></div></header>
+          <div data-owner-dashboard-content><div class="owner-dashboard-loading"><span class="ag-loader" aria-hidden="true"></span><span>Cargando actividad…</span></div></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="businesses-section" class="panel" data-panel="businesses">
       <div class="section-heading">
         <div><h2>Negocios</h2><p>Vista rápida del estado de cada cliente.</p></div>
         <span id="list-status" class="status-text" aria-live="polite">Cargando…</span>
       </div>
+      <section class="summary-grid owner-legacy-summary" aria-label="Resumen de negocios">
+        <article class="summary-card ag-card"><span>Total negocios</span><strong id="total-businesses">—</strong></article>
+        <article class="summary-card"><span>Negocios activos</span><strong id="active-businesses">—</strong></article>
+        <article class="summary-card"><span>Reservas pendientes</span><strong id="pending-bookings">—</strong></article>
+        <article class="summary-card"><span>Mensajes pendientes</span><strong id="pending-messages">—</strong></article>
+        <article class="summary-card"><span>Reseñas pendientes</span><strong id="pending-reviews">—</strong></article>
+        <article class="summary-card"><span>Incidencias abiertas</span><strong id="open-incidents">—</strong></article>
+      </section>
       <div id="business-list" class="business-grid"></div>
     </section>
 
@@ -124,7 +184,7 @@
       <section id="onboarding-wizard" class="onboarding-wizard" aria-live="polite">
         <div id="onboarding-start" class="onboarding-start">
           <label>Nombre comercial<input id="onboarding-name" maxlength="200" placeholder="Estudio Aurora" /></label>
-          <label>Slug opcional<input id="onboarding-slug" maxlength="120" placeholder="Se genera automÃ¡ticamente" /></label>
+          <label>Slug opcional<input id="onboarding-slug" maxlength="120" placeholder="Se genera automáticamente" /></label>
           <label>Plantilla<select id="onboarding-template"><option value="">Cargando plantillas...</option></select></label>
           <button id="onboarding-create" class="button button-primary" type="button">Empezar onboarding</button>
         </div>
@@ -220,6 +280,6 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="owner.js"></script>
+  <script src="owner.js?v=20260805-1"></script>
 </body>
 </html>

@@ -55,6 +55,7 @@ No había Chrome, Edge, Firefox, Playwright ni Selenium ejecutables en el entorn
 19. [Canales y automatizaciones del Business Admin](19_admin_channels_automations.md)
 20. [Reseñas y crecimiento del Business Admin](20_admin_growth_reviews.md)
 21. [QA transversal del Business Admin](21_admin_cross_section_qa.md)
+22. [Dashboard operativo del panel Owner](22_owner_dashboard.md)
 
 ## Principios de implementación
 

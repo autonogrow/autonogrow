@@ -48,17 +48,533 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+const OWNER_DASHBOARD_HEALTH_ATTENTION = new Set(["warning", "degraded", "action_required", "revoked", "suspended", "error"]);
+const OWNER_DASHBOARD_SOURCE_NAMES = ["businesses", "channels", "incidents", "queue", "platform"];
+const ownerDashboardState = Object.fromEntries(OWNER_DASHBOARD_SOURCE_NAMES.map((name) => [name, { status: "idle", data: null, errors: 0 }]));
+const ownerDashboardSourceVersions = Object.fromEntries(OWNER_DASHBOARD_SOURCE_NAMES.map((name) => [name, 0]));
+const ownerDashboardRetryInFlight = new Set();
+let ownerDashboardLoadInFlight = null;
+let ownerDashboardRerunRequested = false;
+let ownerDashboardLastUpdated = null;
+
+function formatOwnerDate(value, options = { dateStyle: "short", timeStyle: "short" }) {
+  if (!value) return "Sin fecha";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Sin fecha";
+  return new Intl.DateTimeFormat("es-ES", options).format(parsed);
+}
+
+function safeOwnerDashboardError() {
+  return "No se pudo comprobar esta fuente. Los demás bloques siguen disponibles.";
+}
+
+function ownerDashboardBlock(id) {
+  return byId(id);
+}
+
+function setOwnerDashboardBlock(id, html, state = "ready") {
+  const block = ownerDashboardBlock(id);
+  if (!block) return;
+  block.dataset.state = state;
+  block.setAttribute("aria-busy", state === "loading" ? "true" : "false");
+  block.querySelector("[data-owner-dashboard-content]").innerHTML = html;
+}
+
+function ownerDashboardEmpty(title, description) {
+  return `<div class="owner-dashboard-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(description)}</span></div>`;
+}
+
+function ownerDashboardError() {
+  return `<div class="owner-dashboard-error" role="group"><strong>Fuente no disponible</strong><span>${escapeHtml(safeOwnerDashboardError())}</span></div>`;
+}
+
+function ownerDashboardPartial(errors) {
+  if (!errors) return "";
+  return `<p class="owner-dashboard-partial">No se pudo comprobar ${errors} ${errors === 1 ? "negocio" : "negocios"}; el resumen conserva únicamente resultados confirmados.</p>`;
+}
+
+function ownerDashboardStale() {
+  return '<p class="owner-dashboard-partial">No se pudo actualizar esta fuente; se conservan los últimos datos válidos.</p>';
+}
+
+function updateOwnerSyncStatus() {
+  const failed = OWNER_DASHBOARD_SOURCE_NAMES.filter((name) => ownerDashboardState[name].status === "error").length;
+  const partial = OWNER_DASHBOARD_SOURCE_NAMES.filter((name) => Number(ownerDashboardState[name].errors || 0) > 0).length;
+  const unavailable = failed + partial;
+  const prefix = unavailable ? `Actualización parcial · ${unavailable} ${unavailable === 1 ? "fuente incompleta" : "fuentes incompletas"}` : "Actualizado";
+  byId("owner-sync-status").textContent = `${prefix} · ${formatOwnerDate((ownerDashboardLastUpdated || new Date()).toISOString())}`;
+}
+
+function dashboardSourceData(name, fallback) {
+  return ownerDashboardState[name].data ?? fallback;
+}
+
+function pendingOwnerDecisions() {
+  const snapshots = dashboardSourceData("channels", []);
+  const decisions = [];
+  snapshots.forEach((snapshot) => {
+    const candidatesByChannel = {
+      instagram: snapshot.instagramCandidates || [],
+      whatsapp: snapshot.whatsappCandidates || [],
+    };
+    Object.entries(candidatesByChannel).forEach(([channel, candidates]) => {
+      candidates.filter((candidate) => candidate.status === "candidate_ready").forEach((candidate) => decisions.push({
+        business: snapshot.business,
+        channel,
+        kind: "candidate",
+        requestedAt: candidate.created_at,
+        purpose: candidate.purpose,
+      }));
+    });
+    (snapshot.controls || []).forEach((control) => {
+      if (control.status !== "pending_approval" || candidatesByChannel[control.channel]?.length) return;
+      decisions.push({
+        business: snapshot.business,
+        channel: control.channel,
+        kind: "connection",
+        requestedAt: control.requested_at || control.updated_at,
+        purpose: null,
+      });
+    });
+  });
+  return decisions.sort((left, right) => new Date(left.requestedAt || 0) - new Date(right.requestedAt || 0));
+}
+
+function integrationAttentionItems() {
+  const items = [];
+  dashboardSourceData("channels", []).forEach((snapshot) => {
+    const healthChannels = snapshot.health || [];
+    healthChannels.forEach((health) => {
+      if (!OWNER_DASHBOARD_HEALTH_ATTENTION.has(health.health_status) && !health.reconnection_required) return;
+      items.push({ business: snapshot.business, control: (snapshot.controls || []).find((item) => item.channel === health.channel), health });
+    });
+    (snapshot.controls || []).forEach((control) => {
+      if (!["suspended", "revoked"].includes(control.status) || healthChannels.some((health) => health.channel === control.channel)) return;
+      items.push({ business: snapshot.business, control, health: { channel: control.channel, health_status: control.status } });
+    });
+  });
+  return items;
+}
+
+function ownerQueueIssueCount(queue) {
+  if (!queue) return null;
+  const failed = (queue.jobs || []).filter((item) => item.status === "failed").length;
+  return Number(queue.retry_inbox || 0) + Number(queue.retry_outbox || 0) + Number(queue.dead_letter_inbox || 0) + Number(queue.dead_letter_outbox || 0) + Number(queue.blocked_outbox || 0) + failed;
+}
+
+function ownerBusinessIsPending(business) {
+  return ["draft", "onboarding", "configuration_pending", "ready"].includes(business.status);
+}
+
+function renderOwnerMetrics() {
+  const businessSource = ownerDashboardState.businesses;
+  const channelSource = ownerDashboardState.channels;
+  const incidentSource = ownerDashboardState.incidents;
+  const queueSource = ownerDashboardState.queue;
+  const businessData = dashboardSourceData("businesses", businesses);
+  const incidentData = dashboardSourceData("incidents", {});
+  const queueData = dashboardSourceData("queue", null);
+  byId("owner-metric-active").textContent = businessSource.status === "error" ? "—" : businessData.filter((item) => item.status === "active").length;
+  byId("owner-metric-pending-businesses").textContent = businessSource.status === "error" ? "—" : businessData.filter(ownerBusinessIsPending).length;
+  byId("owner-metric-decisions").textContent = channelSource.status === "error" ? "—" : pendingOwnerDecisions().length;
+  byId("owner-metric-integrations").textContent = channelSource.status === "error" ? "—" : integrationAttentionItems().length;
+  byId("owner-metric-incidents").textContent = incidentSource.status === "error" ? "—" : Number(incidentData.open_count || 0);
+  const queueIssues = ownerQueueIssueCount(queueData);
+  byId("owner-metric-messages").textContent = queueSource.status === "error" || queueIssues === null ? "—" : queueIssues;
+  byId("owner-dashboard-metrics").setAttribute("aria-busy", OWNER_DASHBOARD_SOURCE_NAMES.some((name) => ownerDashboardState[name].status === "loading") ? "true" : "false");
+}
+
+function ownerDecisionPurpose(value) {
+  return value === "replacement" || value === "reconnection" ? "Reconexión solicitada" : "Nueva conexión solicitada";
+}
+
+function renderPendingDecisions() {
+  const source = ownerDashboardState.channels;
+  if (source.status === "error" && !source.data) { setOwnerDashboardBlock("owner-dashboard-decisions", ownerDashboardError(), "error"); return; }
+  const decisions = pendingOwnerDecisions();
+  if (!decisions.length) {
+    const content = source.status === "error"
+      ? ownerDashboardStale() + ownerDashboardEmpty("Última comprobación sin decisiones", "La fuente debe recuperarse antes de confirmar que no hay nuevas solicitudes.")
+      : source.errors
+      ? ownerDashboardPartial(source.errors) + ownerDashboardEmpty("Comprobación incompleta", "No hay decisiones confirmadas en las fuentes disponibles.")
+      : ownerDashboardEmpty("No hay decisiones pendientes", "Las nuevas solicitudes de conexión o aprobación aparecerán aquí.");
+    setOwnerDashboardBlock("owner-dashboard-decisions", content, source.status === "error" ? "error" : source.errors ? "partial" : "ready");
+    return;
+  }
+  const html = (source.status === "error" ? ownerDashboardStale() : ownerDashboardPartial(source.errors)) + `<ul class="owner-dashboard-list">${decisions.slice(0, 8).map((item) => {
+    const channel = item.channel === "instagram" ? "Instagram" : "WhatsApp";
+    return `<li class="owner-dashboard-item"><div class="owner-dashboard-item__heading"><div><h3>${escapeHtml(item.business.name)}</h3><p>${escapeHtml(channel)} · ${escapeHtml(item.kind === "candidate" ? "Cuenta pendiente de revisión" : "Solicitud pendiente de revisión")}</p></div><span class="ag-badge ag-badge--warning">Pendiente</span></div><div class="owner-dashboard-item__meta"><span>Solicitada: ${escapeHtml(formatOwnerDate(item.requestedAt))}</span><span>${escapeHtml(ownerDecisionPurpose(item.purpose))}</span></div><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="businesses" data-owner-business-id="${escapeHtml(item.business.id)}" data-owner-detail="${escapeHtml(item.channel === "instagram" ? "integration" : "channels")}">Revisar solicitud</button></li>`;
+  }).join("")}</ul>`;
+  setOwnerDashboardBlock("owner-dashboard-decisions", html, source.status === "loading" ? "loading" : source.status === "error" ? "error" : source.errors ? "partial" : "ready");
+}
+
+function ownerApprovalLabel(control) {
+  if (!control) return "Sin control disponible";
+  return ({ approved: "Aprobada", pending_approval: "Pendiente", available: "Disponible", suspended: "Suspendida", revoked: "Revocada", not_allowed: "No permitida" })[control.status] || "Sin comprobar";
+}
+
+function ownerCapabilityLabel(enabled) {
+  return enabled ? "Activada" : "Desactivada";
+}
+
+function ownerHealthLabel(status) {
+  return ({ warning: "Funciona con avisos", degraded: "Necesita revisión", action_required: "Requiere acción", revoked: "Acceso revocado", suspended: "Suspendida", error: "No está funcionando", healthy: "Operativa" })[status] || "No se pudo comprobar";
+}
+
+function renderIntegrationAttention() {
+  const source = ownerDashboardState.channels;
+  if (source.status === "error" && !source.data) { setOwnerDashboardBlock("owner-dashboard-integrations", ownerDashboardError(), "error"); return; }
+  const attention = integrationAttentionItems();
+  if (!attention.length) {
+    const content = source.status === "error"
+      ? ownerDashboardStale() + ownerDashboardEmpty("Última comprobación sin problemas", "La fuente debe recuperarse para confirmar el estado actual.")
+      : source.errors
+      ? ownerDashboardPartial(source.errors) + ownerDashboardEmpty("Comprobación incompleta", "No se confirmaron problemas en las fuentes disponibles.")
+      : ownerDashboardEmpty("Sin integraciones problemáticas", "No hay integraciones que requieran atención.");
+    setOwnerDashboardBlock("owner-dashboard-integrations", content, source.status === "error" ? "error" : source.errors ? "partial" : "ready");
+    return;
+  }
+  const html = (source.status === "error" ? ownerDashboardStale() : ownerDashboardPartial(source.errors)) + `<ul class="owner-dashboard-list">${attention.slice(0, 6).map(({ business, control, health }) => {
+    const channel = health.channel === "instagram" ? "Instagram" : "WhatsApp";
+    const recommendation = health.reconnection_required ? "La cuenta debe volver a conectarse." : health.health_status === "warning" ? "Conviene comprobar el canal." : "Revisa el estado antes de reanudar capacidades.";
+    return `<li class="owner-dashboard-item"><div class="owner-dashboard-item__heading"><div><h3>${escapeHtml(channel)} · ${escapeHtml(business.name)}</h3><p>${escapeHtml(ownerHealthLabel(health.health_status))}</p></div><span class="ag-badge ag-badge--danger">Atención</span></div><div class="owner-dashboard-item__layers"><span><strong>Aprobación</strong>${escapeHtml(ownerApprovalLabel(control))}</span><span><strong>Envío</strong>${escapeHtml(ownerCapabilityLabel(control?.integrated_delivery_enabled))}</span><span><strong>Automatización</strong>${escapeHtml(ownerCapabilityLabel(control?.automation_enabled))}</span></div><div class="owner-dashboard-item__meta"><span>Última comprobación: ${escapeHtml(formatOwnerDate(health.last_health_check_at))}</span><span>${escapeHtml(recommendation)}</span></div><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="businesses" data-owner-business-id="${escapeHtml(business.id)}" data-owner-detail="channels">Revisar integración</button></li>`;
+  }).join("")}</ul>`;
+  setOwnerDashboardBlock("owner-dashboard-integrations", html, source.status === "loading" ? "loading" : source.status === "error" ? "error" : source.errors ? "partial" : "ready");
+}
+
+function safeIncidentTitle(incident) {
+  const category = ({ integration_unavailable: "Canal no disponible", provider_authentication: "Autorización del canal caducada", instagram_authentication: "Instagram necesita reconexión", instagram_token_expired: "Instagram necesita reconexión", provider_send_failure: "No se pudo procesar un mensaje", queue_processing_failure: "Procesamiento de mensajes interrumpido", security_incident: "Incidencia de seguridad" })[incident.category];
+  return category || (incident.channel ? `Incidencia en ${incident.channel === "instagram" ? "Instagram" : "WhatsApp"}` : "Incidencia operativa");
+}
+
+function renderIncidentSummary() {
+  const source = ownerDashboardState.incidents;
+  if (source.status === "error" && !source.data) { setOwnerDashboardBlock("owner-dashboard-incidents", ownerDashboardError(), "error"); return; }
+  const open = (dashboardSourceData("incidents", {}).incidents || []).filter((item) => ["open", "acknowledged"].includes(item.status));
+  if (!open.length) {
+    const content = source.status === "error" ? ownerDashboardStale() + ownerDashboardEmpty("Última comprobación sin incidencias", "Reintenta para confirmar el estado actual.") : ownerDashboardEmpty("No hay incidencias abiertas", "Las incidencias nuevas aparecerán aquí.");
+    setOwnerDashboardBlock("owner-dashboard-incidents", content, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
+    return;
+  }
+  const html = (source.status === "error" ? ownerDashboardStale() : "") + `<ul class="owner-dashboard-list">${open.slice(0, 5).map((incident) => `<li class="owner-dashboard-item"><div class="owner-dashboard-item__heading"><div><h3>${escapeHtml(safeIncidentTitle(incident))}</h3><p>${escapeHtml(incident.business_name || "Plataforma")}</p></div><span class="ag-badge ${["critical", "high"].includes(incident.severity) ? "ag-badge--danger" : "ag-badge--warning"}">${escapeHtml(({ critical: "Crítica", high: "Alta", medium: "Media", low: "Baja" })[incident.severity] || "Sin clasificar")}</span></div><div class="owner-dashboard-item__meta"><span>${escapeHtml(incident.status === "acknowledged" ? "Reconocida" : "Abierta")}</span><span>${escapeHtml(formatOwnerDate(incident.last_occurred_at))}</span></div><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="incidents">Abrir incidencias</button></li>`).join("")}</ul>`;
+  setOwnerDashboardBlock("owner-dashboard-incidents", html, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
+}
+
+function renderOperationsSummary() {
+  const source = ownerDashboardState.queue;
+  if (source.status === "error" && !source.data) { setOwnerDashboardBlock("owner-dashboard-operations", ownerDashboardError(), "error"); return; }
+  const queue = source.data;
+  if (!queue) return;
+  const issueCount = ownerQueueIssueCount(queue);
+  const workerProblem = !queue.worker_active || Number(queue.stale_worker_count || 0) > 0;
+  const pending = Number(queue.pending_inbox || 0) + Number(queue.pending_outbox || 0);
+  if (!issueCount && !workerProblem) {
+    const message = source.status === "error" ? "Reintenta para confirmar el estado actual." : pending ? `${pending} mensajes pendientes continúan en procesamiento.` : "El procesamiento no presenta problemas detectados.";
+    const content = (source.status === "error" ? ownerDashboardStale() : "") + ownerDashboardEmpty(source.status === "error" ? "Última comprobación operativa" : "Procesamiento operativo", message);
+    setOwnerDashboardBlock("owner-dashboard-operations", content, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
+    return;
+  }
+  const rows = [
+    ["Mensajes pendientes", pending],
+    ["Reintentos programados", Number(queue.retry_inbox || 0) + Number(queue.retry_outbox || 0)],
+    ["Casos que necesitan revisión", Number(queue.dead_letter_inbox || 0) + Number(queue.dead_letter_outbox || 0) + Number(queue.blocked_outbox || 0) + (queue.jobs || []).filter((item) => item.status === "failed").length],
+    ["Procesamiento", workerProblem ? "Necesita atención" : "Operativo"],
+  ];
+  const html = (source.status === "error" ? ownerDashboardStale() : "") + `<ul class="owner-dashboard-status-list">${rows.map(([label, value]) => `<li><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></li>`).join("")}</ul><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="queues">Revisar procesamiento</button>`;
+  setOwnerDashboardBlock("owner-dashboard-operations", html, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
+}
+
+function businessAttentionReasons(business) {
+  const reasons = [];
+  if (business.status !== "active") reasons.push(business.status === "suspended" ? "Negocio suspendido" : "Onboarding incompleto");
+  if (!business.health?.has_basic_info) reasons.push("Información básica incompleta");
+  if (!business.health?.has_active_services) reasons.push("Sin servicios activos");
+  if (!business.health?.has_schedule) reasons.push("Sin horarios configurados");
+  if (!business.health?.has_phone) reasons.push("Sin teléfono operativo");
+  return reasons;
+}
+
+function renderBusinessesAttention() {
+  const source = ownerDashboardState.businesses;
+  if (source.status === "error" && !source.data) { setOwnerDashboardBlock("owner-dashboard-businesses", ownerDashboardError(), "error"); return; }
+  const attention = dashboardSourceData("businesses", businesses).map((business) => ({ business, reasons: businessAttentionReasons(business) })).filter((item) => item.reasons.length);
+  if (!attention.length) {
+    const content = (source.status === "error" ? ownerDashboardStale() : "") + ownerDashboardEmpty(source.status === "error" ? "Última comprobación sin bloqueos" : "Sin bloqueos detectados", source.status === "error" ? "Reintenta para confirmar el estado actual." : "Los negocios cargados no presentan carencias operativas básicas.");
+    setOwnerDashboardBlock("owner-dashboard-businesses", content, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
+    return;
+  }
+  const html = (source.status === "error" ? ownerDashboardStale() : "") + `<ul class="owner-dashboard-list">${attention.slice(0, 6).map(({ business, reasons }) => `<li class="owner-dashboard-item"><div class="owner-dashboard-item__heading"><h3>${escapeHtml(business.name)}</h3><span class="ag-badge ag-badge--warning">Revisar</span></div><p>${reasons.slice(0, 3).map(escapeHtml).join(" · ")}</p><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="businesses" data-owner-business-id="${escapeHtml(business.id)}">Abrir negocio</button></li>`).join("")}</ul>`;
+  setOwnerDashboardBlock("owner-dashboard-businesses", html, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
+}
+
+function renderPlatformStatus() {
+  const source = ownerDashboardState.platform;
+  if (source.status === "error" && !source.data) { setOwnerDashboardBlock("owner-dashboard-platform", ownerDashboardError(), "error"); return; }
+  const platform = source.data;
+  if (!platform) return;
+  const queue = dashboardSourceData("queue", null);
+  const critical = (dashboardSourceData("incidents", {}).incidents || []).filter((item) => item.status !== "resolved" && item.status !== "ignored" && item.severity === "critical").length;
+  const integrationIssues = integrationAttentionItems().length;
+  const processing = !queue ? "No se pudo comprobar" : queue.worker_active && ownerQueueIssueCount(queue) === 0 ? "Operativo" : "Necesita atención";
+  const rows = [
+    ["API y datos", platform.database?.at_head === false ? "Necesita atención" : "Operativo"],
+    ["Procesamiento de mensajes", processing],
+    ["Trabajos de integración", integrationIssues ? "Necesita atención" : ownerDashboardState.channels.status === "error" ? "No se pudo comprobar" : "Operativos"],
+    ["Incidencias críticas", critical],
+    ["Última actualización", formatOwnerDate(platform.generated_at)],
+  ];
+  const html = (source.status === "error" ? ownerDashboardStale() : "") + `<ul class="owner-dashboard-status-list">${rows.map(([label, value]) => `<li><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></li>`).join("")}</ul><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="operations">Abrir operaciones</button>`;
+  setOwnerDashboardBlock("owner-dashboard-platform", html, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
+}
+
+function ownerActivityItems() {
+  const items = [];
+  dashboardSourceData("businesses", businesses).forEach((business) => {
+    if (business.created_at) items.push({ at: business.created_at, text: `${business.name}: negocio creado`, target: "businesses", businessId: business.id });
+  });
+  dashboardSourceData("channels", []).forEach((snapshot) => {
+    [...(snapshot.instagramCandidates || []).map((item) => ({ ...item, channel: "Instagram" })), ...(snapshot.whatsappCandidates || []).map((item) => ({ ...item, channel: "WhatsApp" }))].forEach((candidate) => items.push({ at: candidate.created_at, text: `${snapshot.business.name}: candidatura ${candidate.channel} enviada`, target: "businesses", businessId: snapshot.business.id, detail: candidate.channel === "Instagram" ? "integration" : "channels" }));
+    (snapshot.controls || []).forEach((control) => {
+      const events = [[control.approved_at, `${control.channel === "instagram" ? "Instagram" : "WhatsApp"} aprobado`], [control.suspended_at, `${control.channel === "instagram" ? "Instagram" : "WhatsApp"} suspendido`], [control.revoked_at, `${control.channel === "instagram" ? "Instagram" : "WhatsApp"} revocado`]];
+      events.filter(([at]) => at).forEach(([at, label]) => items.push({ at, text: `${snapshot.business.name}: ${label}`, target: "businesses", businessId: snapshot.business.id, detail: "channels" }));
+    });
+  });
+  (dashboardSourceData("incidents", {}).incidents || []).forEach((incident) => items.push({ at: incident.resolved_at || incident.created_at, text: `${incident.business_name || "Plataforma"}: incidencia ${incident.resolved_at ? "resuelta" : "creada"}`, target: "incidents" }));
+  return items.filter((item) => item.at).sort((left, right) => new Date(right.at) - new Date(left.at)).slice(0, 8);
+}
+
+function renderOwnerActivity() {
+  const sourcesAvailable = ownerDashboardState.businesses.status !== "error" || ownerDashboardState.channels.status !== "error" || ownerDashboardState.incidents.status !== "error";
+  if (!sourcesAvailable) { setOwnerDashboardBlock("owner-dashboard-activity", ownerDashboardError(), "error"); return; }
+  const activity = ownerActivityItems();
+  if (!activity.length) { setOwnerDashboardBlock("owner-dashboard-activity", ownerDashboardEmpty("Sin actividad reciente disponible", "La actividad aparecerá cuando existan eventos operativos confirmados."), "ready"); return; }
+  const html = `<ul class="owner-dashboard-activity-list">${activity.map((item) => `<li><p>${escapeHtml(item.text)}</p><time datetime="${escapeHtml(item.at)}">${escapeHtml(formatOwnerDate(item.at))}</time><button class="owner-metric-link" type="button" data-owner-navigate="${escapeHtml(item.target)}"${item.businessId ? ` data-owner-business-id="${escapeHtml(item.businessId)}"` : ""}${item.detail ? ` data-owner-detail="${escapeHtml(item.detail)}"` : ""}>Abrir contexto</button></li>`).join("")}</ul>`;
+  setOwnerDashboardBlock("owner-dashboard-activity", html, OWNER_DASHBOARD_SOURCE_NAMES.some((name) => ownerDashboardState[name].status === "loading") ? "loading" : "ready");
+}
+
+function renderOwnerDashboard() {
+  byId("owner-dashboard-date").textContent = new Intl.DateTimeFormat("es-ES", { dateStyle: "full" }).format(new Date());
+  renderOwnerMetrics();
+  renderPendingDecisions();
+  renderIntegrationAttention();
+  renderIncidentSummary();
+  renderOperationsSummary();
+  renderBusinessesAttention();
+  renderPlatformStatus();
+  renderOwnerActivity();
+}
+
+function markOwnerDashboardSourceLoading(name) {
+  ownerDashboardState[name].status = "loading";
+  if (!ownerDashboardState[name].data) {
+    const blockMap = { channels: ["owner-dashboard-decisions", "owner-dashboard-integrations"], incidents: ["owner-dashboard-incidents"], queue: ["owner-dashboard-operations"], businesses: ["owner-dashboard-businesses"], platform: ["owner-dashboard-platform"] };
+    (blockMap[name] || []).forEach((id) => ownerDashboardBlock(id)?.setAttribute("aria-busy", "true"));
+  }
+}
+
+async function fetchOwnerDashboardJson(path) {
+  const response = await fetch(`${API_BASE_URL}${path}`);
+  if (!response.ok) throw new Error(`Owner dashboard source failed (${response.status})`);
+  return response.json();
+}
+
+async function loadOwnerDashboardBusinesses() {
+  const version = ++ownerDashboardSourceVersions.businesses;
+  markOwnerDashboardSourceLoading("businesses");
+  renderOwnerDashboard();
+  try {
+    const data = await fetchOwnerDashboardJson("/api/owner/businesses");
+    if (version !== ownerDashboardSourceVersions.businesses) return false;
+    businesses = data;
+    ownerDashboardState.businesses = { status: "ready", data, errors: 0 };
+    renderSummary();
+    if (document.querySelector('[data-panel="businesses"]').classList.contains("active")) renderBusinesses();
+    renderOwnerDashboard();
+    return true;
+  } catch {
+    if (version !== ownerDashboardSourceVersions.businesses) return false;
+    ownerDashboardState.businesses.status = "error";
+    renderOwnerDashboard();
+    return false;
+  }
+}
+
+async function loadBusinessChannelSnapshot(business) {
+  const base = `/api/owner/businesses/${encodeURIComponent(business.id)}`;
+  const results = await Promise.allSettled([
+    fetchOwnerDashboardJson(`${base}/channel-controls`),
+    fetchOwnerDashboardJson(`${base}/integrations/whatsapp/embedded-signup/candidates`),
+    fetchOwnerDashboardJson(`${base}/channels/health`),
+    fetchOwnerDashboardJson(`${base}/integrations/instagram/oauth/candidates`),
+  ]);
+  const value = (index, fallback) => results[index].status === "fulfilled" ? results[index].value : fallback;
+  return {
+    business: { id: business.id, name: business.name, slug: business.slug },
+    controls: value(0, {}).channels || [],
+    whatsappCandidates: value(1, []),
+    health: value(2, {}).channels || [],
+    instagramCandidates: value(3, []),
+    errors: results.filter((result) => result.status === "rejected").length,
+  };
+}
+
+async function loadOwnerDashboardChannels() {
+  const version = ++ownerDashboardSourceVersions.channels;
+  markOwnerDashboardSourceLoading("channels");
+  renderOwnerDashboard();
+  const snapshots = [];
+  for (let index = 0; index < businesses.length; index += 4) {
+    const batch = await Promise.all(businesses.slice(index, index + 4).map(loadBusinessChannelSnapshot));
+    if (version !== ownerDashboardSourceVersions.channels) return;
+    snapshots.push(...batch);
+  }
+  const errors = snapshots.filter((snapshot) => snapshot.errors === 4).length;
+  ownerDashboardState.channels = { status: errors === businesses.length && businesses.length ? "error" : "ready", data: snapshots, errors: snapshots.filter((snapshot) => snapshot.errors > 0).length };
+  renderOwnerDashboard();
+}
+
+async function loadOwnerDashboardIncidents() {
+  const version = ++ownerDashboardSourceVersions.incidents;
+  markOwnerDashboardSourceLoading("incidents");
+  renderOwnerDashboard();
+  try {
+    const data = await fetchOwnerDashboardJson("/api/owner/incidents?limit=30");
+    if (version !== ownerDashboardSourceVersions.incidents) return;
+    ownerDashboardState.incidents = { status: "ready", data, errors: 0 };
+    openIncidentCount = Number(data.open_count || 0);
+    renderSummary();
+  } catch {
+    if (version !== ownerDashboardSourceVersions.incidents) return;
+    ownerDashboardState.incidents.status = "error";
+  }
+  renderOwnerDashboard();
+}
+
+async function loadOwnerDashboardQueue() {
+  const version = ++ownerDashboardSourceVersions.queue;
+  markOwnerDashboardSourceLoading("queue");
+  renderOwnerDashboard();
+  try {
+    const data = await fetchOwnerDashboardJson("/api/owner/system/queue-status");
+    if (version !== ownerDashboardSourceVersions.queue) return;
+    ownerDashboardState.queue = { status: "ready", data, errors: 0 };
+  } catch {
+    if (version !== ownerDashboardSourceVersions.queue) return;
+    ownerDashboardState.queue.status = "error";
+  }
+  renderOwnerDashboard();
+}
+
+async function loadOwnerDashboardPlatform() {
+  const version = ++ownerDashboardSourceVersions.platform;
+  markOwnerDashboardSourceLoading("platform");
+  renderOwnerDashboard();
+  try {
+    const data = await fetchOwnerDashboardJson("/api/owner/system/health");
+    if (version !== ownerDashboardSourceVersions.platform) return;
+    ownerDashboardState.platform = { status: "ready", data, errors: 0 };
+  } catch {
+    if (version !== ownerDashboardSourceVersions.platform) return;
+    ownerDashboardState.platform.status = "error";
+  }
+  renderOwnerDashboard();
+}
+
+async function loadOwnerDashboard(options = {}) {
+  if (ownerDashboardLoadInFlight) {
+    ownerDashboardRerunRequested = true;
+    return ownerDashboardLoadInFlight;
+  }
+  const announce = options.announce !== false;
+  if (announce) byId("owner-sync-status").textContent = "Actualizando…";
+  ownerDashboardLoadInFlight = (async () => {
+    const businessesLoaded = await loadOwnerDashboardBusinesses();
+    const sources = [loadOwnerDashboardIncidents(), loadOwnerDashboardQueue(), loadOwnerDashboardPlatform()];
+    if (businessesLoaded) sources.push(loadOwnerDashboardChannels());
+    else {
+      ownerDashboardState.channels.status = "error";
+      renderOwnerDashboard();
+    }
+    await Promise.allSettled(sources);
+    ownerDashboardLastUpdated = new Date();
+    updateOwnerSyncStatus();
+    renderOwnerDashboard();
+  })();
+  try {
+    await ownerDashboardLoadInFlight;
+  } finally {
+    ownerDashboardLoadInFlight = null;
+    if (ownerDashboardRerunRequested) {
+      ownerDashboardRerunRequested = false;
+      return loadOwnerDashboard(options);
+    }
+  }
+}
+
+async function retryOwnerDashboardSource(source) {
+  if (ownerDashboardRetryInFlight.has(source)) return;
+  ownerDashboardRetryInFlight.add(source);
+  try {
+    if (source === "businesses") {
+      const loaded = await loadOwnerDashboardBusinesses();
+      if (loaded) await loadOwnerDashboardChannels();
+    } else if (source === "channels") await loadOwnerDashboardChannels();
+    else if (source === "incidents") await loadOwnerDashboardIncidents();
+    else if (source === "queue") await loadOwnerDashboardQueue();
+    else if (source === "platform") await loadOwnerDashboardPlatform();
+    ownerDashboardLastUpdated = new Date();
+    updateOwnerSyncStatus();
+  } finally {
+    ownerDashboardRetryInFlight.delete(source);
+  }
+}
+
 function slugify(value) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
     .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function setActiveTab(name) {
-  document.querySelectorAll("[data-tab]").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
+  const headings = {
+    overview: ["Resumen operativo", "Supervisa negocios, aprobaciones, integraciones e incidencias de AutonoGrow."],
+    businesses: ["Negocios", "Consulta y gestiona el contexto completo de cada cuenta."],
+    "new-business": ["Nuevo negocio", "Inicia o continúa el alta guiada de un negocio."],
+    incidents: ["Incidencias", "Revisa alertas operativas agrupadas y seguras."],
+    queues: ["Procesamiento de mensajes", "Supervisa tareas de entrada y salida que requieren intervención."],
+    operations: ["Operaciones", "Comprueba el estado técnico global y el mantenimiento."],
+  };
+  document.querySelectorAll("[data-tab]").forEach((tab) => {
+    const active = tab.dataset.tab === name;
+    tab.classList.toggle("active", active);
+    if (active) tab.setAttribute("aria-current", "page");
+    else tab.removeAttribute("aria-current");
+  });
   document.querySelectorAll("[data-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === name));
+  byId("owner-page-title").textContent = headings[name]?.[0] || headings.overview[0];
+  byId("owner-page-subtitle").textContent = headings[name]?.[1] || headings.overview[1];
+  if (name === "overview") renderOwnerDashboard();
+  if (name === "businesses") renderBusinesses();
   if (name === "incidents") loadIncidents();
   if (name === "queues") loadQueueStatus();
   if (name === "operations") loadOperationsStatus();
+}
+
+function navigateOwnerContext(target, businessId = null, detail = null) {
+  const allowed = new Set(["overview", "businesses", "new-business", "incidents", "queues", "operations"]);
+  if (!allowed.has(target)) return;
+  setActiveTab(target);
+  if (target !== "businesses" || !businessId) return;
+  window.requestAnimationFrame(() => {
+    const card = document.querySelector(`[data-business-card-id="${CSS.escape(String(businessId))}"]`);
+    if (!card) return;
+    const selector = detail === "integration" ? "[data-owner-integration-id]" : detail === "channels" ? "[data-owner-channel-control-id]" : null;
+    const details = selector ? card.querySelector(selector) : null;
+    if (details) details.open = true;
+    const focusTarget = details?.querySelector("summary") || card.querySelector("h3");
+    focusTarget?.setAttribute("tabindex", "-1");
+    focusTarget?.focus({ preventScroll: true });
+    card.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  });
 }
 
 function renderOperationsStatus() {
@@ -224,7 +740,7 @@ function businessCard(business) {
   const health = business.health;
   const metrics = business.metrics;
   return `
-    <article class="business-card">
+    <article class="business-card" data-business-card-id="${escapeHtml(business.id)}">
       <div class="business-card-header">
         <div class="owner-brand-title">${business.logo_url ? `<img src="${escapeHtml(resolveMediaUrl(business.logo_url, true))}" alt="${escapeHtml(business.logo_alt || business.name)}">` : `<span>${escapeHtml((business.name || "?").slice(0,2).toUpperCase())}</span>`}<div><p class="business-category">${escapeHtml(business.category || "Sin categoría")}</p><h3>${escapeHtml(business.name)}</h3><p>${escapeHtml(business.city || "Sin ciudad")} · <code>${escapeHtml(business.slug)}</code></p></div></div>
         <span class="state-badge ag-badge ${business.active ? "active ag-badge--success" : "inactive ag-badge--neutral"}">${business.active ? "Activo" : "Inactivo"}</span>
@@ -681,7 +1197,9 @@ async function loadBusinesses() {
     const response = await fetch(`${API_BASE_URL}/api/owner/businesses`);
     if (!response.ok) throw new Error("No se pudo cargar la lista");
     businesses = await response.json();
+    ownerDashboardState.businesses = { status: "ready", data: businesses, errors: 0 };
     renderBusinesses();
+    renderOwnerDashboard();
   } catch (error) {
     byId("list-status").textContent = "Backend no disponible";
     byId("business-list").innerHTML = `<div class="error-box">${escapeHtml(error.message)}. Comprueba que el backend esté en ${API_BASE_URL}.</div>`;
@@ -1040,7 +1558,38 @@ async function saveOnboardingStep() {
 }
 
 document.querySelectorAll("[data-tab]").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
-byId("refresh-button").addEventListener("click", async () => { await loadBusinesses(); await loadIncidents(); if (queueStatus) await loadQueueStatus(); });
+byId("refresh-button").addEventListener("click", async () => {
+  const button = byId("refresh-button");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    await loadOwnerDashboard();
+    const activeTab = document.querySelector("[data-tab].active")?.dataset.tab;
+    if (activeTab === "incidents") await loadIncidents();
+    if (activeTab === "queues") await loadQueueStatus();
+    if (activeTab === "operations") await loadOperationsStatus();
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+});
+byId("owner-overview").addEventListener("click", (event) => {
+  const retry = event.target.closest("[data-owner-retry]");
+  if (retry) {
+    retry.disabled = true;
+    retryOwnerDashboardSource(retry.dataset.ownerRetry).finally(() => { retry.disabled = false; });
+    return;
+  }
+  const focus = event.target.closest("[data-owner-focus-block]");
+  if (focus) {
+    const block = byId(focus.dataset.ownerFocusBlock);
+    block?.focus();
+    block?.scrollIntoView({ block: "start" });
+    return;
+  }
+  const navigation = event.target.closest("[data-owner-navigate]");
+  if (navigation) navigateOwnerContext(navigation.dataset.ownerNavigate, navigation.dataset.ownerBusinessId, navigation.dataset.ownerDetail);
+});
 byId("queue-refresh").addEventListener("click", loadQueueStatus);
 byId("operations-refresh").addEventListener("click", loadOperationsStatus);
 byId("maintenance-toggle").addEventListener("click", () => toggleMaintenance().catch((error) => { byId("operations-status").textContent = error.message; }));
@@ -1116,10 +1665,13 @@ async function bootstrapOwnerAuth() {
     byId("owner-auth-gate").hidden = true;
     byId("owner-app").hidden = false;
     byId("owner-auth-user").textContent = ownerAuthUser.name || ownerAuthUser.email;
-    await loadBusinesses();
+    renderOwnerDashboard();
+    await loadOwnerDashboard({ announce: false });
     const oauthResult = new URLSearchParams(window.location.search).get("instagram_oauth");
-    if (oauthResult) byId("list-status").textContent = oauthResult === "pending_review" ? "Instagram autorizado; revisa la cuenta candidata antes de aprobar." : "Instagram Login no se completó; inicia un nuevo intento.";
-    await loadIncidents();
+    if (oauthResult) {
+      byId("owner-sync-status").textContent = oauthResult === "pending_review" ? "Instagram autorizado; hay una candidatura pendiente de revisión." : "Instagram Login no se completó.";
+      if (oauthResult === "pending_review") setActiveTab("overview");
+    }
     await loadOnboardingTemplates();
   } catch (error) {
     console.error("Owner authentication failed", error);
