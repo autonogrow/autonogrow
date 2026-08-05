@@ -1,199 +1,314 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
+  <meta name="description" content="Consulta los servicios y solicita una cita en este negocio." />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="AutonoGrow | Página de negocio" />
+  <meta property="og:description" content="Consulta los servicios y solicita una cita." />
   <title>AutonoGrow | Página de negocio</title>
-
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=5e1" />
   <link rel="stylesheet" href="../autonogrow-shared/auth.css" />
 </head>
-<body>
-  <div class="auth-strip">
-    <span id="landing-auth-user"></span>
-    <div id="landing-google-button"></div>
-    <a href="../autonogrow-customer/index.html">Mis citas</a>
-    <button id="landing-logout" type="button" hidden>Salir</button>
+<body class="template-classic">
+  <a class="skip-link" href="#main-content">Saltar al contenido</a>
+
+  <div id="landing-loading" class="page-state" role="status" aria-live="polite">
+    <span class="loading-mark" aria-hidden="true"></span>
+    <p>Estamos preparando la información del negocio…</p>
   </div>
-  <main class="page landing-layout">
-    <section class="hero landing-section hero-section">
-      <div class="brand-heading">
-        <img id="business-logo" class="business-logo" alt="" hidden />
-        <h1 id="business-name">Cargando...</h1>
-      </div>
-      <div class="badge" id="business-category">Negocio local</div>
-      <p id="business-headline"></p>
-      <p id="business-description"></p>
 
-      <div class="hero-actions">
-        <a id="hero-booking-button" href="#booking" class="btn btn-primary">Reservar cita</a>
-        <a id="hero-services-button" href="#services" class="btn btn-secondary">Ver servicios</a>
-      </div>
-    </section>
-
-    <nav class="quick-actions landing-section" aria-label="Accesos principales">
-      <a href="#booking" class="quick-card">
-        <strong id="quick-booking-label">Reservar cita</strong>
-        <span>Disponibilidad</span>
-      </a>
-
-      <a href="#services" class="quick-card">
-        <strong id="quick-services-label">Servicios</strong>
-        <span>Opciones y precios</span>
-      </a>
-
-      <a href="#information" class="quick-card">
-        <strong>Información</strong>
-        <span>Sobre el negocio</span>
-      </a>
-
-      <a href="#location" class="quick-card">
-        <strong>Contacto</strong>
-        <span>Horario y ubicación</span>
-      </a>
-    </nav>
-
-    <section class="section landing-section information-section" id="information">
-      <h2 id="information-title">Sobre el negocio</h2>
-      <div id="promotions-list" class="promo-list"></div>
-    </section>
-
-    <section class="section landing-section services-section" id="services">
-      <h2 id="services-title">Servicios</h2>
-      <p id="services-subtitle" class="section-subtitle">
-        Elige un servicio, selecciona un hueco disponible y envía tu solicitud.
-      </p>
-
-      <div id="services-list" class="services-grid"></div>
-    </section>
-
-    <section id="gallery-section" class="section landing-section gallery-section" hidden>
-      <h2 id="gallery-title">Galería</h2>
-
-      <div class="gallery">
-        <button class="gallery-btn" id="prev-image" type="button">‹</button>
-        <img id="gallery-image" src="" alt="Imagen de la galería" />
-        <button class="gallery-btn" id="next-image" type="button">›</button>
-      </div>
-      <div id="gallery-indicators" class="gallery-indicators" aria-label="Seleccionar imagen"></div>
-    </section>
-
-    <section class="section landing-section booking-section" id="booking">
-      <h2 id="booking-title">Reservar cita</h2>
-      <p id="booking-subtitle" class="section-subtitle">
-        Selecciona un servicio, elige un hueco disponible y añade cualquier detalle importante.
-      </p>
-
-      <form id="booking-form" class="booking-form">
-        <label>
-          Servicio
-          <select id="service-select" required>
-            <option value="">Selecciona un servicio</option>
-          </select>
-        </label>
-
-        <label id="staff-select-field" hidden>
-          Profesional que te va a atender
-          <select id="staff-select">
-            <option value="">Cualquiera disponible</option>
-          </select>
-        </label>
-
-        <div id="online-booking-unavailable" class="online-booking-unavailable" hidden>
-          <strong id="online-booking-unavailable-message">Ahora mismo no hay profesionales disponibles para este servicio.</strong>
-          <a id="booking-contact-link" class="btn btn-secondary" target="_blank" rel="noopener">Contactar con el negocio</a>
-        </div>
-
-        <input type="hidden" id="preferred-day" />
-        <input type="hidden" id="preferred-time" />
-
-        <label>
-          Nombre
-          <input type="text" id="client-name" placeholder="Ej: Marta" required />
-        </label>
-
-        <label>
-          Teléfono / WhatsApp
-          <input type="tel" id="client-phone" placeholder="Ej: 612 345 678" required />
-        </label>
-
-        <label>
-          Comentarios
-          <textarea
-            id="notes"
-            placeholder="Indica cualquier detalle relevante para el servicio."
-          ></textarea>
-        </label>
-
-        <label>
-          Fotos de referencia o del problema
-          <input
-            type="file"
-            id="booking-photos"
-            accept="image/jpeg,image/png,image/webp"
-            multiple
-          />
-        </label>
-
-        <p class="form-hint">
-          Puedes adjuntar hasta 5 fotos. Se usarán solo para gestionar esta solicitud y se eliminarán automáticamente tras 14 días.
-        </p>
-
-        <button id="booking-submit" type="submit" class="btn btn-primary btn-full">
-          Confirmar reserva
-        </button>
-
-      </form>
-      <div id="booking-confirmation" class="booking-feedback" hidden></div>
-    </section>
-
-    <section class="section landing-section contact-section location-section" id="location">
-      <h2 id="contact-title">Contacto</h2>
-
-      <div class="info-card">
-        <p><strong>Dirección:</strong> <span id="business-address"></span></p>
-        <p><strong>Horario:</strong> <span id="business-schedule"></span></p>
-        <p><strong>Ciudad:</strong> <span id="business-city"></span></p>
-
-        <div class="info-actions">
-          <a id="maps-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
-            Cómo llegar
-          </a>
-
-          <a id="instagram-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
-            Instagram
-          </a>
-
-          <a id="reviews-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
-            Reseñas
-          </a>
-        </div>
-      </div>
-    </section>
-
-    <section class="final-cta landing-section contact-cta-section">
-      <h2>¿Tienes una duda concreta?</h2>
-      <p>
-        Para cambios, dudas urgentes o consultas especiales, puedes contactar directamente por WhatsApp.
-      </p>
-      <a
-        id="whatsapp-direct-link"
-        class="btn btn-primary btn-full"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        Hablar por WhatsApp
-      </a>
-    </section>
+  <main id="landing-unavailable" class="page-state page-state-error" hidden>
+    <p class="eyebrow">Página pública</p>
+    <h1 id="unavailable-title">Este negocio no está disponible para reservas en este momento.</h1>
+    <p id="unavailable-copy">Comprueba que el enlace sea correcto o vuelve a intentarlo más tarde.</p>
+    <button id="retry-landing" class="btn btn-secondary" type="button">Volver a intentar</button>
   </main>
 
-  <footer class="footer">
-    <p>Impulsado por <strong>AutonoGrow</strong></p>
-  </footer>
+  <div id="landing-app" hidden>
+    <header class="public-header">
+      <nav class="public-nav" aria-label="Navegación del negocio">
+        <a class="public-brand" href="#main-content" aria-label="Volver al inicio">
+          <img id="nav-business-logo" alt="" width="40" height="40" hidden />
+          <span id="nav-business-name">Negocio</span>
+        </a>
+        <button id="public-menu-toggle" class="menu-toggle" type="button" aria-expanded="false" aria-controls="public-menu">
+          <span aria-hidden="true">☰</span><span>Menú</span>
+        </button>
+        <div id="public-menu" class="public-menu">
+          <a data-nav-section="services" href="#services">Servicios</a>
+          <a data-nav-section="team" href="#team">Equipo</a>
+          <a data-nav-section="gallery-section" href="#gallery-section">Galería</a>
+          <a data-nav-section="location" href="#location">Ubicación</a>
+          <a data-nav-section="reviews" href="#reviews">Reseñas</a>
+          <a id="nav-booking-button" class="nav-booking" data-nav-section="booking" href="#booking" hidden>Reservar</a>
+          <a href="../autonogrow-customer/index.html">Mis citas</a>
+        </div>
+      </nav>
+      <div class="auth-strip" aria-label="Sesión del cliente">
+        <span id="landing-auth-user"></span>
+        <div id="landing-google-button"></div>
+        <button id="landing-logout" type="button" hidden>Salir</button>
+      </div>
+    </header>
+
+    <main id="main-content" class="page landing-layout" tabindex="-1">
+      <section class="hero landing-section hero-section" aria-labelledby="business-name">
+        <div class="hero-copy">
+          <div class="brand-heading">
+            <img id="business-logo" class="business-logo" alt="" width="180" height="120" hidden />
+            <p class="eyebrow" id="business-category">Negocio local</p>
+            <h1 id="business-name">Negocio</h1>
+          </div>
+          <p id="business-headline" class="hero-headline"></p>
+          <p id="business-description" class="hero-description"></p>
+          <div class="hero-facts" aria-label="Información principal">
+            <span id="business-city-hero" hidden></span>
+            <span id="business-booking-status">Comprobando servicios disponibles…</span>
+          </div>
+          <div class="hero-actions">
+            <a id="hero-booking-button" href="#booking" class="btn btn-primary" hidden>Reservar</a>
+            <a id="hero-contact-button" href="#contact" class="btn btn-secondary">Contactar</a>
+          </div>
+        </div>
+        <aside class="hero-card" aria-label="Cómo reservar">
+          <p class="eyebrow">Reserva online</p>
+          <h2>Elige un servicio y consulta horarios reales</h2>
+          <ol>
+            <li>Servicio y profesional</li>
+            <li>Fecha y hora disponibles</li>
+            <li>Datos y revisión</li>
+          </ol>
+          <p>La cita se enviará como solicitud. El negocio tendrá que confirmarla.</p>
+        </aside>
+      </section>
+
+      <section class="section landing-section information-section" id="information" aria-labelledby="information-title">
+        <div class="section-heading">
+          <p class="eyebrow">Conoce el negocio</p>
+          <h2 id="information-title">Una atención con identidad propia</h2>
+        </div>
+        <div id="promotions-list" class="intro-card"></div>
+      </section>
+
+      <section class="section landing-section services-section" id="services" aria-labelledby="services-title">
+        <div class="section-heading">
+          <p class="eyebrow">Qué puedes reservar</p>
+          <h2 id="services-title">Servicios</h2>
+          <p id="services-subtitle" class="section-subtitle">Duración, precio publicado y acceso directo a la reserva.</p>
+        </div>
+        <div id="services-status" class="inline-status" role="status"></div>
+        <div id="services-list" class="services-grid"></div>
+      </section>
+
+      <section class="section landing-section team-section" id="team" aria-labelledby="team-title">
+        <div class="section-heading">
+          <p class="eyebrow">Quién te atiende</p>
+          <h2 id="team-title">Equipo</h2>
+          <p class="section-subtitle">Solo se muestran profesionales disponibles para reserva pública.</p>
+        </div>
+        <div id="team-status" class="inline-status" role="status"></div>
+        <div id="team-list" class="team-grid"></div>
+      </section>
+
+      <section id="gallery-section" class="section landing-section gallery-section" aria-labelledby="gallery-title">
+        <div class="section-heading">
+          <p class="eyebrow">El espacio y el trabajo</p>
+          <h2 id="gallery-title">Galería</h2>
+        </div>
+        <div id="gallery-status" class="inline-status" role="status"></div>
+        <div id="gallery-grid" class="gallery-grid"></div>
+      </section>
+
+      <section class="section landing-section location-section" id="location" aria-labelledby="location-title">
+        <div class="section-heading">
+          <p class="eyebrow">Información práctica</p>
+          <h2 id="location-title">Horarios y ubicación</h2>
+        </div>
+        <div class="location-grid">
+          <article class="info-card">
+            <h3>Cómo llegar</h3>
+            <dl class="fact-list">
+              <div id="address-row"><dt>Dirección</dt><dd id="business-address"></dd></div>
+              <div id="city-row"><dt>Ciudad</dt><dd id="business-city"></dd></div>
+            </dl>
+            <a id="maps-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">Abrir en mapas</a>
+          </article>
+          <article class="info-card">
+            <h3>Horario habitual</h3>
+            <p id="business-schedule"></p>
+            <p class="info-note">Los horarios reservables se comprueban en tiempo real al elegir servicio, profesional y fecha.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section landing-section reviews-section" id="reviews" aria-labelledby="reviews-title">
+        <div class="section-heading">
+          <p class="eyebrow">Opiniones externas</p>
+          <h2 id="reviews-title">Reseñas</h2>
+        </div>
+        <p>Consulta las reseñas publicadas en el canal configurado por el negocio.</p>
+        <a id="reviews-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">Ver reseñas</a>
+      </section>
+
+      <section class="section landing-section booking-section" id="booking" aria-labelledby="booking-title">
+        <div class="booking-heading">
+          <div>
+            <p class="eyebrow">Reserva online</p>
+            <h2 id="booking-title" tabindex="-1">Solicitar una cita</h2>
+            <p id="booking-subtitle" class="section-subtitle">Avanza paso a paso. Los horarios proceden de la agenda real del negocio.</p>
+          </div>
+          <p id="booking-timezone" class="timezone-note"></p>
+        </div>
+
+        <ol id="booking-progress" class="booking-progress" aria-label="Progreso de la reserva">
+          <li data-booking-progress="service" aria-current="step"><span>1</span> Servicio</li>
+          <li data-booking-progress="staff"><span>2</span> Profesional</li>
+          <li data-booking-progress="datetime"><span>3</span> Fecha y hora</li>
+          <li data-booking-progress="customer"><span>4</span> Tus datos</li>
+          <li data-booking-progress="review"><span>5</span> Revisión</li>
+          <li data-booking-progress="result"><span>6</span> Resultado</li>
+        </ol>
+
+        <div id="booking-error-summary" class="error-summary" role="alert" tabindex="-1" hidden></div>
+
+        <form id="booking-form" class="booking-form" novalidate hidden>
+          <fieldset id="booking-step-service" class="booking-step" data-booking-step="service">
+            <legend>1. Elige un servicio</legend>
+            <p>Seleccionar un servicio todavía no crea ninguna reserva.</p>
+            <div id="booking-service-options" class="choice-grid"></div>
+            <label class="visually-hidden" for="service-select">Servicio</label>
+            <select id="service-select" class="visually-hidden" required tabindex="-1" aria-hidden="true">
+              <option value="">Selecciona un servicio</option>
+            </select>
+          </fieldset>
+
+          <fieldset id="booking-step-staff" class="booking-step" data-booking-step="staff" hidden>
+            <legend>2. Elige profesional</legend>
+            <p id="staff-step-help">Puedes elegir a una persona o dejar que el negocio asigne a cualquiera que esté disponible.</p>
+            <div id="staff-loading" class="inline-status" role="status"></div>
+            <div id="booking-staff-options" class="choice-grid"></div>
+            <label id="staff-select-field" class="visually-hidden" for="staff-select">
+              Profesional
+              <select id="staff-select"><option value="">Cualquiera disponible</option></select>
+            </label>
+            <div id="online-booking-unavailable" class="online-booking-unavailable" hidden>
+              <strong id="online-booking-unavailable-message">Ahora mismo no hay profesionales disponibles para este servicio.</strong>
+              <a id="booking-contact-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">Contactar con el negocio</a>
+            </div>
+          </fieldset>
+
+          <fieldset id="booking-step-datetime" class="booking-step" data-booking-step="datetime" hidden>
+            <legend>3. Elige fecha y hora</legend>
+            <p>Solo puedes seleccionar fechas y horarios devueltos por la agenda del negocio.</p>
+            <input type="hidden" id="preferred-day" />
+            <input type="hidden" id="preferred-time" />
+            <div id="calendar-picker" class="calendar-picker" aria-busy="false">
+              <div>
+                <h3>Fecha</h3>
+                <div id="calendar-days" class="calendar-days" role="group" aria-label="Fechas consultadas"></div>
+                <div class="calendar-pagination">
+                  <button id="calendar-previous" class="btn btn-secondary" type="button">Fechas anteriores</button>
+                  <button id="calendar-next" class="btn btn-secondary" type="button">Más fechas</button>
+                </div>
+              </div>
+              <div>
+                <h3>Hora</h3>
+                <div id="time-slots" class="time-slots" role="group" aria-label="Horarios disponibles">
+                  <p class="empty-slots">Elige primero una fecha disponible.</p>
+                </div>
+              </div>
+            </div>
+            <div id="selected-slot-summary" class="selected-slot-summary" hidden></div>
+          </fieldset>
+
+          <fieldset id="booking-step-customer" class="booking-step" data-booking-step="customer" hidden>
+            <legend>4. Tus datos</legend>
+            <div class="customer-fields">
+              <label for="client-name">Nombre <span aria-hidden="true">*</span>
+                <input type="text" id="client-name" required minlength="2" maxlength="200" autocomplete="name" />
+              </label>
+              <label for="client-phone">Teléfono o WhatsApp <span class="optional">Opcional</span>
+                <input type="tel" id="client-phone" maxlength="40" autocomplete="tel" inputmode="tel" />
+              </label>
+              <label class="wide-field" for="notes">Comentarios <span class="optional">Opcional</span>
+                <textarea id="notes" maxlength="1000"></textarea>
+              </label>
+              <label class="wide-field" for="booking-photos">Fotos de referencia <span class="optional">Opcional</span>
+                <input type="file" id="booking-photos" accept="image/jpeg,image/png,image/webp" multiple aria-describedby="booking-photos-help" />
+              </label>
+            </div>
+            <p id="booking-photos-help" class="form-hint">Hasta 5 imágenes JPG, PNG o WEBP de 5 MB cada una. Solo se usan para gestionar la solicitud y se eliminan tras un máximo de 14 días.</p>
+            <p class="privacy-note">Usaremos estos datos para tramitar tu cita. Consulta la <a href="../privacy/" target="_blank" rel="noopener">política de privacidad</a> y las <a href="../data-deletion/" target="_blank" rel="noopener">instrucciones de eliminación</a>.</p>
+          </fieldset>
+
+          <fieldset id="booking-step-review" class="booking-step" data-booking-step="review" hidden>
+            <legend>5. Revisa tu solicitud</legend>
+            <div id="booking-review" class="booking-review"></div>
+            <div class="expected-state">
+              <strong>Qué ocurrirá al enviarla</strong>
+              <p>La cita se enviará como solicitud. El negocio tendrá que confirmarla.</p>
+            </div>
+          </fieldset>
+
+          <div id="booking-controls" class="booking-controls">
+            <button id="booking-back" class="btn btn-secondary" type="button" hidden>Anterior</button>
+            <button id="booking-next" class="btn btn-primary" type="button">Continuar</button>
+            <button id="booking-submit" class="btn btn-primary" type="submit" hidden>Enviar solicitud</button>
+          </div>
+        </form>
+
+        <section id="booking-confirmation" class="booking-feedback" aria-live="polite" tabindex="-1" hidden>
+          <div id="booking-result"></div>
+        </section>
+      </section>
+
+      <section class="section landing-section contact-section" id="contact" aria-labelledby="contact-title">
+        <div class="section-heading">
+          <p class="eyebrow">Canales públicos</p>
+          <h2 id="contact-title">Contacto</h2>
+          <p class="section-subtitle">Usa el canal que el negocio haya publicado. Su presencia aquí no implica una automatización.</p>
+        </div>
+        <div id="contact-list" class="contact-grid">
+          <a id="phone-link" class="contact-card" hidden><strong>Teléfono</strong><span id="business-phone"></span></a>
+          <a id="whatsapp-direct-link" class="contact-card" target="_blank" rel="noopener noreferrer" hidden><strong>WhatsApp</strong><span>Escribir al negocio</span></a>
+          <a id="instagram-link" class="contact-card" target="_blank" rel="noopener noreferrer" hidden><strong>Instagram</strong><span>Ver perfil público</span></a>
+        </div>
+        <p id="contact-empty" class="empty-state" hidden>Este negocio no ha publicado canales de contacto.</p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <nav aria-label="Información legal">
+        <a href="../privacy/">Privacidad</a>
+        <a href="../data-deletion/">Eliminación de datos</a>
+      </nav>
+      <p>Impulsado por <strong>AutonoGrow</strong></p>
+    </footer>
+
+    <a id="mobile-booking-cta" class="mobile-booking-cta" href="#booking" hidden>Reservar</a>
+  </div>
+
+  <div id="gallery-dialog" class="gallery-dialog" hidden aria-hidden="true">
+    <div class="gallery-dialog-backdrop" data-gallery-close></div>
+    <section class="gallery-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="gallery-dialog-title" tabindex="-1">
+      <header>
+        <h2 id="gallery-dialog-title">Galería</h2>
+        <button id="gallery-dialog-close" class="icon-button" type="button" aria-label="Cerrar galería">×</button>
+      </header>
+      <div class="gallery-viewer">
+        <button id="gallery-previous" class="gallery-control" type="button" aria-label="Imagen anterior">‹</button>
+        <img id="gallery-dialog-image" alt="" />
+        <button id="gallery-next" class="gallery-control" type="button" aria-label="Imagen siguiente">›</button>
+      </div>
+      <p id="gallery-dialog-caption"></p>
+    </section>
+  </div>
 
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
-  <script src="script.js"></script>
+  <script src="script.js?v=5e1"></script>
 </body>
 </html>
