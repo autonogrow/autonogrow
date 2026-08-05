@@ -186,7 +186,10 @@ def test_user_sensitive_changes_have_specific_context_and_consequence() -> None:
 
 
 def test_activation_uses_fresh_readiness_and_expected_version() -> None:
-    _, _, js, hub = sources()
+    _, _, _, hub = sources()
+    onboarding = (ROOT / "autonogrow-owner" / "owner-onboarding.js").read_text(
+        encoding="utf-8"
+    )
     activation = hub.split("async function activateOwnerBusiness", 1)[1].split(
         "/* Altas y aprobaciones.", 1
     )[0]
@@ -194,7 +197,8 @@ def test_activation_uses_fresh_readiness_and_expected_version() -> None:
     assert "readiness?.ready" in activation
     assert "expected_readiness_version: readiness.version" in activation
     assert "/activate" in activation
-    assert "expected_readiness_version: onboardingReadiness.version" in js
+    assert "const expectedVersion = state.readiness.version" in onboarding
+    assert "expected_readiness_version: expectedVersion" in onboarding
 
 
 def test_suspend_and_reactivate_use_existing_endpoints_without_optimism() -> None:
@@ -223,11 +227,16 @@ def test_onboarding_progress_counts_real_steps_not_invented_percentages() -> Non
 
 def test_onboarding_reuses_existing_wizard_and_all_real_steps() -> None:
     html, _, js, hub = sources()
+    onboarding = (ROOT / "autonogrow-owner" / "owner-onboarding.js").read_text(
+        encoding="utf-8"
+    )
     assert html.count('id="onboarding-wizard"') == 1
-    assert "ONBOARDING_STEPS" in js
-    assert "resumeOnboarding(businessId)" in hub
-    assert "onboardingStepIndex = index" in hub
-    assert '"readiness_review"' in hub
+    assert "ONBOARDING_STEPS" not in js
+    assert "window.OWNER_ONBOARDING_STEPS" in onboarding
+    assert "window.openOwnerOnboarding" in onboarding
+    assert "window.ownerOnboardingStepLabel" in hub
+    assert "async function openOwnerOnboarding" not in hub
+    assert '"readiness_review"' in onboarding
 
 
 def test_readiness_maps_status_message_remediation_and_destination() -> None:

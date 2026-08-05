@@ -322,6 +322,82 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
   .owner-business-row, .owner-dialog { scroll-behavior: auto; }
 }
 
+/* Sprint 5D.1: onboarding completo de negocio. */
+.onboarding-start__intro { grid-column: 1 / -1; max-width: 48rem; }
+.onboarding-start__intro h3, .onboarding-start__intro p { margin-bottom: var(--ag-space-2); }
+.onboarding-start label small { color: var(--ag-color-text-muted); font-weight: var(--ag-font-weight-regular); }
+.onboarding-start__actions { display: grid; gap: var(--ag-space-2); align-content: end; }
+.owner-onboarding-shell-header { display: flex; grid-column: 1 / -1; align-items: flex-start; justify-content: space-between; gap: var(--ag-space-4); padding: var(--ag-space-5); border-bottom: 1px solid var(--ag-color-border); background: var(--ag-color-surface); }
+.owner-onboarding-shell-header h3, .owner-onboarding-shell-header p { margin-bottom: var(--ag-space-1); }
+.owner-onboarding-shell-meta { display: grid; justify-items: end; gap: var(--ag-space-2); max-width: 25rem; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); text-align: right; }
+.owner-onboarding-mobile-step { display: none; }
+#owner-onboarding-progress-text { margin-bottom: var(--ag-space-2); color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); }
+#onboarding-steps li { min-width: 0; }
+#onboarding-steps button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--ag-space-2); align-items: center; min-height: var(--ag-touch-target); }
+#onboarding-steps button span { overflow-wrap: anywhere; }
+#onboarding-steps button small { font-size: .68rem; font-weight: var(--ag-font-weight-bold); text-align: right; }
+#onboarding-steps button.status-completed small { color: var(--ag-color-success); }
+#onboarding-steps button.status-blocked small { color: var(--ag-color-danger); }
+#onboarding-steps button.status-skipped small { color: var(--ag-color-text-muted); }
+.owner-onboarding-step-group { display: block; margin: var(--ag-space-3) var(--ag-space-2) var(--ag-space-1); color: var(--ag-color-text-muted); font-size: .68rem; font-weight: var(--ag-font-weight-extrabold); letter-spacing: .08em; text-transform: uppercase; }
+.onboarding-step-panel { min-width: 0; }
+.onboarding-step-panel > header { align-items: flex-start; }
+.onboarding-step-panel footer { position: sticky; z-index: 5; bottom: max(0px, env(safe-area-inset-bottom)); padding: var(--ag-space-3) 0; border-top: 1px solid var(--ag-color-border); background: color-mix(in srgb, var(--ag-color-surface) 94%, transparent); backdrop-filter: blur(8px); }
+#onboarding-step-content { display: grid; gap: var(--ag-space-4); }
+#onboarding-step-content fieldset { min-width: 0; }
+#onboarding-step-content input:invalid, #onboarding-step-content textarea:invalid, #onboarding-step-content select:invalid { border-color: var(--ag-color-danger); }
+.owner-onboarding-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ag-space-3); flex-wrap: wrap; }
+.owner-onboarding-section-heading > p { max-width: 42rem; color: var(--ag-color-text-muted); }
+.owner-onboarding-repeat { position: relative; display: grid; gap: var(--ag-space-3); margin-bottom: var(--ag-space-3); background: var(--ag-color-surface-subtle); }
+.owner-onboarding-repeat > [data-ob-remove-service], .owner-onboarding-repeat > [data-ob-remove-staff] { position: absolute; top: var(--ag-space-3); right: var(--ag-space-3); }
+.owner-inline-checks, .owner-onboarding-actions { display: flex; flex-wrap: wrap; gap: var(--ag-space-3); }
+.owner-schedule-list { display: grid; gap: var(--ag-space-3); }
+.owner-schedule-day { padding: var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); }
+.owner-schedule-day > header, .owner-schedule-window { display: flex; align-items: end; justify-content: space-between; gap: var(--ag-space-3); }
+.owner-schedule-day h4 { margin: 0; }
+.owner-schedule-window { justify-content: flex-start; margin-top: var(--ag-space-3); }
+.owner-schedule-window label { width: min(12rem, 100%); }
+.owner-closed-day { margin: var(--ag-space-3) 0 0; color: var(--ag-color-text-muted); }
+.owner-related-source, .owner-review-card, .owner-preview-card, .owner-activation-summary, .owner-channel-preparation { padding: var(--ag-space-4); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
+.owner-related-source p, .owner-review-card p { color: var(--ag-color-text-muted); }
+.owner-review-grid, .owner-channel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ag-space-3); }
+.owner-review-card h4, .owner-channel-preparation h4 { margin-bottom: var(--ag-space-2); }
+.owner-readiness-summary { display: flex; justify-content: space-between; gap: var(--ag-space-3); margin-bottom: var(--ag-space-4); padding: var(--ag-space-4); border-radius: var(--ag-radius-md); background: var(--ag-color-info-bg); }
+.owner-readiness-group { margin-top: var(--ag-space-4); }
+.readiness-item.blocking, .readiness-item.error { border-color: var(--ag-color-danger); background: var(--ag-color-danger-bg); }
+.readiness-item.recommended { border-color: var(--ag-color-warning); background: var(--ag-color-warning-bg); }
+.readiness-item.passed { border-color: var(--ag-color-success); }
+.owner-channel-preparation dl, .owner-activation-summary dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ag-space-2); margin: 0; }
+.owner-channel-preparation dl div, .owner-activation-summary dl div { min-width: 0; padding: var(--ag-space-2); border-radius: var(--ag-radius-sm); background: var(--ag-color-surface); }
+.owner-channel-preparation dt, .owner-activation-summary dt { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); }
+.owner-channel-preparation dd, .owner-activation-summary dd { margin: var(--ag-space-1) 0 0; font-weight: var(--ag-font-weight-bold); overflow-wrap: anywhere; }
+.owner-preview-card { margin-top: 0; }
+.owner-result-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--ag-space-3); }
+.owner-result-grid p { padding: var(--ag-space-3); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
+.owner-result-grid strong { display: block; }
+.owner-inline-loading { display: flex; align-items: center; gap: var(--ag-space-3); padding: var(--ag-space-4); color: var(--ag-color-text-muted); }
+.owner-confirm-source { padding: var(--ag-space-3); border-left: 3px solid var(--ag-color-warning); background: var(--ag-color-warning-bg); }
+
+@media (max-width: 900px) {
+  .owner-onboarding-shell-header { align-items: stretch; flex-direction: column; }
+  .owner-onboarding-shell-meta { justify-items: start; max-width: none; text-align: left; }
+  .owner-onboarding-mobile-step { display: grid; margin-top: var(--ag-space-3); }
+  #onboarding-steps { display: none; }
+  .onboarding-workspace aside { padding: var(--ag-space-4); }
+  .owner-review-grid, .owner-channel-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 600px) {
+  .onboarding-start { grid-template-columns: minmax(0, 1fr); padding: var(--ag-space-4); }
+  .onboarding-step-panel { padding: var(--ag-space-4); }
+  .onboarding-step-panel footer { align-items: stretch; display: grid; grid-template-columns: minmax(0, 1fr); }
+  .onboarding-step-panel footer .button, .owner-onboarding-actions .button, .owner-onboarding-actions a { width: 100%; }
+  .owner-schedule-window, .owner-readiness-summary { align-items: stretch; flex-direction: column; }
+  .owner-schedule-window label { width: 100%; }
+  .owner-channel-preparation dl, .owner-activation-summary dl, .owner-result-grid { grid-template-columns: minmax(0, 1fr); }
+  input, textarea, select { font-size: 16px; }
+}
+
 /* Sprint 5C.3: integraciones, incidencias, operaciones y auditoría operativa. */
 .owner-integrations-summary, .owner-operations-summary, .owner-operation-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--ag-space-3); margin-bottom: var(--ag-space-5); }
 .owner-integrations-summary > article, .owner-operations-summary > article, .owner-operation-grid > article { display: grid; min-width: 0; gap: var(--ag-space-2); align-content: space-between; padding: var(--ag-space-4); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-lg); background: var(--ag-color-surface-subtle); }

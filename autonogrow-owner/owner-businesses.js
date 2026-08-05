@@ -506,7 +506,7 @@ async function activateOwnerBusiness(businessId) {
 /* Altas y aprobaciones. */
 function ownerOnboardingProgress(session) {
   const completed = new Set([...(session.completed_steps || []), ...(session.skipped_steps || [])]);
-  return { completed: completed.size, total: Object.keys(session.steps || {}).length || ONBOARDING_STEPS.length };
+  return { completed: completed.size, total: Object.keys(session.steps || {}).length || window.OWNER_ONBOARDING_STEPS?.length || 15 };
 }
 
 function ownerOnboardingStateLabel(entry, business) {
@@ -531,7 +531,7 @@ function renderOwnerOnboardingList() {
     if (entry.status === "error") return `<article class="owner-onboarding-row"><div><h4>${escapeHtml(business.name)}</h4><p>No se pudo cargar esta alta. El resto permanece disponible.</p></div><button class="button button-secondary button-small" type="button" data-owner-onboarding-retry="${escapeHtml(business.id)}">Reintentar</button></article>`;
     const progress = ownerOnboardingProgress(entry.session);
     const blockers = entry.readiness ? `${entry.readiness.blocking_count} bloqueo${entry.readiness.blocking_count === 1 ? "" : "s"}` : "Readiness sin comprobar";
-    const step = ONBOARDING_STEPS.find(([key]) => key === entry.session.current_step)?.[1] || "Paso no disponible";
+    const step = window.ownerOnboardingStepLabel?.(entry.session.current_step) || "Paso no disponible";
     return `<article class="owner-onboarding-row"><div><h4>${escapeHtml(business.name)}</h4><p><strong>${escapeHtml(ownerOnboardingStateLabel(entry, business))}</strong> · Paso actual: ${escapeHtml(step)}</p><p>${progress.completed} de ${progress.total} pasos · ${escapeHtml(blockers)}</p><small>Última actualización: ${escapeHtml(formatOwnerDate(entry.session.last_activity_at))}</small></div><div class="owner-onboarding-row__actions"><button class="button button-primary button-small" type="button" data-owner-business-onboarding="${escapeHtml(business.id)}">Continuar alta</button><button class="button button-secondary button-small" type="button" data-owner-onboarding-readiness="${escapeHtml(business.id)}">Revisar readiness</button></div></article>`;
   }).join("");
 }
@@ -639,17 +639,6 @@ function setOwnerHubView(view) {
   ownerBusinessHubState.hubView = view === "approvals" ? "approvals" : "onboarding";
   document.querySelectorAll("[data-owner-hub-view]").forEach((button) => { const active = button.dataset.ownerHubView === ownerBusinessHubState.hubView; button.classList.toggle("active", active); if (active) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current"); });
   document.querySelectorAll("[data-owner-hub-panel]").forEach((panel) => { panel.hidden = panel.dataset.ownerHubPanel !== ownerBusinessHubState.hubView; });
-}
-
-async function openOwnerOnboarding(businessId, requestedStep = null) {
-  byId("onboarding-wizard").hidden = false;
-  byId("onboarding-new-toggle").setAttribute("aria-expanded", "true");
-  await resumeOnboarding(businessId);
-  if (requestedStep) {
-    const index = ONBOARDING_STEPS.findIndex(([key]) => key === requestedStep);
-    if (index >= 0) { onboardingStepIndex = index; renderOnboarding(); }
-  }
-  byId("onboarding-wizard").scrollIntoView({ block: "start" });
 }
 
 function openOwnerApprovalContext(businessId, channel) {
@@ -760,6 +749,7 @@ document.querySelector('[data-panel="new-business"]').addEventListener("click", 
 });
 
 byId("onboarding-new-toggle").addEventListener("click", (event) => {
+  if (typeof openOwnerOnboardingCreation === "function") { openOwnerOnboardingCreation(event.currentTarget); return; }
   const wizard = byId("onboarding-wizard");
   wizard.hidden = !wizard.hidden;
   event.currentTarget.setAttribute("aria-expanded", String(!wizard.hidden));

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Panel AutonoGrow</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20260805-4" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -246,26 +246,40 @@
         <section id="owner-candidate-review" class="owner-candidate-review" aria-labelledby="owner-candidate-review-title" hidden></section>
       </section>
 
-      <section id="onboarding-wizard" class="onboarding-wizard" aria-live="polite" hidden>
-        <div id="onboarding-start" class="onboarding-start">
-          <label>Nombre comercial<input id="onboarding-name" maxlength="200" placeholder="Estudio Aurora" /></label>
-          <label>Slug opcional<input id="onboarding-slug" maxlength="120" placeholder="Se genera automáticamente" /></label>
-          <label>Plantilla<select id="onboarding-template"><option value="">Cargando plantillas...</option></select></label>
-          <button id="onboarding-create" class="button button-primary" type="button">Empezar onboarding</button>
-        </div>
+      <section id="onboarding-wizard" class="onboarding-wizard" hidden>
+        <form id="onboarding-start" class="onboarding-start" novalidate>
+          <div class="onboarding-start__intro"><p class="eyebrow">Nueva alta</p><h3>Crear el negocio inicial</h3><p>Solo se crea la entidad y su sesión de onboarding. Usuarios, canales y publicación se configuran después.</p></div>
+          <label>Nombre comercial <span aria-hidden="true">*</span><input id="onboarding-name" maxlength="200" required autocomplete="organization" /></label>
+          <label>Slug opcional<input id="onboarding-slug" maxlength="120" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" aria-describedby="onboarding-slug-help" autocomplete="off" /><small id="onboarding-slug-help">Identifica la URL pública. Usa minúsculas, números y guiones; no implica un dominio propio.</small></label>
+          <label>Plantilla<select id="onboarding-template" aria-describedby="onboarding-template-help"><option value="">Cargando plantillas…</option></select><small id="onboarding-template-help">Puedes elegirla ahora o completar el primer paso después.</small></label>
+          <div class="onboarding-start__actions"><button id="onboarding-create" class="button button-primary" type="submit">Crear y configurar</button><p id="owner-onboarding-create-status" class="status-text" role="status" aria-live="polite"></p></div>
+        </form>
         <div id="onboarding-workspace" class="onboarding-workspace" hidden>
-          <aside><div class="onboarding-progress"><span id="onboarding-progress-bar"></span></div><ol id="onboarding-steps"></ol></aside>
+          <header id="owner-onboarding-shell-header" class="owner-onboarding-shell-header">
+            <div><p class="eyebrow">Alta de negocio</p><h3 id="owner-onboarding-business-name">Cargando…</h3><p id="owner-onboarding-current-summary"></p></div>
+            <div class="owner-onboarding-shell-meta"><span id="owner-onboarding-business-status" class="ag-badge ag-badge--neutral">Estado</span><span id="owner-onboarding-last-saved">Último guardado: —</span><span id="owner-onboarding-initiator">Iniciada por una cuenta Owner; esta fuente no expone su identidad.</span><button id="owner-onboarding-origin" class="button button-ghost button-small" type="button" hidden>Volver al origen</button></div>
+          </header>
+          <aside aria-label="Pasos del alta">
+            <p id="owner-onboarding-progress-text">0 de 15 pasos</p><div class="onboarding-progress" aria-hidden="true"><span id="onboarding-progress-bar"></span></div>
+            <label class="owner-onboarding-mobile-step">Paso actual<select id="owner-onboarding-step-select"></select></label>
+            <ol id="onboarding-steps"></ol>
+          </aside>
           <div class="onboarding-step-panel">
-            <header><div><p class="eyebrow">Configuracion guiada</p><h3 id="onboarding-step-title"></h3></div><span id="onboarding-save-state" class="save-state">Guardado</span></header>
-            <div id="onboarding-step-content"></div>
+            <header><div><p class="eyebrow">Configuración guiada</p><h3 id="onboarding-step-title" tabindex="-1"></h3><p id="owner-onboarding-step-help" class="helper"></p></div><span id="onboarding-save-state" class="save-state" role="status" aria-live="polite">Guardado</span></header>
+            <p id="owner-onboarding-source-warning" class="owner-partial-notice" hidden></p>
+            <div id="owner-onboarding-error-summary" class="error-box" role="alert" tabindex="-1" hidden></div>
+            <form id="onboarding-step-content" novalidate></form>
             <footer>
-              <button id="onboarding-back" class="button button-secondary" type="button">Atras</button>
+              <button id="onboarding-back" class="button button-secondary" type="button">Anterior</button>
+              <button id="onboarding-save-only" class="button button-secondary" type="button">Guardar</button>
               <button id="onboarding-save" class="button button-primary" type="button">Guardar y continuar</button>
-              <button id="onboarding-later" class="button button-ghost" type="button">Continuar despues</button>
+              <button id="onboarding-next" class="button button-ghost" type="button">Siguiente</button>
+              <button id="onboarding-later" class="button button-ghost" type="button">Volver a Altas</button>
             </footer>
-            <p id="onboarding-feedback" class="status-text"></p>
+            <p id="onboarding-feedback" class="status-text" role="status" aria-live="polite"></p>
           </div>
         </div>
+        <article id="owner-onboarding-result" class="creation-result" hidden></article>
       </section>
 
       <form id="business-form" class="business-form" hidden>
@@ -354,11 +368,20 @@
       <footer><button id="owner-dialog-cancel" class="button button-secondary" type="button">Cancelar</button><button id="owner-dialog-confirm" class="button button-danger" type="button">Confirmar</button></footer>
     </section>
   </div>
+  <div id="owner-onboarding-unsaved-dialog" class="owner-dialog-backdrop" hidden>
+    <section class="owner-dialog" role="dialog" aria-modal="true" aria-labelledby="owner-onboarding-unsaved-title" aria-describedby="owner-onboarding-unsaved-description" tabindex="-1">
+      <header><div><p class="eyebrow">Cambios sin guardar</p><h2 id="owner-onboarding-unsaved-title">¿Quieres salir de este paso?</h2></div><button id="owner-onboarding-unsaved-close" class="ag-button ag-button--icon" type="button" aria-label="Cerrar confirmación">×</button></header>
+      <p id="owner-onboarding-unsaved-description">Los cambios introducidos en este paso se perderán si sales sin guardarlos.</p>
+      <p id="owner-onboarding-unsaved-error" class="owner-dialog-error" role="alert"></p>
+      <footer><button id="owner-onboarding-unsaved-cancel" class="button button-secondary" type="button">Cancelar</button><button id="owner-onboarding-unsaved-discard" class="button button-ghost" type="button">Salir sin guardar</button><button id="owner-onboarding-unsaved-save" class="button button-primary" type="button">Guardar y salir</button></footer>
+    </section>
+  </div>
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="owner.js?v=20260805-3"></script>
-  <script src="owner-businesses.js?v=20260805-2"></script>
+  <script src="owner.js?v=20260805-5"></script>
+  <script src="owner-businesses.js?v=20260805-4"></script>
   <script src="owner-operations.js?v=20260805-2"></script>
+  <script src="owner-onboarding.js?v=20260805-2"></script>
 </body>
 </html>

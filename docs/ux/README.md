@@ -58,6 +58,7 @@ No había Chrome, Edge, Firefox, Playwright ni Selenium ejecutables en el entorn
 22. [Dashboard operativo del panel Owner](22_owner_dashboard.md)
 23. [Negocios, altas y aprobaciones del panel Owner](23_owner_businesses_approvals.md)
 24. [Integraciones, incidencias y operaciones del panel Owner](24_owner_integrations_operations.md)
+25. [Onboarding completo de negocio en Owner](25_owner_onboarding_complete.md)
 
 ## Principios de implementación
 
