@@ -237,7 +237,7 @@ function renderIntegrationAttention() {
   const html = (source.status === "error" ? ownerDashboardStale() : ownerDashboardPartial(source.errors)) + `<ul class="owner-dashboard-list">${attention.slice(0, 6).map(({ business, control, health }) => {
     const channel = health.channel === "instagram" ? "Instagram" : "WhatsApp";
     const recommendation = health.reconnection_required ? "La cuenta debe volver a conectarse." : health.health_status === "warning" ? "Conviene comprobar el canal." : "Revisa el estado antes de reanudar capacidades.";
-    return `<li class="owner-dashboard-item"><div class="owner-dashboard-item__heading"><div><h3>${escapeHtml(channel)} · ${escapeHtml(business.name)}</h3><p>${escapeHtml(ownerHealthLabel(health.health_status))}</p></div><span class="ag-badge ag-badge--danger">Atención</span></div><div class="owner-dashboard-item__layers"><span><strong>Aprobación</strong>${escapeHtml(ownerApprovalLabel(control))}</span><span><strong>Envío</strong>${escapeHtml(ownerCapabilityLabel(control?.integrated_delivery_enabled))}</span><span><strong>Automatización</strong>${escapeHtml(ownerCapabilityLabel(control?.automation_enabled))}</span></div><div class="owner-dashboard-item__meta"><span>Última comprobación: ${escapeHtml(formatOwnerDate(health.last_health_check_at))}</span><span>${escapeHtml(recommendation)}</span></div><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="businesses" data-owner-business-id="${escapeHtml(business.id)}" data-owner-detail="channels">Revisar integración</button></li>`;
+    return `<li class="owner-dashboard-item"><div class="owner-dashboard-item__heading"><div><h3>${escapeHtml(channel)} · ${escapeHtml(business.name)}</h3><p>${escapeHtml(ownerHealthLabel(health.health_status))}</p></div><span class="ag-badge ag-badge--danger">Atención</span></div><div class="owner-dashboard-item__layers"><span><strong>Aprobación</strong>${escapeHtml(ownerApprovalLabel(control))}</span><span><strong>Envío</strong>${escapeHtml(ownerCapabilityLabel(control?.integrated_delivery_enabled))}</span><span><strong>Automatización</strong>${escapeHtml(ownerCapabilityLabel(control?.automation_enabled))}</span></div><div class="owner-dashboard-item__meta"><span>Última comprobación: ${escapeHtml(formatOwnerDate(health.last_health_check_at))}</span><span>${escapeHtml(recommendation)}</span></div><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="integrations" data-owner-business-id="${escapeHtml(business.id)}" data-owner-detail="${escapeHtml(health.channel)}">Revisar integración</button></li>`;
   }).join("")}</ul>`;
   setOwnerDashboardBlock("owner-dashboard-integrations", html, source.status === "loading" ? "loading" : source.status === "error" ? "error" : source.errors ? "partial" : "ready");
 }
@@ -256,7 +256,7 @@ function renderIncidentSummary() {
     setOwnerDashboardBlock("owner-dashboard-incidents", content, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
     return;
   }
-  const html = (source.status === "error" ? ownerDashboardStale() : "") + `<ul class="owner-dashboard-list">${open.slice(0, 5).map((incident) => `<li class="owner-dashboard-item"><div class="owner-dashboard-item__heading"><div><h3>${escapeHtml(safeIncidentTitle(incident))}</h3><p>${escapeHtml(incident.business_name || "Plataforma")}</p></div><span class="ag-badge ${["critical", "high"].includes(incident.severity) ? "ag-badge--danger" : "ag-badge--warning"}">${escapeHtml(({ critical: "Crítica", high: "Alta", medium: "Media", low: "Baja" })[incident.severity] || "Sin clasificar")}</span></div><div class="owner-dashboard-item__meta"><span>${escapeHtml(incident.status === "acknowledged" ? "Reconocida" : "Abierta")}</span><span>${escapeHtml(formatOwnerDate(incident.last_occurred_at))}</span></div><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="incidents">Abrir incidencias</button></li>`).join("")}</ul>`;
+  const html = (source.status === "error" ? ownerDashboardStale() : "") + `<ul class="owner-dashboard-list">${open.slice(0, 5).map((incident) => `<li class="owner-dashboard-item"><div class="owner-dashboard-item__heading"><div><h3>${escapeHtml(safeIncidentTitle(incident))}</h3><p>${escapeHtml(incident.business_name || "Plataforma")}</p></div><span class="ag-badge ${["critical", "high"].includes(incident.severity) ? "ag-badge--danger" : "ag-badge--warning"}">${escapeHtml(({ critical: "Crítica", high: "Alta", medium: "Media", low: "Baja" })[incident.severity] || "Sin clasificar")}</span></div><div class="owner-dashboard-item__meta"><span>${escapeHtml(incident.status === "acknowledged" ? "Reconocida" : "Abierta")}</span><span>${escapeHtml(formatOwnerDate(incident.last_occurred_at))}</span></div><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="incidents" data-owner-context-id="${escapeHtml(incident.id)}">Abrir incidencia</button></li>`).join("")}</ul>`;
   setOwnerDashboardBlock("owner-dashboard-incidents", html, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
 }
 
@@ -280,7 +280,7 @@ function renderOperationsSummary() {
     ["Casos que necesitan revisión", Number(queue.dead_letter_inbox || 0) + Number(queue.dead_letter_outbox || 0) + Number(queue.blocked_outbox || 0) + (queue.jobs || []).filter((item) => item.status === "failed").length],
     ["Procesamiento", workerProblem ? "Necesita atención" : "Operativo"],
   ];
-  const html = (source.status === "error" ? ownerDashboardStale() : "") + `<ul class="owner-dashboard-status-list">${rows.map(([label, value]) => `<li><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></li>`).join("")}</ul><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="queues">Revisar procesamiento</button>`;
+  const html = (source.status === "error" ? ownerDashboardStale() : "") + `<ul class="owner-dashboard-status-list">${rows.map(([label, value]) => `<li><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></li>`).join("")}</ul><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="operations" data-owner-detail="messages">Revisar procesamiento</button>`;
   setOwnerDashboardBlock("owner-dashboard-operations", html, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
 }
 
@@ -539,9 +539,10 @@ function setActiveTab(name) {
     overview: ["Resumen operativo", "Supervisa negocios, aprobaciones, integraciones e incidencias de AutonoGrow."],
     businesses: ["Negocios", "Consulta y gestiona el contexto completo de cada cuenta."],
     "new-business": ["Altas y aprobaciones", "Continúa altas y toma decisiones pendientes con contexto seguro."],
-    incidents: ["Incidencias", "Revisa alertas operativas agrupadas y seguras."],
-    queues: ["Procesamiento de mensajes", "Supervisa tareas de entrada y salida que requieren intervención."],
+    integrations: ["Integraciones", "Separa control comercial, conexión, capacidades, salud y recuperación."],
+    incidents: ["Incidencias", "Revisa impacto, cronología y acciones operativas seguras."],
     operations: ["Operaciones", "Comprueba el estado técnico global y el mantenimiento."],
+    audit: ["Auditoría operativa", "Consulta los hitos seguros disponibles sin exponer payloads ni datos internos."],
   };
   document.querySelectorAll("[data-tab]").forEach((tab) => {
     const active = tab.dataset.tab === name;
@@ -555,17 +556,34 @@ function setActiveTab(name) {
   if (name === "overview") renderOwnerDashboard();
   if (name === "businesses") renderBusinesses();
   if (name === "new-business" && typeof loadOwnerOnboardingHub === "function") loadOwnerOnboardingHub();
+  if (name === "integrations" && typeof loadOwnerIntegrationsHub === "function") loadOwnerIntegrationsHub();
   if (name === "incidents") loadIncidents();
   if (name === "queues") loadQueueStatus();
-  if (name === "operations") loadOperationsStatus();
+  if (name === "operations") {
+    if (typeof loadOwnerOperationsHub === "function") loadOwnerOperationsHub();
+    else loadOperationsStatus();
+  }
+  if (name === "audit" && typeof loadOwnerAuditHub === "function") loadOwnerAuditHub();
 }
 
-function navigateOwnerContext(target, businessId = null, detail = null) {
-  const allowed = new Set(["overview", "businesses", "new-business", "incidents", "queues", "operations"]);
+function navigateOwnerContext(target, businessId = null, detail = null, contextId = null) {
+  const allowed = new Set(["overview", "businesses", "new-business", "integrations", "incidents", "operations", "audit"]);
   if (!allowed.has(target)) return;
   setActiveTab(target);
   if (target === "new-business" && businessId && typeof openOwnerApprovalContext === "function") {
     window.requestAnimationFrame(() => openOwnerApprovalContext(businessId, detail));
+    return;
+  }
+  if (target === "integrations" && businessId && typeof openOwnerIntegrationContext === "function") {
+    window.requestAnimationFrame(() => openOwnerIntegrationContext(businessId, detail));
+    return;
+  }
+  if (target === "incidents" && contextId && typeof openOwnerIncidentContext === "function") {
+    window.requestAnimationFrame(() => openOwnerIncidentContext(contextId));
+    return;
+  }
+  if (target === "operations" && detail && typeof setOwnerOperationsView === "function") {
+    window.requestAnimationFrame(() => setOwnerOperationsView(detail));
     return;
   }
   if (target !== "businesses" || !businessId) return;
@@ -596,7 +614,7 @@ function renderOperationsStatus() {
   ];
   byId("operations-summary").innerHTML = items.map(([label, value]) => `<article class="summary-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("");
   byId("maintenance-toggle").textContent = operationsStatus.maintenance ? "Desactivar mantenimiento" : "Activar mantenimiento";
-  byId("operations-details").textContent = JSON.stringify({ database: operationsStatus.database, workers: operationsStatus.workers, queues: operationsStatus.queues, storage: operationsStatus.storage, backups: operationsStatus.backups }, null, 2);
+  byId("operations-details").textContent = "";
 }
 
 async function loadOperationsStatus() {
@@ -1583,9 +1601,12 @@ byId("refresh-button").addEventListener("click", async () => {
     const activeTab = document.querySelector("[data-tab].active")?.dataset.tab;
     if (activeTab === "businesses" && typeof loadOwnerBusinessAccessIndex === "function") await loadOwnerBusinessAccessIndex(true);
     if (activeTab === "new-business" && typeof loadOwnerOnboardingHub === "function") await loadOwnerOnboardingHub(true);
+    if (activeTab === "integrations" && typeof loadOwnerIntegrationsHub === "function") await loadOwnerIntegrationsHub(true);
     if (activeTab === "incidents") await loadIncidents();
     if (activeTab === "queues") await loadQueueStatus();
-    if (activeTab === "operations") await loadOperationsStatus();
+    if (activeTab === "operations" && typeof loadOwnerOperationsHub === "function") await loadOwnerOperationsHub(true);
+    else if (activeTab === "operations") await loadOperationsStatus();
+    if (activeTab === "audit" && typeof loadOwnerAuditHub === "function") await loadOwnerAuditHub(true);
   } finally {
     button.disabled = false;
     button.removeAttribute("aria-busy");
@@ -1606,10 +1627,13 @@ byId("owner-overview").addEventListener("click", (event) => {
     return;
   }
   const navigation = event.target.closest("[data-owner-navigate]");
-  if (navigation) navigateOwnerContext(navigation.dataset.ownerNavigate, navigation.dataset.ownerBusinessId, navigation.dataset.ownerDetail);
+  if (navigation) navigateOwnerContext(navigation.dataset.ownerNavigate, navigation.dataset.ownerBusinessId, navigation.dataset.ownerDetail, navigation.dataset.ownerContextId);
 });
 byId("queue-refresh").addEventListener("click", loadQueueStatus);
-byId("operations-refresh").addEventListener("click", loadOperationsStatus);
+byId("operations-refresh").addEventListener("click", () => {
+  if (typeof loadOwnerOperationsHub === "function") loadOwnerOperationsHub(true);
+  else loadOperationsStatus();
+});
 byId("maintenance-toggle").addEventListener("click", () => toggleMaintenance().catch((error) => { byId("operations-status").textContent = error.message; }));
 byId("queue-business-filter").addEventListener("change", renderQueueStatus);
 byId("queue-jobs").addEventListener("click", (event) => { const button = event.target.closest("[data-queue-action]"); if (button) updateQueueJob(button.dataset.jobType, button.dataset.jobId, button.dataset.queueAction).catch((error) => window.alert(error.message)); });

@@ -199,9 +199,19 @@ def test_dashboard_refresh_is_single_flight_without_new_polling() -> None:
 
 def test_context_navigation_reuses_existing_owner_sections() -> None:
     html, _, js = read_sources()
-    for tab in ("overview", "businesses", "new-business", "incidents", "queues", "operations"):
+    for tab in (
+        "overview",
+        "businesses",
+        "new-business",
+        "integrations",
+        "incidents",
+        "operations",
+        "audit",
+    ):
         assert f'data-tab="{tab}"' in html
         assert f'data-panel="{tab}"' in html
+    assert 'data-tab="queues"' not in html
+    assert 'data-panel="queues"' in html
     assert "function navigateOwnerContext" in js
     assert "setActiveTab(target);" in js
     assert 'data-business-card-id="${escapeHtml(business.id)}"' in js

@@ -58,9 +58,10 @@
       <button class="tab active" type="button" data-tab="overview" aria-current="page"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-3H4zM14 7h6V4h-6z"/></svg></span>Resumen</button>
       <button class="tab" type="button" data-tab="businesses"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5l8-3 8 3v16"/><path d="M9 21v-5h6v5M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span>Negocios</button>
       <button class="tab" type="button" data-tab="new-business"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>Altas y aprobaciones</button>
+      <button class="tab" type="button" data-tab="integrations"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 12h8M6 8h3v8H6a4 4 0 0 1 0-8ZM18 8h-3v8h3a4 4 0 0 0 0-8Z"/></svg></span>Integraciones</button>
       <button class="tab" type="button" data-tab="incidents"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 2.5 20h19Z"/><path d="M12 9v4M12 17h.01"/></svg></span>Incidencias</button>
-      <button class="tab" type="button" data-tab="queues"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="5" rx="1"/><rect x="4" y="15" width="16" height="5" rx="1"/><path d="M8 9v6M16 9v6"/></svg></span>Colas y worker</button>
       <button class="tab" type="button" data-tab="operations"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg></span>Operaciones</button>
+      <button class="tab" type="button" data-tab="audit"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4"/></svg></span>Auditoría</button>
     </nav>
 
     <section id="owner-overview" class="panel owner-dashboard active" data-panel="overview" aria-labelledby="owner-dashboard-title">
@@ -77,9 +78,9 @@
         <article class="owner-dashboard-metric ag-card"><span>Negocios activos</span><strong id="owner-metric-active">—</strong><button class="owner-metric-link" type="button" data-owner-navigate="businesses">Ver negocios</button></article>
         <article class="owner-dashboard-metric ag-card"><span>Altas pendientes</span><strong id="owner-metric-pending-businesses">—</strong><button class="owner-metric-link" type="button" data-owner-navigate="new-business">Revisar altas</button></article>
         <article class="owner-dashboard-metric ag-card"><span>Decisiones pendientes</span><strong id="owner-metric-decisions">—</strong><button class="owner-metric-link" type="button" data-owner-focus-block="owner-dashboard-decisions">Ver decisiones</button></article>
-        <article class="owner-dashboard-metric ag-card"><span>Integraciones con problemas</span><strong id="owner-metric-integrations">—</strong><button class="owner-metric-link" type="button" data-owner-focus-block="owner-dashboard-integrations">Ver integraciones</button></article>
+        <article class="owner-dashboard-metric ag-card"><span>Integraciones con problemas</span><strong id="owner-metric-integrations">—</strong><button class="owner-metric-link" type="button" data-owner-navigate="integrations" data-owner-detail="problems">Ver integraciones</button></article>
         <article class="owner-dashboard-metric ag-card"><span>Incidencias abiertas</span><strong id="owner-metric-incidents">—</strong><button class="owner-metric-link" type="button" data-owner-navigate="incidents">Ver incidencias</button></article>
-        <article class="owner-dashboard-metric ag-card"><span>Problemas de mensajes</span><strong id="owner-metric-messages">—</strong><button class="owner-metric-link" type="button" data-owner-navigate="queues">Ver procesamiento</button></article>
+        <article class="owner-dashboard-metric ag-card"><span>Problemas de mensajes</span><strong id="owner-metric-messages">—</strong><button class="owner-metric-link" type="button" data-owner-navigate="operations" data-owner-detail="messages">Ver procesamiento</button></article>
       </section>
 
       <div class="owner-dashboard-layout">
@@ -154,18 +155,25 @@
       <section id="business-detail" class="owner-business-detail" aria-labelledby="business-detail-title" hidden></section>
     </section>
 
-    <section class="panel" data-panel="operations">
+    <section id="owner-operations-section" class="panel owner-operations-hub" data-panel="operations" aria-labelledby="owner-operations-title">
       <div class="section-heading">
-        <div><h2>Operaciones</h2><p>Estado global seguro de la versión, PostgreSQL, workers, almacenamiento y recuperación.</p></div>
-        <button id="operations-refresh" class="button button-secondary" type="button">Comprobar ahora</button>
+        <div><p class="eyebrow">Procesamiento y recuperación</p><h2 id="owner-operations-title">Operaciones</h2><p>Supervisa mensajes, workers, colas, jobs y mantenimiento sin exponer la implementación interna.</p></div>
+        <button id="operations-refresh" class="button button-secondary" type="button">Actualizar operaciones</button>
       </div>
-      <div id="operations-summary" class="summary-grid"></div>
-      <div class="incident-actions">
-        <button id="maintenance-toggle" class="button button-secondary ag-button ag-button--danger" type="button">Cambiar mantenimiento</button>
-      </div>
+      <div id="owner-operations-summary" class="owner-operations-summary" aria-busy="true"></div>
+      <nav class="owner-secondary-nav" aria-label="Áreas operativas">
+        <button class="active" type="button" data-owner-operations-view="messages" aria-current="page">Mensajes y outbox</button>
+        <button type="button" data-owner-operations-view="workers">Workers y colas</button>
+        <button type="button" data-owner-operations-view="jobs">Jobs de integración</button>
+        <button type="button" data-owner-operations-view="maintenance">Mantenimiento</button>
+      </nav>
+      <section data-owner-operations-panel="messages"><h3>Mensajes y outbox</h3><div id="owner-outbox-summary" class="owner-operation-grid" aria-busy="true"></div><p class="owner-source-note">El contrato actual no expone agregados de mensajes en curso, enviados, asistidos o claims caducados; no se presentan como cero.</p><div id="owner-outbox-problems" class="owner-operation-list" aria-busy="true"></div></section>
+      <section data-owner-operations-panel="workers" hidden><h3>Workers y colas</h3><div id="owner-workers-summary" class="owner-operation-grid" aria-busy="true"></div><div id="owner-workers-list" class="owner-operation-list"></div></section>
+      <section data-owner-operations-panel="jobs" hidden><h3>Jobs de integración</h3><div id="owner-integration-jobs" class="owner-operation-list" aria-busy="true"></div></section>
+      <section data-owner-operations-panel="maintenance" hidden><h3>Mantenimiento</h3><div id="owner-maintenance-panel" aria-busy="true"></div><button id="maintenance-toggle" class="button button-secondary ag-button ag-button--danger" type="button">Cambiar mantenimiento</button><p class="helper ag-alert ag-alert--info">Backups, restauración, despliegues, rotación de secretos y rollback permanecen fuera del panel y usan scripts auditables del servidor.</p></section>
       <p id="operations-status" class="status-text" aria-live="polite"></p>
-      <pre id="operations-details" class="operations-details"></pre>
-      <p class="helper ag-alert ag-alert--info">Backups, verificación, mantenimiento seco y decisión GO/NO-GO se ejecutan mediante los scripts auditables del servidor. Restaurar, desplegar, rotar secretos o hacer rollback nunca se inicia desde este panel.</p>
+      <div id="operations-summary" hidden></div>
+      <pre id="operations-details" hidden></pre>
     </section>
 
     <section class="panel" data-panel="queues">
@@ -179,19 +187,42 @@
       <div id="queue-incidents" class="incident-list"></div>
     </section>
 
-    <section class="panel" data-panel="incidents">
+    <section id="owner-integrations-section" class="panel owner-integrations-hub" data-panel="integrations" aria-labelledby="owner-integrations-title">
+      <div class="section-heading"><div><p class="eyebrow">Control y salud</p><h2 id="owner-integrations-title">Integraciones</h2><p>Disponibilidad, aprobación, conexión, capacidades y salud permanecen como estados independientes.</p></div><button id="owner-integrations-refresh" class="button button-secondary" type="button">Actualizar integraciones</button></div>
+      <section id="owner-integrations-summary" class="owner-integrations-summary" aria-label="Resumen de integraciones" aria-busy="true"></section>
+      <form id="owner-integration-filters" class="owner-operations-filters" role="search">
+        <label>Buscar<input id="owner-integration-search" type="search" autocomplete="off" placeholder="Negocio, slug, cuenta pública o teléfono redactado" /></label>
+        <label>Mostrar<select id="owner-integration-filter"><option value="all">Todas</option><option value="instagram">Instagram</option><option value="whatsapp">WhatsApp</option><option value="pending">Pendientes</option><option value="problems">Con problemas</option><option value="reconnect">Requieren reconexión</option><option value="suspended">Suspendidas</option><option value="revoked">Revocadas</option></select></label>
+      </form>
+      <p id="owner-integrations-status" class="status-text" aria-live="polite"></p>
+      <div id="owner-integrations-list" class="owner-integration-list" role="list" aria-busy="true"></div>
+      <section id="owner-integration-detail" class="owner-integration-detail" aria-labelledby="owner-integration-detail-title" hidden></section>
+    </section>
+
+    <section id="owner-incidents-section" class="panel owner-incidents-hub" data-panel="incidents" aria-labelledby="owner-incidents-title">
       <div class="section-heading">
-        <div><h2>Incidencias</h2><p>Alertas técnicas seguras y agrupadas de todos los negocios.</p></div>
+        <div><p class="eyebrow">Intervención operativa</p><h2 id="owner-incidents-title">Incidencias</h2><p>Revisa impacto y cronología sin mostrar trazas, payloads ni datos internos.</p></div>
         <span id="incidents-status" class="status-text" aria-live="polite"></span>
       </div>
+      <nav class="owner-secondary-nav" aria-label="Estados de incidencias"><button class="active" type="button" data-owner-incident-view="active" aria-current="page">Abiertas</button><button type="button" data-owner-incident-view="acknowledged">Reconocidas</button><button type="button" data-owner-incident-view="resolved">Resueltas</button><button type="button" data-owner-incident-view="all">Todas</button></nav>
       <form id="incident-filters" class="incident-filters">
         <label class="ag-field ag-label">Estado<select class="ag-select" name="status"><option value="active">Abiertas</option><option value="">Todos</option><option value="open">Sin reconocer</option><option value="acknowledged">Reconocidas</option><option value="resolved">Resueltas</option><option value="ignored">Ignoradas</option></select></label>
         <label>Severidad<select name="severity"><option value="">Todas</option><option value="critical">Críticas</option><option value="high">Altas</option><option value="medium">Medias</option><option value="low">Bajas</option></select></label>
         <label>Negocio<select name="business_id"><option value="">Todos</option></select></label>
         <label>Canal<select name="channel"><option value="">Todos</option><option value="instagram">Instagram</option><option value="whatsapp">WhatsApp</option></select></label>
+        <label>Origen<select id="owner-incident-origin"><option value="">Todos</option><option value="instagram">Instagram</option><option value="whatsapp">WhatsApp</option><option value="messaging">Mensajería</option><option value="bookings">Reservas</option><option value="integrations">Integraciones</option><option value="processing">Procesamiento</option><option value="platform">Plataforma</option></select></label>
+        <label>Buscar<input id="owner-incident-search" type="search" autocomplete="off" placeholder="Título, negocio o mensaje seguro" /></label>
         <button class="button button-secondary" type="submit">Filtrar</button>
       </form>
-      <div id="incident-list" class="incident-list"></div>
+      <div id="incident-list" class="incident-list" role="list" aria-busy="true"></div>
+      <section id="owner-incident-detail" class="owner-incident-detail" aria-labelledby="owner-incident-detail-title" hidden></section>
+    </section>
+
+    <section id="owner-audit-section" class="panel owner-audit-hub" data-panel="audit" aria-labelledby="owner-audit-title">
+      <div class="section-heading"><div><p class="eyebrow">Trazabilidad disponible</p><h2 id="owner-audit-title">Auditoría operativa</h2><p>Hitos seguros derivados de fuentes consultables. El registro de auditoría completo permanece en servidor.</p></div><button id="owner-audit-refresh" class="button button-secondary" type="button">Actualizar actividad</button></div>
+      <div class="ag-alert ag-alert--info">El backend registra actor, entidad y acción, pero no expone actualmente un endpoint Owner de lectura de <code>AuditLog</code>. Esta vista no inventa actores ni payloads.</div>
+      <form id="owner-audit-filters" class="owner-operations-filters"><label>Negocio<select id="owner-audit-business"><option value="">Todos</option></select></label><label>Tipo de evento<select id="owner-audit-kind"><option value="">Todos</option><option value="channel">Canales</option><option value="incident">Incidencias</option><option value="job">Procesamiento</option><option value="maintenance">Mantenimiento</option></select></label></form>
+      <div id="owner-audit-events" class="owner-audit-list" role="list" aria-busy="true"></div>
     </section>
 
     <section class="panel" data-panel="new-business">
@@ -326,7 +357,8 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="owner.js?v=20260805-2"></script>
-  <script src="owner-businesses.js?v=20260805-1"></script>
+  <script src="owner.js?v=20260805-3"></script>
+  <script src="owner-businesses.js?v=20260805-2"></script>
+  <script src="owner-operations.js?v=20260805-2"></script>
 </body>
 </html>

@@ -109,9 +109,18 @@ def test_critical_owner_contracts_and_navigation_remain() -> None:
         "operations-details",
     ):
         assert html.count(f'id="{element_id}"') == 1
-    for tab in ("businesses", "new-business", "incidents", "queues", "operations"):
+    for tab in (
+        "businesses",
+        "new-business",
+        "integrations",
+        "incidents",
+        "operations",
+        "audit",
+    ):
         assert f'data-tab="{tab}"' in html
         assert f'data-panel="{tab}"' in html
+    assert 'data-tab="queues"' not in html
+    assert 'data-panel="queues"' in html
 
 
 def test_shell_accessibility_contracts_are_present() -> None:
