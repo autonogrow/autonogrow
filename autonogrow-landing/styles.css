@@ -107,6 +107,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   background: color-mix(in srgb, var(--color-background) 90%, transparent);
   backdrop-filter: blur(14px);
+  padding-top: env(safe-area-inset-top);
 }
 .public-nav,
 .auth-strip {
@@ -505,4 +506,28 @@ input[type="file"] { padding: 10px; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+@media (forced-colors: active) {
+  :focus-visible,
+  .btn,
+  .choice-button,
+  .calendar-day,
+  .time-slot,
+  .status-badge,
+  .gallery-control { border: 2px solid currentColor; }
+  .choice-button[aria-pressed="true"],
+  .calendar-day[aria-pressed="true"],
+  .time-slot[aria-pressed="true"] { outline: 3px solid currentColor; }
+}
+
+@media print {
+  .public-header,
+  .mobile-booking-cta,
+  .booking-controls,
+  .gallery-dialog,
+  .auth-strip { display: none !important; }
+  body { background: #fff; color: #000; }
+  .page { width: 100%; padding: 0; }
+  .section, .hero { break-inside: avoid; box-shadow: none; }
 }

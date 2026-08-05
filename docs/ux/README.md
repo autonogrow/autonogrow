@@ -60,6 +60,7 @@ No había Chrome, Edge, Firefox, Playwright ni Selenium ejecutables en el entorn
 24. [Integraciones, incidencias y operaciones del panel Owner](24_owner_integrations_operations.md)
 25. [Onboarding completo de negocio en Owner](25_owner_onboarding_complete.md)
 26. [Landing pública y experiencia de reserva](26_public_landing_booking.md)
+27. [QA transversal final de frontends](27_frontend_final_qa.md)
 
 ## Principios de implementación
 

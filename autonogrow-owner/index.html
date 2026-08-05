@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
   <link rel="stylesheet" href="../autonogrow-shared/layout.css" />
-  <link rel="stylesheet" href="../autonogrow-shared/responsive.css" />
+  <link rel="stylesheet" href="../autonogrow-shared/responsive.css?v=5f1" />
   <link rel="stylesheet" href="../autonogrow-shared/accessibility.css" />
   <link rel="stylesheet" href="../autonogrow-shared/auth.css" />
 </head>
@@ -287,7 +287,7 @@
           <legend>Datos básicos</legend>
           <div class="form-grid">
             <label>Plantilla de alta<select id="business-type-template"><option value="">Desde cero</option><option value="barberia">Barbería</option><option value="manicura">Manicura</option><option value="fisioterapia">Fisioterapia</option><option value="taller">Taller</option><option value="peluqueria">Peluquería</option><option value="estetica">Estética</option><option value="entrenamiento_personal">Entrenamiento personal</option><option value="psicologia">Psicología</option><option value="clinica_dental">Clínica dental</option><option value="masajes">Masajes</option></select></label>
-            <label>Nombre <input name="name" required maxlength="200" placeholder="Estudio Aurora" /></label>
+            <label>Nombre <span aria-hidden="true">*</span><input name="name" required maxlength="200" placeholder="Estudio Aurora" /></label>
             <label>Slug <input name="slug" maxlength="120" placeholder="Se genera automáticamente" /></label>
             <label>Categoría <input name="category" placeholder="Estética, barbería, taller…" /></label>
             <label>Teléfono WhatsApp <input name="phone" placeholder="34600000000" /></label>
@@ -377,11 +377,11 @@
     </section>
   </div>
   <script src="https://accounts.google.com/gsi/client" async></script>
-  <script src="../autonogrow-shared/auth.js"></script>
+  <script src="../autonogrow-shared/auth.js?v=5f1"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="owner.js?v=20260805-5"></script>
+  <script src="owner.js?v=5f1"></script>
   <script src="owner-businesses.js?v=20260805-4"></script>
   <script src="owner-operations.js?v=20260805-2"></script>
-  <script src="owner-onboarding.js?v=20260805-2"></script>
+  <script src="owner-onboarding.js?v=5f1"></script>
 </body>
 </html>

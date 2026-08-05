@@ -148,7 +148,13 @@ def test_customer_context_reuses_loaded_bookings_without_n_plus_one() -> None:
     assert "fetch(" not in block
     assert "Próxima reserva" in block
     assert "Última reserva" in block
-    assert "goToBooking" in block
+    assert 'data-admin-action="go-to-booking"' in block
+    delegated = function_block(
+        js,
+        "function setupAdminDelegatedActions",
+        'document.addEventListener("DOMContentLoaded"',
+    )
+    assert "goToBooking(id)" in delegated
     assert "Solo se relacionan teléfonos coincidentes" in block
 
 

@@ -796,13 +796,13 @@ function businessCard(business) {
         <button class="button ${business.active ? "button-danger" : "button-primary"} button-small" type="button" data-business-state-id="${business.id}" data-business-status="${escapeHtml(business.status || (business.active ? "active" : "configuration_pending"))}">${business.active ? "Suspender" : business.status === "suspended" ? "Reactivar" : "Continuar onboarding"}</button>
       </div>
       <details class="owner-brand-editor" data-owner-editor="${escapeHtml(business.slug)}"><summary>Marca y apariencia · ${escapeHtml(business.theme_key === "custom" ? "Personalizado" : (business.theme_key || "Sin paleta"))} · ${escapeHtml(business.template_key || "classic")}</summary>
-        <div class="owner-brand-grid"><label>Paleta<select data-owner-theme>${paletteOptions(business.theme_key)}</select></label><label>Plantilla<select data-owner-template>${templateOptions(business.template_key)}</select></label><p class="wide helper" data-owner-template-description>${escapeHtml(templateDescription(business.template_key))}</p>${["primary","secondary","accent","background"].map((name, index) => `<label>${name}<span class="owner-color"><input type="color" data-owner-color="${name}" value="${escapeHtml(business[`${name}_color`] || PALETTES.slate_gold[index])}"><input data-owner-hex="${name}" value="${escapeHtml(business[`${name}_color`] || PALETTES.slate_gold[index])}"></span></label>`).join("")}<label>Alt logo<input data-owner-logo-alt value="${escapeHtml(business.logo_alt || "")}"></label></div>
+        <div class="owner-brand-grid"><label>Paleta<select data-owner-theme>${paletteOptions(business.theme_key)}</select></label><label>Plantilla<select data-owner-template>${templateOptions(business.template_key)}</select></label><p class="wide helper" data-owner-template-description>${escapeHtml(templateDescription(business.template_key))}</p>${["primary","secondary","accent","background"].map((name, index) => `<label>${name}<span class="owner-color"><input type="color" data-owner-color="${name}" value="${escapeHtml(business[`${name}_color`] || PALETTES.slate_gold[index])}"><input data-owner-hex="${name}" aria-label="Código hexadecimal: ${name}" value="${escapeHtml(business[`${name}_color`] || PALETTES.slate_gold[index])}"></span></label>`).join("")}<label>Alt logo<input data-owner-logo-alt value="${escapeHtml(business.logo_alt || "")}"></label></div>
         <div class="owner-upload-row"><input id="owner-logo-input-${escapeHtml(business.slug)}" type="file" accept="image/jpeg,image/png,image/webp" hidden data-owner-media-input="logo" data-slug="${escapeHtml(business.slug)}"><button type="button" class="button button-secondary button-small" data-action="select-logo">Subir logo</button><button type="button" class="button button-danger button-small" data-action="delete-logo">Eliminar logo</button></div>
-        <div class="owner-upload-row"><input id="owner-gallery-input-${escapeHtml(business.slug)}" type="file" accept="image/jpeg,image/png,image/webp" hidden data-owner-media-input="gallery" data-slug="${escapeHtml(business.slug)}"><input data-owner-gallery-alt placeholder="Texto alternativo"><button type="button" class="button button-secondary button-small" data-action="select-gallery">Subir foto</button></div>
+        <div class="owner-upload-row"><input id="owner-gallery-input-${escapeHtml(business.slug)}" type="file" accept="image/jpeg,image/png,image/webp" hidden data-owner-media-input="gallery" data-slug="${escapeHtml(business.slug)}"><input data-owner-gallery-alt placeholder="Texto alternativo" aria-label="Texto alternativo de la nueva foto"><button type="button" class="button button-secondary button-small" data-action="select-gallery">Subir foto</button></div>
         <div class="owner-gallery" data-owner-gallery></div><button type="button" class="button button-primary button-small" data-owner-brand-save>Guardar apariencia</button><span data-owner-feedback></span>
       </details>
       <details class="owner-users-editor" data-owner-users="${escapeHtml(business.slug)}"><summary>Usuarios del negocio</summary>
-        <div class="owner-user-form"><input data-owner-user-email type="email" placeholder="persona@negocio.com"><select data-owner-user-role><option value="business_admin">Administrador</option><option value="business_staff">Personal</option></select><button type="button" class="button button-primary button-small" data-owner-user-action="add">Añadir usuario</button></div>
+        <div class="owner-user-form"><input data-owner-user-email type="email" placeholder="persona@negocio.com" aria-label="Email del usuario"><select data-owner-user-role aria-label="Rol a asignar"><option value="business_admin">Administrador</option><option value="business_staff">Personal</option></select><button type="button" class="button button-primary button-small" data-owner-user-action="add">Añadir usuario</button></div>
         <div data-owner-users-list class="owner-users-list"><p>Cargando usuarios...</p></div><p data-owner-users-feedback class="status-text"></p>
       </details>
       <details class="owner-channel-control-editor" data-owner-channel-control-id="${business.id}"><summary>Control y onboarding de canales</summary><div data-owner-channel-control-content><p>Cargando permisos...</p></div></details>
@@ -830,12 +830,29 @@ function renderBusinesses() {
 }
 
 function ownerChannelControlStatusLabel(status) {
-  return ({ not_allowed: "No permitido", available: "Disponible", pending_approval: "Pendiente de aprobación", approved: "Aprobado", suspended: "Suspendido", revoked: "Revocado" })[status] || status;
+  return ({ not_allowed: "No permitido", available: "Disponible", pending_approval: "Pendiente de aprobación", approved: "Aprobado", suspended: "Suspendido", revoked: "Revocado" })[status] || "Estado no disponible";
+}
+
+function ownerIntegrationHealthLabel(kind, status) {
+  const labels = {
+    health: { unknown: "Aún no comprobado", healthy: "Correcta", warning: "Revisar", degraded: "Con problemas", action_required: "Requiere acción", revoked: "Revocada", suspended: "Suspendida", error: "No comprobada" },
+    token: { unknown: "No comprobado", valid: "Válido", expires_soon: "Caduca pronto", critical: "Caducidad inminente", expired: "Caducado", revoked: "Revocado" },
+    subscription: { unknown: "No comprobada", active: "Activa", subscribed: "Activa", missing: "No configurada", failed: "Fallida", error: "No comprobada" },
+    asset: { unknown: "No comprobado", active: "Activo", registered: "Registrado", inaccessible: "Sin acceso", invalid: "No válido", failed: "Fallido" }
+  };
+  return labels[kind]?.[status] || "Estado no disponible";
+}
+
+function ownerIntegrationHealthTone(status) {
+  if (status === "healthy") return "healthy";
+  if (["warning", "degraded"].includes(status)) return "warning";
+  if (["action_required", "revoked", "suspended", "error"].includes(status)) return "danger";
+  return "unknown";
 }
 
 function ownerWhatsAppCandidate(candidate) {
   const setupReady = candidate.app_subscription_status === "subscribed" && candidate.phone_registration_status === "registered";
-  return `<section class="owner-integration-warning"><h5>Cuenta de WhatsApp pendiente de revisión</h5><p><strong>${escapeHtml(candidate.candidate_verified_name || "WhatsApp Business")}</strong> · ${escapeHtml(candidate.candidate_display_phone_number_redacted || "número verificado")}</p><p>Finalidad: ${escapeHtml(candidate.purpose)} · Expira: ${escapeHtml(formatAutomationDate(candidate.expires_at))}</p><p>Suscripción: ${escapeHtml(candidate.app_subscription_status || "pendiente")} · Registro: ${escapeHtml(candidate.phone_registration_status || "pendiente")}</p>${candidate.safe_error_message ? `<p>${escapeHtml(candidate.safe_error_message)}</p>` : ""}<div class="owner-integration-actions"><button class="button button-secondary button-small" type="button" data-owner-channel-action="whatsapp-retry" data-channel="whatsapp" data-attempt-id="${candidate.id}">Reintentar verificación</button><button class="button button-primary button-small" type="button" data-owner-channel-action="whatsapp-approve" data-channel="whatsapp" data-attempt-id="${candidate.id}" ${setupReady ? "" : "disabled"}>Aprobar cuenta</button><button class="button button-danger button-small" type="button" data-owner-channel-action="whatsapp-reject" data-channel="whatsapp" data-attempt-id="${candidate.id}">Rechazar cuenta</button></div></section>`;
+  return `<section class="owner-integration-warning"><h5>Cuenta de WhatsApp pendiente de revisión</h5><p><strong>${escapeHtml(candidate.candidate_verified_name || "WhatsApp Business")}</strong> · ${escapeHtml(candidate.candidate_display_phone_number_redacted || "número verificado")}</p><p>Finalidad: ${escapeHtml(candidate.purpose || "No indicada")} · Expira: ${escapeHtml(formatAutomationDate(candidate.expires_at))}</p><p>Suscripción: ${escapeHtml(ownerIntegrationHealthLabel("subscription", candidate.app_subscription_status))} · Registro: ${escapeHtml(ownerIntegrationHealthLabel("asset", candidate.phone_registration_status))}</p>${candidate.safe_error_message ? `<p>${escapeHtml(candidate.safe_error_message)}</p>` : ""}<div class="owner-integration-actions"><button class="button button-secondary button-small" type="button" data-owner-channel-action="whatsapp-retry" data-channel="whatsapp" data-attempt-id="${candidate.id}">Reintentar verificación</button><button class="button button-primary button-small" type="button" data-owner-channel-action="whatsapp-approve" data-channel="whatsapp" data-attempt-id="${candidate.id}" ${setupReady ? "" : "disabled"}>Aprobar cuenta</button><button class="button button-danger button-small" type="button" data-owner-channel-action="whatsapp-reject" data-channel="whatsapp" data-attempt-id="${candidate.id}">Rechazar cuenta</button></div></section>`;
 }
 
 function renderOwnerChannelControls(panel, data) {
@@ -851,7 +868,7 @@ function renderOwnerChannelControls(panel, data) {
     if (!["not_allowed", "revoked"].includes(channel.status)) actions += `<button class="button button-danger button-small" type="button" data-owner-channel-action="suspend" data-channel="${escapeHtml(channel.channel)}">Suspender</button><button class="button button-danger button-small" type="button" data-owner-channel-action="revoke" data-channel="${escapeHtml(channel.channel)}">Revocar</button>`;
     if (health) actions += `<button class="button button-secondary button-small" type="button" data-owner-channel-action="health-check" data-channel="${escapeHtml(channel.channel)}">Comprobar ahora</button>${health.subscription_status === "missing" ? `<button class="button button-secondary button-small" type="button" data-owner-channel-action="retry-subscription" data-channel="${escapeHtml(channel.channel)}">Reintentar suscripción</button>` : ""}${health.reconnection_required && channel.channel === "instagram" ? `<button class="button button-primary button-small" type="button" data-owner-channel-action="health-reconnect" data-channel="instagram">Reconectar</button>` : ""}${health.reconnection_required && channel.channel === "whatsapp" ? `<a class="button button-primary button-small" href="../autonogrow-admin/index.html?b=${escapeHtml(data.business.slug)}#channels">Abrir onboarding</a>` : ""}`;
     const candidates = channel.channel === "whatsapp" ? (data.whatsapp_candidates || []).map(ownerWhatsAppCandidate).join("") : "";
-    const healthPanel = health ? `<div class="owner-integration-health state-${escapeHtml(health.health_status)}"><p><strong>Salud: ${escapeHtml(health.health_status)}</strong></p><p>Última: ${escapeHtml(formatAutomationDate(health.last_health_check_at))} · Próxima: ${escapeHtml(formatAutomationDate(health.next_health_check_at))}</p><p>Token: ${escapeHtml(health.token_expiry_status)} · Suscripción: ${escapeHtml(health.subscription_status)} · Activo: ${escapeHtml(health.asset_status)}</p><p>Fallos consecutivos: ${Number(health.consecutive_health_failures || 0)}</p>${health.safe_error_message ? `<p>${escapeHtml(health.safe_error_message)}</p>` : ""}</div>` : `<p class="helper">Sin integración operativa.</p>`;
+    const healthPanel = health ? `<div class="owner-integration-health state-${ownerIntegrationHealthTone(health.health_status)}"><p><strong>Salud: ${escapeHtml(ownerIntegrationHealthLabel("health", health.health_status))}</strong></p><p>Última: ${escapeHtml(formatAutomationDate(health.last_health_check_at))} · Próxima: ${escapeHtml(formatAutomationDate(health.next_health_check_at))}</p><p>Token: ${escapeHtml(ownerIntegrationHealthLabel("token", health.token_expiry_status))} · Suscripción: ${escapeHtml(ownerIntegrationHealthLabel("subscription", health.subscription_status))} · Activo: ${escapeHtml(ownerIntegrationHealthLabel("asset", health.asset_status))}</p><p>Fallos consecutivos: ${Number(health.consecutive_health_failures || 0)}</p>${health.safe_error_message ? `<p>${escapeHtml(health.safe_error_message)}</p>` : ""}</div>` : `<p class="helper">Sin integración operativa.</p>`;
     return `<article class="owner-channel-control-card"><div class="owner-integration-heading"><h4>${escapeHtml(names[channel.channel])}</h4><span class="state-badge ag-badge ${channel.status === "approved" ? "active ag-badge--success" : "inactive ag-badge--neutral"}">${escapeHtml(ownerChannelControlStatusLabel(channel.status))}</span></div>${healthPanel}${candidates}<div class="owner-channel-control-actions">${actions}</div></article>`;
   }).join("")}</div><p data-owner-channel-feedback class="status-text"></p>`;
 }
@@ -932,7 +949,7 @@ async function handleOwnerChannelControlAction(button) {
 }
 
 function ownerAutomationStatusLabel(status) {
-  return ({ available: "Activo", near_limit: "Activo · cerca del límite", limit_reached: "Límite alcanzado", automation_paused: "Activo · automatización pausada", pending_renewal: "Pendiente de renovación", suspended: "Suspendido" })[status] || status;
+  return ({ available: "Activo", near_limit: "Activo · cerca del límite", limit_reached: "Límite alcanzado", automation_paused: "Activo · automatización pausada", pending_renewal: "Pendiente de renovación", suspended: "Suspendido" })[status] || "Estado no disponible";
 }
 
 function formatAutomationDate(value) {
@@ -943,7 +960,7 @@ function formatAutomationDate(value) {
 }
 
 function ownerIntegrationStatusLabel(status) {
-  return ({ pending: "Pendiente", connected: "Conectado", degraded: "Necesita revisión", expired: "Caducado", disconnected: "Desconectado", revoked: "Revocado", error: "Error" })[status] || status;
+  return ({ pending: "Pendiente", connected: "Conectado", degraded: "Necesita revisión", expired: "Caducado", disconnected: "Desconectado", revoked: "Revocado", error: "Error" })[status] || "Estado no disponible";
 }
 
 function ownerInstagramCredentialForm(mode) {

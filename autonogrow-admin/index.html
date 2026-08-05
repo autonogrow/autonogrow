@@ -6,12 +6,12 @@
 
   <title>AutonoGrow Admin</title>
 
-  <link rel="stylesheet" href="styles.css?v=20260804-6" />
+  <link rel="stylesheet" href="styles.css?v=5f1" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
   <link rel="stylesheet" href="../autonogrow-shared/layout.css" />
-  <link rel="stylesheet" href="../autonogrow-shared/responsive.css" />
+  <link rel="stylesheet" href="../autonogrow-shared/responsive.css?v=5f1" />
   <link rel="stylesheet" href="../autonogrow-shared/accessibility.css" />
   <link rel="stylesheet" href="../autonogrow-shared/auth.css" />
 </head>
@@ -202,7 +202,7 @@
         <div class="growth-summary-progress" aria-hidden="true">
           <span id="growth-summary-progress-bar"></span>
         </div>
-        <button class="btn btn-primary" type="button" onclick="showAdminSection('growth')">Ver resumen</button>
+        <button class="btn btn-primary" type="button" data-admin-action="navigate-section" data-section="growth">Ver resumen</button>
       </article>
 
       <div hidden aria-hidden="true">
@@ -323,10 +323,10 @@
           <label>Paleta<select id="business-setting-theme"><option value="slate_gold">Slate Gold</option><option value="rose_beauty">Rose Beauty</option><option value="emerald_clean">Emerald Clean</option><option value="blue_clinic">Blue Clinic</option><option value="amber_barber">Amber Barber</option><option value="violet_modern">Violet Modern</option><option value="custom">Personalizado</option></select></label>
           <label>Plantilla<select id="business-setting-template" aria-describedby="admin-template-description"><option value="classic">Classic</option><option value="elegant">Elegant</option><option value="beauty">Beauty</option><option value="clinic">Clinic</option><option value="urban">Urban</option><option value="minimal">Minimal</option></select></label>
           <p id="admin-template-description" class="field-wide template-description">Estructura equilibrada para cualquier negocio.</p>
-          <label>Color principal<span class="color-field"><input id="business-setting-primary-color" type="color" /><input id="business-setting-primary-hex" maxlength="7" /></span></label>
-          <label>Color secundario<span class="color-field"><input id="business-setting-secondary-color" type="color" /><input id="business-setting-secondary-hex" maxlength="7" /></span></label>
-          <label>Color de acento<span class="color-field"><input id="business-setting-accent-color" type="color" /><input id="business-setting-accent-hex" maxlength="7" /></span></label>
-          <label>Fondo<span class="color-field"><input id="business-setting-background-color" type="color" /><input id="business-setting-background-hex" maxlength="7" /></span></label>
+          <label>Color principal<span class="color-field"><input id="business-setting-primary-color" type="color" /><input id="business-setting-primary-hex" maxlength="7" aria-label="Código hexadecimal del color principal" /></span></label>
+          <label>Color secundario<span class="color-field"><input id="business-setting-secondary-color" type="color" /><input id="business-setting-secondary-hex" maxlength="7" aria-label="Código hexadecimal del color secundario" /></span></label>
+          <label>Color de acento<span class="color-field"><input id="business-setting-accent-color" type="color" /><input id="business-setting-accent-hex" maxlength="7" aria-label="Código hexadecimal del color de acento" /></span></label>
+          <label>Fondo<span class="color-field"><input id="business-setting-background-color" type="color" /><input id="business-setting-background-hex" maxlength="7" aria-label="Código hexadecimal del fondo" /></span></label>
         </div>
         <p id="admin-brand-feedback" class="inline-feedback"></p>
       </div>
@@ -621,7 +621,7 @@
       <div id="exception-windows-panel" class="exception-windows-panel" style="display: none;">
         <div class="day-header">
           <strong>Tramos especiales</strong>
-          <button class="btn btn-small btn-secondary" type="button" onclick="addExceptionWindow()">
+          <button class="btn btn-small btn-secondary" type="button" data-admin-action="add-exception-window">
             Añadir tramo
           </button>
         </div>
@@ -757,7 +757,7 @@
           <p id="reschedule-modal-description">Selecciona un día y uno de los huecos disponibles.</p>
         </div>
 
-        <button class="modal-close ag-button ag-button--ghost ag-button--icon ag-modal__close" type="button" onclick="closeRescheduleModal()" aria-label="Cerrar">
+        <button class="modal-close ag-button ag-button--ghost ag-button--icon ag-modal__close" type="button" data-admin-action="close-reschedule" aria-label="Cerrar">
           x
         </button>
       </div>
@@ -775,7 +775,7 @@
           <p class="eyebrow">Citas pendientes</p>
           <h2 id="staff-removal-modal-title">No se puede eliminar este miembro</h2>
         </div>
-        <button class="modal-close ag-button ag-button--ghost ag-button--icon ag-modal__close" type="button" onclick="closeStaffRemovalModal()" aria-label="Cerrar">x</button>
+        <button class="modal-close ag-button ag-button--ghost ag-button--icon ag-modal__close" type="button" data-admin-action="close-staff-removal" aria-label="Cerrar">x</button>
       </div>
       <div class="modal-content ag-modal__body">
         <p id="staff-removal-modal-message"></p>
@@ -785,8 +785,8 @@
   </div>
 
   <script src="https://accounts.google.com/gsi/client" async></script>
-  <script src="../autonogrow-shared/auth.js"></script>
+  <script src="../autonogrow-shared/auth.js?v=5f1"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="admin.js?v=20260805-1"></script>
+  <script src="admin.js?v=5f1"></script>
 </body>
 </html>

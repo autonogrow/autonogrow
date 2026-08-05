@@ -1864,7 +1864,7 @@ input {
 .agenda-state--error { border-style: solid; border-color: var(--ag-color-danger); background: var(--ag-color-danger-bg); }
 
 .modal-scroll-locked { overflow: hidden; }
-#reschedule-modal .ag-modal { max-height: min(90vh, 52rem); overflow: hidden; }
+#reschedule-modal .ag-modal { max-height: min(90dvh, 52rem); overflow: hidden; }
 #reschedule-modal .ag-modal__body { overflow-y: auto; overscroll-behavior: contain; }
 #reschedule-modal-description { margin: var(--ag-space-1) 0 0; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
 .reschedule-selection-summary { display: grid; gap: var(--ag-space-1); padding: var(--ag-space-3); border: 1px solid var(--ag-color-blue-500); border-radius: var(--ag-radius-md); background: var(--ag-color-info-bg); }
@@ -1896,7 +1896,7 @@ input {
   .agenda-state__actions,
   .agenda-state__actions .ag-button { width: 100%; }
   #reschedule-modal { align-items: flex-end; padding: 0; }
-  #reschedule-modal .ag-modal { width: 100%; max-width: none; max-height: calc(92vh - env(safe-area-inset-bottom)); border-radius: var(--ag-radius-xl) var(--ag-radius-xl) 0 0; }
+  #reschedule-modal .ag-modal { width: 100%; max-width: none; max-height: calc(92dvh - env(safe-area-inset-bottom)); border-radius: var(--ag-radius-xl) var(--ag-radius-xl) 0 0; }
   #reschedule-modal .ag-modal__body { padding-bottom: calc(var(--ag-space-5) + env(safe-area-inset-bottom)); }
   .reschedule-slots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

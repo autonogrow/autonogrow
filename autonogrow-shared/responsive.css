@@ -21,6 +21,7 @@
 
 @media (max-width: 639px) {
   body.ag-body { min-width: 0; }
+  .ag-app :where(input, select, textarea) { font-size: 1rem; }
 
   .ag-topbar.admin-header,
   .ag-topbar.owner-header,
@@ -31,7 +32,7 @@
   }
 
   .ag-topbar__title { flex: 1 1 auto; }
-  .ag-topbar__title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ag-topbar__title h1 { overflow-wrap: anywhere; white-space: normal; }
   .ag-topbar .subtitle, .ag-topbar #business-subtitle { display: none; }
   .ag-topbar .header-actions { flex: 0 1 auto; gap: var(--ag-space-2); }
   .ag-topbar .header-actions > :not(#refresh-button), .ag-topbar.owner-header > .auth-user { display: none; }

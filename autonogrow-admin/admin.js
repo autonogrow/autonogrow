@@ -1597,7 +1597,7 @@ function renderChannelDetail(name) {
     : channel?.status === "available" && channel.connector_policy === "owner_only"
       ? `<div class="ag-alert ag-alert--info"><div><strong>Conexión gestionada por AutonoGrow</strong><p>Tu configuración comercial actual no permite iniciar este flujo desde el Business Admin.</p></div></div>` : "";
   const approval = channel?.status === "pending_approval" ? `<div class="ag-alert ag-alert--info"><div><strong>Conectado, pendiente de revisión</strong><p>No necesitas hacer nada más. Conectar una cuenta no activa el envío ni las respuestas automáticas; AutonoGrow revisará la conexión.</p></div></div>` : "";
-  const healthMarkup = `<article class="channel-health-card channel-health-card--${healthState.tone}"><div><p>Salud de la conexión</p><h3>${channelHubLoadState.health === "error" ? "No se ha podido comprobar" : healthState.label}</h3><p>${channelHubLoadState.health === "error" ? "Instagram y WhatsApp se cargan de forma independiente. Reintenta solo este diagnóstico." : healthState.message}</p>${health?.last_health_check_at ? `<small>Última comprobación: ${escapeHtml(new Date(health.last_health_check_at).toLocaleString("es-ES"))}</small>` : ""}</div></article>`;
+  const healthMarkup = `<article class="channel-health-card channel-health-card--${healthState.tone}"><div><p>Salud de la conexión</p><h3>${channelHubLoadState.health === "error" ? "No se ha podido comprobar" : healthState.label}</h3><p>${channelHubLoadState.health === "error" ? "Instagram y WhatsApp se cargan de forma independiente. Reintenta solo este diagnóstico." : healthState.message}</p>${health?.last_health_check_at ? `<small>Última comprobación: ${escapeHtml(formatDateTime(health.last_health_check_at))}</small>` : ""}</div></article>`;
   const delivery = name === "whatsapp" ? `<article class="channel-delivery-help"><h3>Cómo puedes responder</h3><p><strong>Envío desde AutonoGrow:</strong> ${escapeHtml(channelCapabilityLabel(channel, "integrated_delivery_enabled"))}.</p><p><strong>Modo asistido:</strong> disponible cuando la conversación tiene teléfono. “Abrir en WhatsApp” prepara el texto, pero la persona completa el envío fuera de AutonoGrow.</p><p>WhatsApp permite respuestas libres durante 24 horas desde el último mensaje del cliente.</p></article>` : "";
   const reconnect = health?.reconnection_required || channel?.status === "revoked" ? `<div class="ag-alert ag-alert--warning"><div><strong>Vuelve a conectar ${title}</strong><p>Volverás a iniciar sesión con Meta. La conexión actual seguirá funcionando hasta que la nueva conexión sea revisada y aprobada.</p></div></div>` : "";
   container.innerHTML = `${availabilityHelp}${onboardingHelp}${approval}${reconnect}<article class="channel-detail-card"><div class="section-header"><div><h3>Estado y capacidades</h3><p>La conexión, la aprobación y cada capacidad se gestionan por separado.</p></div></div>${account}${channelStateRows(channel, health)}</article>${healthMarkup}${delivery}${channelActionMarkup(channel, health, name)}`;
@@ -1887,7 +1887,7 @@ async function loadAvailabilitySettings() {
     console.error(error);
     setDashboardDataState("availability", "error");
     document.getElementById("weekly-schedule-editor").innerHTML = `
-      <div class="configuration-partial-error" role="alert"><p>No se pudieron cargar los horarios.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadAvailabilitySettings()">Reintentar horarios</button></div>
+      <div class="configuration-partial-error" role="alert"><p>No se pudieron cargar los horarios.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="retry-availability-settings">Reintentar horarios</button></div>
     `;
     document.getElementById("weekly-schedule-editor").setAttribute("aria-busy", "false");
     renderConfigurationOverview();
@@ -1922,11 +1922,11 @@ function renderWeeklyScheduleEditor() {
         <div class="day-identity">
           <strong>${day.label}</strong>
           <label class="closed-toggle">
-            <input type="checkbox" aria-label="Marcar ${day.label} como cerrado" ${isClosed ? "checked" : ""} onchange="toggleDayClosed('${day.value}', this.checked)" />
+            <input type="checkbox" aria-label="Marcar ${day.label} como cerrado" ${isClosed ? "checked" : ""} data-admin-change="toggle-day-closed" data-day="${day.value}" />
             <span>${isClosed ? "Cerrado" : "Abierto"}</span>
           </label>
         </div>
-        <button class="btn btn-small btn-secondary" type="button" onclick="addScheduleWindow('${day.value}')">
+        <button class="btn btn-small btn-secondary" type="button" data-admin-action="add-schedule-window" data-day="${day.value}">
           Añadir tramo
         </button>
       </div>
@@ -1969,7 +1969,7 @@ function appendWindowRow(containerId, start = "10:00", end = "14:00") {
     <input type="time" class="window-start" value="${escapeHtml(start)}" />
     <span>hasta</span>
     <input type="time" class="window-end" value="${escapeHtml(end)}" />
-    <button class="btn btn-small btn-danger" type="button" onclick="removeWindowRow(this)">
+    <button class="btn btn-small btn-danger" type="button" data-admin-action="remove-window-row">
       Eliminar
     </button>
   `;
@@ -2110,7 +2110,7 @@ async function loadAvailabilityExceptions() {
     console.error(error);
     configurationLoadState.exceptions = "error";
     document.getElementById("availability-exceptions-list").setAttribute("aria-busy", "false");
-    document.getElementById("availability-exceptions-list").innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudieron cargar las excepciones.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadAvailabilityExceptions()">Reintentar excepciones</button></div>`;
+    document.getElementById("availability-exceptions-list").innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudieron cargar las excepciones.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="retry-availability-exceptions">Reintentar excepciones</button></div>`;
   }
 }
 
@@ -2151,10 +2151,10 @@ function renderExceptionWindows() {
     const row = document.createElement("div");
     row.className = "window-row";
     row.innerHTML = `
-      <input type="time" value="${escapeHtml(windowItem.start)}" onchange="updateExceptionWindow(${index}, 'start', this.value)" />
+      <input type="time" value="${escapeHtml(windowItem.start)}" data-admin-change="update-exception-window" data-index="${index}" data-field="start" />
       <span>hasta</span>
-      <input type="time" value="${escapeHtml(windowItem.end)}" onchange="updateExceptionWindow(${index}, 'end', this.value)" />
-      <button class="btn btn-small btn-danger" type="button" onclick="removeExceptionWindow(${index})">
+      <input type="time" value="${escapeHtml(windowItem.end)}" data-admin-change="update-exception-window" data-index="${index}" data-field="end" />
+      <button class="btn btn-small btn-danger" type="button" data-admin-action="remove-exception-window" data-index="${index}">
         Eliminar
       </button>
     `;
@@ -2242,7 +2242,7 @@ function renderAvailabilityExceptions() {
   const container = document.getElementById("availability-exceptions-list");
 
   if (!availabilityExceptions.length) {
-    container.innerHTML = `<div class="configuration-empty-state"><strong>Sin excepciones</strong><p>No hay cierres ni horarios especiales configurados.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="document.getElementById('exception-date').focus()">Añadir excepción</button></div>`;
+    container.innerHTML = `<div class="configuration-empty-state"><strong>Sin excepciones</strong><p>No hay cierres ni horarios especiales configurados.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="focus-control" data-control="exception-date">Añadir excepción</button></div>`;
     return;
   }
 
@@ -2260,7 +2260,7 @@ function renderAvailabilityExceptions() {
         <p>${escapeHtml(windowsText || "Sin tramos")}</p>
         ${exception.reason ? `<p>${escapeHtml(exception.reason)}</p>` : ""}
       </div>
-      <button class="btn btn-small btn-danger" type="button" onclick="deleteAvailabilityException(${exception.id})">
+      <button class="btn btn-small btn-danger" type="button" data-admin-action="delete-availability-exception" data-id="${exception.id}">
         Eliminar
       </button>
     `;
@@ -2649,14 +2649,14 @@ async function loadAdminGallery() {
     adminGallery = body.images || [];
     const gallery = document.getElementById("admin-gallery-list");
     gallery.setAttribute("aria-busy", "false");
-    gallery.innerHTML = adminGallery.map((image) => `<article data-config-dirty-key="gallery-${image.id}"><img src="${escapeHtml(resolveSafeAdminMediaUrl(image.url, true))}" alt="${escapeHtml(image.alt_text || "Foto")}"><label>Texto alternativo<input data-alt-id="${image.id}" value="${escapeHtml(image.alt_text || "")}"></label><label>Orden<input data-position-id="${image.id}" type="number" min="0" value="${image.position}"></label><button class="btn btn-secondary" data-toggle-image="${image.id}" data-active="${!image.active}">${image.active ? "Desactivar" : "Activar"}</button><button class="btn btn-danger" data-delete-image="${image.id}">Eliminar</button></article>`).join("") || `<div class="configuration-empty-state"><strong>Sin imágenes</strong><p>Añade una foto si quieres mostrar una galería en tu página pública.</p></div>`;
+    gallery.innerHTML = adminGallery.map((image) => `<article data-config-dirty-key="gallery-${image.id}"><img src="${escapeHtml(resolveSafeAdminMediaUrl(image.url, true))}" alt="${escapeHtml(image.alt_text || "Foto")}"><label>Texto alternativo<input data-alt-id="${image.id}" value="${escapeHtml(image.alt_text || "")}"></label><label>Orden<input data-position-id="${image.id}" type="number" min="0" value="${image.position}"></label><button class="btn btn-secondary" type="button" data-toggle-image="${image.id}" data-active="${!image.active}">${image.active ? "Desactivar" : "Activar"}</button><button class="btn btn-danger" type="button" data-delete-image="${image.id}">Eliminar</button></article>`).join("") || `<div class="configuration-empty-state"><strong>Sin imágenes</strong><p>Añade una foto si quieres mostrar una galería en tu página pública.</p></div>`;
     snapshotConfigurationForms("#admin-gallery-list [data-config-dirty-key]");
   } catch (error) {
     console.error(error);
     configurationLoadState.gallery = "error";
     document.getElementById("admin-gallery-list")?.setAttribute("aria-busy", "false");
     showAdminBrandFeedback(error.message || "No se pudo cargar la galería.", true);
-    document.getElementById("admin-gallery-list").innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudo cargar la galería. Puedes seguir editando el resto de la página.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadAdminGallery()">Reintentar galería</button></div>`;
+    document.getElementById("admin-gallery-list").innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudo cargar la galería. Puedes seguir editando el resto de la página.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="retry-gallery">Reintentar galería</button></div>`;
   }
   renderConfigurationOverview();
 }
@@ -2719,7 +2719,7 @@ async function loadAdminServices() {
     console.error(error);
     setDashboardDataState("services", "error");
     container.setAttribute("aria-busy", "false");
-    container.innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudieron cargar los servicios.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadAdminServices()">Reintentar servicios</button></div>`;
+    container.innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudieron cargar los servicios.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="retry-services">Reintentar servicios</button></div>`;
     renderConfigurationOverview();
   }
 }
@@ -2729,7 +2729,7 @@ function renderAdminServices() {
   document.getElementById("stat-services-active").textContent =
     adminServices.filter((service) => service.active).length;
   if (!adminServices.length) {
-    container.innerHTML = `<div class="configuration-empty-state"><strong>Sin servicios</strong><p>Todavía no has añadido servicios. Añade el primero para que tus clientes puedan reservar.</p><button class="ag-button ag-button--primary ag-button--small" type="button" onclick="document.getElementById('new-service-name').focus()">Añadir el primer servicio</button></div>`;
+    container.innerHTML = `<div class="configuration-empty-state"><strong>Sin servicios</strong><p>Todavía no has añadido servicios. Añade el primero para que tus clientes puedan reservar.</p><button class="ag-button ag-button--primary ag-button--small" type="button" data-admin-action="focus-control" data-control="new-service-name">Añadir el primer servicio</button></div>`;
     ensureConfigurationSnapshot("service-new");
     renderConfigurationOverview();
     return;
@@ -2748,7 +2748,7 @@ function renderAdminServices() {
         <label class="active-setting"><input class="service-active" type="checkbox" ${service.active ? "checked" : ""} />Activo</label>
       </div>
       <p class="configuration-impact-note">Al desactivar un servicio dejará de ofrecerse para nuevas reservas; las reservas existentes se conservan.</p>
-      <div class="settings-actions"><span class="configuration-item-save-state">Sin cambios</span><button class="btn btn-small btn-secondary" data-save-service type="button" onclick="saveAdminService(${service.id})">Guardar servicio</button></div>
+      <div class="settings-actions"><span class="configuration-item-save-state">Sin cambios</span><button class="btn btn-small btn-secondary" data-save-service type="button" data-admin-action="save-service" data-id="${service.id}">Guardar servicio</button></div>
     </article>
   `; }).join("");
   ensureConfigurationSnapshot("service-new");
@@ -2919,7 +2919,7 @@ async function loadStaffMembers() {
     console.error(error);
     configurationLoadState.staff = "error";
     container.setAttribute("aria-busy", "false");
-    container.innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudo cargar el equipo. El resto de la configuración sigue disponible.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadStaffMembers()">Reintentar equipo</button></div>`;
+    container.innerHTML = `<div class="configuration-partial-error" role="alert"><p>No se pudo cargar el equipo. El resto de la configuración sigue disponible.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="retry-staff">Reintentar equipo</button></div>`;
     renderConfigurationOverview();
   }
 }
@@ -2977,8 +2977,7 @@ function renderStaffMembers() {
         `).join("")
       : `<span class="staff-services-empty">No hay servicios activos.</span>`;
     const removeAction = canRemoveMembers
-      ? `<button class="btn btn-small btn-danger" type="button"
-          onclick="removeStaffMember(${member.id})"
+      ? `<button class="btn btn-small btn-danger" type="button" data-admin-action="remove-staff" data-id="${member.id}"
           ${isOnlyActiveAdmin ? 'disabled title="No puedes eliminar al único administrador activo"' : ""}>
           Eliminar del equipo
         </button>
@@ -2992,7 +2991,7 @@ function renderStaffMembers() {
         <label>Nombre público<input class="staff-public-name" value="${escapeHtml(member.public_name || "")}" /></label>
         <label>Rol de acceso<select class="staff-role"><option value="business_staff" ${member.role === "business_staff" ? "selected" : ""}>Personal</option><option value="business_admin" ${member.role === "business_admin" ? "selected" : ""}>Administrador</option></select></label>
         <label class="active-setting"><input class="staff-active" type="checkbox" checked disabled />Activo</label>
-        <label class="active-setting"><input class="staff-bookable" type="checkbox" ${member.bookable ? "checked" : ""} onchange="toggleStaffServiceControls(${member.id}, this.checked)" />Reservable</label>
+        <label class="active-setting"><input class="staff-bookable" type="checkbox" ${member.bookable ? "checked" : ""} data-admin-change="toggle-staff-services" data-id="${member.id}" />Reservable</label>
         <label class="active-setting"><input class="staff-show-schedule" type="checkbox" ${member.show_schedule ? "checked" : ""} />Visible en agenda</label>
         <label class="field-wide">Bio<textarea class="staff-bio" rows="2">${escapeHtml(member.bio || "")}</textarea></label>
       </div>
@@ -3012,8 +3011,8 @@ function renderStaffMembers() {
       </div>
       <div class="settings-actions">
         <span class="configuration-item-save-state">Sin cambios</span>
-        <button class="btn btn-small btn-primary" type="button" onclick="saveStaffMember(${member.id})">Guardar ficha</button>
-        <button class="btn btn-small btn-secondary" type="button" onclick="editStaffSchedule(${member.id})">Editar horario</button>
+        <button class="btn btn-small btn-primary" type="button" data-admin-action="save-staff" data-id="${member.id}">Guardar ficha</button>
+        <button class="btn btn-small btn-secondary" type="button" data-admin-action="edit-staff-schedule" data-id="${member.id}">Editar horario</button>
         ${removeAction}
       </div>
     </article>
@@ -3028,11 +3027,11 @@ function renderStaffMembers() {
         ${member.public_name ? `<span>Nombre público: ${escapeHtml(member.public_name)}</span>` : ""}
         <small>${member.removed_at ? `Eliminado el ${escapeHtml(formatStaffRemovedAt(member.removed_at))}` : "Desactivado sin fecha registrada"}</small>
       </div>
-      ${canRemoveMembers ? `<button class="btn btn-small btn-secondary" type="button" onclick="reactivateStaffMember(${member.id})">Reactivar</button>` : ""}
+      ${canRemoveMembers ? `<button class="btn btn-small btn-secondary" type="button" data-admin-action="reactivate-staff" data-id="${member.id}">Reactivar</button>` : ""}
     </article>
   `).join("") || `<p class="empty-state">No hay miembros inactivos.</p>`;
   if (!activeMembers.length) {
-    container.innerHTML = `<div class="configuration-empty-state"><strong>Sin profesionales activos</strong><p>Añade un miembro si necesitas asignar servicios y horarios por profesional.</p><button class="ag-button ag-button--primary ag-button--small" type="button" onclick="document.getElementById('new-staff-email').focus()">Añadir miembro</button></div>`;
+    container.innerHTML = `<div class="configuration-empty-state"><strong>Sin profesionales activos</strong><p>Añade un miembro si necesitas asignar servicios y horarios por profesional.</p><button class="ag-button ag-button--primary ag-button--small" type="button" data-admin-action="focus-control" data-control="new-staff-email">Añadir miembro</button></div>`;
   }
   ensureConfigurationSnapshot("staff-new");
   snapshotConfigurationForms("#admin-staff-list [data-config-dirty-key]");
@@ -3048,7 +3047,7 @@ function toggleStaffServiceControls(memberId, enabled) {
 
 function formatStaffRemovedAt(value) {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return "Fecha no disponible";
   return date.toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" });
 }
 
@@ -3246,7 +3245,7 @@ function openStaffRemovalModal(member, result) {
         <span>${escapeHtml(booking.customer_name)}</span>
         <span>${escapeHtml(booking.service_name)} · ${escapeHtml(getStatusLabel(booking.status))}</span>
       </div>
-      <button class="btn btn-small btn-primary" type="button" onclick="goToBooking(${booking.id})">Ir a la cita</button>
+      <button class="btn btn-small btn-primary" type="button" data-admin-action="go-to-booking" data-id="${booking.id}">Ir a la cita</button>
     </article>
   `).join("");
   modal.classList.add("open");
@@ -3395,7 +3394,7 @@ async function loadBookings({ background = false } = {}) {
     if (!allBookings.length) {
       setDashboardDataState("bookings", "error");
       list.setAttribute("aria-busy", "false");
-      list.innerHTML = `<div class="agenda-state agenda-state--error" role="alert"><strong>No pudimos cargar la agenda.</strong><p>Comprueba la conexión y vuelve a intentarlo.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadBookings()">Reintentar</button></div>`;
+      list.innerHTML = `<div class="agenda-state agenda-state--error" role="alert"><strong>No pudimos cargar la agenda.</strong><p>Comprueba la conexión y vuelve a intentarlo.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="retry-bookings">Reintentar</button></div>`;
     }
   }
 }
@@ -3456,7 +3455,7 @@ function conversationStatusLabel(status) {
 }
 
 function conversationChannelLabel(channel) {
-  return { manual: "Manual", whatsapp: "WhatsApp", instagram: "Instagram" }[channel] || channel;
+  return { manual: "Manual", whatsapp: "WhatsApp", instagram: "Instagram" }[channel] || "Canal no disponible";
 }
 
 function conversationIntentLabel(intent) {
@@ -3471,7 +3470,7 @@ function conversationIntentLabel(intent) {
     complaint_intent: "Queja",
     cancel_reschedule_intent: "Cancelar o cambiar cita",
     unknown: "Desconocida"
-  }[intent] || intent;
+  }[intent] || "Sin clasificar";
 }
 
 function conversationIntentBadge(item) {
@@ -3514,7 +3513,7 @@ function conversationProviderBadge(conversation) {
 function formatConversationDate(value) {
   if (!value) return "Sin actividad";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return "Sin actividad";
   return date.toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
 }
 
@@ -3628,7 +3627,7 @@ async function loadConversations({ background = false, refreshDetail = true } = 
       selectedConversation = null;
       const hasFilters = Boolean(status || channel || query);
       document.getElementById("conversation-detail").innerHTML = hasFilters
-        ? `<div class="conversation-state"><strong>No hay conversaciones con estos filtros</strong><p>Prueba a limpiar la búsqueda.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="resetConversationFilters()">Limpiar filtros</button></div>`
+        ? `<div class="conversation-state"><strong>No hay conversaciones con estos filtros</strong><p>Prueba a limpiar la búsqueda.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="reset-conversation-filters">Limpiar filtros</button></div>`
         : `<div class="conversation-state"><strong>Todavía no hay conversaciones</strong><p>Los mensajes de Instagram y WhatsApp aparecerán aquí.</p></div>`;
       renderConversationCustomerPanel(null);
     }
@@ -3639,7 +3638,7 @@ async function loadConversations({ background = false, refreshDetail = true } = 
     if (!conversations.length) {
       if (!dashboardConversations.length) setDashboardDataState("conversations", "error");
       container.setAttribute("aria-busy", "false");
-      container.innerHTML = `<div class="conversation-state conversation-state--error" role="alert"><strong>No pudimos cargar las conversaciones</strong><p>Comprueba la conexión y vuelve a intentarlo.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadConversations()">Reintentar</button></div>`;
+      container.innerHTML = `<div class="conversation-state conversation-state--error" role="alert"><strong>No pudimos cargar las conversaciones</strong><p>Comprueba la conexión y vuelve a intentarlo.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="retry-conversations">Reintentar</button></div>`;
     }
   }
 }
@@ -3663,10 +3662,10 @@ function renderConversationList() {
     return;
   }
   container.innerHTML = conversations.map((item) => `
-    <button id="conversation-list-item-${item.id}" class="conversation-list-item ${item.id === selectedConversationId ? "active" : ""}" type="button" role="option" aria-selected="${item.id === selectedConversationId}" onclick="selectConversation(${item.id})">
+    <button id="conversation-list-item-${item.id}" class="conversation-list-item ${item.id === selectedConversationId ? "active" : ""}" type="button" role="option" aria-selected="${item.id === selectedConversationId}" data-admin-action="select-conversation" data-id="${item.id}">
       <span class="conversation-list-head">
         <strong>${escapeHtml(conversationDisplayName(item))}</strong>
-        <span class="conversation-status conversation-status-${item.status}">${escapeHtml(conversationStatusLabel(item.status))}</span>
+        <span class="conversation-status conversation-status-${escapeHtml(item.status)}">${escapeHtml(conversationStatusLabel(item.status))}</span>
       </span>
       <span class="conversation-channel">${escapeHtml(conversationChannelLabel(item.channel))}</span>
       ${conversationProviderBadge(item)}
@@ -3761,7 +3760,7 @@ async function selectConversation(conversationId, showLoading = true, { backgrou
     if (requestVersion !== conversationDetailVersion) return;
     console.error(error);
     if (background) throw error;
-    detail.innerHTML = `<div class="conversation-state conversation-state--error" role="alert"><strong>No pudimos abrir esta conversación</strong><p>El historial sigue intacto. Vuelve a intentarlo.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="selectConversation(${Number(conversationId)})">Reintentar</button></div>`;
+    detail.innerHTML = `<div class="conversation-state conversation-state--error" role="alert"><strong>No pudimos abrir esta conversación</strong><p>El historial sigue intacto. Vuelve a intentarlo.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="select-conversation" data-id="${Number(conversationId)}">Reintentar</button></div>`;
   }
 }
 
@@ -3848,7 +3847,7 @@ function conversationComposerModel(conversation) {
 function renderConversationComposer(conversation, quickReplies) {
   const model = conversationComposerModel(conversation);
   if (!model.canCompose) {
-    return `<div class="conversation-reply conversation-reply--unavailable" role="status"><strong>Respuesta no disponible</strong><p>${escapeHtml(model.notice)}</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="showAdminSection('channels')">Revisar canal</button></div>`;
+    return `<div class="conversation-reply conversation-reply--unavailable" role="status"><strong>Respuesta no disponible</strong><p>${escapeHtml(model.notice)}</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="navigate-section" data-section="channels">Revisar canal</button></div>`;
   }
   return `<div class="conversation-reply" aria-label="Responder a la conversación">
     <div class="conversation-quick-replies">${quickReplies || `<small>No hay respuestas rápidas activas.</small>`}</div>
@@ -3857,8 +3856,8 @@ function renderConversationComposer(conversation, quickReplies) {
     <div class="conversation-composer-actions">
       <small>${escapeHtml(model.notice)}</small>
       <div>
-        ${model.canSend ? `<button id="conversation-send-button" class="ag-button ag-button--primary" type="button" onclick="sendConversationReply()">${escapeHtml(model.action)}</button>` : ""}
-        ${model.assisted ? `<button id="conversation-whatsapp-button" class="btn btn-whatsapp" type="button" onclick="openConversationWhatsApp()">${escapeHtml(model.action)}</button>` : ""}
+        ${model.canSend ? `<button id="conversation-send-button" class="ag-button ag-button--primary" type="button" data-admin-action="send-conversation-reply">${escapeHtml(model.action)}</button>` : ""}
+        ${model.assisted ? `<button id="conversation-whatsapp-button" class="btn btn-whatsapp" type="button" data-admin-action="open-conversation-whatsapp">${escapeHtml(model.action)}</button>` : ""}
       </div>
     </div>
   </div>`;
@@ -3870,7 +3869,7 @@ function renderConversationDetail(conversation, uiState = null) {
   const messages = conversation.messages || [];
   const composer = conversationComposerModel(conversation);
   const quickReplies = conversationTemplates.filter((item) => item.active).map((template) => `
-    <button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="fillConversationReply(${template.id})">${escapeHtml(template.name)}</button>
+    <button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="fill-conversation-reply" data-id="${template.id}">${escapeHtml(template.name)}</button>
   `).join("");
   const pendingSuggestions = conversationSuggestions.filter((item) => item.status === "pending");
   const automation = conversation.automation || { mode: "automatic", is_active: true };
@@ -3885,9 +3884,9 @@ function renderConversationDetail(conversation, uiState = null) {
           <span class="conversation-intent-badge">${escapeHtml(suggestion.intent_label)} · ${Number(suggestion.confidence)}%</span>
           <p>${escapeHtml(suggestion.body)}</p>
           <div class="conversation-suggestion-actions">
-            ${composer.canSend ? `<button class="ag-button ag-button--primary ag-button--small" type="button" onclick="sendConversationSuggestion(${Number(suggestion.id)})">Enviar sugerencia</button>` : ""}
-            ${composer.canCompose ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="modifyConversationSuggestion(${Number(suggestion.id)})">Modificar</button>` : ""}
-            <button class="ag-button ag-button--ghost ag-button--small" type="button" onclick="dismissConversationSuggestion(${Number(suggestion.id)})">Descartar</button>
+            ${composer.canSend ? `<button class="ag-button ag-button--primary ag-button--small" type="button" data-admin-action="send-conversation-suggestion" data-id="${Number(suggestion.id)}">Enviar sugerencia</button>` : ""}
+            ${composer.canCompose ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="modify-conversation-suggestion" data-id="${Number(suggestion.id)}">Modificar</button>` : ""}
+            <button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="dismiss-conversation-suggestion" data-id="${Number(suggestion.id)}">Descartar</button>
           </div>
         </article>
       `).join("")}
@@ -3895,29 +3894,29 @@ function renderConversationDetail(conversation, uiState = null) {
   ` : "";
   detail.innerHTML = `
     <header class="conversation-detail-header">
-      <button class="conversation-mobile-back ag-button ag-button--ghost ag-button--small" type="button" onclick="closeConversationMobileDetail()">← Conversaciones</button>
+      <button class="conversation-mobile-back ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="close-conversation-mobile-detail">← Conversaciones</button>
       <div class="conversation-detail-header-copy">
         <h3 id="conversation-detail-title" tabindex="-1">${escapeHtml(conversationDisplayName(conversation))}</h3>
         <span>${escapeHtml(contactParts.join(" · ") || "Sin datos de contacto adicionales")}</span>
         <div class="conversation-detail-badges"><span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>${conversationProviderBadge(conversation)}${conversationIntentBadge(conversation)}</div>
       </div>
       <div class="conversation-detail-actions">
-        <button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" onclick="openConversationCustomerPanel(this)" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Ver cliente</button>
-        <span class="conversation-status conversation-status-${conversation.status}">${escapeHtml(conversationStatusLabel(conversation.status))}</span>
+        <button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-panel" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Ver cliente</button>
+        <span class="conversation-status conversation-status-${escapeHtml(conversation.status)}">${escapeHtml(conversationStatusLabel(conversation.status))}</span>
         ${conversation.status === "closed"
-          ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="changeConversationStatus('pending')">Reabrir</button>`
-          : `<button class="ag-button ag-button--ghost ag-button--small" type="button" onclick="changeConversationStatus('pending')">Marcar pendiente</button><button class="ag-button ag-button--ghost ag-button--small" type="button" onclick="changeConversationStatus('closed')">Cerrar</button>`}
+          ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="pending">Reabrir</button>`
+          : `<button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="pending">Marcar pendiente</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="closed">Cerrar</button>`}
       </div>
       <div class="conversation-automation-controls">
         <div class="conversation-automation-state-copy"><span class="conversation-automation-state ${automation.is_active ? "is-active" : "is-paused"}">${escapeHtml(conversationAutomationLabel(automation))}</span>${automationReason ? `<small>${escapeHtml(automationReason)}</small>` : ""}</div>
         <select id="conversation-automation-duration" aria-label="Duración de la pausa"><option value="15" ${automationDuration === "15" ? "selected" : ""}>15 min</option><option value="60" ${automationDuration === "60" ? "selected" : ""}>1 h</option><option value="240" ${automationDuration === "240" ? "selected" : ""}>4 h</option><option value="-1" ${automationDuration === "-1" ? "selected" : ""}>Hasta reactivarla</option></select>
-        <button id="conversation-automation-toggle" class="ag-button ag-button--small ${automation.is_active ? "ag-button--secondary" : "ag-button--primary"}" type="button" onclick="toggleConversationAutomation(${automation.is_active ? "true" : "false"})">${automation.is_active ? "Pausar automatización" : "Activar automatización"}</button>
+        <button id="conversation-automation-toggle" class="ag-button ag-button--small ${automation.is_active ? "ag-button--secondary" : "ag-button--primary"}" type="button" data-admin-action="toggle-conversation-automation" data-active="${automation.is_active ? "true" : "false"}">${automation.is_active ? "Pausar automatización" : "Activar automatización"}</button>
         <small class="conversation-automation-suggestion-note">Las sugerencias pueden seguir apareciendo durante la pausa.</small>
       </div>
     </header>
     <div id="conversation-thread" class="conversation-thread" data-last-message-id="${messages.at(-1)?.id || ""}" data-message-count="${messages.length}">
       ${messages.length ? renderConversationMessages(messages) : `<div class="conversation-state conversation-state--compact"><p>Todavía no hay mensajes.</p></div>`}
-      <button id="conversation-new-messages" class="ag-button ag-button--primary ag-button--small conversation-new-messages" type="button" onclick="scrollConversationThreadToBottom()" hidden>Hay mensajes nuevos</button>
+      <button id="conversation-new-messages" class="ag-button ag-button--primary ag-button--small conversation-new-messages" type="button" data-admin-action="scroll-conversation-bottom" hidden>Hay mensajes nuevos</button>
     </div>
     ${suggestionsMarkup}
     ${renderConversationComposer(conversation, quickReplies)}
@@ -3968,7 +3967,7 @@ function renderConversationCustomerPanel(conversation) {
   const upcoming = [...bookings].reverse().find((booking) => booking.start_datetime && new Date(booking.start_datetime) >= now && !["cancelled", "rejected", "completed", "no_show"].includes(booking.status));
   const previous = bookings.find((booking) => booking !== upcoming && booking.start_datetime && new Date(booking.start_datetime) < now);
   const contact = [conversation.customer_phone, conversation.customer_username ? `@${conversation.customer_username}` : null].filter(Boolean);
-  const bookingCard = (booking, label) => booking ? `<article class="conversation-customer-booking"><span>${label}</span><strong>${escapeHtml(booking.service_name || "Servicio sin indicar")}</strong><p>${escapeHtml(formatBookingSlot(booking))}</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="goToBooking(${Number(booking.id)})">Ver en agenda</button></article>` : "";
+  const bookingCard = (booking, label) => booking ? `<article class="conversation-customer-booking"><span>${label}</span><strong>${escapeHtml(booking.service_name || "Servicio sin indicar")}</strong><p>${escapeHtml(formatBookingSlot(booking))}</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="go-to-booking" data-id="${Number(booking.id)}">Ver en agenda</button></article>` : "";
   content.innerHTML = `
     <section class="conversation-customer-summary">
       <div class="conversation-customer-avatar" aria-hidden="true">${escapeHtml(conversationDisplayName(conversation).charAt(0).toUpperCase())}</div>
@@ -4340,7 +4339,7 @@ function renderConversationTemplates() {
       <p><strong>Aplicación:</strong> canales con automatización autorizada.</p>
       <div class="template-preview"><strong>Vista previa</strong><p class="conversation-template-item-preview">${escapeHtml(templatePreviewText(template.body))}</p></div>
       <label class="active-setting"><input class="conversation-template-item-active" type="checkbox" ${template.active ? "checked" : ""} />Plantilla activa</label>
-      <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" onclick="saveConversationTemplate(${template.id})">Guardar</button><button class="btn btn-small btn-danger" type="button" onclick="deleteConversationTemplate(${template.id})">Eliminar</button><span class="configuration-item-save-state">Sin cambios</span></div>
+      <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" data-admin-action="save-conversation-template" data-id="${template.id}">Guardar</button><button class="btn btn-small btn-danger" type="button" data-admin-action="delete-conversation-template" data-id="${template.id}">Eliminar</button><span class="configuration-item-save-state">Sin cambios</span></div>
     </article>
   `).join("") || `<div class="empty-state"><strong>Aún no hay plantillas</strong><p>Crea la primera con las variables disponibles.</p></div>`;
   snapshotConfigurationForms("#conversation-templates-panel [data-config-dirty-key]");
@@ -4480,10 +4479,10 @@ function renderConversationAutomation() {
     disabled: "No responder"
   };
   const periodSummary = usage.period_status === "active"
-    ? `Inicio del periodo: ${new Date(usage.period_start).toLocaleString("es-ES")} · Periodo activo hasta: ${new Date(usage.period_end).toLocaleString("es-ES")} · ${usage.days_remaining} días restantes.`
+    ? `Inicio del periodo: ${formatDateTime(usage.period_start)} · Periodo activo hasta: ${formatDateTime(usage.period_end)} · ${usage.days_remaining} días restantes.`
     : usage.period_status === "suspended"
-      ? `Periodo suspendido · Inicio: ${usage.period_start ? new Date(usage.period_start).toLocaleString("es-ES") : "sin fecha"} · Vencimiento: ${usage.period_end ? new Date(usage.period_end).toLocaleString("es-ES") : "sin fecha"}.`
-      : `Periodo pendiente de renovación · Inicio anterior: ${usage.period_start ? new Date(usage.period_start).toLocaleString("es-ES") : "sin fecha"} · Vencimiento anterior: ${usage.period_end ? new Date(usage.period_end).toLocaleString("es-ES") : "sin fecha"}.`;
+      ? `Periodo suspendido · Inicio: ${usage.period_start ? formatDateTime(usage.period_start) : "sin fecha"} · Vencimiento: ${usage.period_end ? formatDateTime(usage.period_end) : "sin fecha"}.`
+      : `Periodo pendiente de renovación · Inicio anterior: ${usage.period_start ? formatDateTime(usage.period_start) : "sin fecha"} · Vencimiento anterior: ${usage.period_end ? formatDateTime(usage.period_end) : "sin fecha"}.`;
   const templates = conversationAutomation.templates || [];
   const templateOptions = (selectedId) => `
     <option value="">Plantilla recomendada</option>
@@ -4507,7 +4506,7 @@ function renderConversationAutomation() {
       <label>Umbral automático (%)<input id="conversation-automation-threshold" type="number" min="0" max="100" value="${settings.auto_threshold}" /></label>
       <label>Al alcanzar el límite<select id="conversation-automation-limit-mode" ${allowedLimitBehaviors.length === 1 ? "disabled" : ""}>${allowedLimitBehaviors.map((value) => `<option value="${value}" ${settings.on_limit_reached === value ? "selected" : ""}>${limitBehaviorLabels[value]}</option>`).join("")}</select></label>
       <label>Pausa tras respuesta humana<select id="conversation-human-reply-pause"><option value="0" ${settings.human_reply_pause_minutes === 0 ? "selected" : ""}>No pausar</option><option value="15" ${settings.human_reply_pause_minutes === 15 ? "selected" : ""}>15 minutos</option><option value="60" ${settings.human_reply_pause_minutes === 60 ? "selected" : ""}>1 hora</option><option value="240" ${settings.human_reply_pause_minutes === 240 ? "selected" : ""}>4 horas</option><option value="-1" ${settings.human_reply_pause_minutes === -1 ? "selected" : ""}>Hasta reactivarla</option></select></label>
-      <div class="settings-actions"><button class="btn btn-primary" type="button" onclick="saveConversationAutomationSettings()">Guardar configuración</button><span class="configuration-item-save-state">Sin cambios</span></div>
+      <div class="settings-actions"><button class="btn btn-primary" type="button" data-admin-action="save-conversation-automation-settings">Guardar configuración</button><span class="configuration-item-save-state">Sin cambios</span></div>
     </div>
     <article class="conversation-automation-usage-card">
       <div><p>Créditos de automatización</p><strong>${usage.total_available} disponibles</strong><span class="conversation-automation-usage-state state-${escapeHtml(usage.status)}">${usageStatusLabels[usage.status] || "Estado no disponible"}</span></div>
@@ -4535,7 +4534,7 @@ function renderConversationAutomation() {
           <select class="conversation-automation-rule-template">${templateOptions(rule.template_id)}</select>
           <label class="active-setting"><input class="conversation-automation-rule-active" type="checkbox" ${rule.active ? "checked" : ""} ${canEnableAutomation || rule.active ? "" : "disabled"} />Activa</label>
           <p class="automation-message-excerpt">${escapeHtml((templates.find((template) => template.id === rule.template_id)?.body || "Se usará la plantilla recomendada.").slice(0, 180))}</p>
-          <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" onclick="saveConversationAutomationRule('${rule.intent}')">Guardar</button><span class="configuration-item-save-state">Sin cambios</span></div>
+          <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" data-admin-action="save-conversation-automation-rule" data-intent="${escapeHtml(rule.intent)}">Guardar</button><span class="configuration-item-save-state">Sin cambios</span></div>
         </article>
       `).join("")}
     </div>
@@ -4737,13 +4736,13 @@ function renderMessageCards(messages, emptyMessage = "No hay mensajes para este 
         <p class="message-preview">${escapeHtml(message.message)}</p>
         ${phoneIsValid ? "" : `<p class="message-phone-warning">Este cliente no tiene un teléfono válido para WhatsApp.</p>`}
         <div class="message-actions">
-          <button class="btn btn-small btn-whatsapp" type="button" onclick="openWhatsAppMessage(${message.id})" ${!phoneIsValid || isClosed ? "disabled" : ""}>
+          <button class="btn btn-small btn-whatsapp" type="button" data-admin-action="open-whatsapp-message" data-id="${message.id}" ${!phoneIsValid || isClosed ? "disabled" : ""}>
             Enviar por WhatsApp
           </button>
-          <button class="btn btn-small btn-success" type="button" onclick="updateOutboxStatus(${message.id}, 'sent')" ${message.status === "sent" ? "disabled" : ""}>
+          <button class="btn btn-small btn-success" type="button" data-admin-action="update-outbox-status" data-id="${message.id}" data-status="sent" ${message.status === "sent" ? "disabled" : ""}>
             Marcar como enviado
           </button>
-          <button class="btn btn-small btn-secondary" type="button" onclick="updateOutboxStatus(${message.id}, 'skipped')" ${message.status === "skipped" ? "disabled" : ""}>
+          <button class="btn btn-small btn-secondary" type="button" data-admin-action="update-outbox-status" data-id="${message.id}" data-status="skipped" ${message.status === "skipped" ? "disabled" : ""}>
             Omitir
           </button>
         </div>
@@ -4760,7 +4759,7 @@ function getMessageTypeLabel(messageType) {
     booking_rescheduled: "Cita reagendada",
     booking_completed_review: "Solicitud de reseña"
   };
-  return labels[messageType] || messageType;
+  return labels[messageType] || "Mensaje";
 }
 
 function getMessageStatusLabel(status) {
@@ -4771,7 +4770,7 @@ function getMessageStatusLabel(status) {
     skipped: "Omitido",
     failed: "Error"
   };
-  return labels[status] || status;
+  return labels[status] || "Estado no disponible";
 }
 
 function getMessageStatusClass(status) {
@@ -5330,13 +5329,13 @@ function formatRequestAge(createdAt) {
 function renderAgendaEmptyState() {
   const hasFilters = Boolean(selectedStaffFilter || selectedBookingStatusFilter || selectedBookingServiceFilter || bookingCustomerSearch);
   if (hasFilters) {
-    return `<div class="agenda-state"><strong>No hay citas con estos filtros.</strong><p>Prueba otra combinación o restablece los filtros.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="resetAgendaFilters()">Restablecer filtros</button></div>`;
+    return `<div class="agenda-state"><strong>No hay citas con estos filtros.</strong><p>Prueba otra combinación o restablece los filtros.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="reset-agenda-filters">Restablecer filtros</button></div>`;
   }
   if (currentBookingView === "pending") {
     return `<div class="agenda-state"><strong>Todo está revisado</strong><p>No hay solicitudes esperando confirmación.</p></div>`;
   }
-  const changeDay = `<button class="ag-button ag-button--ghost ag-button--small" type="button" onclick="navigateAgendaDate(1)">Ver día siguiente</button>`;
-  const settings = isBusinessStaff() ? "" : `<button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="showAdminSection('schedule')">Revisar disponibilidad</button>`;
+  const changeDay = `<button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="navigate-agenda-date" data-direction="1">Ver día siguiente</button>`;
+  const settings = isBusinessStaff() ? "" : `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="navigate-section" data-section="schedule">Revisar disponibilidad</button>`;
   return `<div class="agenda-state"><strong>No tienes citas para este día.</strong><p>${currentBookingView === "week" ? "Selecciona otro día de la semana o cambia de semana." : "La agenda está libre en la fecha seleccionada."}</p><div class="agenda-state__actions">${changeDay}${settings}</div></div>`;
 }
 
@@ -5383,7 +5382,7 @@ function renderBookingCard(booking, nextBookingId) {
           ${renderNotes(booking.notes)}
           <div class="booking-notes internal-notes-editor">
             <label>Notas internas<textarea data-internal-notes="${bookingId}" rows="2">${escapeHtml(booking.internal_notes || "")}</textarea></label>
-            <button class="btn btn-small btn-secondary" type="button" onclick="saveInternalNotes(${bookingId})">Guardar notas</button>
+            <button class="btn btn-small btn-secondary" type="button" data-admin-action="save-internal-notes" data-id="${bookingId}">Guardar notas</button>
           </div>
           ${renderAttachments(booking.attachments || [])}
         </details>
@@ -5417,8 +5416,8 @@ function getViewForBooking(booking) {
 }
 
 function goToBooking(bookingId, updateUrl = true) {
-  // TODO: sustituir esta navegacion por una accion de reasignacion cuando exista
-  // un endpoint para cambiar el profesional de una reserva.
+  // La ficha conserva esta navegación hasta que exista una acción backend
+  // autorizada para cambiar el profesional de una reserva.
   const booking = allBookings.find((item) => item.id === bookingId);
   if (!booking) {
     alert("No se encontró la reserva solicitada.");
@@ -5490,7 +5489,7 @@ function renderReviewRequest(booking) {
       </div>
       <p>${escapeHtml(reviewDeliveryState(reviewRequest).detail)}</p>
       <div class="review-actions">
-        <button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="showAdminSection('reviews')">Gestionar en Crecimiento</button>
+        <button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="navigate-section" data-section="reviews">Gestionar en Crecimiento</button>
       </div>
       <p data-review-feedback="${reviewRequest.id}" class="inline-feedback"></p>
     </div>
@@ -5717,22 +5716,22 @@ function renderAttachments(attachments) {
 function renderBookingActions(booking) {
   const bookingId = Number(booking.id);
   const busy = bookingMutationIds.has(bookingId);
-  const button = (label, action, className, handler, description = "") => `
-    <button class="ag-button ag-button--small ${className}" type="button" data-booking-action="${action}" data-booking-id="${bookingId}" data-action-allowed="true" onclick="${handler}" ${busy ? "disabled aria-busy=\"true\"" : ""}${description ? ` title="${escapeHtml(description)}"` : ""}>${label}</button>`;
+  const button = (label, action, className, description = "") => `
+    <button class="ag-button ag-button--small ${className}" type="button" data-booking-action="${action}" data-booking-id="${bookingId}" data-action-allowed="true" ${busy ? "disabled aria-busy=\"true\"" : ""}${description ? ` title="${escapeHtml(description)}"` : ""}>${label}</button>`;
   let actions = [];
 
   if (["requested", "pending"].includes(booking.status)) {
     actions = [
-      button("Confirmar", "confirmed", "ag-button--primary", `updateBookingStatus(${bookingId}, 'confirmed')`),
-      ...(booking.service_id ? [button("Reagendar", "reschedule", "ag-button--secondary", `rescheduleBooking(${bookingId})`, "Muestra únicamente huecos disponibles")] : []),
-      button("Rechazar", "rejected", "ag-button--danger-ghost", `updateBookingStatus(${bookingId}, 'rejected')`)
+      button("Confirmar", "confirmed", "ag-button--primary"),
+      ...(booking.service_id ? [button("Reagendar", "reschedule", "ag-button--secondary", "Muestra únicamente huecos disponibles")] : []),
+      button("Rechazar", "rejected", "ag-button--danger-ghost")
     ];
   } else if (booking.status === "confirmed") {
     actions = [
-      button("Completar", "completed", "ag-button--primary", `updateBookingStatus(${bookingId}, 'completed')`),
-      ...(booking.service_id ? [button("Reagendar", "reschedule", "ag-button--secondary", `rescheduleBooking(${bookingId})`, "Muestra únicamente huecos disponibles")] : []),
-      button("Cancelar", "cancelled", "ag-button--danger-ghost", `updateBookingStatus(${bookingId}, 'cancelled')`),
-      button("No presentado", "no_show", "ag-button--ghost", `updateBookingStatus(${bookingId}, 'no_show')`)
+      button("Completar", "completed", "ag-button--primary"),
+      ...(booking.service_id ? [button("Reagendar", "reschedule", "ag-button--secondary", "Muestra únicamente huecos disponibles")] : []),
+      button("Cancelar", "cancelled", "ag-button--danger-ghost"),
+      button("No presentado", "no_show", "ag-button--ghost")
     ];
   }
 
@@ -5894,7 +5893,7 @@ async function loadRescheduleSlots() {
     if (loadVersion !== rescheduleSlotsLoadVersion) return;
     console.error(error);
     container.setAttribute("aria-busy", "false");
-    container.innerHTML = `<div class="agenda-state agenda-state--error" role="alert"><strong>No pudimos cargar los huecos.</strong><p>Vuelve a intentarlo para consultar la disponibilidad real.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" onclick="loadRescheduleSlots()">Reintentar</button></div>`;
+    container.innerHTML = `<div class="agenda-state agenda-state--error" role="alert"><strong>No pudimos cargar los huecos.</strong><p>Vuelve a intentarlo para consultar la disponibilidad real.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="retry-reschedule-slots">Reintentar</button></div>`;
   }
 }
 
@@ -6158,7 +6157,7 @@ function getStatusLabel(status) {
     no_show: "No presentado"
   };
 
-  return labels[status] || status;
+  return labels[status] || "Estado no disponible";
 }
 
 function formatDateTime(value) {
@@ -6167,6 +6166,7 @@ function formatDateTime(value) {
   }
 
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "No disponible";
   return date.toLocaleString("es-ES", {
     dateStyle: "short",
     timeStyle: "short"
@@ -6244,7 +6244,85 @@ function setupConversationInterface() {
   syncConversationCustomerPanelMode();
 }
 
+function setupAdminDelegatedActions() {
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest("button[data-admin-action], button[data-booking-action]");
+    if (!button || button.disabled) return;
+    const bookingAction = button.dataset.bookingAction;
+    if (bookingAction) {
+      const bookingId = Number(button.dataset.bookingId);
+      if (!Number.isInteger(bookingId)) return;
+      if (bookingAction === "reschedule") rescheduleBooking(bookingId);
+      else if (["confirmed", "rejected", "cancelled", "completed", "no_show"].includes(bookingAction)) {
+        updateBookingStatus(bookingId, bookingAction);
+      }
+      return;
+    }
+
+    const action = button.dataset.adminAction;
+    const id = Number(button.dataset.id);
+    const index = Number(button.dataset.index);
+    if (action === "navigate-section") showAdminSection(button.dataset.section);
+    else if (action === "add-exception-window") addExceptionWindow();
+    else if (action === "close-reschedule") closeRescheduleModal();
+    else if (action === "close-staff-removal") closeStaffRemovalModal();
+    else if (action === "retry-availability-settings") loadAvailabilitySettings();
+    else if (action === "add-schedule-window") addScheduleWindow(button.dataset.day);
+    else if (action === "remove-window-row") removeWindowRow(button);
+    else if (action === "retry-availability-exceptions") loadAvailabilityExceptions();
+    else if (action === "remove-exception-window" && Number.isInteger(index)) removeExceptionWindow(index);
+    else if (action === "focus-control") document.getElementById(button.dataset.control)?.focus();
+    else if (action === "delete-availability-exception" && Number.isInteger(id)) deleteAvailabilityException(id);
+    else if (action === "retry-gallery") loadAdminGallery();
+    else if (action === "retry-services") loadAdminServices();
+    else if (action === "save-service" && Number.isInteger(id)) saveAdminService(id);
+    else if (action === "retry-staff") loadStaffMembers();
+    else if (action === "remove-staff" && Number.isInteger(id)) removeStaffMember(id);
+    else if (action === "save-staff" && Number.isInteger(id)) saveStaffMember(id);
+    else if (action === "edit-staff-schedule" && Number.isInteger(id)) editStaffSchedule(id);
+    else if (action === "reactivate-staff" && Number.isInteger(id)) reactivateStaffMember(id);
+    else if (action === "go-to-booking" && Number.isInteger(id)) goToBooking(id);
+    else if (action === "retry-bookings") loadBookings();
+    else if (action === "reset-conversation-filters") resetConversationFilters();
+    else if (action === "retry-conversations") loadConversations();
+    else if (action === "select-conversation" && Number.isInteger(id)) selectConversation(id);
+    else if (action === "send-conversation-reply") sendConversationReply();
+    else if (action === "open-conversation-whatsapp") openConversationWhatsApp();
+    else if (action === "fill-conversation-reply" && Number.isInteger(id)) fillConversationReply(id);
+    else if (action === "send-conversation-suggestion" && Number.isInteger(id)) sendConversationSuggestion(id);
+    else if (action === "modify-conversation-suggestion" && Number.isInteger(id)) modifyConversationSuggestion(id);
+    else if (action === "dismiss-conversation-suggestion" && Number.isInteger(id)) dismissConversationSuggestion(id);
+    else if (action === "close-conversation-mobile-detail") closeConversationMobileDetail();
+    else if (action === "open-conversation-customer-panel") openConversationCustomerPanel(button);
+    else if (action === "change-conversation-status" && ["pending", "closed"].includes(button.dataset.status)) changeConversationStatus(button.dataset.status);
+    else if (action === "toggle-conversation-automation") toggleConversationAutomation(button.dataset.active === "true");
+    else if (action === "scroll-conversation-bottom") scrollConversationThreadToBottom();
+    else if (action === "save-conversation-template" && Number.isInteger(id)) saveConversationTemplate(id);
+    else if (action === "delete-conversation-template" && Number.isInteger(id)) deleteConversationTemplate(id);
+    else if (action === "save-conversation-automation-settings") saveConversationAutomationSettings();
+    else if (action === "save-conversation-automation-rule") saveConversationAutomationRule(button.dataset.intent);
+    else if (action === "open-whatsapp-message" && Number.isInteger(id)) openWhatsAppMessage(id);
+    else if (action === "update-outbox-status" && Number.isInteger(id) && ["sent", "skipped"].includes(button.dataset.status)) updateOutboxStatus(id, button.dataset.status);
+    else if (action === "reset-agenda-filters") resetAgendaFilters();
+    else if (action === "navigate-agenda-date") navigateAgendaDate(Number(button.dataset.direction));
+    else if (action === "save-internal-notes" && Number.isInteger(id)) saveInternalNotes(id);
+    else if (action === "retry-reschedule-slots") loadRescheduleSlots();
+  });
+
+  document.addEventListener("change", (event) => {
+    if (!(event.target instanceof HTMLInputElement)) return;
+    const action = event.target.dataset.adminChange;
+    const index = Number(event.target.dataset.index);
+    const id = Number(event.target.dataset.id);
+    if (action === "toggle-day-closed") toggleDayClosed(event.target.dataset.day, event.target.checked);
+    else if (action === "update-exception-window" && Number.isInteger(index)) updateExceptionWindow(index, event.target.dataset.field, event.target.value);
+    else if (action === "toggle-staff-services" && Number.isInteger(id)) toggleStaffServiceControls(id, event.target.checked);
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  setupAdminDelegatedActions();
   setupBusinessConfiguration();
   setupChannelHub();
   setupGrowthHub();

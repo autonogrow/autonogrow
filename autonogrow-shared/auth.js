@@ -72,14 +72,14 @@
             });
             await onAuthenticated(result.user);
           } catch (error) {
-            console.error("Google login failed", { status: error.status, body: error.body, error });
+            console.error("Google login failed", { status: error.status || 0 });
             onError?.(error);
           }
         },
       });
       identity.renderButton(container, { theme: "outline", size: "large", text: "signin_with", shape: "pill" });
     } catch (error) {
-      console.error("Google Identity setup failed", error);
+      console.error("Google Identity setup failed", { status: error.status || 0 });
       container.textContent = error.message;
       container.classList.add("auth-error");
       onError?.(error);

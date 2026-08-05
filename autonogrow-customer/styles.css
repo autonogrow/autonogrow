@@ -78,6 +78,10 @@ input { width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid #b8c4d0
 .management-note { margin: 18px 0; padding: 16px; border-left: 4px solid var(--primary); background: #eef4ff; }
 .management-note strong { display: block; margin-bottom: 4px; }
 .detail-actions { margin-top: 20px; }
+.customer-footer { width: min(1080px, calc(100% - 32px)); margin: 0 auto; padding: 0 0 calc(32px + env(safe-area-inset-bottom)); color: var(--muted); text-align: center; }
+.customer-footer nav { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 20px; }
+.customer-footer a { color: inherit; font-weight: 800; }
+.customer-footer p { margin: 12px 0 0; }
 
 @media (max-width: 680px) {
   .customer-page { width: min(100% - 20px, 1080px); padding-top: 24px; }
@@ -97,4 +101,20 @@ input { width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid #b8c4d0
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+@media (forced-colors: active) {
+  :focus-visible,
+  button,
+  .detail-actions a,
+  .booking-actions a,
+  .status-badge,
+  .count-badge { border: 2px solid currentColor; }
+}
+@media print {
+  .header-actions,
+  .detail-dialog,
+  .customer-footer { display: none !important; }
+  body { background: #fff; color: #000; }
+  .customer-page { width: 100%; padding: 0; }
+  .profile-card, .booking-card, .anonymous-note { break-inside: avoid; box-shadow: none; }
 }

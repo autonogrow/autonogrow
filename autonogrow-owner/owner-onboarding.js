@@ -70,7 +70,13 @@
   const num = (input) => Number(input.value);
   const checked = (condition) => condition ? " checked" : "";
   const selected = (left, right) => String(left ?? "") === String(right ?? "") ? " selected" : "";
-  const formatDate = (raw) => raw ? new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(new Date(raw)) : "—";
+  const formatDate = (raw) => {
+    if (!raw) return "—";
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime())
+      ? "—"
+      : new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(parsed);
+  };
   const stepKey = () => STEPS[onboardingStepIndex]?.[0] || STEPS[0][0];
   const stepIndex = (key) => Math.max(0, STEPS.findIndex(([candidate]) => candidate === key));
   const sessionStep = (key) => onboardingData?.onboarding?.steps?.find((item) => item.key === key);
@@ -266,9 +272,9 @@
       const heading = group !== nextGroup ? `<span class="owner-onboarding-step-group">${esc(nextGroup)}</span>` : "";
       group = nextGroup;
       const status = map[key] || "pending";
-      return `<li>${heading}<button type="button" data-ob-step="${index}" class="${index === onboardingStepIndex ? "active" : ""} status-${attr(status)}"${index === onboardingStepIndex ? ' aria-current="step"' : ""}><span>${index + 1}. ${esc(label)}</span><small>${esc(STATUS[status] || status)}</small></button></li>`;
+      return `<li>${heading}<button type="button" data-ob-step="${index}" class="${index === onboardingStepIndex ? "active" : ""} status-${STATUS[status] ? attr(status) : "unknown"}"${index === onboardingStepIndex ? ' aria-current="step"' : ""}><span>${index + 1}. ${esc(label)}</span><small>${esc(STATUS[status] || "Estado no disponible")}</small></button></li>`;
     }).join("");
-    q("owner-onboarding-step-select").innerHTML = STEPS.map(([key, label], index) => `<option value="${index}"${selected(index, onboardingStepIndex)}>${index + 1}. ${esc(label)} · ${esc(STATUS[map[key]] || map[key] || "No iniciado")}</option>`).join("");
+    q("owner-onboarding-step-select").innerHTML = STEPS.map(([key, label], index) => `<option value="${index}"${selected(index, onboardingStepIndex)}>${index + 1}. ${esc(label)} · ${esc(map[key] ? STATUS[map[key]] || "Estado no disponible" : "No iniciado")}</option>`).join("");
     const completed = steps.filter((item) => ["completed", "skipped"].includes(item.status)).length;
     const percent = Math.round(completed * 100 / STEPS.length);
     q("onboarding-progress-bar").style.width = `${percent}%`;
@@ -416,7 +422,7 @@
       const blocked = items.some((item) => item.status === "blocked");
       const complete = items.every((item) => ["completed", "skipped"].includes(item.status));
       const status = blocked ? "Bloqueante" : complete ? "Correcto" : "Incompleto";
-      return `<article class="owner-review-card"><h4>${esc(label)}</h4><span class="ag-badge ag-badge--${blocked ? "danger" : complete ? "success" : "warning"}">${status}</span><ul>${items.map((item) => `<li>${esc(STEPS.find(([key]) => key === item.key)?.[1] || item.key)}: ${esc(STATUS[item.status] || item.status)}</li>`).join("")}</ul><button class="button button-secondary button-small" type="button" data-ob-go-step="${attr(keys[0])}">Revisar</button></article>`;
+      return `<article class="owner-review-card"><h4>${esc(label)}</h4><span class="ag-badge ag-badge--${blocked ? "danger" : complete ? "success" : "warning"}">${status}</span><ul>${items.map((item) => `<li>${esc(STEPS.find(([key]) => key === item.key)?.[1] || "Paso del alta")}: ${esc(STATUS[item.status] || "Estado no disponible")}</li>`).join("")}</ul><button class="button button-secondary button-small" type="button" data-ob-go-step="${attr(keys[0])}">Revisar</button></article>`;
     }).join("");
     return `<p class="owner-source-note">Este resumen usa estados de pasos del backend; no sustituye la decisión de readiness.</p><div class="owner-review-grid">${cards}</div><div class="owner-onboarding-section-heading"><h4>Readiness del servidor</h4><button class="button button-primary" type="button" data-ob-readiness>Comprobar ahora</button></div><div id="onboarding-readiness">${readinessHtml()}</div>`;
   }

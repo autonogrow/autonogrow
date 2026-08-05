@@ -116,7 +116,8 @@ def test_contextual_links_reach_the_exact_existing_section_and_subview() -> None
     assert 'getElementById("business-setting-reviews-url")?.focus()' in growth_navigation
     assert 'showAdminSection(`channel-${button.dataset.channel}`)' in growth_navigation
     assert 'showAdminSection("messages")' in growth_navigation
-    assert "onclick=\"showAdminSection('reviews')\"" in js
+    assert 'data-admin-action="navigate-section" data-section="reviews"' in js
+    assert "function setupAdminDelegatedActions" in js
     assert 'data-channel-hub-target="messages"' in html
 
 
@@ -199,7 +200,14 @@ def test_staff_removal_modal_does_not_render_technical_ids_or_phone_numbers() ->
     assert "formatBlockingBookingDate" in modal
     assert "customer_phone" not in modal
     assert "Reserva #" not in modal
-    assert "goToBooking" in modal  # the identifier remains internal to the action
+    assert 'data-admin-action="go-to-booking"' in modal
+    delegated = function_block(
+        js,
+        "function setupAdminDelegatedActions",
+        'document.addEventListener("DOMContentLoaded"',
+    )
+    assert 'action === "go-to-booking"' in delegated
+    assert "goToBooking(id)" in delegated  # the identifier remains internal to the action
 
 
 def test_business_requests_are_authenticated_tenant_scoped_and_stale_media_is_slug_scoped() -> None:
@@ -338,4 +346,4 @@ def test_responsive_contracts_cover_phone_tablet_desktop_zoom_and_safe_areas() -
 
 def test_admin_javascript_cachebuster_matches_this_cross_section_pass() -> None:
     html, _, _, _ = sources()
-    assert '<script src="admin.js?v=20260805-1"></script>' in html
+    assert '<script src="admin.js?v=5f1"></script>' in html
