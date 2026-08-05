@@ -57,7 +57,7 @@
     <nav class="tabs" data-ag-shell-nav aria-label="Secciones del panel">
       <button class="tab active" type="button" data-tab="overview" aria-current="page"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-3H4zM14 7h6V4h-6z"/></svg></span>Resumen</button>
       <button class="tab" type="button" data-tab="businesses"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5l8-3 8 3v16"/><path d="M9 21v-5h6v5M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span>Negocios</button>
-      <button class="tab" type="button" data-tab="new-business"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>Nuevo negocio</button>
+      <button class="tab" type="button" data-tab="new-business"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>Altas y aprobaciones</button>
       <button class="tab" type="button" data-tab="incidents"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 2.5 20h19Z"/><path d="M12 9v4M12 17h.01"/></svg></span>Incidencias</button>
       <button class="tab" type="button" data-tab="queues"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="5" rx="1"/><rect x="4" y="15" width="16" height="5" rx="1"/><path d="M8 9v6M16 9v6"/></svg></span>Colas y worker</button>
       <button class="tab" type="button" data-tab="operations"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg></span>Operaciones</button>
@@ -122,7 +122,7 @@
 
     <section id="businesses-section" class="panel" data-panel="businesses">
       <div class="section-heading">
-        <div><h2>Negocios</h2><p>Vista rápida del estado de cada cliente.</p></div>
+        <div><p class="eyebrow">Directorio operativo</p><h2>Negocios</h2><p>Localiza una cuenta, entiende qué necesita y abre su contexto sin mezclar estados.</p></div>
         <span id="list-status" class="status-text" aria-live="polite">Cargando…</span>
       </div>
       <section class="summary-grid owner-legacy-summary" aria-label="Resumen de negocios">
@@ -133,7 +133,25 @@
         <article class="summary-card"><span>Reseñas pendientes</span><strong id="pending-reviews">—</strong></article>
         <article class="summary-card"><span>Incidencias abiertas</span><strong id="open-incidents">—</strong></article>
       </section>
-      <div id="business-list" class="business-grid"></div>
+      <form id="business-hub-filters" class="owner-business-filters" role="search">
+        <label>Buscar negocio
+          <input id="business-hub-search" type="search" autocomplete="off" placeholder="Nombre, slug, ciudad o email administrativo" />
+        </label>
+        <label>Mostrar
+          <select id="business-hub-filter">
+            <option value="all">Todos</option>
+            <option value="active">Activos</option>
+            <option value="onboarding">Onboarding</option>
+            <option value="pending">Pendientes</option>
+            <option value="suspended">Suspendidos</option>
+            <option value="attention">Necesitan atención</option>
+            <option value="no-admin">Sin administrador</option>
+          </select>
+        </label>
+      </form>
+      <p id="business-hub-partial" class="owner-partial-notice" hidden></p>
+      <div id="business-list" class="owner-business-list" role="list" aria-busy="true"></div>
+      <section id="business-detail" class="owner-business-detail" aria-labelledby="business-detail-title" hidden></section>
     </section>
 
     <section class="panel" data-panel="operations">
@@ -178,10 +196,26 @@
 
     <section class="panel" data-panel="new-business">
       <div class="section-heading">
-        <div><h2>Nuevo negocio</h2><p>Crea la base del cliente; después podrás afinarla desde su admin.</p></div>
+        <div><p class="eyebrow">Altas y decisiones</p><h2>Altas y aprobaciones</h2><p>Continúa configuraciones reales y revisa candidaturas sin sustituir conexiones antes de confirmar.</p></div>
+        <button id="onboarding-new-toggle" class="button button-primary" type="button" aria-expanded="false" aria-controls="onboarding-wizard">Crear alta</button>
       </div>
 
-      <section id="onboarding-wizard" class="onboarding-wizard" aria-live="polite">
+      <nav class="owner-secondary-nav" aria-label="Altas y aprobaciones">
+        <button class="active" type="button" data-owner-hub-view="onboarding" aria-current="page">Altas en curso</button>
+        <button type="button" data-owner-hub-view="approvals">Decisiones pendientes <span id="owner-approvals-count" class="ag-badge ag-badge--neutral">—</span></button>
+      </nav>
+      <p id="owner-onboarding-hub-status" class="status-text" aria-live="polite"></p>
+      <section id="owner-onboarding-hub" class="owner-hub-view" data-owner-hub-panel="onboarding" aria-labelledby="owner-onboarding-hub-title">
+        <h3 id="owner-onboarding-hub-title" class="owner-visually-muted">Altas en curso</h3>
+        <div id="owner-onboarding-list" class="owner-onboarding-list" aria-busy="true"></div>
+      </section>
+      <section id="owner-approvals-hub" class="owner-hub-view" data-owner-hub-panel="approvals" aria-labelledby="owner-approvals-hub-title" hidden>
+        <h3 id="owner-approvals-hub-title" class="owner-visually-muted">Decisiones pendientes</h3>
+        <div id="owner-approvals-list" class="owner-approvals-list" aria-busy="true"></div>
+        <section id="owner-candidate-review" class="owner-candidate-review" aria-labelledby="owner-candidate-review-title" hidden></section>
+      </section>
+
+      <section id="onboarding-wizard" class="onboarding-wizard" aria-live="polite" hidden>
         <div id="onboarding-start" class="onboarding-start">
           <label>Nombre comercial<input id="onboarding-name" maxlength="200" placeholder="Estudio Aurora" /></label>
           <label>Slug opcional<input id="onboarding-slug" maxlength="120" placeholder="Se genera automáticamente" /></label>
@@ -277,9 +311,22 @@
     </div>
     </div>
   </main>
+  <div id="owner-critical-dialog" class="owner-dialog-backdrop" hidden>
+    <section class="owner-dialog" role="dialog" aria-modal="true" aria-labelledby="owner-dialog-title" aria-describedby="owner-dialog-consequence" tabindex="-1">
+      <header><div><p id="owner-dialog-kicker" class="eyebrow">Acción crítica</p><h2 id="owner-dialog-title">Confirmar acción</h2></div><button id="owner-dialog-close" class="ag-button ag-button--icon" type="button" aria-label="Cerrar confirmación">×</button></header>
+      <dl id="owner-dialog-context" class="owner-dialog-context"></dl>
+      <p id="owner-dialog-consequence" class="owner-dialog-consequence"></p>
+      <label id="owner-dialog-reason-field">Motivo
+        <textarea id="owner-dialog-reason" rows="3" maxlength="500" aria-describedby="owner-dialog-error"></textarea>
+      </label>
+      <p id="owner-dialog-error" class="owner-dialog-error" role="alert"></p>
+      <footer><button id="owner-dialog-cancel" class="button button-secondary" type="button">Cancelar</button><button id="owner-dialog-confirm" class="button button-danger" type="button">Confirmar</button></footer>
+    </section>
+  </div>
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="owner.js?v=20260805-1"></script>
+  <script src="owner.js?v=20260805-2"></script>
+  <script src="owner-businesses.js?v=20260805-1"></script>
 </body>
 </html>

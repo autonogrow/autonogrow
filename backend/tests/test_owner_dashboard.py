@@ -85,7 +85,7 @@ def test_pending_decisions_are_review_links_not_approval_actions() -> None:
     assert "Necesita tu decisión" in overview
     assert "Cuenta pendiente de revisión" in dashboard
     assert "Revisar solicitud" in dashboard
-    assert 'data-owner-navigate="businesses"' in dashboard
+    assert 'data-owner-navigate="new-business"' in dashboard
     assert "candidate-approve" not in overview
     assert "whatsapp-approve" not in overview
     assert "data-incident-action" not in overview

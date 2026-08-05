@@ -203,7 +203,7 @@ function renderPendingDecisions() {
   }
   const html = (source.status === "error" ? ownerDashboardStale() : ownerDashboardPartial(source.errors)) + `<ul class="owner-dashboard-list">${decisions.slice(0, 8).map((item) => {
     const channel = item.channel === "instagram" ? "Instagram" : "WhatsApp";
-    return `<li class="owner-dashboard-item"><div class="owner-dashboard-item__heading"><div><h3>${escapeHtml(item.business.name)}</h3><p>${escapeHtml(channel)} · ${escapeHtml(item.kind === "candidate" ? "Cuenta pendiente de revisión" : "Solicitud pendiente de revisión")}</p></div><span class="ag-badge ag-badge--warning">Pendiente</span></div><div class="owner-dashboard-item__meta"><span>Solicitada: ${escapeHtml(formatOwnerDate(item.requestedAt))}</span><span>${escapeHtml(ownerDecisionPurpose(item.purpose))}</span></div><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="businesses" data-owner-business-id="${escapeHtml(item.business.id)}" data-owner-detail="${escapeHtml(item.channel === "instagram" ? "integration" : "channels")}">Revisar solicitud</button></li>`;
+    return `<li class="owner-dashboard-item"><div class="owner-dashboard-item__heading"><div><h3>${escapeHtml(item.business.name)}</h3><p>${escapeHtml(channel)} · ${escapeHtml(item.kind === "candidate" ? "Cuenta pendiente de revisión" : "Solicitud pendiente de revisión")}</p></div><span class="ag-badge ag-badge--warning">Pendiente</span></div><div class="owner-dashboard-item__meta"><span>Solicitada: ${escapeHtml(formatOwnerDate(item.requestedAt))}</span><span>${escapeHtml(ownerDecisionPurpose(item.purpose))}</span></div><button class="button button-secondary button-small owner-dashboard-item__action" type="button" data-owner-navigate="new-business" data-owner-business-id="${escapeHtml(item.business.id)}" data-owner-detail="${escapeHtml(item.channel)}">Revisar solicitud</button></li>`;
   }).join("")}</ul>`;
   setOwnerDashboardBlock("owner-dashboard-decisions", html, source.status === "loading" ? "loading" : source.status === "error" ? "error" : source.errors ? "partial" : "ready");
 }
@@ -538,7 +538,7 @@ function setActiveTab(name) {
   const headings = {
     overview: ["Resumen operativo", "Supervisa negocios, aprobaciones, integraciones e incidencias de AutonoGrow."],
     businesses: ["Negocios", "Consulta y gestiona el contexto completo de cada cuenta."],
-    "new-business": ["Nuevo negocio", "Inicia o continúa el alta guiada de un negocio."],
+    "new-business": ["Altas y aprobaciones", "Continúa altas y toma decisiones pendientes con contexto seguro."],
     incidents: ["Incidencias", "Revisa alertas operativas agrupadas y seguras."],
     queues: ["Procesamiento de mensajes", "Supervisa tareas de entrada y salida que requieren intervención."],
     operations: ["Operaciones", "Comprueba el estado técnico global y el mantenimiento."],
@@ -554,6 +554,7 @@ function setActiveTab(name) {
   byId("owner-page-subtitle").textContent = headings[name]?.[1] || headings.overview[1];
   if (name === "overview") renderOwnerDashboard();
   if (name === "businesses") renderBusinesses();
+  if (name === "new-business" && typeof loadOwnerOnboardingHub === "function") loadOwnerOnboardingHub();
   if (name === "incidents") loadIncidents();
   if (name === "queues") loadQueueStatus();
   if (name === "operations") loadOperationsStatus();
@@ -563,6 +564,10 @@ function navigateOwnerContext(target, businessId = null, detail = null) {
   const allowed = new Set(["overview", "businesses", "new-business", "incidents", "queues", "operations"]);
   if (!allowed.has(target)) return;
   setActiveTab(target);
+  if (target === "new-business" && businessId && typeof openOwnerApprovalContext === "function") {
+    window.requestAnimationFrame(() => openOwnerApprovalContext(businessId, detail));
+    return;
+  }
   if (target !== "businesses" || !businessId) return;
   window.requestAnimationFrame(() => {
     const card = document.querySelector(`[data-business-card-id="${CSS.escape(String(businessId))}"]`);
@@ -932,24 +937,24 @@ function ownerInstagramCredentialForm(mode) {
 
 function ownerInstagramCandidate(candidate) {
   const webhookRetry = candidate.webhook_subscription_status === "failed" ? `<button class="button button-secondary button-small" type="button" data-owner-integration-action="candidate-retry-webhook" data-attempt-id="${candidate.id}">Reintentar webhook</button>` : "";
-  return `<section class="owner-integration-warning"><h5>Cuenta pendiente de revisión</h5><p><strong>${escapeHtml(candidate.candidate_external_account_name || candidate.candidate_external_account_id_masked || "Instagram")}</strong> · ${escapeHtml(candidate.candidate_account_type || "Profesional")} · ${escapeHtml(candidate.purpose)}</p><p>Autorizada: ${escapeHtml(formatAutomationDate(candidate.created_at))} · Expira: ${escapeHtml(formatAutomationDate(candidate.candidate_token_expires_at))}</p><p>Webhook: ${escapeHtml(candidate.webhook_subscription_status || "pendiente")} · Scopes: ${(candidate.candidate_granted_scopes || []).map(escapeHtml).join(" · ")}</p>${candidate.safe_error_message ? `<p>${escapeHtml(candidate.safe_error_message)}</p>` : ""}<div class="owner-integration-actions">${webhookRetry}<button class="button button-primary button-small" type="button" data-owner-integration-action="candidate-approve" data-attempt-id="${candidate.id}" ${candidate.webhook_subscription_status !== "subscribed" ? "disabled" : ""}>Aprobar cuenta</button><button class="button button-danger button-small" type="button" data-owner-integration-action="candidate-reject" data-attempt-id="${candidate.id}">Rechazar cuenta</button></div></section>`;
+  return `<section class="owner-integration-warning"><h5>Cuenta pendiente de revisión</h5><p><strong>${escapeHtml(candidate.candidate_external_account_name || "Cuenta profesional sin nombre público")}</strong> · ${escapeHtml(candidate.candidate_account_type || "Profesional")} · ${escapeHtml(candidate.purpose)}</p><p>Autorizada: ${escapeHtml(formatAutomationDate(candidate.created_at))} · Expira: ${escapeHtml(formatAutomationDate(candidate.candidate_token_expires_at))}</p><p>Webhook: ${escapeHtml(candidate.webhook_subscription_status || "pendiente")} · Permisos técnicos validados por el servidor</p>${candidate.safe_error_message ? `<p>${escapeHtml(candidate.safe_error_message)}</p>` : ""}<div class="owner-integration-actions">${webhookRetry}<button class="button button-primary button-small" type="button" data-owner-integration-action="candidate-approve" data-attempt-id="${candidate.id}" ${candidate.webhook_subscription_status !== "subscribed" ? "disabled" : ""}>Aprobar cuenta</button><button class="button button-danger button-small" type="button" data-owner-integration-action="candidate-reject" data-attempt-id="${candidate.id}">Rechazar cuenta</button></div></section>`;
 }
 
 function renderOwnerIntegration(panel, integration, candidates = []) {
   const content = panel.querySelector("[data-owner-integration-content]");
   const candidateHtml = candidates.map(ownerInstagramCandidate).join("");
   if (!integration) {
-    content.innerHTML = `<article class="owner-integration-card"><h4>Instagram</h4><p>No conectado.</p>${candidateHtml}<button class="button button-primary button-small" type="button" data-owner-integration-action="oauth-start" data-oauth-purpose="initial_connection">Conectar con Instagram</button><details><summary>Conexión manual avanzada</summary>${ownerInstagramCredentialForm("connect")}</details><p data-owner-integration-feedback class="status-text"></p></article>`;
+    content.innerHTML = `<article class="owner-integration-card"><h4>Instagram</h4><p>No conectado.</p>${candidateHtml}<button class="button button-primary button-small" type="button" data-owner-integration-action="oauth-start" data-oauth-purpose="initial_connection">Conectar con Instagram</button><p class="helper">La conexión segura continúa en Instagram; este panel no solicita credenciales.</p><p data-owner-integration-feedback class="status-text"></p></article>`;
     return;
   }
   content.innerHTML = `<article class="owner-integration-card">
     <div class="owner-integration-heading"><h4>Instagram</h4><span class="state-badge ag-badge ${integration.integration_status === "connected" ? "active ag-badge--success" : "inactive ag-badge--neutral"}">${escapeHtml(ownerIntegrationStatusLabel(integration.integration_status))}</span></div>${candidateHtml}
-    <div class="owner-integration-summary"><span><strong>${escapeHtml(integration.external_account_id_masked || "—")}</strong>Cuenta</span><span><strong>${escapeHtml(integration.external_account_name || "—")}</strong>Nombre</span><span><strong>${escapeHtml(formatAutomationDate(integration.connected_at))}</strong>Conectado desde</span><span><strong>${escapeHtml(formatAutomationDate(integration.last_verified_at))}</strong>Última verificación</span><span><strong>${escapeHtml(formatAutomationDate(integration.last_success_at))}</strong>Último éxito</span><span><strong>${escapeHtml(formatAutomationDate(integration.token_expires_at))}</strong>Caducidad</span></div>
+    <div class="owner-integration-summary"><span><strong>${escapeHtml(integration.external_account_name || "Nombre público no disponible")}</strong>Cuenta pública</span><span><strong>${escapeHtml(formatAutomationDate(integration.connected_at))}</strong>Conectado desde</span><span><strong>${escapeHtml(formatAutomationDate(integration.last_verified_at))}</strong>Última verificación</span><span><strong>${escapeHtml(formatAutomationDate(integration.last_success_at))}</strong>Último éxito</span><span><strong>${escapeHtml(formatAutomationDate(integration.token_expires_at))}</strong>Caducidad</span></div>
     ${integration.expires_soon ? `<p class="owner-integration-warning">El token caduca próximamente (${integration.days_remaining} días).</p>` : ""}
     ${integration.safe_error_message ? `<p class="owner-integration-warning">${escapeHtml(integration.safe_error_message)}</p>` : ""}
     ${integration.has_open_incident ? `<p class="owner-integration-warning">Existe una incidencia abierta para esta integración.</p>` : ""}
-    <p>Scopes: <strong>${(integration.granted_scopes || []).map(escapeHtml).join(" · ") || "No disponibles"}</strong></p>
-    <div class="owner-integration-actions"><button class="button button-primary button-small" type="button" data-owner-integration-action="oauth-start" data-oauth-purpose="replacement">Conectar o reemplazar con Instagram</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="verify">Verificar conexión</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="show-reconnect">Reconexión manual avanzada</button><button class="button button-danger button-small" type="button" data-owner-integration-action="disconnect">Desconectar</button><button class="button button-danger button-small" type="button" data-owner-integration-action="delete-credentials">Eliminar credenciales</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="incidents">Ver incidencias</button></div>
+    <p>Los permisos técnicos se validan en el servidor y no se muestran en este panel.</p>
+    <div class="owner-integration-actions"><button class="button button-primary button-small" type="button" data-owner-integration-action="oauth-start" data-oauth-purpose="replacement">Conectar o reemplazar con Instagram</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="verify">Verificar conexión</button><button class="button button-danger button-small" type="button" data-owner-integration-action="disconnect">Desconectar</button><button class="button button-danger button-small" type="button" data-owner-integration-action="delete-credentials">Eliminar credenciales</button><button class="button button-secondary button-small" type="button" data-owner-integration-action="incidents">Ver incidencias</button></div>
     <div data-owner-integration-reconnect></div><p data-owner-integration-feedback class="status-text"></p>
   </article>`;
 }
@@ -1549,7 +1554,18 @@ async function saveOnboardingStep() {
   else if (step === "credits_and_plan") { path = "credits"; payload = { plan_key: field("plan_key").value, included_credits: numberField("included_credits"), additional_credits: numberField("additional_credits"), period_days: numberField("period_days") }; }
   else if (step === "readiness_review") { onboardingReadiness = await onboardingRequest(`/businesses/${businessId}/readiness`); byId("onboarding-readiness").innerHTML = onboardingReadiness.checks.map((item) => `<div class="readiness-item ${item.status}"><strong>${escapeHtml(item.label)}</strong><p>${escapeHtml(item.message)}</p><small>${escapeHtml(item.remediation || "")}</small></div>`).join(""); byId("onboarding-feedback").textContent = onboardingReadiness.ready ? "Listo para activar" : `Bloqueado por ${onboardingReadiness.blocking_count} comprobaciones`; return; }
   else if (step === "preview") { const preview = await onboardingRequest(`/businesses/${businessId}/preview`); byId("onboarding-preview").innerHTML = `<div class="creation-result"><strong>Vista previa · ${escapeHtml(preview.business.name)}</strong><p>${escapeHtml(preview.business.headline || "Sin titular")}</p><p>Reservas deshabilitadas · noindex · sin consumo de creditos</p></div>`; return; }
-  else if (step === "activation") { if (!onboardingReadiness) onboardingReadiness = await onboardingRequest(`/businesses/${businessId}/readiness`); await onboardingRequest(`/businesses/${businessId}/activate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: field("reason").value, expected_readiness_version: onboardingReadiness.version }) }); byId("onboarding-feedback").textContent = "Negocio activado"; await loadBusinesses(); return; }
+  else if (step === "activation") {
+    if (!onboardingReadiness) onboardingReadiness = await onboardingRequest(`/businesses/${businessId}/readiness`);
+    if (!onboardingReadiness.ready) { byId("onboarding-feedback").textContent = `La activación sigue bloqueada por ${onboardingReadiness.blocking_count} comprobaciones.`; return; }
+    const activate = (confirmedReason) => onboardingRequest(`/businesses/${businessId}/activate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: confirmedReason || field("reason").value, expected_readiness_version: onboardingReadiness.version }) });
+    const confirmed = typeof confirmOwnerCriticalAction === "function"
+      ? await confirmOwnerCriticalAction({ title: "Activar negocio", resource: onboardingData.business.name, current: "Alta en curso", next: "Activo", consequence: "La página pública dejará de estar en noindex y el negocio podrá operar según su configuración vigente.", confirmLabel: "Activar negocio", reason: field("reason").value, action: activate })
+      : (await activate(), true);
+    if (!confirmed) return;
+    byId("onboarding-feedback").textContent = "Negocio activado";
+    await loadBusinesses();
+    return;
+  }
   byId("onboarding-save-state").textContent = "Guardando...";
   onboardingData = await onboardingRequest(`/businesses/${businessId}/onboarding/${path}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   onboardingData = await onboardingRequest(`/businesses/${businessId}/onboarding`);
@@ -1565,6 +1581,8 @@ byId("refresh-button").addEventListener("click", async () => {
   try {
     await loadOwnerDashboard();
     const activeTab = document.querySelector("[data-tab].active")?.dataset.tab;
+    if (activeTab === "businesses" && typeof loadOwnerBusinessAccessIndex === "function") await loadOwnerBusinessAccessIndex(true);
+    if (activeTab === "new-business" && typeof loadOwnerOnboardingHub === "function") await loadOwnerOnboardingHub(true);
     if (activeTab === "incidents") await loadIncidents();
     if (activeTab === "queues") await loadQueueStatus();
     if (activeTab === "operations") await loadOperationsStatus();
@@ -1605,7 +1623,7 @@ byId("onboarding-steps").addEventListener("click", (event) => { const button = e
 byId("onboarding-step-content").addEventListener("input", () => { byId("onboarding-save-state").textContent = "Cambios sin guardar"; });
 byId("add-service").addEventListener("click", addServiceRow);
 byId("business-form").addEventListener("submit", createBusiness);
-byId("business-list").addEventListener("click", (event) => {
+byId("businesses-section").addEventListener("click", (event) => {
   const button = event.target.closest("[data-business-state-id]");
   if (button) changeBusinessState(button.dataset.businessStateId, button.dataset.businessStatus, button);
   else if (event.target.closest("[data-owner-user-action]")) handleOwnerUserAction(event.target.closest("[data-owner-user-action]")).catch((error) => console.error("Business user action failed", error));
@@ -1618,7 +1636,7 @@ byId("business-list").addEventListener("click", (event) => {
     if (feedback) feedback.textContent = error.message || "No se pudo completar la acción.";
   });
 });
-byId("business-list").addEventListener("change", async (event) => {
+byId("businesses-section").addEventListener("change", async (event) => {
   if (event.target.matches("[data-owner-media-input]")) {
     await uploadOwnerMedia(event.target);
     return;
@@ -1628,7 +1646,7 @@ byId("business-list").addEventListener("change", async (event) => {
   if (event.target.matches("[data-owner-template]")) editor.querySelector("[data-owner-template-description]").textContent = templateDescription(event.target.value);
   if (event.target.matches("[data-owner-color]")) { const name = event.target.dataset.ownerColor; editor.querySelector(`[data-owner-hex="${name}"]`).value = event.target.value; editor.querySelector("[data-owner-theme]").value = "custom"; }
 });
-byId("business-list").addEventListener("input", (event) => {
+byId("businesses-section").addEventListener("input", (event) => {
   const editor = event.target.closest("[data-owner-editor]"); if (!editor) return;
   if (event.target.matches("[data-owner-color]")) { const name = event.target.dataset.ownerColor; editor.querySelector(`[data-owner-hex="${name}"]`).value = event.target.value; editor.querySelector("[data-owner-theme]").value = "custom"; }
   if (event.target.matches("[data-owner-hex]")) { const name = event.target.dataset.ownerHex; if (/^#[0-9a-f]{6}$/i.test(event.target.value)) editor.querySelector(`[data-owner-color="${name}"]`).value = event.target.value; editor.querySelector("[data-owner-theme]").value = "custom"; }
