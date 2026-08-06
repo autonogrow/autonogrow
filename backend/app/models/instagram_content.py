@@ -15,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.models.utc_datetime import UTCDateTime
 
 
 class InstagramContentSettings(Base):
@@ -71,7 +72,7 @@ class InstagramContent(Base):
     __table_args__ = (
         CheckConstraint(
             "status IN ('draft','ready_for_review','changes_requested','validated',"
-            "'scheduled','cancelled')",
+            "'scheduled','published','cancelled')",
             name="ck_instagram_contents_status",
         ),
         Index("ix_instagram_contents_business_status", "business_id", "status"),
@@ -84,7 +85,7 @@ class InstagramContent(Base):
     )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="draft", nullable=False, index=True)
-    planned_publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    planned_publish_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), index=True)
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
@@ -108,6 +109,9 @@ class InstagramContent(Base):
     )
     validations = relationship(
         "InstagramContentValidation", back_populates="content", cascade="all, delete-orphan"
+    )
+    publish_jobs = relationship(
+        "InstagramPublishJob", back_populates="content", cascade="all, delete-orphan"
     )
 
 
@@ -174,6 +178,7 @@ class InstagramContentVersion(Base):
     )
     validation = relationship("InstagramContentValidation", back_populates="version", uselist=False)
     comments = relationship("InstagramContentComment", back_populates="version")
+    publish_job = relationship("InstagramPublishJob", back_populates="version", uselist=False)
 
 
 class InstagramContentVersionAsset(Base):

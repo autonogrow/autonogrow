@@ -276,6 +276,7 @@ def test_source_table_classifications_are_explicit_and_complete() -> None:
         "instagram_content_version_assets",
         "instagram_content_validations",
         "instagram_content_comments",
+        "instagram_publish_jobs",
         "instagram_oauth_attempts",
         "whatsapp_embedded_signup_attempts",
         "meta_integration_jobs",
@@ -520,4 +521,4 @@ def test_partial_destination_schema_is_rejected(tmp_path: Path) -> None:
 
 
 def test_alembic_has_expected_single_head() -> None:
-    assert head_revisions() == ("20260806_11",)
+    assert head_revisions() == ("20260806_12",)

@@ -30,6 +30,7 @@ POST_BASELINE_TABLES = {
     "instagram_content_version_assets",
     "instagram_content_validations",
     "instagram_content_comments",
+    "instagram_publish_jobs",
 }
 
 CRITICAL_COLUMNS: dict[str, set[str]] = {
@@ -73,6 +74,14 @@ CRITICAL_COLUMNS: dict[str, set[str]] = {
     "worker_heartbeats": {"id", "worker_id", "status", "last_seen_at"},
     "operational_states": {"id", "key", "enabled", "updated_at"},
     "backup_records": {"id", "backup_set_id", "backup_type", "status", "created_at"},
+    "instagram_publish_jobs": {
+        "id",
+        "business_id",
+        "content_version_id",
+        "status",
+        "idempotency_key",
+        "claim_expires_at",
+    },
 }
 
 

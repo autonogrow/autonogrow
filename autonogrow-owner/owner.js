@@ -1500,7 +1500,24 @@ function renderOwnerInstagramBusinessOptions() {
 }
 
 function ownerInstagramStateLabel(status) {
-  return ({ draft: "Borrador", ready_for_review: "Listo para revisión", changes_requested: "Cambios solicitados", validated: "Validado", scheduled: "Programado (sin publicación)", cancelled: "Cancelado" })[status] || status;
+  return ({ draft: "Borrador", ready_for_review: "Listo para revisión", changes_requested: "Cambios solicitados", validated: "Validado", scheduled: "Programado", published: "Publicado (simulado)", cancelled: "Cancelado" })[status] || status;
+}
+
+function ownerInstagramJobPanel(item) {
+  const job = item.publish_jobs?.[0];
+  if (!job) return item.status === "validated" ? `<div class="instagram-editorial-actions"><button class="button button-primary button-small" type="button" data-owner-instagram-action="publish-now" data-content-id="${item.id}">Publicar ahora (simulado)</button></div>` : `<p class="helper">Sin job de publicación.</p>`;
+  const labels = { queued: "Programado", claimed: "En cola de ejecución", simulating_publish: "Publicando (simulado)", published: "Publicado", retry_wait: "Reintento pendiente", failed: "Fallido", action_required: "Requiere acción", cancelled: "Cancelado" };
+  const when = job.scheduled_for ? new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(job.scheduled_for)) : "Sin fecha";
+  const actions = ["validated", "scheduled"].includes(item.status) && !["published", "simulating_publish", "claimed"].includes(job.status) ? `<button class="button button-primary button-small" type="button" data-owner-instagram-action="publish-now" data-content-id="${item.id}">Publicar ahora (simulado)</button>` : "";
+  const cancel = ["queued", "retry_wait", "claimed"].includes(job.status) ? `<button class="button button-ghost button-small" type="button" data-owner-instagram-action="cancel-publish" data-content-id="${item.id}">Cancelar programación</button>` : "";
+  const retry = ["failed", "action_required", "retry_wait"].includes(job.status) ? `<button class="button button-secondary button-small" type="button" data-owner-instagram-action="retry-publish" data-content-id="${item.id}">Reintentar</button>` : "";
+  return `<section class="instagram-publish-job"><p><strong>${escapeHtml(labels[job.status] || job.status)}</strong> · ${escapeHtml(when)}</p><div class="instagram-editorial-actions">${actions}${cancel}${retry}</div><details><summary>Detalle técnico</summary><dl><dt>Job</dt><dd>${job.id}</dd><dt>Versión</dt><dd>${job.content_version_id}</dd><dt>Intentos</dt><dd>${job.attempt_count}/${job.max_attempts}</dd>${job.provider_media_id ? `<dt>Media ID</dt><dd>${escapeHtml(job.provider_media_id)}</dd>` : ""}${job.safe_error_message ? `<dt>Estado seguro</dt><dd>${escapeHtml(job.safe_error_message)}</dd>` : ""}</dl></details></section>`;
+}
+
+function ownerInstagramLocalInput(isoValue, timeZone) {
+  if (!isoValue) return "";
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(isoValue)).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
 function renderOwnerInstagramRaw(assets) {
@@ -1521,7 +1538,7 @@ function renderOwnerInstagramContents() {
     const cover = version.assets.find((asset) => asset.is_cover)?.id;
     const assets = item.final_assets.map((asset) => `<label class="instagram-asset-choice"><input type="checkbox" data-instagram-asset-id="${asset.id}" ${selected.has(asset.id) ? "checked" : ""}><span>${escapeHtml(asset.original_filename)}</span><input type="radio" name="cover-${item.id}" data-instagram-cover-id="${asset.id}" ${cover === asset.id ? "checked" : ""} aria-label="Usar como portada"></label>`).join("");
     const actions = ["draft", "changes_requested"].includes(item.status) ? `<button class="button button-secondary button-small" type="button" data-owner-instagram-action="submit" data-content-id="${item.id}">Enviar a revisión</button>` : item.status === "ready_for_review" && ownerInstagramSettings?.owner_can_validate_instagram_content ? `<button class="button button-primary button-small" type="button" data-owner-instagram-action="validate" data-content-id="${item.id}" data-version-id="${version.id}">Validar por delegación</button>` : item.status === "validated" ? `<button class="button button-primary button-small" type="button" data-owner-instagram-action="schedule" data-content-id="${item.id}">Marcar programado</button>` : "";
-    return `<article class="instagram-content-card" data-owner-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>Versión ${version.version_number} · ${escapeHtml(ownerInstagramStateLabel(item.status))}</p></div><span class="ag-badge ag-badge--neutral">${escapeHtml(version.format === "carousel" ? "Carrusel" : "Imagen")}</span></header><label>Caption<textarea data-instagram-caption maxlength="2200" rows="4">${escapeHtml(version.caption)}</textarea></label><label>Formato<select data-instagram-format><option value="single_image" ${version.format === "single_image" ? "selected" : ""}>Imagen única</option><option value="carousel" ${version.format === "carousel" ? "selected" : ""}>Carrusel</option></select></label><label>Fecha prevista<input data-instagram-date type="datetime-local" value="${item.planned_publish_at ? escapeHtml(item.planned_publish_at.slice(0, 16)) : ""}"></label><form data-owner-final-upload><label>Subir asset final<input name="file" type="file" accept="image/jpeg,image/png,image/webp" required></label><button class="button button-secondary button-small" type="submit">Subir final</button></form><div class="instagram-asset-choices">${assets || "<p class='helper'>Sube al menos un asset final.</p>"}</div><div class="instagram-editorial-actions"><button class="button button-secondary button-small" type="button" data-owner-instagram-action="save-material" data-content-id="${item.id}">Guardar nueva versión</button><button class="button button-secondary button-small" type="button" data-owner-instagram-action="save-date" data-content-id="${item.id}">Guardar fecha</button>${actions}${item.status !== "cancelled" ? `<button class="button button-ghost button-small" type="button" data-owner-instagram-action="cancel" data-content-id="${item.id}">Cancelar</button>` : ""}</div>${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong> · v${escapeHtml(item.versions.find((candidate) => candidate.id === comment.version_id)?.version_number || "?")}<p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}</article>`;
+    return `<article class="instagram-content-card" data-owner-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>Versión ${version.version_number} · ${escapeHtml(ownerInstagramStateLabel(item.status))}</p></div><span class="ag-badge ag-badge--neutral">${escapeHtml(version.format === "carousel" ? "Carrusel" : "Imagen")}</span></header><label>Caption<textarea data-instagram-caption maxlength="2200" rows="4">${escapeHtml(version.caption)}</textarea></label><label>Formato<select data-instagram-format><option value="single_image" ${version.format === "single_image" ? "selected" : ""}>Imagen única</option><option value="carousel" ${version.format === "carousel" ? "selected" : ""}>Carrusel</option></select></label><label>Fecha prevista (${escapeHtml(item.business_timezone)})<input data-instagram-date type="datetime-local" value="${escapeHtml(ownerInstagramLocalInput(item.planned_publish_at, item.business_timezone))}"></label><form data-owner-final-upload><label>Subir asset final<input name="file" type="file" accept="image/jpeg,image/png,image/webp" required></label><button class="button button-secondary button-small" type="submit">Subir final</button></form><div class="instagram-asset-choices">${assets || "<p class='helper'>Sube al menos un asset final.</p>"}</div><div class="instagram-editorial-actions"><button class="button button-secondary button-small" type="button" data-owner-instagram-action="save-material" data-content-id="${item.id}">Guardar nueva versión</button><button class="button button-secondary button-small" type="button" data-owner-instagram-action="save-date" data-content-id="${item.id}">Guardar fecha</button>${actions}${item.status !== "cancelled" ? `<button class="button button-ghost button-small" type="button" data-owner-instagram-action="cancel" data-content-id="${item.id}">Cancelar</button>` : ""}</div>${ownerInstagramJobPanel(item)}${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong> · v${escapeHtml(item.versions.find((candidate) => candidate.id === comment.version_id)?.version_number || "?")}<p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}</article>`;
   }).join("");
 }
 
@@ -1588,7 +1605,7 @@ async function createOwnerInstagramContent(event) {
   const data = new FormData(event.currentTarget);
   if (!api) return;
   try {
-    await ownerInstagramJson(`${api}/contents`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: data.get("title"), caption: data.get("caption"), format: data.get("format"), planned_publish_at: data.get("planned_publish_at") ? new Date(data.get("planned_publish_at")).toISOString() : null }) });
+    await ownerInstagramJson(`${api}/contents`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: data.get("title"), caption: data.get("caption"), format: data.get("format"), planned_publish_at: data.get("planned_publish_at") || null }) });
     event.currentTarget.reset();
     await loadOwnerInstagramPanel();
   } catch (error) { byId("owner-instagram-status").textContent = error.message; }
@@ -1610,8 +1627,11 @@ async function handleOwnerInstagramAction(button) {
   } else if (action === "save-date") {
     const value = card.querySelector("[data-instagram-date]").value;
     url = `${api}/contents/${contentId}/planned-date`;
-    options = { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ planned_publish_at: value ? new Date(value).toISOString() : null }) };
+    options = { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ planned_publish_at: value || null }) };
   } else if (action === "submit") url = `${api}/contents/${contentId}/submit-for-review`;
+  else if (action === "publish-now") url = `${api}/contents/${contentId}/publish-now`;
+  else if (action === "cancel-publish") url = `${api}/contents/${contentId}/publish-job/cancel`;
+  else if (action === "retry-publish") url = `${api}/contents/${contentId}/publish-job/retry`;
   else if (action === "validate") options = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version_id: Number(button.dataset.versionId) }) };
   try {
     button.disabled = true;

@@ -164,6 +164,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .instagram-editorial-card + .instagram-editorial-card, .instagram-content-card + .instagram-content-card { margin-top: var(--ag-space-4); }
 .instagram-editorial-card form, .instagram-content-card form { display: grid; gap: var(--ag-space-3); }
 .instagram-content-card header, .instagram-editorial-actions { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: var(--ag-space-2); }
+.instagram-publish-job { margin-top: var(--ag-space-3); padding: var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
+.instagram-publish-job dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--ag-space-1) var(--ag-space-3); }
 .instagram-asset-list, .instagram-final-assets, .instagram-asset-choices { display: flex; flex-wrap: wrap; gap: var(--ag-space-2); margin-top: var(--ag-space-3); }
 .instagram-asset-chip, .instagram-final-preview, .instagram-asset-choice { padding: var(--ag-space-2) var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
 .instagram-asset-choice { display: inline-flex; align-items: center; gap: var(--ag-space-2); }

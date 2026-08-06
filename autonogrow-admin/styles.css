@@ -2324,6 +2324,8 @@ input {
 .instagram-editorial-card + .instagram-editorial-card, .instagram-content-card + .instagram-content-card { margin-top: var(--ag-space-4); }
 .instagram-editorial-card form, .instagram-content-card form { display: grid; gap: var(--ag-space-3); }
 .instagram-content-card header, .instagram-inline-form { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: var(--ag-space-3); }
+.instagram-publish-job { margin-top: var(--ag-space-3); padding: var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
+.instagram-publish-job dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--ag-space-1) var(--ag-space-3); }
 .instagram-asset-list, .instagram-final-assets { display: flex; flex-wrap: wrap; gap: var(--ag-space-2); margin-top: var(--ag-space-3); }
 .instagram-asset-chip, .instagram-final-preview { padding: var(--ag-space-2) var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
 .instagram-caption { padding: var(--ag-space-3); white-space: pre-wrap; border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }

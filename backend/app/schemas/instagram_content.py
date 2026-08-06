@@ -5,6 +5,48 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 InstagramFormat = Literal["single_image", "carousel"]
 CommentKind = Literal["comment", "proposal", "change_request"]
+InstagramPublishJobStatus = Literal[
+    "queued",
+    "claimed",
+    "simulating_publish",
+    "published",
+    "retry_wait",
+    "failed",
+    "action_required",
+    "cancelled",
+]
+
+
+class InstagramPublishJobRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    business_id: int
+    content_item_id: int
+    content_version_id: int
+    integration_id: int | None
+    status: InstagramPublishJobStatus
+    scheduled_for: datetime
+    attempt_count: int
+    max_attempts: int
+    next_attempt_at: datetime | None
+    claimed_at: datetime | None
+    claim_expires_at: datetime | None
+    provider_container_id: str | None
+    provider_media_id: str | None
+    provider_permalink: str | None
+    provider_status: str | None
+    provider_error_code: str | None
+    safe_error_message: str | None
+    provider_metadata: dict[str, str] | None
+    created_at: datetime
+    updated_at: datetime
+    published_at: datetime | None
+    cancelled_at: datetime | None
+
+
+class InstagramPublishJobHistory(BaseModel):
+    jobs: list[InstagramPublishJobRead]
 
 
 class InstagramServiceUpdate(BaseModel):

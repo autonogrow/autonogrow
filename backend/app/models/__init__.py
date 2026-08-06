@@ -44,6 +44,7 @@ from app.models.instagram_content import (
     InstagramRawAsset,
 )
 from app.models.instagram_oauth_attempt import InstagramOAuthAttempt
+from app.models.instagram_publish_job import InstagramPublishJob
 from app.models.message_outbox import MessageOutbox
 from app.models.meta_integration_job import MetaIntegrationJob
 from app.models.operations import BackupRecord, OperationalState
@@ -76,6 +77,7 @@ __all__ = [
     "InstagramContentVersionAsset",
     "InstagramFinalAsset",
     "InstagramRawAsset",
+    "InstagramPublishJob",
     "WhatsAppEmbeddedSignupAttempt",
     "SyncJob",
     "ReviewRequest",

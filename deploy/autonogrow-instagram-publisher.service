@@ -1,0 +1,31 @@
+[Unit]
+Description=AutonoGrow simulated Instagram publishing worker
+After=network-online.target autonogrow.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=autonogrow
+Group=autonogrow
+WorkingDirectory=/opt/autonogrow/backend
+EnvironmentFile=/etc/autonogrow/backend.env
+ExecStart=/opt/autonogrow/.venv/bin/python -m app.workers.instagram_publish_worker --poll-seconds 2
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/autonogrow /var/log/autonogrow
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+LimitNOFILE=65536
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

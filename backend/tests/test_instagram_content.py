@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -14,12 +15,15 @@ from app.core.security import get_current_user
 from app.models import (
     AuditLog,
     Business,
+    BusinessChannelControl,
+    BusinessChannelIntegration,
     BusinessUser,
     InstagramContent,
     InstagramContentSettings,
     InstagramContentValidation,
     InstagramContentVersion,
     InstagramFinalAsset,
+    InstagramPublishJob,
     InstagramRawAsset,
     MetaIntegrationJob,
     User,
@@ -117,6 +121,29 @@ def enable_service(ctx) -> None:
     set_actor(ctx, ctx["owner"])
     response = ctx["client"].patch(f"{owner_base(ctx)}/settings", json={"enabled": True})
     assert response.status_code == 200
+
+
+def enable_publish_integration(ctx) -> None:
+    ctx["db"].add_all(
+        [
+            BusinessChannelControl(
+                business_id=ctx["business"].id,
+                channel="instagram",
+                status="approved",
+                integrated_delivery_enabled=True,
+                connector_policy="owner_only",
+            ),
+            BusinessChannelIntegration(
+                business_id=ctx["business"].id,
+                channel="instagram",
+                provider="instagram",
+                external_account_id="editorial-publish-account",
+                integration_status="connected",
+                health_status="healthy",
+            ),
+        ]
+    )
+    ctx["db"].commit()
 
 
 def create_content_with_asset(ctx) -> tuple[int, int, int]:
@@ -349,7 +376,7 @@ def test_validation_must_target_current_version_and_owner_requires_delegation(ed
     )
 
 
-def test_change_request_and_scheduled_state_create_no_jobs(editorial_context):
+def test_schedule_is_blocked_without_an_approved_integration(editorial_context):
     ctx = editorial_context
     content_id, _asset_id, version_id = create_content_with_asset(ctx)
     assert (
@@ -415,8 +442,12 @@ def test_change_request_and_scheduled_state_create_no_jobs(editorial_context):
     )
     set_actor(ctx, ctx["owner"])
     scheduled = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule")
-    assert scheduled.status_code == 200
-    assert scheduled.json()["status"] == "scheduled"
+    assert scheduled.status_code == 409
+    assert ctx["db"].query(InstagramPublishJob).count() == 2
+    assert (
+        ctx["db"].query(InstagramPublishJob).order_by(InstagramPublishJob.id.desc()).first().status
+        == "action_required"
+    )
     assert ctx["db"].query(MetaIntegrationJob).count() == 0
 
 
@@ -436,3 +467,68 @@ def test_same_material_payload_does_not_create_a_version(editorial_context):
     assert response.status_code == 200
     after = ctx["db"].query(InstagramContentVersion).filter_by(content_id=content_id).count()
     assert after == before
+
+
+def test_publish_job_endpoints_enforce_role_and_business_isolation(editorial_context):
+    ctx = editorial_context
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    set_actor(ctx, ctx["admin"])
+    assert (
+        ctx["client"].get(f"{admin_base(ctx)}/contents/{content_id}/publish-jobs").status_code
+        == 200
+    )
+    assert (
+        ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/publish-now").status_code
+        == 403
+    )
+
+
+def test_owner_schedule_reschedule_publish_now_and_cancel_endpoints(editorial_context):
+    ctx = editorial_context
+    enable_publish_integration(ctx)
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    assert (
+        ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review").status_code
+        == 200
+    )
+    set_actor(ctx, ctx["admin"])
+    validated = ctx["client"].post(
+        f"{admin_base(ctx)}/contents/{content_id}/validate", json={"version_id": version_id}
+    )
+    assert validated.status_code == 200
+    assert validated.json()["status"] == "scheduled"
+    first_job = validated.json()["publish_jobs"][0]
+    set_actor(ctx, ctx["owner"])
+    future = datetime.now(timezone.utc) + timedelta(days=3)
+    rescheduled = ctx["client"].patch(
+        f"{owner_base(ctx)}/contents/{content_id}/publish-job/reschedule",
+        json={"planned_publish_at": future.isoformat()},
+    )
+    assert rescheduled.status_code == 200
+    assert rescheduled.json()["publish_jobs"][0]["id"] == first_job["id"]
+    publish_now = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/publish-now")
+    assert publish_now.status_code == 200
+    assert publish_now.json()["status"] == "queued"
+    assert publish_now.json()["id"] == first_job["id"]
+    cancelled = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/publish-job/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    set_actor(ctx, ctx["admin"])
+    assert (
+        ctx["client"]
+        .post(f"{admin_base(ctx)}/contents/{content_id}/publish-job/cancel")
+        .status_code
+        == 404
+    )
+    set_actor(ctx, ctx["other_admin"])
+    assert (
+        ctx["client"]
+        .get(f"{admin_base(ctx, ctx['other_business'].slug)}/contents/{content_id}/publish-jobs")
+        .status_code
+        == 404
+    )
+    set_actor(ctx, ctx["staff"])
+    assert (
+        ctx["client"].get(f"{admin_base(ctx)}/contents/{content_id}/publish-jobs").status_code
+        == 403
+    )

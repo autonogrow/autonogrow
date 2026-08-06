@@ -113,6 +113,14 @@ class Settings(BaseSettings):
     instagram_oauth_attempt_ttl_seconds: int = 600
     instagram_candidate_review_ttl_hours: int = 72
     instagram_simulated_onboarding_test_only: bool = False
+    instagram_publishing_worker_enabled: bool = False
+    instagram_publishing_poll_seconds: float = 2.0
+    instagram_publishing_max_attempts: int = 5
+    instagram_publishing_claim_ttl_seconds: int = 120
+    instagram_publishing_backoff_base_seconds: int = 30
+    instagram_publishing_backoff_max_seconds: int = 3600
+    instagram_publishing_simulated_mode: bool = True
+    instagram_default_timezone: str = "Europe/Madrid"
     whatsapp_webhook_enabled: bool = False
     whatsapp_verify_token: str = ""
     whatsapp_require_signature: bool = True
@@ -378,6 +386,49 @@ class Settings(BaseSettings):
             raise ValueError("INSTAGRAM_LOGIN_GRAPH_API_VERSION no es válida")
         if self.instagram_simulated_onboarding_test_only and self.app_env != "test":
             raise ValueError("INSTAGRAM_SIMULATED_ONBOARDING_TEST_ONLY solo se permite en test")
+        publishing_ranges = (
+            ("INSTAGRAM_PUBLISHING_POLL_SECONDS", self.instagram_publishing_poll_seconds, 0.1, 60),
+            ("INSTAGRAM_PUBLISHING_MAX_ATTEMPTS", self.instagram_publishing_max_attempts, 1, 20),
+            (
+                "INSTAGRAM_PUBLISHING_CLAIM_TTL_SECONDS",
+                self.instagram_publishing_claim_ttl_seconds,
+                10,
+                3600,
+            ),
+            (
+                "INSTAGRAM_PUBLISHING_BACKOFF_BASE_SECONDS",
+                self.instagram_publishing_backoff_base_seconds,
+                1,
+                86400,
+            ),
+            (
+                "INSTAGRAM_PUBLISHING_BACKOFF_MAX_SECONDS",
+                self.instagram_publishing_backoff_max_seconds,
+                1,
+                604800,
+            ),
+        )
+        for (
+            publishing_name,
+            publishing_value,
+            publishing_minimum,
+            publishing_maximum,
+        ) in publishing_ranges:
+            if not publishing_minimum <= publishing_value <= publishing_maximum:
+                raise ValueError(
+                    f"{publishing_name} debe estar entre {publishing_minimum} y {publishing_maximum}"
+                )
+        if (
+            self.instagram_publishing_backoff_max_seconds
+            < self.instagram_publishing_backoff_base_seconds
+        ):
+            raise ValueError("INSTAGRAM_PUBLISHING_BACKOFF_MAX_SECONDS debe ser >= al valor base")
+        try:
+            from zoneinfo import ZoneInfo
+
+            ZoneInfo(self.instagram_default_timezone)
+        except (KeyError, ValueError) as exc:
+            raise ValueError("INSTAGRAM_DEFAULT_TIMEZONE no es válida") from exc
         health_ranges = (
             (
                 "META_INTEGRATION_HEALTH_CHECK_INTERVAL_HOURS",

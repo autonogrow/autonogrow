@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import (
     InstagramContent,
     InstagramContentComment,
@@ -161,8 +162,8 @@ def update_material(
 ) -> tuple[InstagramContent, InstagramContentVersion, bool]:
     require_service_enabled(db, business_id)
     content = content_or_404(db, business_id, content_id, for_update=True)
-    if content.status == "cancelled":
-        raise HTTPException(status_code=409, detail="Cancelled content cannot be edited")
+    if content.status in {"cancelled", "published"}:
+        raise HTTPException(status_code=409, detail="Terminal content cannot be edited")
     if format == "single_image" and len(asset_ids) > 1:
         raise HTTPException(status_code=422, detail="single_image accepts at most one asset")
     if format == "carousel" and len(asset_ids) == 1:
@@ -211,6 +212,22 @@ def update_material(
             )
         )
     invalidate_validation(db, content, "material_content_changed")
+    from app.services.instagram_publish_service import cancel_publish_job
+
+    cancelled_job = cancel_publish_job(db, content, reason="material_content_changed", actor=actor)
+    if cancelled_job is not None:
+        from app.core.audit import record_audit
+
+        record_audit(
+            db,
+            action="material_change_cancelled_publish_job",
+            actor=actor,
+            business_id=business_id,
+            resource_type="instagram_publish_job",
+            resource_id=cancelled_job.id,
+            metadata={"content_id": content.id, "new_version_id": version.id},
+            commit=False,
+        )
     content.status = "draft"
     db.flush()
     return content, version, True
@@ -280,6 +297,9 @@ def add_admin_comment(
         if content.status not in {"ready_for_review", "validated", "scheduled"}:
             raise HTTPException(status_code=409, detail="Content is not in review")
         invalidate_validation(db, content, "changes_requested_by_admin")
+        from app.services.instagram_publish_service import cancel_publish_job
+
+        cancel_publish_job(db, content, reason="validation_revoked_by_change_request", actor=actor)
         content.status = "changes_requested"
     comment = InstagramContentComment(
         business_id=business_id,
@@ -326,27 +346,58 @@ def validate_content(
     db.add(validation)
     content.status = "validated"
     db.flush()
+    if content.planned_publish_at is not None:
+        from app.services.instagram_publish_service import sync_publish_job
+
+        job = sync_publish_job(db, content, actor=actor)
+        if job.status == "action_required" and job.provider_error_code == "planned_date_in_past":
+            from app.core.audit import record_audit
+
+            record_audit(
+                db,
+                action="validated_too_late",
+                actor=actor,
+                business_id=business_id,
+                resource_type="instagram_publish_job",
+                resource_id=job.id,
+                metadata={"content_id": content.id, "version_id": version.id},
+                commit=False,
+            )
     return validation
 
 
-def schedule_content(db: Session, business_id: int, content_id: int) -> InstagramContent:
+def schedule_content(
+    db: Session, business_id: int, content_id: int, actor: User | None = None
+) -> InstagramContent:
     require_service_enabled(db, business_id)
     content = content_or_404(db, business_id, content_id, for_update=True)
     if content.status != "validated" or _active_validation(db, content) is None:
         raise HTTPException(status_code=409, detail="Only validated content can be scheduled")
     if content.planned_publish_at is None:
         raise HTTPException(status_code=409, detail="A planned date is required")
-    content.status = "scheduled"
-    db.flush()
+    from app.services.instagram_publish_service import sync_publish_job
+
+    job = sync_publish_job(db, content, actor=actor)
+    if job.status != "queued":
+        raise HTTPException(
+            status_code=409, detail=job.safe_error_message or "Publishing requires action"
+        )
     return content
 
 
-def cancel_content(db: Session, business_id: int, content_id: int) -> InstagramContent:
+def cancel_content(
+    db: Session, business_id: int, content_id: int, actor: User | None = None
+) -> InstagramContent:
     require_service_enabled(db, business_id)
     content = content_or_404(db, business_id, content_id, for_update=True)
     if content.status == "cancelled":
         raise HTTPException(status_code=409, detail="Content is already cancelled")
+    if content.status == "published":
+        raise HTTPException(status_code=409, detail="Published content cannot be cancelled")
     content.status = "cancelled"
+    from app.services.instagram_publish_service import cancel_publish_job
+
+    cancel_publish_job(db, content, reason="editorial_content_cancelled", actor=actor)
     db.flush()
     return content
 
@@ -436,6 +487,9 @@ def serialize_content(
     payload = {
         "id": content.id,
         "business_id": content.business_id,
+        "business_timezone": (
+            content.business.timezone.strip() or get_settings().instagram_default_timezone
+        ),
         "title": content.title,
         "status": content.status,
         "planned_publish_at": (
@@ -450,5 +504,11 @@ def serialize_content(
         payload["comments"] = [serialize_comment(item) for item in content.comments]
         payload["final_assets"] = [
             serialize_final_asset(item, api_prefix) for item in content.final_assets
+        ]
+        from app.services.instagram_publish_service import serialize_publish_job
+
+        payload["publish_jobs"] = [
+            serialize_publish_job(item)
+            for item in sorted(content.publish_jobs, key=lambda item: item.created_at, reverse=True)
         ]
     return payload
