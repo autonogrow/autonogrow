@@ -75,6 +75,7 @@
       <button class="admin-tab admin-tab--legacy" type="button" data-section="staff" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 4a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5"/></svg></span>Equipo</button>
       <button class="admin-tab admin-tab--legacy" type="button" data-section="schedule" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>Horarios</button>
       <button class="admin-tab" type="button" data-section="channels" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2"/></svg></span>Canales y automatizaciones</button>
+      <button class="admin-tab" type="button" data-section="instagram-content" aria-selected="false"><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/></svg></span>Contenido Instagram</button>
       <button class="admin-tab admin-tab--legacy" type="button" data-section="business" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5l8-3 8 3v16"/><path d="M9 21v-5h6v5M8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span>Datos del negocio</button>
       <button class="admin-tab admin-tab--legacy" type="button" data-section="reviews" aria-selected="false" hidden><span class="ag-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg></span>Reseñas</button>
     </nav>
@@ -734,6 +735,17 @@
           <div id="growth-tasks-list" class="growth-tasks-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Calculando oportunidades.</span></div>
           <aside class="growth-review-automation-note"><div><strong>Solicitudes de reseña asistidas</strong><p>El sistema actual no envía automáticamente estas solicitudes ni consume créditos. Puedes configurar las automatizaciones de conversación por separado.</p></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="automations">Ver respuestas automáticas</button></aside>
         </div>
+      </div>
+    </section>
+
+    <section class="section admin-section instagram-editorial" data-admin-section="instagram-content" aria-labelledby="admin-instagram-content-title">
+      <div class="section-heading"><div><p class="eyebrow">Revisión colaborativa</p><h2 id="admin-instagram-content-title">Contenido de Instagram</h2><p>Revisa versiones finales, comenta, solicita cambios y valida la versión vigente.</p></div><button id="admin-instagram-refresh" class="btn btn-secondary" type="button">Actualizar</button></div>
+      <p id="admin-instagram-status" class="status-text" aria-live="polite"></p>
+      <div id="admin-instagram-disabled" class="instagram-editorial-card" hidden><h3>Servicio no activo</h3><p>El Owner debe activar la gestión adicional para este negocio.</p></div>
+      <div id="admin-instagram-workspace" hidden>
+        <section class="instagram-editorial-card"><div><h3>Delegación de validación</h3><p>Autoriza explícitamente al Owner para validar en nombre del negocio.</p></div><label class="checkbox-row"><input id="admin-instagram-owner-validation" type="checkbox"> El Owner puede validar contenido</label></section>
+        <section class="instagram-editorial-card"><h3>Material bruto</h3><form id="admin-instagram-raw-form" class="instagram-inline-form"><label>Etiqueta<input name="label" maxlength="240"></label><label>Imagen<input name="file" type="file" accept="image/jpeg,image/png,image/webp" required></label><button class="btn btn-secondary" type="submit">Subir</button></form><div id="admin-instagram-raw-list" class="instagram-asset-list"></div></section>
+        <section class="instagram-editorial-card"><h3>Versiones finales</h3><div id="admin-instagram-content-list" class="instagram-content-list"></div></section>
       </div>
     </section>
     </div>

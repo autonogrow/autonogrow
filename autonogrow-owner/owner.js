@@ -13,6 +13,8 @@ let openIncidentCount = 0;
 let ownerAuthUser = null;
 let queueStatus = null;
 let operationsStatus = null;
+let ownerInstagramSettings = null;
+let ownerInstagramContents = [];
 const OWNER_CREDIT_PRESETS = [100, 200, 500];
 const PALETTES = { slate_gold: ["#334155", "#0f172a", "#f59e0b", "#f8fafc"], rose_beauty: ["#be123c", "#831843", "#f9a8d4", "#fff1f2"], emerald_clean: ["#047857", "#064e3b", "#6ee7b7", "#ecfdf5"], blue_clinic: ["#2563eb", "#1e3a8a", "#93c5fd", "#eff6ff"], amber_barber: ["#92400e", "#451a03", "#fbbf24", "#fffbeb"], violet_modern: ["#7c3aed", "#4c1d95", "#c4b5fd", "#f5f3ff"] };
 const TEMPLATE_DESCRIPTIONS = { classic: "Estructura equilibrada para cualquier negocio.", elegant: "Diseño más premium y visual.", beauty: "Pensada para estética, manicura y peluquería.", clinic: "Limpia y profesional para centros de salud o consulta.", urban: "Más impacto para barberías y negocios modernos.", minimal: "Directa y sencilla para servicios prácticos." };
@@ -540,6 +542,7 @@ function setActiveTab(name) {
     businesses: ["Negocios", "Consulta y gestiona el contexto completo de cada cuenta."],
     "new-business": ["Altas y aprobaciones", "Continúa altas y toma decisiones pendientes con contexto seguro."],
     integrations: ["Integraciones", "Separa control comercial, conexión, capacidades, salud y recuperación."],
+    "instagram-content": ["Contenido de Instagram", "Prepara material, versiones y fechas para el flujo de revisión."],
     incidents: ["Incidencias", "Revisa impacto, cronología y acciones operativas seguras."],
     operations: ["Operaciones", "Comprueba el estado técnico global y el mantenimiento."],
     audit: ["Auditoría operativa", "Consulta los hitos seguros disponibles sin exponer payloads ni datos internos."],
@@ -557,6 +560,7 @@ function setActiveTab(name) {
   if (name === "businesses") renderBusinesses();
   if (name === "new-business" && typeof loadOwnerOnboardingHub === "function") loadOwnerOnboardingHub();
   if (name === "integrations" && typeof loadOwnerIntegrationsHub === "function") loadOwnerIntegrationsHub();
+  if (name === "instagram-content") loadOwnerInstagramPanel();
   if (name === "incidents") loadIncidents();
   if (name === "queues") loadQueueStatus();
   if (name === "operations") {
@@ -567,7 +571,7 @@ function setActiveTab(name) {
 }
 
 function navigateOwnerContext(target, businessId = null, detail = null, contextId = null) {
-  const allowed = new Set(["overview", "businesses", "new-business", "integrations", "incidents", "operations", "audit"]);
+  const allowed = new Set(["overview", "businesses", "new-business", "integrations", "instagram-content", "incidents", "operations", "audit"]);
   if (!allowed.has(target)) return;
   setActiveTab(target);
   if (target === "new-business" && businessId && detail === "onboarding" && typeof openOwnerOnboarding === "function") {
@@ -1478,9 +1482,171 @@ function applyBusinessTemplate(key) {
 
 let onboardingData = null;
 let onboardingStepIndex = 0;
+function ownerInstagramBusinessId() {
+  return Number(byId("owner-instagram-business").value) || null;
+}
+
+function ownerInstagramApi() {
+  const businessId = ownerInstagramBusinessId();
+  return businessId ? `${API_BASE_URL}/api/owner/businesses/${businessId}/instagram-content` : null;
+}
+
+function renderOwnerInstagramBusinessOptions() {
+  const select = byId("owner-instagram-business");
+  const previous = select.value;
+  select.innerHTML = `<option value="">Selecciona un negocio</option>${businesses.map((business) => `<option value="${business.id}">${escapeHtml(business.name)}</option>`).join("")}`;
+  if (businesses.some((business) => String(business.id) === previous)) select.value = previous;
+  else if (businesses.length === 1) select.value = String(businesses[0].id);
+}
+
+function ownerInstagramStateLabel(status) {
+  return ({ draft: "Borrador", ready_for_review: "Listo para revisión", changes_requested: "Cambios solicitados", validated: "Validado", scheduled: "Programado (sin publicación)", cancelled: "Cancelado" })[status] || status;
+}
+
+function renderOwnerInstagramRaw(assets) {
+  byId("owner-instagram-raw-list").innerHTML = assets.length
+    ? assets.map((asset) => `<a class="instagram-asset-chip" href="${API_BASE_URL}${escapeHtml(asset.file_url)}" target="_blank" rel="noopener">${escapeHtml(asset.label || asset.original_filename)}</a>`).join("")
+    : `<p class="helper">Todavía no hay material bruto.</p>`;
+}
+
+function renderOwnerInstagramContents() {
+  const container = byId("owner-instagram-content-list");
+  if (!ownerInstagramContents.length) {
+    container.innerHTML = `<p class="helper">Todavía no hay contenido final.</p>`;
+    return;
+  }
+  container.innerHTML = ownerInstagramContents.map((item) => {
+    const version = item.current_version;
+    const selected = new Set(version.assets.map((asset) => asset.id));
+    const cover = version.assets.find((asset) => asset.is_cover)?.id;
+    const assets = item.final_assets.map((asset) => `<label class="instagram-asset-choice"><input type="checkbox" data-instagram-asset-id="${asset.id}" ${selected.has(asset.id) ? "checked" : ""}><span>${escapeHtml(asset.original_filename)}</span><input type="radio" name="cover-${item.id}" data-instagram-cover-id="${asset.id}" ${cover === asset.id ? "checked" : ""} aria-label="Usar como portada"></label>`).join("");
+    const actions = ["draft", "changes_requested"].includes(item.status) ? `<button class="button button-secondary button-small" type="button" data-owner-instagram-action="submit" data-content-id="${item.id}">Enviar a revisión</button>` : item.status === "ready_for_review" && ownerInstagramSettings?.owner_can_validate_instagram_content ? `<button class="button button-primary button-small" type="button" data-owner-instagram-action="validate" data-content-id="${item.id}" data-version-id="${version.id}">Validar por delegación</button>` : item.status === "validated" ? `<button class="button button-primary button-small" type="button" data-owner-instagram-action="schedule" data-content-id="${item.id}">Marcar programado</button>` : "";
+    return `<article class="instagram-content-card" data-owner-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>Versión ${version.version_number} · ${escapeHtml(ownerInstagramStateLabel(item.status))}</p></div><span class="ag-badge ag-badge--neutral">${escapeHtml(version.format === "carousel" ? "Carrusel" : "Imagen")}</span></header><label>Caption<textarea data-instagram-caption maxlength="2200" rows="4">${escapeHtml(version.caption)}</textarea></label><label>Formato<select data-instagram-format><option value="single_image" ${version.format === "single_image" ? "selected" : ""}>Imagen única</option><option value="carousel" ${version.format === "carousel" ? "selected" : ""}>Carrusel</option></select></label><label>Fecha prevista<input data-instagram-date type="datetime-local" value="${item.planned_publish_at ? escapeHtml(item.planned_publish_at.slice(0, 16)) : ""}"></label><form data-owner-final-upload><label>Subir asset final<input name="file" type="file" accept="image/jpeg,image/png,image/webp" required></label><button class="button button-secondary button-small" type="submit">Subir final</button></form><div class="instagram-asset-choices">${assets || "<p class='helper'>Sube al menos un asset final.</p>"}</div><div class="instagram-editorial-actions"><button class="button button-secondary button-small" type="button" data-owner-instagram-action="save-material" data-content-id="${item.id}">Guardar nueva versión</button><button class="button button-secondary button-small" type="button" data-owner-instagram-action="save-date" data-content-id="${item.id}">Guardar fecha</button>${actions}${item.status !== "cancelled" ? `<button class="button button-ghost button-small" type="button" data-owner-instagram-action="cancel" data-content-id="${item.id}">Cancelar</button>` : ""}</div>${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong> · v${escapeHtml(item.versions.find((candidate) => candidate.id === comment.version_id)?.version_number || "?")}<p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}</article>`;
+  }).join("");
+}
+
+async function ownerInstagramJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const body = await readResponseBody(response);
+  if (!response.ok) throw new Error(body.detail || "No se pudo completar la operación editorial.");
+  return body;
+}
+
+async function loadOwnerInstagramPanel() {
+  const status = byId("owner-instagram-status");
+  if (!businesses.length) await loadBusinesses();
+  renderOwnerInstagramBusinessOptions();
+  const api = ownerInstagramApi();
+  byId("owner-instagram-workspace").hidden = !api;
+  if (!api) { status.textContent = "Selecciona un negocio."; return; }
+  status.textContent = "Cargando flujo editorial…";
+  try {
+    ownerInstagramSettings = await ownerInstagramJson(`${api}/settings`);
+    byId("owner-instagram-enabled").checked = ownerInstagramSettings.enabled;
+    byId("owner-instagram-enabled-area").hidden = !ownerInstagramSettings.enabled;
+    if (!ownerInstagramSettings.enabled) { status.textContent = "Servicio desactivado."; return; }
+    const [raw, contentList] = await Promise.all([
+      ownerInstagramJson(`${api}/raw-assets`),
+      ownerInstagramJson(`${api}/contents`)
+    ]);
+    ownerInstagramContents = await Promise.all(contentList.contents.map((item) => ownerInstagramJson(`${api}/contents/${item.id}`)));
+    renderOwnerInstagramRaw(raw.assets);
+    renderOwnerInstagramContents();
+    status.textContent = `${ownerInstagramContents.length} contenidos · ${raw.assets.length} materiales brutos`;
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+async function updateOwnerInstagramService() {
+  const api = ownerInstagramApi();
+  if (!api) return;
+  const enabled = byId("owner-instagram-enabled").checked;
+  try {
+    await ownerInstagramJson(`${api}/settings`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) });
+    await loadOwnerInstagramPanel();
+  } catch (error) {
+    byId("owner-instagram-enabled").checked = !enabled;
+    byId("owner-instagram-status").textContent = error.message;
+  }
+}
+
+async function uploadOwnerInstagramRaw(event) {
+  event.preventDefault();
+  const api = ownerInstagramApi();
+  if (!api) return;
+  try {
+    await ownerInstagramJson(`${api}/raw-assets`, { method: "POST", body: new FormData(event.currentTarget) });
+    event.currentTarget.reset();
+    await loadOwnerInstagramPanel();
+  } catch (error) { byId("owner-instagram-status").textContent = error.message; }
+}
+
+async function createOwnerInstagramContent(event) {
+  event.preventDefault();
+  const api = ownerInstagramApi();
+  const data = new FormData(event.currentTarget);
+  if (!api) return;
+  try {
+    await ownerInstagramJson(`${api}/contents`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: data.get("title"), caption: data.get("caption"), format: data.get("format"), planned_publish_at: data.get("planned_publish_at") ? new Date(data.get("planned_publish_at")).toISOString() : null }) });
+    event.currentTarget.reset();
+    await loadOwnerInstagramPanel();
+  } catch (error) { byId("owner-instagram-status").textContent = error.message; }
+}
+
+async function handleOwnerInstagramAction(button) {
+  const api = ownerInstagramApi();
+  const contentId = Number(button.dataset.contentId);
+  const card = button.closest("[data-owner-instagram-content]");
+  if (!api || !contentId || !card) return;
+  const action = button.dataset.ownerInstagramAction;
+  let url = `${api}/contents/${contentId}/${action}`;
+  let options = { method: "POST" };
+  if (action === "save-material") {
+    const assetIds = [...card.querySelectorAll("[data-instagram-asset-id]:checked")].map((input) => Number(input.dataset.instagramAssetId));
+    const cover = card.querySelector("[data-instagram-cover-id]:checked");
+    url = `${api}/contents/${contentId}/material`;
+    options = { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ caption: card.querySelector("[data-instagram-caption]").value, format: card.querySelector("[data-instagram-format]").value, asset_ids: assetIds, cover_asset_id: cover ? Number(cover.dataset.instagramCoverId) : null }) };
+  } else if (action === "save-date") {
+    const value = card.querySelector("[data-instagram-date]").value;
+    url = `${api}/contents/${contentId}/planned-date`;
+    options = { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ planned_publish_at: value ? new Date(value).toISOString() : null }) };
+  } else if (action === "submit") url = `${api}/contents/${contentId}/submit-for-review`;
+  else if (action === "validate") options = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version_id: Number(button.dataset.versionId) }) };
+  try {
+    button.disabled = true;
+    await ownerInstagramJson(url, options);
+    await loadOwnerInstagramPanel();
+  } catch (error) { byId("owner-instagram-status").textContent = error.message; }
+  finally { button.disabled = false; }
+}
+
+async function uploadOwnerInstagramFinal(event) {
+  event.preventDefault();
+  const api = ownerInstagramApi();
+  const card = event.currentTarget.closest("[data-owner-instagram-content]");
+  if (!api || !card) return;
+  try {
+    await ownerInstagramJson(`${api}/contents/${card.dataset.ownerInstagramContent}/final-assets`, { method: "POST", body: new FormData(event.currentTarget) });
+    await loadOwnerInstagramPanel();
+  } catch (error) { byId("owner-instagram-status").textContent = error.message; }
+}
+
 let onboardingReadiness = null;
 
 document.querySelectorAll("[data-tab]").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
+byId("owner-instagram-business").addEventListener("change", loadOwnerInstagramPanel);
+byId("owner-instagram-refresh").addEventListener("click", loadOwnerInstagramPanel);
+byId("owner-instagram-enabled").addEventListener("change", updateOwnerInstagramService);
+byId("owner-instagram-raw-form").addEventListener("submit", uploadOwnerInstagramRaw);
+byId("owner-instagram-create-form").addEventListener("submit", createOwnerInstagramContent);
+byId("owner-instagram-content-list").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-owner-instagram-action]");
+  if (button) handleOwnerInstagramAction(button);
+});
+byId("owner-instagram-content-list").addEventListener("submit", (event) => {
+  if (event.target.matches("[data-owner-final-upload]")) uploadOwnerInstagramFinal(event);
+});
 byId("refresh-button").addEventListener("click", async () => {
   const button = byId("refresh-button");
   button.disabled = true;
@@ -1491,6 +1657,7 @@ byId("refresh-button").addEventListener("click", async () => {
     if (activeTab === "businesses" && typeof loadOwnerBusinessAccessIndex === "function") await loadOwnerBusinessAccessIndex(true);
     if (activeTab === "new-business" && typeof loadOwnerOnboardingHub === "function") await loadOwnerOnboardingHub(true);
     if (activeTab === "integrations" && typeof loadOwnerIntegrationsHub === "function") await loadOwnerIntegrationsHub(true);
+    if (activeTab === "instagram-content") await loadOwnerInstagramPanel();
     if (activeTab === "incidents") await loadIncidents();
     if (activeTab === "queues") await loadQueueStatus();
     if (activeTab === "operations" && typeof loadOwnerOperationsHub === "function") await loadOwnerOperationsHub(true);

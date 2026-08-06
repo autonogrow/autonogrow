@@ -22,6 +22,14 @@ POST_BASELINE_TABLES = {
     "worker_heartbeats",
     "operational_states",
     "backup_records",
+    "instagram_content_settings",
+    "instagram_raw_assets",
+    "instagram_contents",
+    "instagram_final_assets",
+    "instagram_content_versions",
+    "instagram_content_version_assets",
+    "instagram_content_validations",
+    "instagram_content_comments",
 }
 
 CRITICAL_COLUMNS: dict[str, set[str]] = {

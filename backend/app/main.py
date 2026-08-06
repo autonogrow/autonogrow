@@ -34,6 +34,8 @@ from app.routers.conversations import (
 from app.routers.customer import router as customer_router
 from app.routers.customers import router as customers_router
 from app.routers.health import router as health_router
+from app.routers.instagram_content import admin_router as instagram_content_admin_router
+from app.routers.instagram_content import owner_router as instagram_content_owner_router
 from app.routers.instagram_oauth import admin_router as instagram_oauth_admin_router
 from app.routers.instagram_oauth import callback_router as instagram_oauth_callback_router
 from app.routers.instagram_oauth import owner_router as instagram_oauth_owner_router
@@ -149,6 +151,8 @@ app.include_router(instagram_webhook_router)
 app.include_router(instagram_oauth_callback_router)
 app.include_router(instagram_oauth_admin_router)
 app.include_router(instagram_oauth_owner_router)
+app.include_router(instagram_content_admin_router)
+app.include_router(instagram_content_owner_router)
 app.include_router(whatsapp_webhook_router)
 app.include_router(whatsapp_embedded_signup_admin_router)
 app.include_router(whatsapp_embedded_signup_owner_router)

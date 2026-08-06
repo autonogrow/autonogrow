@@ -38,6 +38,8 @@ let conversationAutomation = null;
 let businessIntegrationStatus = null;
 let businessChannelOnboarding = null;
 let businessChannelHealth = [];
+let adminInstagramSettings = null;
+let adminInstagramContents = [];
 let conversationSuggestions = [];
 let selectedConversationSuggestionId = null;
 let conversationSuggestionNotice = null;
@@ -435,9 +437,11 @@ function applyRoleVisibility() {
   const allowed = new Set(["summary", "bookings", "conversations"]);
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
     tab.hidden = tab.classList.contains("admin-tab--legacy") || (staffOnly && !allowed.has(tab.dataset.section));
+    if (tab.dataset.section === "instagram-content" && adminAuthUser?.is_owner) tab.hidden = true;
   });
   document.querySelectorAll("[data-admin-section]").forEach((section) => {
     if (staffOnly && !allowed.has(section.dataset.adminSection)) section.hidden = true;
+    if (section.dataset.adminSection === "instagram-content" && adminAuthUser?.is_owner) section.hidden = true;
   });
   document.getElementById("booking-staff-filter-field").hidden = staffOnly;
   document.querySelectorAll("[data-conversation-admin-only]").forEach((element) => {
@@ -500,6 +504,7 @@ function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = fal
   if (CONFIGURATION_SECTIONS.has(targetSection)) renderConfigurationOverview();
   if (CHANNEL_HUB_SECTIONS.has(targetSection)) renderChannelHubNavigation();
   if (GROWTH_HUB_SECTIONS.has(targetSection)) renderGrowthNavigation();
+  if (targetSection === "instagram-content") loadAdminInstagramPanel();
   return true;
 }
 
@@ -6321,7 +6326,116 @@ function setupAdminDelegatedActions() {
   });
 }
 
+function adminInstagramApi() {
+  return `${API_BASE_URL}/api/admin/businesses/${encodeURIComponent(getBusinessSlug())}/instagram-content`;
+}
+
+function adminInstagramStateLabel(status) {
+  return ({ draft: "Borrador", ready_for_review: "Listo para revisión", changes_requested: "Cambios solicitados", validated: "Validado", scheduled: "Programado (sin publicación)", cancelled: "Cancelado" })[status] || status;
+}
+
+async function adminInstagramJson(url, options = {}) {
+  const response = await fetch(url, options);
+  let body = {};
+  try { body = await response.json(); } catch (_error) { body = {}; }
+  if (!response.ok) throw new Error(body.detail || "No se pudo completar la operación editorial.");
+  return body;
+}
+
+function renderAdminInstagramRaw(assets) {
+  document.getElementById("admin-instagram-raw-list").innerHTML = assets.length
+    ? assets.map((asset) => `<a class="instagram-asset-chip" href="${API_BASE_URL}${escapeHtml(asset.file_url)}" target="_blank" rel="noopener">${escapeHtml(asset.label || asset.original_filename)}</a>`).join("")
+    : `<p class="helper">Todavía no hay material bruto.</p>`;
+}
+
+function renderAdminInstagramContents() {
+  const container = document.getElementById("admin-instagram-content-list");
+  if (!adminInstagramContents.length) {
+    container.innerHTML = `<p class="helper">El Owner todavía no ha preparado contenido final.</p>`;
+    return;
+  }
+  container.innerHTML = adminInstagramContents.map((item) => {
+    const version = item.current_version;
+    const assets = version.assets.map((asset) => `<a class="instagram-final-preview" href="${API_BASE_URL}${escapeHtml(asset.file_url)}" target="_blank" rel="noopener"><span>${asset.is_cover ? "Portada · " : ""}${escapeHtml(asset.original_filename)}</span></a>`).join("");
+    const history = item.versions.map((candidate) => `<li>v${candidate.version_number} · ${escapeHtml(candidate.format)}${candidate.validation ? candidate.validation.invalidated_at ? " · validación invalidada" : " · validada" : ""}</li>`).join("");
+    return `<article class="instagram-content-card" data-admin-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(adminInstagramStateLabel(item.status))} · versión ${version.version_number}</p></div><span class="ag-badge ag-badge--neutral">${item.planned_publish_at ? escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(new Date(item.planned_publish_at))) : "Sin fecha"}</span></header><p class="instagram-caption">${escapeHtml(version.caption) || "Sin caption"}</p><div class="instagram-final-assets">${assets || "<p class='helper'>Sin assets finales.</p>"}</div><details><summary>Historial de versiones</summary><ul>${history}</ul></details>${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong><p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}<form data-admin-instagram-comment><input type="hidden" name="version_id" value="${version.id}"><label>Tipo<select name="kind"><option value="comment">Comentario</option><option value="proposal">Propuesta</option><option value="change_request">Solicitar cambios</option></select></label><label>Mensaje<textarea name="body" maxlength="4000" required rows="3"></textarea></label><button class="btn btn-secondary" type="submit">Enviar</button></form>${item.status === "ready_for_review" ? `<button class="btn btn-primary" type="button" data-admin-instagram-validate data-content-id="${item.id}" data-version-id="${version.id}">Validar esta versión</button>` : ""}</article>`;
+  }).join("");
+}
+
+async function loadAdminInstagramPanel() {
+  if (isBusinessStaff() || adminAuthUser?.is_owner) return;
+  const status = document.getElementById("admin-instagram-status");
+  const api = adminInstagramApi();
+  status.textContent = "Cargando flujo editorial…";
+  try {
+    adminInstagramSettings = await adminInstagramJson(`${api}/settings`);
+    const enabled = adminInstagramSettings.enabled;
+    document.getElementById("admin-instagram-disabled").hidden = enabled;
+    document.getElementById("admin-instagram-workspace").hidden = !enabled;
+    document.getElementById("admin-instagram-owner-validation").checked = adminInstagramSettings.owner_can_validate_instagram_content;
+    if (!enabled) { status.textContent = "Servicio pendiente de activación por Owner."; return; }
+    const [raw, contentList] = await Promise.all([
+      adminInstagramJson(`${api}/raw-assets`),
+      adminInstagramJson(`${api}/contents`)
+    ]);
+    adminInstagramContents = await Promise.all(contentList.contents.map((item) => adminInstagramJson(`${api}/contents/${item.id}`)));
+    renderAdminInstagramRaw(raw.assets);
+    renderAdminInstagramContents();
+    status.textContent = `${adminInstagramContents.length} contenidos · ${raw.assets.length} materiales brutos`;
+  } catch (error) { status.textContent = error.message; }
+}
+
+async function updateAdminInstagramDelegation() {
+  const input = document.getElementById("admin-instagram-owner-validation");
+  try {
+    await adminInstagramJson(`${adminInstagramApi()}/settings/validation-delegation`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ owner_can_validate_instagram_content: input.checked }) });
+    await loadAdminInstagramPanel();
+  } catch (error) {
+    input.checked = !input.checked;
+    document.getElementById("admin-instagram-status").textContent = error.message;
+  }
+}
+
+async function uploadAdminInstagramRaw(event) {
+  event.preventDefault();
+  try {
+    await adminInstagramJson(`${adminInstagramApi()}/raw-assets`, { method: "POST", body: new FormData(event.currentTarget) });
+    event.currentTarget.reset();
+    await loadAdminInstagramPanel();
+  } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
+}
+
+async function submitAdminInstagramComment(event) {
+  event.preventDefault();
+  const card = event.currentTarget.closest("[data-admin-instagram-content]");
+  const data = new FormData(event.currentTarget);
+  if (!card) return;
+  try {
+    await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version_id: Number(data.get("version_id")), kind: data.get("kind"), body: data.get("body") }) });
+    await loadAdminInstagramPanel();
+  } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
+}
+
+async function validateAdminInstagram(button) {
+  try {
+    button.disabled = true;
+    await adminInstagramJson(`${adminInstagramApi()}/contents/${button.dataset.contentId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version_id: Number(button.dataset.versionId) }) });
+    await loadAdminInstagramPanel();
+  } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
+  finally { button.disabled = false; }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("admin-instagram-refresh").addEventListener("click", loadAdminInstagramPanel);
+  document.getElementById("admin-instagram-owner-validation").addEventListener("change", updateAdminInstagramDelegation);
+  document.getElementById("admin-instagram-raw-form").addEventListener("submit", uploadAdminInstagramRaw);
+  document.getElementById("admin-instagram-content-list").addEventListener("submit", (event) => {
+    if (event.target.matches("[data-admin-instagram-comment]")) submitAdminInstagramComment(event);
+  });
+  document.getElementById("admin-instagram-content-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-admin-instagram-validate]");
+    if (button) validateAdminInstagram(button);
+  });
   setupAdminDelegatedActions();
   setupBusinessConfiguration();
   setupChannelHub();

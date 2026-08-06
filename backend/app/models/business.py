@@ -115,6 +115,18 @@ class Business(Base):
         back_populates="business",
         cascade="all, delete-orphan",
     )
+    instagram_content_settings = relationship(
+        "InstagramContentSettings",
+        back_populates="business",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    instagram_raw_assets = relationship(
+        "InstagramRawAsset", back_populates="business", cascade="all, delete-orphan"
+    )
+    instagram_contents = relationship(
+        "InstagramContent", back_populates="business", cascade="all, delete-orphan"
+    )
     whatsapp_embedded_signup_attempts = relationship(
         "WhatsAppEmbeddedSignupAttempt",
         back_populates="business",

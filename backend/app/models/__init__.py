@@ -33,6 +33,16 @@ from app.models.conversation import (
 )
 from app.models.customer import Customer
 from app.models.google_integration import GoogleIntegration
+from app.models.instagram_content import (
+    InstagramContent,
+    InstagramContentComment,
+    InstagramContentSettings,
+    InstagramContentValidation,
+    InstagramContentVersion,
+    InstagramContentVersionAsset,
+    InstagramFinalAsset,
+    InstagramRawAsset,
+)
 from app.models.instagram_oauth_attempt import InstagramOAuthAttempt
 from app.models.message_outbox import MessageOutbox
 from app.models.meta_integration_job import MetaIntegrationJob
@@ -58,6 +68,14 @@ __all__ = [
     "BusinessUserAvailabilityException",
     "GoogleIntegration",
     "InstagramOAuthAttempt",
+    "InstagramContent",
+    "InstagramContentComment",
+    "InstagramContentSettings",
+    "InstagramContentValidation",
+    "InstagramContentVersion",
+    "InstagramContentVersionAsset",
+    "InstagramFinalAsset",
+    "InstagramRawAsset",
     "WhatsAppEmbeddedSignupAttempt",
     "SyncJob",
     "ReviewRequest",
