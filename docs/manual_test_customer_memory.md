@@ -2,7 +2,7 @@
 
 ## Preparación
 
-1. Aplicar `alembic upgrade head` y confirmar una sola head `20260814_17`.
+1. Aplicar `alembic upgrade head` y confirmar una sola head vigente (`20260814_18` o posterior).
 2. Entrar en Admin con un negocio de prueba y tener conversaciones vinculables por teléfono a reservas reales.
 3. Probar con admin y staff; no usar información médica, credenciales ni tarjetas reales.
 

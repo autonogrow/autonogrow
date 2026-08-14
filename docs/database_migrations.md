@@ -1,6 +1,6 @@
 # Migraciones de base de datos
 
-La head de Sprint 8C es `20260814_17`, sucesora única de `20260814_16`. Añade `customer_memory_items` con categorías, fuentes, lifecycle, trazabilidad y FK en cascada para Customer Memory. Sprint 8B permanece en `20260814_16` con señales agregadas de crecimiento y eventos comerciales. Las revisiones usan constraints compatibles con SQLite/PostgreSQL.
+La head vigente de Sprint 9A es `20260814_18`, sucesora única de `20260814_17`. Añade reseñas recibidas utilizables, propuestas de contenido y su relación N:M con Growth Signals. Sprint 8C permanece en `20260814_17` con Customer Memory. Las revisiones usan constraints compatibles con SQLite/PostgreSQL.
 
 La head vigente es `20260730_06`. Añade estado operativo, metadatos de backup y `request_id` nullable en inbox/outbox; baja a `20260730_05` solo con servicio detenido, backup verificado y código compatible.
 

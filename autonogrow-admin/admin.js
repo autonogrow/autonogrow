@@ -49,6 +49,8 @@ let businessChannelOnboarding = null;
 let businessChannelHealth = [];
 let adminInstagramSettings = null;
 let adminInstagramContents = [];
+let socialContentProposals = [];
+const socialContentProposalMutationIds = new Set();
 let conversationSuggestions = [];
 let selectedConversationSuggestionId = null;
 let conversationSuggestionNotice = null;
@@ -6867,6 +6869,69 @@ function adminInstagramApi() {
   return `${API_BASE_URL}/api/admin/businesses/${encodeURIComponent(getBusinessSlug())}/instagram-content`;
 }
 
+function socialContentProposalsApi() {
+  return `${API_BASE_URL}/api/admin/businesses/${encodeURIComponent(getBusinessSlug())}/social-content-proposals`;
+}
+
+function socialContentLabel(kind, value) {
+  const labels = {
+    priority: { high: "Alta prioridad", normal: "Prioridad normal", low: "Prioridad baja" },
+    objective: { increase_bookings: "aumentar reservas", reactivate_customers: "favorecer el retorno", promote_service: "dar visibilidad al servicio", seasonal_activation: "activar una ventana estacional", social_proof: "generar prueba social", educate: "educar", engagement: "generar interacción", fill_capacity: "llenar agenda" },
+    format: { story: "Story", reel: "Reel", carousel: "Carrusel", static_post: "Post estático" },
+    angle: { availability: "disponibilidad", before_after: "antes y después", process: "proceso", faq: "pregunta frecuente", benefit: "beneficio general", testimonial: "testimonio", seasonal: "estacional", limited_window: "ventana limitada", educational: "educativo", behind_the_scenes: "entre bastidores" },
+    cta: { book_now: "Reservar", check_availability: "Consultar disponibilidad", contact_us: "Contactar", learn_more: "Saber más", discover_service: "Descubrir servicio", none: "Sin CTA" }
+  };
+  return labels[kind]?.[value] || value;
+}
+
+function renderSocialContentProposals() {
+  const container = document.getElementById("social-content-ideas-list");
+  if (!socialContentProposals.length) {
+    container.innerHTML = `<div class="conversation-state conversation-state--compact"><strong>No hay ideas activas ahora</strong><p>La siguiente evaluación volverá a revisar las señales y el contenido evergreen.</p></div>`;
+    return;
+  }
+  container.innerHTML = socialContentProposals.map((item) => {
+    const busy = socialContentProposalMutationIds.has(item.id);
+    const service = item.service?.name || "Idea general";
+    const formats = item.recommended_formats.map((format) => socialContentLabel("format", format)).join(" + ");
+    const assets = item.available_assets.available ? `${item.available_assets.count} materiales disponibles en el negocio` : "Se necesita material visual";
+    return `<article class="instagram-content-card" data-social-content-proposal="${item.id}"><header><div><h4>${escapeHtml(service)}</h4><p>${escapeHtml(socialContentLabel("priority", item.priority))}</p></div><span class="ag-badge ag-badge--neutral">${escapeHtml(formats)}</span></header><p>${escapeHtml(item.reason_text)}</p><dl><dt>Objetivo</dt><dd>${escapeHtml(socialContentLabel("objective", item.objective))}</dd><dt>Ángulo</dt><dd>${escapeHtml(socialContentLabel("angle", item.angle_code))}</dd><dt>CTA</dt><dd>${escapeHtml(socialContentLabel("cta", item.recommended_cta))}</dd><dt>Material</dt><dd>${escapeHtml(assets)}</dd></dl><div class="growth-action-card-actions"><button class="btn btn-primary" type="button" data-social-proposal-action="accept" ${busy ? "disabled" : ""}>Usar idea</button><button class="btn btn-secondary" type="button" data-social-proposal-action="dismiss" ${busy ? "disabled" : ""}>Descartar</button></div></article>`;
+  }).join("");
+}
+
+async function loadSocialContentProposals() {
+  const status = document.getElementById("social-content-ideas-status");
+  status.textContent = "Cargando ideas recomendadas…";
+  try {
+    const body = await adminInstagramJson(`${socialContentProposalsApi()}?status=active`);
+    socialContentProposals = body.proposals || [];
+    renderSocialContentProposals();
+    status.textContent = `${socialContentProposals.length} ideas activas`;
+  } catch (error) {
+    socialContentProposals = [];
+    renderSocialContentProposals();
+    status.textContent = error.message;
+  }
+}
+
+async function mutateSocialContentProposal(button) {
+  const card = button.closest("[data-social-content-proposal]");
+  const proposalId = Number(card?.dataset.socialContentProposal);
+  const action = button.dataset.socialProposalAction;
+  if (!Number.isInteger(proposalId) || !["accept", "dismiss"].includes(action) || socialContentProposalMutationIds.has(proposalId)) return;
+  socialContentProposalMutationIds.add(proposalId);
+  renderSocialContentProposals();
+  try {
+    await adminInstagramJson(`${socialContentProposalsApi()}/${proposalId}/${action}`, { method: "POST" });
+    await loadSocialContentProposals();
+  } catch (error) {
+    document.getElementById("social-content-ideas-status").textContent = error.message;
+  } finally {
+    socialContentProposalMutationIds.delete(proposalId);
+    renderSocialContentProposals();
+  }
+}
+
 function adminInstagramStateLabel(status) {
   return ({ draft: "Borrador", ready_for_review: "Listo para revisión", changes_requested: "Cambios solicitados", validated: "Validado", scheduled: "Programado", published: "Publicado (simulado)", cancelled: "Cancelado" })[status] || status;
 }
@@ -6912,13 +6977,14 @@ async function loadAdminInstagramPanel() {
   const status = document.getElementById("admin-instagram-status");
   const api = adminInstagramApi();
   status.textContent = "Cargando flujo editorial…";
+  const proposalsPromise = loadSocialContentProposals();
   try {
     adminInstagramSettings = await adminInstagramJson(`${api}/settings`);
     const enabled = adminInstagramSettings.enabled;
     document.getElementById("admin-instagram-disabled").hidden = enabled;
     document.getElementById("admin-instagram-workspace").hidden = !enabled;
     document.getElementById("admin-instagram-owner-validation").checked = adminInstagramSettings.owner_can_validate_instagram_content;
-    if (!enabled) { status.textContent = "Servicio pendiente de activación por Owner."; return; }
+    if (!enabled) { status.textContent = "Servicio pendiente de activación por Owner."; await proposalsPromise; return; }
     const [raw, contentList] = await Promise.all([
       adminInstagramJson(`${api}/raw-assets`),
       adminInstagramJson(`${api}/contents`)
@@ -6926,6 +6992,7 @@ async function loadAdminInstagramPanel() {
     adminInstagramContents = await Promise.all(contentList.contents.map((item) => adminInstagramJson(`${api}/contents/${item.id}`)));
     renderAdminInstagramRaw(raw.assets);
     renderAdminInstagramContents();
+    await proposalsPromise;
     status.textContent = `${adminInstagramContents.length} contenidos · ${raw.assets.length} materiales brutos`;
   } catch (error) { status.textContent = error.message; }
 }
@@ -6980,6 +7047,10 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("admin-instagram-content-list").addEventListener("click", (event) => {
     const button = event.target.closest("[data-admin-instagram-validate]");
     if (button) validateAdminInstagram(button);
+  });
+  document.getElementById("social-content-ideas-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-social-proposal-action]");
+    if (button) mutateSocialContentProposal(button);
   });
   setupAdminDelegatedActions();
   setupBusinessConfiguration();

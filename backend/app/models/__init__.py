@@ -54,6 +54,11 @@ from app.models.operations import BackupRecord, OperationalState
 from app.models.opportunity_action import BookingAttribution, OpportunityAction
 from app.models.review_request import ReviewRequest
 from app.models.service import BusinessService
+from app.models.social_content_proposal import (
+    BusinessReview,
+    SocialContentProposal,
+    SocialContentProposalSignal,
+)
 from app.models.sync_job import SyncJob
 from app.models.system_incident import SystemIncident
 from app.models.user import User
@@ -92,6 +97,9 @@ __all__ = [
     "WhatsAppEmbeddedSignupAttempt",
     "SyncJob",
     "ReviewRequest",
+    "BusinessReview",
+    "SocialContentProposal",
+    "SocialContentProposalSignal",
     "MessageOutbox",
     "MetaIntegrationJob",
     "BackupRecord",

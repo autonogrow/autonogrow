@@ -37,6 +37,7 @@ MODEL_MODULES = (
     "app.models.meta_integration_job",
     "app.models.operations",
     "app.models.review_request",
+    "app.models.social_content_proposal",
     "app.models.service",
     "app.models.sync_job",
     "app.models.system_incident",

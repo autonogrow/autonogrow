@@ -93,6 +93,9 @@ class Business(Base):
     review_requests = relationship(
         "ReviewRequest", back_populates="business", cascade="all, delete-orphan"
     )
+    received_reviews = relationship(
+        "BusinessReview", back_populates="business", cascade="all, delete-orphan"
+    )
     message_outbox = relationship(
         "MessageOutbox", back_populates="business", cascade="all, delete-orphan"
     )
@@ -169,6 +172,9 @@ class Business(Base):
     )
     growth_signals = relationship(
         "BusinessGrowthSignal", back_populates="business", cascade="all, delete-orphan"
+    )
+    social_content_proposals = relationship(
+        "SocialContentProposal", back_populates="business", cascade="all, delete-orphan"
     )
     calendar_events = relationship(
         "BusinessCalendarEvent", back_populates="business", cascade="all, delete-orphan"
