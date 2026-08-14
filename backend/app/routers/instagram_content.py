@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -43,6 +44,8 @@ from app.services.instagram_publish_service import (
     cancel_business_jobs,
     cancel_publish_job,
     normalize_planned_datetime,
+    publication_history_events,
+    publication_metrics,
     retry_publish_job,
     serialize_publish_job,
     sync_publish_job,
@@ -312,6 +315,18 @@ def admin_get_settings(
     return serialize_settings(settings)
 
 
+@admin_router.get("/publication-metrics")
+def admin_get_publication_metrics(
+    business_slug: str,
+    actor: User = Depends(require_instagram_business_admin),
+    db: Session = Depends(get_db),
+):
+    del actor
+    business = _admin_business(db, business_slug)
+    require_service_enabled(db, business.id)
+    return publication_metrics(db, business.id)
+
+
 @admin_router.patch("/settings/validation-delegation")
 def admin_update_validation_delegation(
     business_slug: str,
@@ -481,13 +496,21 @@ def owner_create_content(
     return serialize_content(db, content, _owner_prefix(business_id), detailed=True)
 
 
-def _content_detail(db: Session, business_id: int, content_id: int, api_prefix: str) -> dict:
+def _content_detail(
+    db: Session,
+    business_id: int,
+    content_id: int,
+    api_prefix: str,
+    *,
+    owner_technical: bool = True,
+) -> dict:
     require_service_enabled(db, business_id)
     return serialize_content(
         db,
         content_or_404(db, business_id, content_id),
         api_prefix,
         detailed=True,
+        owner_technical=owner_technical,
     )
 
 
@@ -506,7 +529,13 @@ def admin_get_content(
 ):
     del actor
     business = _admin_business(db, business_slug)
-    return _content_detail(db, business.id, content_id, _admin_prefix(business_slug))
+    return _content_detail(
+        db,
+        business.id,
+        content_id,
+        _admin_prefix(business_slug),
+        owner_technical=False,
+    )
 
 
 @owner_router.post("/contents/{content_id}/final-assets", status_code=201)
@@ -536,6 +565,7 @@ async def owner_upload_final_asset(
         storage_key=storage_key,
         media_type=media_type,
         size_bytes=len(file_content),
+        sha256=hashlib.sha256(file_content).hexdigest(),
     )
     db.add(asset)
     db.flush()
@@ -653,12 +683,17 @@ def owner_update_planned_date(
     planned = normalize_planned_datetime(payload.planned_publish_at, _business_timezone(business))
     old_value = content.planned_publish_at
     content.planned_publish_at = planned
-    if content.status in {"validated", "scheduled"}:
+    if content.status == "scheduled":
         if planned is None:
             cancel_publish_job(db, content, reason="planned_date_removed", actor=actor)
             content.status = "validated"
         else:
-            sync_publish_job(db, content, actor=actor)
+            job = sync_publish_job(db, content, actor=actor)
+            if job.status != "queued":
+                raise HTTPException(
+                    status_code=409,
+                    detail=job.safe_error_message or "Publishing preflight failed",
+                )
     _audit(
         db,
         request=request,
@@ -675,6 +710,62 @@ def owner_update_planned_date(
     db.commit()
     db.refresh(content)
     return serialize_content(db, content, _owner_prefix(business_id), detailed=True)
+
+
+@admin_router.patch("/contents/{content_id}/planned-date")
+@admin_router.patch("/contents/{content_id}/publish-job/reschedule")
+def admin_update_planned_date(
+    business_slug: str,
+    content_id: int,
+    payload: InstagramPlannedDateUpdate,
+    request: Request,
+    actor: User = Depends(require_instagram_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = _admin_business(db, business_slug)
+    require_service_enabled(db, business.id)
+    content = content_or_404(db, business.id, content_id, for_update=True)
+    if content.status in {"cancelled", "published"}:
+        raise HTTPException(status_code=409, detail="Terminal content cannot be edited")
+    planned = normalize_planned_datetime(
+        payload.planned_publish_at,
+        _business_timezone(business),
+    )
+    old_value = content.planned_publish_at
+    content.planned_publish_at = planned
+    if content.status == "scheduled":
+        if planned is None:
+            cancel_publish_job(db, content, reason="planned_date_removed", actor=actor)
+            content.status = "validated"
+        else:
+            job = sync_publish_job(db, content, actor=actor)
+            if job.status != "queued":
+                raise HTTPException(
+                    status_code=409,
+                    detail=job.safe_error_message or "Publishing preflight failed",
+                )
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        action="instagram_content_planned_date_updated",
+        resource_type="instagram_content",
+        resource_id=content.id,
+        metadata={
+            "old_value": old_value.isoformat() if old_value else None,
+            "new_value": planned.isoformat() if planned else None,
+        },
+    )
+    db.commit()
+    db.refresh(content)
+    return serialize_content(
+        db,
+        content,
+        _admin_prefix(business_slug),
+        detailed=True,
+        owner_technical=False,
+    )
 
 
 @owner_router.patch("/contents/{content_id}/title")
@@ -794,7 +885,9 @@ def owner_cancel_content(
     )
 
 
-def _publish_job_history(db: Session, business_id: int, content_id: int) -> dict:
+def _publish_job_history(
+    db: Session, business_id: int, content_id: int, *, owner_technical: bool = True
+) -> dict:
     content_or_404(db, business_id, content_id)
     jobs = (
         db.query(InstagramPublishJob)
@@ -805,7 +898,15 @@ def _publish_job_history(db: Session, business_id: int, content_id: int) -> dict
         .order_by(InstagramPublishJob.created_at.desc(), InstagramPublishJob.id.desc())
         .all()
     )
-    return {"jobs": [serialize_publish_job(job) for job in jobs]}
+    return {
+        "jobs": [serialize_publish_job(job, owner_technical=owner_technical) for job in jobs],
+        "events": publication_history_events(
+            db,
+            business_id,
+            content_id,
+            owner_technical=owner_technical,
+        ),
+    }
 
 
 @owner_router.get("/contents/{content_id}/publish-jobs", response_model=InstagramPublishJobHistory)
@@ -823,7 +924,7 @@ def admin_publish_job_history(
 ):
     del actor
     business = _admin_business(db, business_slug)
-    return _publish_job_history(db, business.id, content_id)
+    return _publish_job_history(db, business.id, content_id, owner_technical=False)
 
 
 @owner_router.post("/contents/{content_id}/publish-now", response_model=InstagramPublishJobRead)
@@ -838,6 +939,11 @@ def owner_publish_now(
     require_service_enabled(db, business_id)
     content = content_or_404(db, business_id, content_id, for_update=True)
     job = sync_publish_job(db, content, actor=actor, now=utc_now(), force_now=True)
+    if job.status != "queued":
+        raise HTTPException(
+            status_code=409,
+            detail=job.safe_error_message or "Publishing preflight failed",
+        )
     _audit(
         db,
         request=request,
@@ -888,6 +994,108 @@ def owner_retry_publish_job(
     job = retry_publish_job(db, content, actor)
     db.commit()
     return serialize_publish_job(job)
+
+
+@admin_router.post("/contents/{content_id}/schedule")
+def admin_schedule_content(
+    business_slug: str,
+    content_id: int,
+    request: Request,
+    actor: User = Depends(require_instagram_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = _admin_business(db, business_slug)
+    content = schedule_content(db, business.id, content_id, actor)
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        action="instagram_content_schedule",
+        resource_type="instagram_content",
+        resource_id=content.id,
+        metadata={"new_status": content.status},
+    )
+    db.commit()
+    db.refresh(content)
+    return serialize_content(
+        db,
+        content,
+        _admin_prefix(business_slug),
+        detailed=True,
+        owner_technical=False,
+    )
+
+
+@admin_router.post("/contents/{content_id}/publish-now", response_model=InstagramPublishJobRead)
+def admin_publish_now(
+    business_slug: str,
+    content_id: int,
+    request: Request,
+    actor: User = Depends(require_instagram_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = _admin_business(db, business_slug)
+    require_service_enabled(db, business.id)
+    content = content_or_404(db, business.id, content_id, for_update=True)
+    job = sync_publish_job(db, content, actor=actor, now=utc_now(), force_now=True)
+    if job.status != "queued":
+        raise HTTPException(
+            status_code=409,
+            detail=job.safe_error_message or "Publishing preflight failed",
+        )
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        action="publish_now_requested",
+        resource_type="instagram_publish_job",
+        resource_id=job.id,
+        metadata={"content_id": content_id, "version_id": job.content_version_id},
+    )
+    db.commit()
+    return serialize_publish_job(job, owner_technical=False)
+
+
+@admin_router.post(
+    "/contents/{content_id}/publish-job/cancel",
+    response_model=InstagramPublishJobRead,
+)
+def admin_cancel_publish_job(
+    business_slug: str,
+    content_id: int,
+    actor: User = Depends(require_instagram_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = _admin_business(db, business_slug)
+    require_service_enabled(db, business.id)
+    content = content_or_404(db, business.id, content_id, for_update=True)
+    job = cancel_publish_job(db, content, reason="cancelled_by_business_admin", actor=actor)
+    if job is None:
+        raise HTTPException(status_code=409, detail="No active publish job is available")
+    if content.status == "scheduled":
+        content.status = "validated"
+    db.commit()
+    return serialize_publish_job(job, owner_technical=False)
+
+
+@admin_router.post(
+    "/contents/{content_id}/publish-job/retry",
+    response_model=InstagramPublishJobRead,
+)
+def admin_retry_publish_job(
+    business_slug: str,
+    content_id: int,
+    actor: User = Depends(require_instagram_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = _admin_business(db, business_slug)
+    require_service_enabled(db, business.id)
+    content = content_or_404(db, business.id, content_id, for_update=True)
+    job = retry_publish_job(db, content, actor)
+    db.commit()
+    return serialize_publish_job(job, owner_technical=False)
 
 
 @admin_router.post("/contents/{content_id}/comments", status_code=201)
@@ -961,11 +1169,24 @@ def _validate_and_commit(
             "content_id": content_id,
             "version_id": version_id,
             "validator_role": role,
+            "approved_asset_ids": [
+                link.asset_id
+                for link in sorted(
+                    validation.version.asset_links,
+                    key=lambda item: item.position,
+                )
+            ],
         },
     )
     db.commit()
     content = content_or_404(db, business_id, content_id)
-    return serialize_content(db, content, api_prefix, detailed=True)
+    return serialize_content(
+        db,
+        content,
+        api_prefix,
+        detailed=True,
+        owner_technical=role == "owner_delegate",
+    )
 
 
 @admin_router.post("/contents/{content_id}/validate")

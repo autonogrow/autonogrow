@@ -776,7 +776,7 @@
     </div>
 
     <section class="section admin-section instagram-editorial" data-admin-section="instagram-content" aria-labelledby="admin-instagram-content-title">
-      <div class="section-heading"><div><p class="eyebrow">Revisión y planificación</p><h2 id="admin-instagram-content-title">Contenido de Instagram</h2><p>Revisa y valida versiones; consulta la programación y publicación simulada en modo solo lectura.</p></div><button id="admin-instagram-refresh" class="btn btn-secondary" type="button">Actualizar</button></div>
+      <div class="section-heading"><div><p class="eyebrow">Revisión y planificación</p><h2 id="admin-instagram-content-title">Contenido de Instagram</h2><p>Aprueba la versión y sus assets, programa o publica ahora, y consulta cada intento.</p></div><button id="admin-instagram-refresh" class="btn btn-secondary" type="button">Actualizar</button></div>
       <p id="admin-instagram-status" class="status-text" aria-live="polite"></p>
       <section class="instagram-editorial-card" aria-labelledby="social-content-ideas-title">
         <div><p class="eyebrow">Inteligencia comercial</p><h3 id="social-content-ideas-title">Ideas recomendadas</h3><p>Propuestas explicables a partir de señales agregadas del negocio. Usar una idea todavía no crea ni publica contenido.</p></div>
@@ -785,6 +785,7 @@
       </section>
       <div id="admin-instagram-disabled" class="instagram-editorial-card" hidden><h3>Servicio no activo</h3><p>El Owner debe activar la gestión adicional para este negocio.</p></div>
       <div id="admin-instagram-workspace" hidden>
+        <section class="instagram-editorial-card" aria-labelledby="admin-instagram-planning-title"><div><h3 id="admin-instagram-planning-title">Plan de publicación</h3><p>Resumen operativo y próximas publicaciones en la zona horaria del negocio.</p></div><div id="admin-instagram-planning-summary" aria-live="polite"></div></section>
         <section class="instagram-editorial-card"><div><h3>Delegación de validación</h3><p>Autoriza explícitamente al Owner para validar en nombre del negocio.</p></div><label class="checkbox-row"><input id="admin-instagram-owner-validation" type="checkbox"> El Owner puede validar contenido</label></section>
         <section class="instagram-editorial-card"><h3>Material bruto</h3><form id="admin-instagram-raw-form" class="instagram-inline-form"><label>Etiqueta<input name="label" maxlength="240"></label><label>Imagen<input name="file" type="file" accept="image/jpeg,image/png,image/webp" required></label><button class="btn btn-secondary" type="submit">Subir</button></form><div id="admin-instagram-raw-list" class="instagram-asset-list"></div></section>
         <section class="instagram-editorial-card"><h3>Versiones finales</h3><div id="admin-instagram-content-list" class="instagram-content-list"></div></section>

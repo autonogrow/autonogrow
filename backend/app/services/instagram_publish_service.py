@@ -2,32 +2,131 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
-from sqlalchemy import Select, and_, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.config import Settings, get_settings
 from app.models import (
+    AuditLog,
     BusinessChannelControl,
     BusinessChannelIntegration,
     InstagramContent,
+    InstagramContentSettings,
     InstagramContentValidation,
     InstagramContentVersion,
     InstagramPublishJob,
     User,
 )
+from app.services.instagram_asset_url_service import resolve_private_asset_path
+from app.services.instagram_image_validation import (
+    validate_instagram_caption,
+    validate_instagram_image,
+)
+from app.services.instagram_login_provider import INSTAGRAM_CONTENT_PUBLISH_SCOPE
+from app.services.instagram_publishing_adapter import InstagramPublishingError
 
-ACTIVE_JOB_STATUSES = {"queued", "claimed", "simulating_publish", "retry_wait"}
+ACTIVE_JOB_STATUSES = {
+    "queued",
+    "claimed",
+    "creating_container",
+    "publishing",
+    "simulating_publish",
+    "retry_wait",
+}
 BLOCKING_HEALTH = {"action_required", "revoked", "suspended", "error"}
 UNCERTAIN_PROVIDER_STATUSES = {
     "unknown_result",
     "unknown_after_claim_expiry",
     "outcome_requires_review",
 }
+
+
+@dataclass(frozen=True)
+class InstagramPublicationPreflight:
+    ok: bool
+    code: str | None
+    safe_message: str | None
+    integration: BusinessChannelIntegration | None
+
+
+def _granted_scopes(raw: str | None) -> set[str]:
+    try:
+        values = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return set()
+    return {value for value in values if isinstance(value, str)} if isinstance(values, list) else set()
+
+
+def publication_preflight(
+    db: Session,
+    content: InstagramContent,
+    *,
+    version: InstagramContentVersion | None = None,
+    settings: Settings | None = None,
+    validate_files: bool = False,
+) -> InstagramPublicationPreflight:
+    """Return the shared, side-effect-free gate used by scheduling and workers."""
+    config = settings or get_settings()
+    current = version or _current_version(db, content)
+    if current is None:
+        return InstagramPublicationPreflight(False, "publish_version_missing", "Content has no version", None)
+    latest = _current_version(db, content)
+    if latest is None or latest.id != current.id:
+        return InstagramPublicationPreflight(False, "publish_version_is_not_current", "Only the current version can be published", None)
+    service = db.get(InstagramContentSettings, content.business_id)
+    if service is None or not service.enabled:
+        return InstagramPublicationPreflight(False, "instagram_content_service_disabled", "Instagram content service is disabled", None)
+    if _active_validation(db, content, current.id) is None:
+        return InstagramPublicationPreflight(False, "publish_validation_revoked", "Current version is not approved", None)
+    integration, issue = integration_eligibility(db, content.business_id)
+    if issue or integration is None:
+        return InstagramPublicationPreflight(False, issue or "instagram_integration_missing", "Instagram integration requires attention", integration)
+    links = sorted(current.asset_links, key=lambda item: item.position)
+    if not links:
+        return InstagramPublicationPreflight(False, "publish_assets_missing", "Approved version has no final assets", integration)
+    if any(link.asset.business_id != content.business_id or link.asset.content_id != content.id for link in links):
+        return InstagramPublicationPreflight(False, "publish_asset_scope_mismatch", "A final asset does not belong to this content", integration)
+    if current.format == "single_image" and len(links) != 1:
+        return InstagramPublicationPreflight(False, "publish_assets_do_not_match_format", "single_image requires one final asset", integration)
+    if current.format == "carousel" and len(links) < 2:
+        return InstagramPublicationPreflight(False, "publish_assets_do_not_match_format", "carousel requires at least two final assets", integration)
+    if config.instagram_publishing_mode == "meta":
+        if current.format != "single_image" or len(links) != 1:
+            return InstagramPublicationPreflight(False, "publishing_not_supported_yet", "Real publishing currently supports one static JPEG only", integration)
+        if not integration.encrypted_access_token or not integration.encryption_key_version:
+            return InstagramPublicationPreflight(False, "instagram_credentials_missing", "Instagram needs to be reconnected", integration)
+        token_expires_at = as_utc(integration.token_expires_at)
+        if token_expires_at is not None and token_expires_at <= utc_now():
+            return InstagramPublicationPreflight(
+                False,
+                "instagram_token_expired",
+                "Instagram access has expired; reconnect the account",
+                integration,
+            )
+        if INSTAGRAM_CONTENT_PUBLISH_SCOPE not in _granted_scopes(integration.granted_scopes_json):
+            return InstagramPublicationPreflight(False, "instagram_publish_scope_missing", "Instagram publishing permission is missing; reconnect the account", integration)
+        if not integration.external_account_id.strip():
+            return InstagramPublicationPreflight(False, "instagram_professional_account_missing", "Instagram professional account identifier is missing", integration)
+        if validate_files:
+            try:
+                validate_instagram_caption(current.caption)
+                root_setting = config.uploads_dir.strip()
+                from app.core.config import get_backend_dir
+
+                root = Path(root_setting) if root_setting else get_backend_dir() / "uploads"
+                root = (root if root.is_absolute() else get_backend_dir() / root).resolve()
+                path = resolve_private_asset_path(links[0].asset.storage_key, root=root)
+                validate_instagram_image(links[0].asset, path)
+            except InstagramPublishingError as exc:
+                return InstagramPublicationPreflight(False, exc.code, exc.safe_message, integration)
+    return InstagramPublicationPreflight(True, None, None, integration)
 
 
 def utc_now() -> datetime:
@@ -127,11 +226,17 @@ def _active_validation(
 
 
 def _audit_job(
-    db: Session, job: InstagramPublishJob, action: str, metadata: dict | None = None
+    db: Session,
+    job: InstagramPublishJob,
+    action: str,
+    metadata: dict | None = None,
+    *,
+    actor: User | None = None,
 ) -> None:
     record_audit(
         db,
         action=action,
+        actor=actor,
         business_id=job.business_id,
         resource_type="instagram_publish_job",
         resource_id=job.id,
@@ -170,7 +275,15 @@ def sync_publish_job(
     if planned is None:
         raise HTTPException(status_code=409, detail="A planned date is required")
     clock = as_utc(now) or utc_now()
-    integration, eligibility_error = integration_eligibility(db, content.business_id)
+    preflight = publication_preflight(
+        db,
+        content,
+        version=current,
+        settings=config,
+        validate_files=config.instagram_publishing_mode == "meta",
+    )
+    integration = preflight.integration
+    eligibility_error = preflight.code if not preflight.ok else None
     status = "queued"
     safe_error: str | None = None
     if not force_now and planned <= clock:
@@ -178,7 +291,7 @@ def sync_publish_job(
         safe_error = "Planned date is in the past; choose a new future date"
     elif eligibility_error:
         status = "action_required"
-        safe_error = eligibility_error
+        safe_error = preflight.safe_message or eligibility_error
     job = (
         db.query(InstagramPublishJob)
         .filter(
@@ -201,12 +314,18 @@ def sync_publish_job(
         raise HTTPException(
             status_code=409, detail="Unknown publish outcomes require manual review"
         )
-    if job is not None and job.status == "simulating_publish":
+    if job is not None and job.status in {"simulating_publish", "publishing"}:
         job.status = "action_required"
         job.safe_error_message = "Schedule changed after publishing execution began"
         job.provider_status = "outcome_requires_review"
         _clear_claim(job)
-        _audit_job(db, job, "publish_action_required", {"reason": "execution_already_started"})
+        _audit_job(
+            db,
+            job,
+            "publish_action_required",
+            {"reason": "execution_already_started"},
+            actor=actor,
+        )
         db.flush()
         return job
     created = job is None
@@ -243,6 +362,7 @@ def sync_publish_job(
         job,
         "publish_job_created" if created else "publish_job_rescheduled",
         {"scheduled_for": planned.isoformat(), "status": status, "publish_now": force_now},
+        actor=actor,
     )
     db.flush()
     return job
@@ -268,7 +388,7 @@ def cancel_publish_job(
     )
     if job is None:
         return None
-    if job.status == "simulating_publish":
+    if job.status in {"simulating_publish", "publishing"}:
         job.status = "action_required"
         job.provider_status = "outcome_requires_review"
         job.safe_error_message = "Publishing had started before cancellation"
@@ -280,7 +400,13 @@ def cancel_publish_job(
         job.safe_error_message = reason[:500]
         _clear_claim(job)
         action = "publish_job_cancelled"
-    _audit_job(db, job, action, {"reason": reason, "actor_user_id": actor.id if actor else None})
+    _audit_job(
+        db,
+        job,
+        action,
+        {"reason": reason, "actor_user_id": actor.id if actor else None},
+        actor=actor,
+    )
     db.flush()
     return job
 
@@ -322,9 +448,18 @@ def retry_publish_job(
         or _active_validation(db, content, current.id) is None
     ):
         raise HTTPException(status_code=409, detail="The job version is no longer validated")
-    integration, error = integration_eligibility(db, content.business_id)
-    if error:
-        raise HTTPException(status_code=409, detail="Instagram integration requires action")
+    preflight = publication_preflight(
+        db,
+        content,
+        version=current,
+        validate_files=get_settings().instagram_publishing_mode == "meta",
+    )
+    integration = preflight.integration
+    if not preflight.ok:
+        raise HTTPException(
+            status_code=409,
+            detail=preflight.safe_message or "Instagram integration requires action",
+        )
     clock = as_utc(now) or utc_now()
     job.integration_id = integration.id if integration else None
     job.status = "queued"
@@ -336,7 +471,13 @@ def retry_publish_job(
         job.max_attempts = job.attempt_count + get_settings().instagram_publishing_max_attempts
     _clear_claim(job)
     content.status = "scheduled"
-    _audit_job(db, job, "publish_retry_requested", {"actor_user_id": actor.id})
+    _audit_job(
+        db,
+        job,
+        "publish_retry_requested",
+        {"actor_user_id": actor.id},
+        actor=actor,
+    )
     db.flush()
     return job
 
@@ -353,7 +494,17 @@ def claim_publish_jobs(
     expired_executing = (
         db.query(InstagramPublishJob)
         .filter(
-            InstagramPublishJob.status == "simulating_publish",
+            or_(
+                InstagramPublishJob.status == "simulating_publish",
+                and_(
+                    InstagramPublishJob.status == "publishing",
+                    InstagramPublishJob.provider_media_id.is_(None),
+                    or_(
+                        InstagramPublishJob.provider_status.is_(None),
+                        InstagramPublishJob.provider_status != "container_created",
+                    ),
+                ),
+            ),
             InstagramPublishJob.claim_expires_at <= clock,
         )
         .with_for_update()
@@ -370,7 +521,7 @@ def claim_publish_jobs(
     )
     jobs = list(db.scalars(statement).all())
     for job in jobs:
-        was_expired = job.status == "claimed"
+        was_expired = job.status in {"claimed", "creating_container", "publishing"}
         job.status = "claimed"
         job.claimed_at = clock
         job.claim_expires_at = clock + timedelta(seconds=claim_ttl_seconds)
@@ -399,6 +550,18 @@ def build_publish_claim_statement(
             InstagramPublishJob.status == "claimed",
             InstagramPublishJob.claim_expires_at <= clock,
         ),
+        and_(
+            InstagramPublishJob.status == "creating_container",
+            InstagramPublishJob.claim_expires_at <= clock,
+        ),
+        and_(
+            InstagramPublishJob.status == "publishing",
+            or_(
+                InstagramPublishJob.provider_media_id.is_not(None),
+                InstagramPublishJob.provider_status == "container_created",
+            ),
+            InstagramPublishJob.claim_expires_at <= clock,
+        ),
     )
     statement = (
         select(InstagramPublishJob)
@@ -423,7 +586,111 @@ def retry_delay_seconds(job: InstagramPublishJob, settings: Settings) -> float:
     return min(settings.instagram_publishing_backoff_max_seconds, base * jitter)
 
 
-def serialize_publish_job(job: InstagramPublishJob) -> dict:
+def publication_metrics(db: Session, business_id: int) -> dict[str, int | float]:
+    content_counts: dict[str, int] = {
+        str(status): int(count)
+        for status, count in db.query(
+            InstagramContent.status, func.count(InstagramContent.id)
+        )
+        .filter(InstagramContent.business_id == business_id)
+        .group_by(InstagramContent.status)
+        .all()
+    }
+    job_counts: dict[str, int] = {
+        str(status): int(count)
+        for status, count in db.query(
+            InstagramPublishJob.status, func.count(InstagramPublishJob.id)
+        )
+        .filter(InstagramPublishJob.business_id == business_id)
+        .group_by(InstagramPublishJob.status)
+        .all()
+    }
+    published = int(job_counts.get("published", 0))
+    failed = int(job_counts.get("failed", 0))
+    completed = published + failed
+    return {
+        "drafts": int(content_counts.get("draft", 0)),
+        "approved": int(content_counts.get("validated", 0)),
+        "scheduled": int(content_counts.get("scheduled", 0)),
+        "published": int(content_counts.get("published", 0)),
+        "failed": failed,
+        "action_required": int(job_counts.get("action_required", 0)),
+        "successful_publishes": published,
+        "publish_success_rate": round(published / completed, 4) if completed else 0.0,
+    }
+
+
+def publication_history_events(
+    db: Session,
+    business_id: int,
+    content_id: int,
+    *,
+    owner_technical: bool,
+) -> list[dict]:
+    publication_actions = (
+        "publish_job_created",
+        "publish_job_rescheduled",
+        "publish_job_cancelled",
+        "publish_now_requested",
+        "publish_retry_requested",
+        "publish_attempt_started",
+        "publish_container_created",
+        "publish_provider_call_started",
+        "publish_media_id_persisted",
+        "publish_succeeded",
+        "publish_failed",
+        "publish_retry_scheduled",
+        "publish_action_required",
+        "publish_validation_failed",
+        "integration_blocked_publish",
+    )
+    rows = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.business_id == business_id,
+            AuditLog.action.in_(publication_actions),
+        )
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .all()
+    )
+    events: list[dict] = []
+    for row in rows:
+        try:
+            metadata = json.loads(row.metadata_json or "{}")
+        except (TypeError, ValueError):
+            metadata = {}
+        if metadata.get("content_id") != content_id:
+            continue
+        safe_metadata = {
+            key: value
+            for key, value in metadata.items()
+            if key
+            in {
+                "content_id",
+                "version_id",
+                "scheduled_for",
+                "status",
+                "publish_now",
+                "attempt",
+                "reason",
+                "error_code",
+                "actor_user_id",
+                *(("mode", "worker_id") if owner_technical else ()),
+            }
+        }
+        events.append(
+            {
+                "id": row.id,
+                "action": row.action,
+                "actor_user_id": row.actor_user_id,
+                "created_at": row.created_at.isoformat(),
+                "metadata": safe_metadata,
+            }
+        )
+    return events
+
+
+def serialize_publish_job(job: InstagramPublishJob, *, owner_technical: bool = True) -> dict:
     def stamp(value: datetime | None) -> str | None:
         normalized = as_utc(value)
         return normalized.isoformat() if normalized else None
@@ -447,13 +714,17 @@ def serialize_publish_job(job: InstagramPublishJob) -> dict:
         "next_attempt_at": stamp(job.next_attempt_at),
         "claimed_at": stamp(job.claimed_at),
         "claim_expires_at": stamp(job.claim_expires_at),
-        "provider_container_id": job.provider_container_id,
+        "provider_container_id": (
+            f"...{job.provider_container_id[-8:]}"
+            if owner_technical and job.provider_container_id
+            else None
+        ),
         "provider_media_id": job.provider_media_id,
         "provider_permalink": job.provider_permalink,
         "provider_status": job.provider_status,
         "provider_error_code": job.provider_error_code,
         "safe_error_message": job.safe_error_message,
-        "provider_metadata": metadata,
+        "provider_metadata": metadata if owner_technical else None,
         "created_at": stamp(job.created_at),
         "updated_at": stamp(job.updated_at),
         "published_at": stamp(job.published_at),

@@ -13,6 +13,7 @@ INSTAGRAM_LOGIN_SCOPES = (
     "instagram_business_basic",
     "instagram_business_manage_messages",
 )
+INSTAGRAM_CONTENT_PUBLISH_SCOPE = "instagram_business_content_publish"
 INSTAGRAM_WEBHOOK_FIELDS = ("messages",)
 INSTAGRAM_PROFESSIONAL_ACCOUNT_TYPES = {"BUSINESS", "CREATOR"}
 
@@ -56,12 +57,13 @@ def _response_status_code(response: object) -> int:
 
 def build_instagram_authorization_url(state: str, *, settings: Settings | None = None) -> str:
     settings = settings or get_settings()
+    requested_scopes = instagram_login_scopes(settings)
     query = urlencode(
         {
             "client_id": settings.instagram_login_client_id.strip(),
             "redirect_uri": settings.instagram_login_redirect_uri.strip(),
             "response_type": "code",
-            "scope": ",".join(INSTAGRAM_LOGIN_SCOPES),
+            "scope": ",".join(requested_scopes),
             "state": state,
         }
     )
@@ -75,6 +77,7 @@ def exchange_instagram_authorization_code(
     timeout_seconds: float = 10.0,
 ) -> InstagramTokenResult:
     settings = settings or get_settings()
+    requested_scopes = instagram_login_scopes(settings)
     try:
         response = requests.post(
             "https://api.instagram.com/oauth/access_token",
@@ -111,18 +114,26 @@ def exchange_instagram_authorization_code(
         permissions = {str(item).strip() for item in raw_permissions if str(item).strip()}
     else:
         permissions = set()
-    if not set(INSTAGRAM_LOGIN_SCOPES).issubset(permissions):
+    if not set(requested_scopes).issubset(permissions):
         raise InstagramLoginProviderError(
             "permissions_incomplete",
             "Not all required Instagram permissions were granted",
         )
-    granted = tuple(scope for scope in INSTAGRAM_LOGIN_SCOPES if scope in permissions)
+    granted = tuple(scope for scope in requested_scopes if scope in permissions)
     return InstagramTokenResult(
         access_token=token.strip(),
         expires_at=None,
         token_type="bearer",
         granted_scopes=granted,
     )
+
+
+def instagram_login_scopes(settings: Settings) -> tuple[str, ...]:
+    """Expand OAuth permission only behind the explicit real-publishing safety switch."""
+
+    if settings.instagram_publishing_mode == "meta":
+        return (*INSTAGRAM_LOGIN_SCOPES, INSTAGRAM_CONTENT_PUBLISH_SCOPE)
+    return INSTAGRAM_LOGIN_SCOPES
 
 
 def exchange_instagram_long_lived_token(

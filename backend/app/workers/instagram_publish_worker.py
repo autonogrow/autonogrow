@@ -8,36 +8,52 @@ import socket
 import time
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.audit import record_audit
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, get_backend_dir, get_settings
 from app.core.database import SessionLocal
 from app.models import (
+    BusinessChannelIntegration,
     InstagramContent,
-    InstagramContentSettings,
-    InstagramContentValidation,
     InstagramContentVersion,
     InstagramPublishJob,
 )
+from app.services.instagram_asset_url_service import (
+    SignedAssetURLInvalid,
+    build_signed_asset_url,
+    resolve_private_asset_path,
+)
+from app.services.instagram_image_validation import (
+    validate_instagram_caption,
+    validate_instagram_image,
+)
+from app.services.instagram_login_provider import INSTAGRAM_CONTENT_PUBLISH_SCOPE
 from app.services.instagram_publish_service import (
     _clear_claim,
     claim_publish_jobs,
-    integration_eligibility,
+    publication_preflight,
     retry_delay_seconds,
     utc_now,
 )
 from app.services.instagram_publishing_adapter import (
     InstagramPublishingAdapter,
+    InstagramPublishingError,
     InstagramPublishRequest,
     InstagramPublishResult,
     PermanentPublishingError,
-    SimulatedInstagramPublishingAdapter,
+    PublishingActionRequired,
+    PublishingAuthenticationError,
+    PublishingResultUnknown,
+    PublishingValidationError,
     TemporaryPublishingError,
-    UnknownPublishingResult,
+    get_instagram_publishing_adapter,
 )
+from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +63,21 @@ class PreparedPublish:
     request: InstagramPublishRequest
     business_id: int
     content_id: int
+
+
+class _PublishProgress:
+    def __init__(self, worker: InstagramPublishWorker, job_id: int) -> None:
+        self.worker = worker
+        self.job_id = job_id
+
+    def container_created(self, container_id: str) -> None:
+        self.worker._persist_container(self.job_id, container_id)
+
+    def media_published(self, media_id: str) -> None:
+        self.worker._persist_media(self.job_id, media_id)
+
+    def publishing_started(self) -> None:
+        self.worker._persist_publish_started(self.job_id)
 
 
 class InstagramPublishWorker:
@@ -61,7 +92,7 @@ class InstagramPublishWorker:
     ) -> None:
         self.settings = settings or get_settings()
         self.session_factory = session_factory
-        self.adapter = adapter or SimulatedInstagramPublishingAdapter()
+        self.adapter = adapter or get_instagram_publishing_adapter(self.settings)
         self.worker_id = (
             worker_id or f"instagram-publisher:{socket.gethostname()}:{uuid4().hex[:10]}"
         )
@@ -83,6 +114,109 @@ class InstagramPublishWorker:
             db.commit()
             return ids
 
+    @staticmethod
+    def _scopes(raw: str | None) -> set[str]:
+        try:
+            parsed = json.loads(raw or "[]")
+        except (TypeError, ValueError):
+            return set()
+        if not isinstance(parsed, list):
+            return set()
+        return {item for item in parsed if isinstance(item, str)}
+
+    def _uploads_root(self) -> Path:
+        configured = self.settings.uploads_dir.strip()
+        root = Path(configured) if configured else get_backend_dir() / "uploads"
+        return (root if root.is_absolute() else get_backend_dir() / root).resolve()
+
+    @staticmethod
+    def _block_job(
+        db: Session,
+        job: InstagramPublishJob,
+        error: InstagramPublishingError,
+        *,
+        audit_action: str | None = None,
+    ) -> None:
+        validation_failure = isinstance(error, PublishingValidationError)
+        job.status = "failed" if validation_failure else "action_required"
+        job.provider_status = (
+            "validation_failure" if validation_failure else "prerequisites_action_required"
+        )
+        job.provider_error_code = error.code
+        job.safe_error_message = error.safe_message[:500]
+        _clear_claim(job)
+        record_audit(
+            db,
+            action=(
+                audit_action
+                or (
+                    "publish_validation_failed" if validation_failure else "publish_action_required"
+                )
+            ),
+            business_id=job.business_id,
+            resource_type="instagram_publish_job",
+            resource_id=job.id,
+            metadata={
+                "content_id": job.content_item_id,
+                "version_id": job.content_version_id,
+                "reason": error.code,
+            },
+            commit=False,
+        )
+
+    def _meta_request_fields(self, job, version, integration, links):
+        if version.format != "single_image" or len(links) != 1:
+            raise PublishingValidationError(
+                "unsupported_instagram_format", "Real publishing supports one image only"
+            )
+        if not integration.encrypted_access_token or not integration.encryption_key_version:
+            raise PublishingAuthenticationError(
+                "instagram_credentials_missing", "Instagram needs to be reconnected"
+            )
+        if INSTAGRAM_CONTENT_PUBLISH_SCOPE not in self._scopes(integration.granted_scopes_json):
+            raise PublishingActionRequired(
+                "instagram_publish_scope_missing",
+                "Instagram publishing permission is missing; reconnect the account",
+            )
+        account_id = integration.external_account_id.strip()
+        if not account_id:
+            raise PublishingActionRequired(
+                "instagram_professional_account_missing",
+                "Instagram professional account identifier is missing",
+            )
+        try:
+            access_token = decrypt_secret(
+                integration.encrypted_access_token,
+                integration.encryption_key_version,
+                settings=self.settings,
+            )
+        except IntegrationCryptoError as exc:
+            raise PublishingAuthenticationError(
+                "instagram_credentials_unavailable", "Instagram needs to be reconnected"
+            ) from exc
+        validate_instagram_caption(version.caption)
+        asset = links[0].asset
+        path = resolve_private_asset_path(asset.storage_key, root=self._uploads_root())
+        image = validate_instagram_image(asset, path)
+        try:
+            asset_url = build_signed_asset_url(
+                self.settings,
+                business_id=job.business_id,
+                version_id=job.content_version_id,
+                asset_id=asset.id,
+            )
+        except SignedAssetURLInvalid as exc:
+            raise PublishingActionRequired(
+                "instagram_asset_delivery_unavailable",
+                "Secure Instagram asset delivery is not configured",
+            ) from exc
+        metadata = {
+            "asset_sha256": image.sha256,
+            "image_width": str(image.width),
+            "image_height": str(image.height),
+        }
+        return account_id, access_token, asset_url, metadata
+
     def _prepare(self, job_id: int) -> PreparedPublish | None:
         with self.session_factory() as db:
             job = (
@@ -95,75 +229,67 @@ class InstagramPublishWorker:
                 return None
             content = db.get(InstagramContent, job.content_item_id)
             version = db.get(InstagramContentVersion, job.content_version_id)
-            service = db.get(InstagramContentSettings, job.business_id)
-            validation = (
-                db.query(InstagramContentValidation)
-                .filter(
-                    InstagramContentValidation.business_id == job.business_id,
-                    InstagramContentValidation.content_id == job.content_item_id,
-                    InstagramContentValidation.version_id == job.content_version_id,
-                    InstagramContentValidation.invalidated_at.is_(None),
+            preflight_error: PublishingActionRequired | None
+            if content is None or version is None:
+                preflight_error = PublishingActionRequired(
+                    "publish_version_is_not_current", "Publishing version is unavailable"
                 )
-                .first()
-            )
-            latest = (
-                db.query(InstagramContentVersion.id)
-                .filter(
-                    InstagramContentVersion.business_id == job.business_id,
-                    InstagramContentVersion.content_id == job.content_item_id,
-                )
-                .order_by(InstagramContentVersion.version_number.desc())
-                .first()
-            )
-            integration, integration_error = integration_eligibility(db, job.business_id)
-            error = None
-            if (
-                content is None
-                or version is None
-                or latest is None
-                or latest[0] != job.content_version_id
-            ):
-                error = "publish_version_is_not_current"
-            elif content.status != "scheduled":
-                error = "publish_content_is_not_scheduled"
-            elif service is None or not service.enabled:
-                error = "instagram_content_service_disabled"
-            elif validation is None:
-                error = "publish_validation_revoked"
-            elif integration_error or integration is None or integration.id != job.integration_id:
-                error = integration_error or "publish_integration_changed"
-            elif not version.asset_links:
-                error = "publish_assets_missing"
-            elif version.format == "single_image" and len(version.asset_links) != 1:
-                error = "publish_assets_do_not_match_format"
-            elif version.format == "carousel" and len(version.asset_links) < 2:
-                error = "publish_assets_do_not_match_format"
-            elif any(
-                link.asset.business_id != job.business_id
-                or link.asset.content_id != job.content_item_id
-                for link in version.asset_links
-            ):
-                error = "publish_asset_scope_mismatch"
-            if error:
-                job.status = "action_required"
-                job.provider_error_code = error
-                job.safe_error_message = "Publishing prerequisites require attention"
-                _clear_claim(job)
-                record_audit(
+                integration = None
+            else:
+                preflight = publication_preflight(
                     db,
-                    action="integration_blocked_publish"
-                    if "integration" in error
-                    else "publish_action_required",
-                    business_id=job.business_id,
-                    resource_type="instagram_publish_job",
-                    resource_id=job.id,
-                    metadata={"reason": error},
-                    commit=False,
+                    content,
+                    version=version,
+                    settings=self.settings,
+                    validate_files=self.settings.instagram_publishing_mode == "meta",
+                )
+                integration = preflight.integration
+                preflight_error = (
+                    PublishingActionRequired(
+                        preflight.code or "publish_preflight_failed",
+                        preflight.safe_message or "Publishing prerequisites require attention",
+                    )
+                    if not preflight.ok
+                    else None
+                )
+            if preflight_error is None and content is not None and content.status != "scheduled":
+                preflight_error = PublishingActionRequired(
+                    "publish_content_is_not_scheduled", "Content is no longer scheduled"
+                )
+            if preflight_error is None and (
+                integration is None or integration.id != job.integration_id
+            ):
+                preflight_error = PublishingActionRequired(
+                    "publish_integration_changed", "Instagram integration changed"
+                )
+            if preflight_error is not None:
+                self._block_job(
+                    db,
+                    job,
+                    preflight_error,
+                    audit_action=(
+                        "integration_blocked_publish"
+                        if "integration" in preflight_error.code
+                        else None
+                    ),
                 )
                 db.commit()
                 return None
-            assert content is not None and version is not None
+            content = cast(InstagramContent, content)
+            version = cast(InstagramContentVersion, version)
+            integration = cast(BusinessChannelIntegration, integration)
             links = sorted(version.asset_links, key=lambda item: item.position)
+            account_id = access_token = asset_url = None
+            metadata: dict[str, str] = {}
+            if self.settings.instagram_publishing_mode == "meta":
+                try:
+                    account_id, access_token, asset_url, metadata = self._meta_request_fields(
+                        job, version, integration, links
+                    )
+                except InstagramPublishingError as exc:
+                    self._block_job(db, job, exc)
+                    db.commit()
+                    return None
             request = InstagramPublishRequest(
                 idempotency_key=job.idempotency_key,
                 business_id=job.business_id,
@@ -172,38 +298,126 @@ class InstagramPublishWorker:
                 caption=version.caption,
                 format=version.format,
                 asset_storage_keys=tuple(link.asset.storage_key for link in links),
+                professional_account_id=account_id,
+                access_token=access_token,
+                asset_url=asset_url,
+                existing_container_id=job.provider_container_id,
+                existing_media_id=job.provider_media_id,
+                progress=_PublishProgress(self, job.id),
             )
-            job.status = "simulating_publish"
-            job.provider_status = "simulating_publish"
+            if self.settings.instagram_publishing_mode == "meta":
+                job.status = "publishing" if job.provider_container_id else "creating_container"
+                job.provider_status = job.status
+                job.provider_metadata_json = json.dumps(metadata, sort_keys=True)
+            else:
+                job.status = "simulating_publish"
+                job.provider_status = "simulating_publish"
             record_audit(
                 db,
                 action="publish_attempt_started",
                 business_id=job.business_id,
                 resource_type="instagram_publish_job",
                 resource_id=job.id,
-                metadata={"attempt": job.attempt_count, "worker_id": self.worker_id},
+                metadata={
+                    "content_id": job.content_item_id,
+                    "version_id": job.content_version_id,
+                    "attempt": job.attempt_count,
+                    "worker_id": self.worker_id,
+                    "mode": self.settings.instagram_publishing_mode,
+                },
                 commit=False,
             )
             db.commit()
-            return PreparedPublish(
-                request=request, business_id=job.business_id, content_id=job.content_item_id
+            return PreparedPublish(request, job.business_id, job.content_item_id)
+
+    def _persist_container(self, job_id: int, container_id: str) -> None:
+        with self.session_factory() as db:
+            job = db.query(InstagramPublishJob).filter_by(id=job_id).with_for_update().first()
+            if (
+                job is None
+                or job.status != "creating_container"
+                or job.claimed_by != self.worker_id
+            ):
+                raise PublishingActionRequired(
+                    "publish_job_changed_during_container_creation",
+                    "Publishing job changed while creating the container",
+                )
+            job.provider_container_id = container_id[:255]
+            job.status = "publishing"
+            job.provider_status = "container_created"
+            record_audit(
+                db,
+                action="publish_container_created",
+                business_id=job.business_id,
+                resource_type="instagram_publish_job",
+                resource_id=job.id,
+                metadata={
+                    "content_id": job.content_item_id,
+                    "version_id": job.content_version_id,
+                    "provider_container_id": container_id[:255],
+                },
+                commit=False,
             )
+            db.commit()
+
+    def _persist_media(self, job_id: int, media_id: str) -> None:
+        with self.session_factory() as db:
+            job = db.query(InstagramPublishJob).filter_by(id=job_id).with_for_update().first()
+            if job is None or job.status != "publishing" or job.claimed_by != self.worker_id:
+                raise PublishingResultUnknown(
+                    "publish_job_changed_after_provider_publish",
+                    "Publishing outcome requires manual verification",
+                )
+            job.provider_media_id = media_id[:255]
+            job.provider_status = "media_id_persisted"
+            record_audit(
+                db,
+                action="publish_media_id_persisted",
+                business_id=job.business_id,
+                resource_type="instagram_publish_job",
+                resource_id=job.id,
+                metadata={
+                    "content_id": job.content_item_id,
+                    "version_id": job.content_version_id,
+                    "provider_media_id": media_id[:255],
+                },
+                commit=False,
+            )
+            db.commit()
+
+    def _persist_publish_started(self, job_id: int) -> None:
+        with self.session_factory() as db:
+            job = db.query(InstagramPublishJob).filter_by(id=job_id).with_for_update().first()
+            if job is None or job.status != "publishing" or job.claimed_by != self.worker_id:
+                raise PublishingActionRequired(
+                    "publish_job_changed_before_provider_publish",
+                    "Publishing job changed before provider publication",
+                )
+            job.provider_status = "media_publish_started"
+            record_audit(
+                db,
+                action="publish_provider_call_started",
+                business_id=job.business_id,
+                resource_type="instagram_publish_job",
+                resource_id=job.id,
+                metadata={
+                    "content_id": job.content_item_id,
+                    "version_id": job.content_version_id,
+                    "attempt": job.attempt_count,
+                },
+                commit=False,
+            )
+            db.commit()
 
     def _finish_success(self, job_id: int, result: InstagramPublishResult) -> None:
         with self.session_factory() as db:
-            job = (
-                db.query(InstagramPublishJob)
-                .filter(InstagramPublishJob.id == job_id)
-                .with_for_update()
-                .first()
-            )
+            job = db.query(InstagramPublishJob).filter_by(id=job_id).with_for_update().first()
             if (
                 job is None
-                or job.status != "simulating_publish"
+                or job.status not in {"simulating_publish", "publishing"}
                 or job.claimed_by != self.worker_id
             ):
                 return
-            clock = utc_now()
             job.status = "published"
             job.provider_container_id = result.container_id
             job.provider_media_id = result.media_id
@@ -211,8 +425,14 @@ class InstagramPublishWorker:
             job.provider_status = result.provider_status
             job.provider_error_code = None
             job.safe_error_message = None
-            job.provider_metadata_json = json.dumps(result.metadata or {}, sort_keys=True)
-            job.published_at = clock
+            try:
+                previous = json.loads(job.provider_metadata_json or "{}")
+            except (TypeError, ValueError):
+                previous = {}
+            job.provider_metadata_json = json.dumps(
+                {**previous, **(result.metadata or {})}, sort_keys=True
+            )
+            job.published_at = utc_now()
             _clear_claim(job)
             content = db.get(InstagramContent, job.content_item_id)
             if content is not None and content.business_id == job.business_id:
@@ -223,34 +443,43 @@ class InstagramPublishWorker:
                 business_id=job.business_id,
                 resource_type="instagram_publish_job",
                 resource_id=job.id,
-                metadata={"provider_media_id": result.media_id, "attempt": job.attempt_count},
+                metadata={
+                    "content_id": job.content_item_id,
+                    "version_id": job.content_version_id,
+                    "provider_media_id": result.media_id,
+                    "attempt": job.attempt_count,
+                },
                 commit=False,
             )
             db.commit()
 
     def _finish_error(self, job_id: int, exc: Exception) -> None:
         with self.session_factory() as db:
-            job = (
-                db.query(InstagramPublishJob)
-                .filter(InstagramPublishJob.id == job_id)
-                .with_for_update()
-                .first()
-            )
+            job = db.query(InstagramPublishJob).filter_by(id=job_id).with_for_update().first()
             if (
                 job is None
-                or job.status != "simulating_publish"
+                or job.status not in {"simulating_publish", "creating_container", "publishing"}
                 or job.claimed_by != self.worker_id
             ):
                 return
             action = "publish_failed"
-            if isinstance(exc, UnknownPublishingResult):
+            if isinstance(exc, PublishingResultUnknown):
                 job.status = "action_required"
                 job.provider_status = "unknown_result"
                 code, message = exc.code, exc.safe_message
                 action = "publish_action_required"
+            elif isinstance(exc, (PublishingAuthenticationError, PublishingActionRequired)):
+                job.status = "action_required"
+                job.provider_status = "action_required"
+                code, message = exc.code, exc.safe_message
+                action = "publish_action_required"
             elif isinstance(exc, PermanentPublishingError):
                 job.status = "failed"
-                job.provider_status = "permanent_failure"
+                job.provider_status = (
+                    "validation_failure"
+                    if isinstance(exc, PublishingValidationError)
+                    else "permanent_failure"
+                )
                 code, message = exc.code, exc.safe_message
             else:
                 if isinstance(exc, TemporaryPublishingError):
@@ -258,10 +487,7 @@ class InstagramPublishWorker:
                 elif isinstance(exc, TimeoutError):
                     code, message = "simulated_timeout", "Simulated provider timed out"
                 else:
-                    code, message = (
-                        "unexpected_simulated_error",
-                        "Simulated publishing failed safely",
-                    )
+                    code, message = "unexpected_publish_error", "Publishing failed safely"
                 if job.attempt_count < job.max_attempts:
                     job.status = "retry_wait"
                     job.provider_status = "temporary_failure"
@@ -281,7 +507,12 @@ class InstagramPublishWorker:
                 business_id=job.business_id,
                 resource_type="instagram_publish_job",
                 resource_id=job.id,
-                metadata={"error_code": code, "attempt": job.attempt_count},
+                metadata={
+                    "content_id": job.content_item_id,
+                    "version_id": job.content_version_id,
+                    "error_code": code,
+                    "attempt": job.attempt_count,
+                },
                 commit=False,
             )
             db.commit()
@@ -323,14 +554,11 @@ class InstagramPublishWorker:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Simulated Instagram publishing worker")
+    parser = argparse.ArgumentParser(description="Instagram publishing worker")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--poll-seconds", type=float)
     args = parser.parse_args()
     settings = get_settings()
-    if not settings.instagram_publishing_simulated_mode:
-        logger.error("instagram_publish_worker_refuses_non_simulated_mode")
-        return 2
     worker = InstagramPublishWorker(settings=settings)
     signal.signal(signal.SIGTERM, worker.request_stop)
     signal.signal(signal.SIGINT, worker.request_stop)

@@ -38,6 +38,7 @@ from app.routers.growth_actions import router as growth_actions_router
 from app.routers.growth_opportunities import router as growth_opportunities_router
 from app.routers.growth_signals import router as growth_signals_router
 from app.routers.health import router as health_router
+from app.routers.instagram_asset_delivery import router as instagram_asset_delivery_router
 from app.routers.instagram_content import admin_router as instagram_content_admin_router
 from app.routers.instagram_content import owner_router as instagram_content_owner_router
 from app.routers.instagram_oauth import admin_router as instagram_oauth_admin_router
@@ -165,6 +166,7 @@ app.include_router(instagram_oauth_admin_router)
 app.include_router(instagram_oauth_owner_router)
 app.include_router(instagram_content_admin_router)
 app.include_router(instagram_content_owner_router)
+app.include_router(instagram_asset_delivery_router)
 app.include_router(whatsapp_webhook_router)
 app.include_router(whatsapp_embedded_signup_admin_router)
 app.include_router(whatsapp_embedded_signup_owner_router)

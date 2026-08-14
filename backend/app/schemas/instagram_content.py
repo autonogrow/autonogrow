@@ -8,6 +8,8 @@ CommentKind = Literal["comment", "proposal", "change_request"]
 InstagramPublishJobStatus = Literal[
     "queued",
     "claimed",
+    "creating_container",
+    "publishing",
     "simulating_publish",
     "published",
     "retry_wait",
@@ -47,6 +49,7 @@ class InstagramPublishJobRead(BaseModel):
 
 class InstagramPublishJobHistory(BaseModel):
     jobs: list[InstagramPublishJobRead]
+    events: list[dict] = Field(default_factory=list)
 
 
 class InstagramServiceUpdate(BaseModel):

@@ -423,6 +423,7 @@ def serialize_settings(settings: InstagramContentSettings) -> dict:
         "business_id": settings.business_id,
         "enabled": settings.enabled,
         "owner_can_validate_instagram_content": (settings.owner_can_validate_instagram_content),
+        "publishing_mode": get_settings().instagram_publishing_mode,
         "updated_at": settings.updated_at.isoformat() if settings.updated_at else None,
     }
 
@@ -461,6 +462,10 @@ def serialize_validation(validation: InstagramContentValidation) -> dict:
             validation.invalidated_at.isoformat() if validation.invalidated_at else None
         ),
         "invalidation_reason": validation.invalidation_reason,
+        "approved_asset_ids": [
+            link.asset_id
+            for link in sorted(validation.version.asset_links, key=lambda item: item.position)
+        ],
     }
 
 
@@ -504,7 +509,12 @@ def serialize_comment(comment: InstagramContentComment) -> dict:
 
 
 def serialize_content(
-    db: Session, content: InstagramContent, api_prefix: str, *, detailed: bool = False
+    db: Session,
+    content: InstagramContent,
+    api_prefix: str,
+    *,
+    detailed: bool = False,
+    owner_technical: bool = True,
 ) -> dict:
     version = current_version(db, content)
     payload = {
@@ -529,10 +539,19 @@ def serialize_content(
         payload["final_assets"] = [
             serialize_final_asset(item, api_prefix) for item in content.final_assets
         ]
-        from app.services.instagram_publish_service import serialize_publish_job
+        from app.services.instagram_publish_service import (
+            publication_history_events,
+            serialize_publish_job,
+        )
 
         payload["publish_jobs"] = [
-            serialize_publish_job(item)
+            serialize_publish_job(item, owner_technical=owner_technical)
             for item in sorted(content.publish_jobs, key=lambda item: item.created_at, reverse=True)
         ]
+        payload["publication_events"] = publication_history_events(
+            db,
+            content.business_id,
+            content.id,
+            owner_technical=owner_technical,
+        )
     return payload

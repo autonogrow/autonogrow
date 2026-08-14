@@ -46,6 +46,15 @@
 - [ ] Una candidatura Instagram no crea integración utilizable antes de aprobación Owner.
 - [ ] La aprobación no activa envío ni automatización; un webhook fallido bloquea aprobación.
 - [ ] `INSTAGRAM_SIMULATED_ONBOARDING_TEST_ONLY=false` fuera de tests.
+- [ ] `INSTAGRAM_PUBLISHING_MODE=simulated` salvo activación real expresamente aprobada.
+- [ ] Modo `meta` exige `INSTAGRAM_REAL_PUBLISHING_ACKNOWLEDGED=true`, worker inicialmente detenido y runbook completado.
+- [ ] `INSTAGRAM_ASSET_URL_BASE` es HTTPS público exacto y no redirige a otro host.
+- [ ] `INSTAGRAM_ASSET_URL_SECRET` es aleatorio, independiente, de al menos 32 caracteres y está fuera del repo.
+- [ ] El proxy no registra query strings de `/api/public/instagram-assets/`.
+- [ ] La integración contiene `instagram_business_content_publish`; cuentas antiguas se reconectaron de forma controlada.
+- [ ] App Review/Advanced Access y Live/Development mode de Meta se verificaron para el entorno.
+- [ ] Una prueba confirma que logs/auditoría no contienen tokens, captions, URLs firmadas completas ni respuestas Meta.
+- [ ] Los jobs `unknown_result` se revisan manualmente y no se reintentan.
 
 - [ ] IDOR probado entre negocios para reservas, servicios, horarios, media y usuarios.
 - [ ] Un customer no puede leer citas de otro customer.

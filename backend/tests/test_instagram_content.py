@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 
@@ -288,9 +289,12 @@ def test_material_change_versions_and_invalidates_but_date_change_does_not(edito
     )
     assert response.status_code == 200
     assert response.json()["status"] == "validated"
+    assert response.json()["current_version"]["validation"]["approved_asset_ids"] == [asset_id]
     validation = ctx["db"].query(InstagramContentValidation).one()
     assert validation.version_id == version_id
     assert validation.invalidated_at is None
+    audit = ctx["db"].query(AuditLog).filter_by(action="instagram_content_validated").one()
+    assert json.loads(audit.metadata_json)["approved_asset_ids"] == [asset_id]
 
     set_actor(ctx, ctx["owner"])
     response = ctx["client"].patch(
@@ -514,12 +518,24 @@ def test_owner_schedule_reschedule_publish_now_and_cancel_endpoints(editorial_co
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
     set_actor(ctx, ctx["admin"])
-    assert (
-        ctx["client"]
-        .post(f"{admin_base(ctx)}/contents/{content_id}/publish-job/cancel")
-        .status_code
-        == 404
+    admin_publish = ctx["client"].post(f"{admin_base(ctx)}/contents/{content_id}/publish-now")
+    assert admin_publish.status_code == 200
+    assert admin_publish.json()["status"] == "queued"
+    admin_cancel = ctx["client"].post(
+        f"{admin_base(ctx)}/contents/{content_id}/publish-job/cancel"
     )
+    assert admin_cancel.status_code == 200
+    assert admin_cancel.json()["status"] == "cancelled"
+    metrics = ctx["client"].get(f"{admin_base(ctx)}/publication-metrics")
+    assert metrics.status_code == 200
+    assert set(metrics.json()) >= {
+        "drafts",
+        "approved",
+        "scheduled",
+        "published",
+        "failed",
+        "publish_success_rate",
+    }
     set_actor(ctx, ctx["other_admin"])
     assert (
         ctx["client"]
@@ -530,5 +546,9 @@ def test_owner_schedule_reschedule_publish_now_and_cancel_endpoints(editorial_co
     set_actor(ctx, ctx["staff"])
     assert (
         ctx["client"].get(f"{admin_base(ctx)}/contents/{content_id}/publish-jobs").status_code
+        == 403
+    )
+    assert (
+        ctx["client"].post(f"{admin_base(ctx)}/contents/{content_id}/publish-now").status_code
         == 403
     )

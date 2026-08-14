@@ -119,7 +119,15 @@ class Settings(BaseSettings):
     instagram_publishing_claim_ttl_seconds: int = 120
     instagram_publishing_backoff_base_seconds: int = 30
     instagram_publishing_backoff_max_seconds: int = 3600
-    instagram_publishing_simulated_mode: bool = True
+    instagram_publishing_mode: str = "simulated"
+    instagram_real_publishing_acknowledged: bool = False
+    instagram_graph_api_base_url: str = "https://graph.instagram.com"
+    instagram_graph_api_version: str = "v23.0"
+    instagram_http_connect_timeout_seconds: float = 5.0
+    instagram_http_read_timeout_seconds: float = 20.0
+    instagram_asset_url_base: str = ""
+    instagram_asset_url_secret: str = ""
+    instagram_asset_url_ttl_seconds: int = 300
     instagram_default_timezone: str = "Europe/Madrid"
     whatsapp_webhook_enabled: bool = False
     whatsapp_verify_token: str = ""
@@ -386,6 +394,12 @@ class Settings(BaseSettings):
             raise ValueError("INSTAGRAM_LOGIN_GRAPH_API_VERSION no es válida")
         if self.instagram_simulated_onboarding_test_only and self.app_env != "test":
             raise ValueError("INSTAGRAM_SIMULATED_ONBOARDING_TEST_ONLY solo se permite en test")
+        self.instagram_publishing_mode = self.instagram_publishing_mode.strip().lower()
+        if self.instagram_publishing_mode not in {"simulated", "meta"}:
+            raise ValueError("INSTAGRAM_PUBLISHING_MODE debe ser simulated o meta")
+        self.instagram_graph_api_version = self.instagram_graph_api_version.strip()
+        if not re.fullmatch(r"v\d+\.\d+", self.instagram_graph_api_version):
+            raise ValueError("INSTAGRAM_GRAPH_API_VERSION no es valida")
         publishing_ranges = (
             ("INSTAGRAM_PUBLISHING_POLL_SECONDS", self.instagram_publishing_poll_seconds, 0.1, 60),
             ("INSTAGRAM_PUBLISHING_MAX_ATTEMPTS", self.instagram_publishing_max_attempts, 1, 20),
@@ -407,6 +421,24 @@ class Settings(BaseSettings):
                 1,
                 604800,
             ),
+            (
+                "INSTAGRAM_HTTP_CONNECT_TIMEOUT_SECONDS",
+                self.instagram_http_connect_timeout_seconds,
+                0.1,
+                60,
+            ),
+            (
+                "INSTAGRAM_HTTP_READ_TIMEOUT_SECONDS",
+                self.instagram_http_read_timeout_seconds,
+                0.1,
+                300,
+            ),
+            (
+                "INSTAGRAM_ASSET_URL_TTL_SECONDS",
+                self.instagram_asset_url_ttl_seconds,
+                30,
+                900,
+            ),
         )
         for (
             publishing_name,
@@ -423,6 +455,77 @@ class Settings(BaseSettings):
             < self.instagram_publishing_backoff_base_seconds
         ):
             raise ValueError("INSTAGRAM_PUBLISHING_BACKOFF_MAX_SECONDS debe ser >= al valor base")
+        for publishing_url_name, publishing_url_value in (
+            ("INSTAGRAM_GRAPH_API_BASE_URL", self.instagram_graph_api_base_url),
+            ("INSTAGRAM_ASSET_URL_BASE", self.instagram_asset_url_base),
+        ):
+            if (
+                not publishing_url_value
+                and publishing_url_name == "INSTAGRAM_ASSET_URL_BASE"
+                and self.instagram_publishing_mode != "meta"
+            ):
+                continue
+            parsed = urlsplit(publishing_url_value.strip())
+            if (
+                parsed.scheme != "https"
+                or not parsed.netloc
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+                or parsed.path not in {"", "/"}
+            ):
+                raise ValueError(
+                    f"{publishing_url_name} debe ser una URL HTTPS base sin credenciales ni query"
+                )
+            if self.app_env in {"staging", "production"}:
+                hostname = (parsed.hostname or "").lower()
+                if (
+                    publishing_url_name == "INSTAGRAM_GRAPH_API_BASE_URL"
+                    and hostname != "graph.instagram.com"
+                ):
+                    raise ValueError(
+                        "INSTAGRAM_GRAPH_API_BASE_URL debe usar graph.instagram.com fuera de test"
+                    )
+                if publishing_url_name == "INSTAGRAM_ASSET_URL_BASE":
+                    if hostname in {"localhost", "localhost.localdomain"}:
+                        raise ValueError("INSTAGRAM_ASSET_URL_BASE debe ser publica")
+                    try:
+                        asset_ip = ipaddress.ip_address(hostname)
+                    except ValueError:
+                        asset_ip = None
+                    if asset_ip is not None and not asset_ip.is_global:
+                        raise ValueError("INSTAGRAM_ASSET_URL_BASE debe ser publica")
+        self.instagram_graph_api_base_url = self.instagram_graph_api_base_url.rstrip("/")
+        self.instagram_asset_url_base = self.instagram_asset_url_base.rstrip("/")
+        if self.instagram_publishing_mode == "meta":
+            if not self.instagram_real_publishing_acknowledged:
+                raise ValueError(
+                    "INSTAGRAM_PUBLISHING_MODE=meta requiere INSTAGRAM_REAL_PUBLISHING_ACKNOWLEDGED=true"
+                )
+            if len(self.instagram_asset_url_secret) < 32:
+                raise ValueError("INSTAGRAM_ASSET_URL_SECRET debe tener al menos 32 caracteres")
+            minimum_claim = int(
+                3
+                * (
+                    self.instagram_http_connect_timeout_seconds
+                    + self.instagram_http_read_timeout_seconds
+                )
+                + 15
+            )
+            if self.instagram_publishing_claim_ttl_seconds < minimum_claim:
+                raise ValueError(
+                    "INSTAGRAM_PUBLISHING_CLAIM_TTL_SECONDS es insuficiente para los timeouts Meta"
+                )
+            minimum_asset_ttl = int(
+                self.instagram_http_connect_timeout_seconds
+                + self.instagram_http_read_timeout_seconds
+                + 30
+            )
+            if self.instagram_asset_url_ttl_seconds < minimum_asset_ttl:
+                raise ValueError(
+                    "INSTAGRAM_ASSET_URL_TTL_SECONDS es insuficiente para la descarga de Meta"
+                )
         try:
             from zoneinfo import ZoneInfo
 

@@ -8,6 +8,7 @@ from threading import Lock
 
 from fastapi import HTTPException, Request
 from sqlalchemy import func
+from sqlalchemy.engine import Connection
 
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal, safe_database_pool_status
@@ -18,6 +19,8 @@ from app.models import (
     Booking,
     BusinessChannelIntegration,
     ChannelOutboxMessage,
+    InstagramContent,
+    InstagramPublishJob,
     MetaIntegrationJob,
     SystemIncident,
     WebhookInboxEvent,
@@ -121,7 +124,9 @@ def render_metrics() -> str:
     try:
         with SessionLocal() as db:
             _metric(lines, "autonogrow_database_health", 1)
-            for key, value in safe_database_pool_status(db.get_bind()).items():
+            bind = db.get_bind()
+            database_engine = bind.engine if isinstance(bind, Connection) else bind
+            for key, value in safe_database_pool_status(database_engine).items():
                 if key != "dialect" and value is not None:
                     _metric(lines, f"autonogrow_database_pool_{key}", value)
             workers = db.query(WorkerHeartbeat).all()
@@ -162,6 +167,38 @@ def render_metrics() -> str:
                     value,
                     job_type=job_type,
                     status=status,
+                )
+            for status, value in db.query(
+                InstagramContent.status,
+                func.count(InstagramContent.id),
+            ).group_by(InstagramContent.status):
+                _metric(lines, "autonogrow_instagram_contents", value, status=status)
+            for status, value in db.query(
+                InstagramPublishJob.status,
+                func.count(InstagramPublishJob.id),
+            ).group_by(InstagramPublishJob.status):
+                _metric(lines, "autonogrow_instagram_publish_jobs", value, status=status)
+            instagram_published = db.query(InstagramPublishJob).filter(
+                InstagramPublishJob.status == "published"
+            ).count()
+            instagram_failed = db.query(InstagramPublishJob).filter(
+                InstagramPublishJob.status == "failed"
+            ).count()
+            instagram_completed = instagram_published + instagram_failed
+            _metric(
+                lines,
+                "autonogrow_instagram_publish_success_ratio",
+                instagram_published / instagram_completed if instagram_completed else 0,
+            )
+            for action, metric_name in (
+                ("publish_attempt_started", "attempts"),
+                ("publish_succeeded", "succeeded"),
+                ("publish_failed", "failed"),
+            ):
+                _metric(
+                    lines,
+                    f"autonogrow_instagram_publish_{metric_name}_total",
+                    db.query(AuditLog).filter(AuditLog.action == action).count(),
                 )
             health_jobs = db.query(MetaIntegrationJob).filter(
                 MetaIntegrationJob.job_type == "health_check"
