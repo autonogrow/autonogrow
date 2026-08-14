@@ -165,7 +165,7 @@ def parse_weekly_schedule(raw_value: str | None) -> dict[int, list[dict[str, str
 
 
 def normalize_weekly_schedule(value: dict[str, Any] | None) -> dict[str, list[dict[str, str]]]:
-    source = value or default_weekly_schedule()
+    source: dict[Any, Any] = value or default_weekly_schedule()
     result = {}
 
     for weekday in range(7):
@@ -492,7 +492,7 @@ def get_available_slots(
     exclude_booking_id: int | None = None,
     staff_business_user_id: int | None = None,
     allow_nonpublic_staff: bool = False,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     business = get_business_or_none(db, business_slug)
 
     if business is None:

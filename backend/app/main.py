@@ -35,6 +35,7 @@ from app.routers.customer import router as customer_router
 from app.routers.customers import router as customers_router
 from app.routers.growth_actions import router as growth_actions_router
 from app.routers.growth_opportunities import router as growth_opportunities_router
+from app.routers.growth_signals import router as growth_signals_router
 from app.routers.health import router as health_router
 from app.routers.instagram_content import admin_router as instagram_content_admin_router
 from app.routers.instagram_content import owner_router as instagram_content_owner_router
@@ -138,6 +139,7 @@ app.include_router(admin_availability_router)
 app.include_router(admin_router)
 app.include_router(growth_opportunities_router)
 app.include_router(growth_actions_router)
+app.include_router(growth_signals_router)
 app.include_router(channel_onboarding_router)
 app.include_router(owner_router)
 app.include_router(owner_channel_controls_router)

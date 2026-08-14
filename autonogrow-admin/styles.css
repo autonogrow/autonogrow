@@ -2359,3 +2359,19 @@ input {
 .growth-action-modal-actions { display: flex; gap: var(--ag-space-3); justify-content: flex-end; }
 @media (max-width: 900px) { .growth-results-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .growth-funnel { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 639px) { .growth-results-metrics, .growth-funnel, .growth-action-context { grid-template-columns: 1fr; } .growth-action-modal-actions { flex-direction: column-reverse; } }
+
+/* Sprint 8B deterministic business growth signals */
+.growth-signals-card { background: var(--ag-color-surface); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-lg); padding: var(--ag-space-5); }
+.growth-signals-list { display: grid; gap: var(--ag-space-3); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.growth-signal { border: 1px solid var(--ag-color-border); border-left: 4px solid var(--ag-color-blue-500); border-radius: var(--ag-radius-md); display: grid; gap: var(--ag-space-2); padding: var(--ag-space-4); }
+.growth-signal--high { border-left-color: var(--ag-color-danger); }
+.growth-signal--medium { border-left-color: var(--ag-color-warning); }
+.growth-signal--low { border-left-color: var(--ag-color-blue-500); }
+.growth-signal--info { border-left-color: var(--ag-color-success); }
+.growth-signal-heading { align-items: center; display: flex; justify-content: space-between; gap: var(--ag-space-2); }
+.growth-signal-heading span { background: var(--ag-color-surface-subtle); border-radius: 999px; font-size: .78rem; font-weight: 700; padding: .2rem .6rem; }
+.growth-signal h4, .growth-signal p { margin: 0; }
+.growth-signal p { color: var(--ag-color-text-muted); }
+.growth-signal-recommendation { background: var(--ag-color-surface-subtle); border-radius: var(--ag-radius-md); display: grid; gap: .2rem; padding: var(--ag-space-3); }
+.growth-signal-recommendation span { color: var(--ag-color-text-muted); font-size: .78rem; text-transform: uppercase; }
+@media (max-width: 800px) { .growth-signals-list { grid-template-columns: 1fr; } }

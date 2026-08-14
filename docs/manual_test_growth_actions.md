@@ -2,7 +2,7 @@
 
 ## Preparación
 
-Aplicar Alembic head `20260814_15`, arrancar API, worker de canales, Admin y landing. Usar una integración real aprobada para el caso de envío; nunca interpretar el modo asistido o un job en cola como entrega.
+Aplicar la head Alembic actual (`20260814_16`; Sprint 8A se introdujo en `20260814_15`), arrancar API, worker de canales, Admin y landing. Usar una integración real aprobada para el caso de envío; nunca interpretar el modo asistido o un job en cola como entrega.
 
 ## Manicura recurrente
 

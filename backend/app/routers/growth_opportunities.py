@@ -97,6 +97,7 @@ def list_opportunities(
     due_to: datetime | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=250),
     db: Session = Depends(get_db),
+    service_id: int | None = None,
 ):
     business = business_or_404(db, business_slug)
     query = db.query(CustomerOpportunity).filter(
@@ -108,6 +109,18 @@ def list_opportunities(
         query = query.filter(CustomerOpportunity.type == type)
     if customer_id is not None:
         query = query.filter(CustomerOpportunity.customer_id == customer_id)
+    if service_id is not None:
+        service = (
+            db.query(BusinessService)
+            .filter(
+                BusinessService.id == service_id,
+                BusinessService.business_id == business.id,
+            )
+            .first()
+        )
+        if service is None:
+            raise HTTPException(status_code=422, detail="Service does not belong to this business")
+        query = query.filter(CustomerOpportunity.source_service_id == service_id)
     if due_from is not None:
         query = query.filter(CustomerOpportunity.due_at >= as_utc(due_from))
     if due_to is not None:

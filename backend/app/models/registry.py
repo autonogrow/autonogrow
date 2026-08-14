@@ -15,6 +15,7 @@ MODEL_MODULES = (
     "app.models.booking",
     "app.models.booking_attachment",
     "app.models.business",
+    "app.models.business_growth_signal",
     "app.models.business_channel_control",
     "app.models.business_channel_integration",
     "app.models.business_media",

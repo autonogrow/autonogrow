@@ -21,9 +21,12 @@ from app.models import (  # noqa: E402
     WebhookInboxEvent,
     WorkerHeartbeat,
 )
+from app.services.business_growth_signal_service import (  # noqa: E402
+    BusinessGrowthSignalService,
+)
 from app.services.growth_opportunity_service import GrowthOpportunityService  # noqa: E402
 
-TASKS = ("queue-history", "heartbeats", "growth-opportunities")
+TASKS = ("queue-history", "heartbeats", "growth-opportunities", "growth-signals")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -73,6 +76,25 @@ def main(argv: list[str] | None = None) -> int:
                 for key in totals:
                     totals[key] += getattr(result, key)
             counts["growth_opportunities"] = totals
+        if "growth-signals" in selected:
+            totals = {
+                "created": 0,
+                "updated": 0,
+                "resolved": 0,
+                "expired": 0,
+                "suppressed": 0,
+            }
+            business_ids = [
+                row[0]
+                for row in db.query(Business.id)
+                .filter(Business.status.in_(("ready", "active")))
+                .all()
+            ]
+            for business_id in business_ids:
+                result = BusinessGrowthSignalService(db).evaluate_business(business_id)
+                for key in totals:
+                    totals[key] += getattr(result, key)
+            counts["growth_signals"] = totals
         if args.apply:
             db.commit()
         else:

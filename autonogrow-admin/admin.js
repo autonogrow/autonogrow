@@ -20,11 +20,14 @@ let reviewRequestsByBooking = new Map();
 let messageOutbox = [];
 let adminServices = [];
 let customerOpportunities = [];
+let businessGrowthSignals = [];
+let growthSignalsSummary = null;
 let growthActionMetrics = null;
 let selectedOpportunityAction = null;
 let selectedOpportunityForAction = null;
 let growthActionReturnFocus = null;
 const opportunityMutationIds = new Set();
+const growthSignalMutationIds = new Set();
 let availabilitySettings = null;
 let availabilityExceptions = [];
 let exceptionDraftWindows = [];
@@ -95,7 +98,7 @@ const BRAND_PALETTES = {
   amber_barber: ["#92400e", "#451a03", "#fbbf24", "#fffbeb"], violet_modern: ["#7c3aed", "#4c1d95", "#c4b5fd", "#f5f3ff"]
 };
 const BRAND_COLOR_NAMES = ["primary", "secondary", "accent", "background"];
-const growthLoadState = { reviews: "loading", outbox: "loading", opportunities: "loading" };
+const growthLoadState = { reviews: "loading", outbox: "loading", opportunities: "loading", signals: "loading" };
 const dashboardDataState = {
   business: "loading",
   bookings: "loading",
@@ -373,6 +376,9 @@ function setupGrowthHub() {
       else if (opportunityAction === "conversation") openOpportunityConversation(opportunityId);
       else updateCustomerOpportunity(opportunityId, opportunityAction);
     }
+    const signalAction = event.target.closest("[data-growth-signal-action]");
+    if (signalAction?.dataset.growthSignalAction === "dismiss") dismissGrowthSignal(Number(signalAction.dataset.growthSignalId));
+    if (signalAction?.dataset.growthSignalAction === "opportunities") openSignalOpportunities(Number(signalAction.dataset.growthSignalId));
     const modalAction = event.target.closest("[data-growth-action-modal]");
     if (modalAction?.dataset.growthActionModal === "close") closeGrowthActionModal();
     if (modalAction?.dataset.growthActionModal === "copy") copyGrowthOpportunityText();
@@ -1375,7 +1381,7 @@ function hasUsableReviewPhone(booking) {
 }
 
 function growthSourcesSettled() {
-  return dashboardDataState.bookings !== "loading" && growthLoadState.reviews !== "loading" && growthLoadState.outbox !== "loading" && growthLoadState.opportunities !== "loading";
+  return dashboardDataState.bookings !== "loading" && growthLoadState.reviews !== "loading" && growthLoadState.outbox !== "loading" && growthLoadState.opportunities !== "loading" && growthLoadState.signals !== "loading";
 }
 
 function growthSourceErrors() {
@@ -1384,6 +1390,7 @@ function growthSourceErrors() {
   if (growthLoadState.reviews === "error") errors.push("No se pudieron actualizar las solicitudes de reseña.");
   if (growthLoadState.outbox === "error") errors.push("No se pudo comprobar el estado de los mensajes asistidos.");
   if (growthLoadState.opportunities === "error") errors.push("No se pudieron actualizar las oportunidades de clientes.");
+  if (growthLoadState.signals === "error") errors.push("No se pudieron actualizar las señales agregadas del negocio.");
   return errors;
 }
 
@@ -1480,6 +1487,92 @@ function renderGrowthActionMetrics() {
   if (container) container.innerHTML = funnel
     ? Object.entries(labels).map(([key, label]) => `<span><small>${escapeHtml(label)}</small><strong>${Number(funnel[key] || 0)}</strong></span>`).join("")
     : "";
+}
+
+function renderBusinessGrowthSignals() {
+  const container = document.getElementById("growth-signals-list");
+  const status = document.getElementById("growth-signals-status");
+  if (!container || !status) return;
+  container.setAttribute("aria-busy", "false");
+  const typeLabels = {
+    low_future_occupancy: "Agenda floja",
+    high_due_customer_pool: "Retorno de clientes",
+    low_return_rate: "Menor tasa de retorno",
+    service_demand_drop: "Servicio con menor demanda",
+    seasonal_window: "Ventana comercial"
+  };
+  const severityLabels = { info: "Información", low: "Atención", medium: "Prioritaria", high: "Urgente" };
+  const recommendationLabels = {
+    increase_booking_visibility: "Dar más visibilidad a la disponibilidad",
+    contact_due_customers: "Revisar oportunidades de retorno",
+    promote_service: "Dar visibilidad al servicio",
+    consider_campaign: "Valorar una comunicación comercial",
+    review_service_demand: "Revisar la demanda del servicio"
+  };
+  container.innerHTML = businessGrowthSignals.length ? businessGrowthSignals.map((signal) => {
+    const explanation = signal.explanation || {};
+    const related = signal.related_opportunities;
+    return `<article class="growth-signal growth-signal--${escapeHtml(signal.severity)}" data-growth-signal="${signal.id}"><div class="growth-signal-heading"><span>${escapeHtml(severityLabels[signal.severity] || signal.severity)}</span><small>${escapeHtml(signal.service?.name || "Todo el negocio")}</small></div><h4>${escapeHtml(explanation.title || typeLabels[signal.type] || signal.type)}</h4><p><strong>${escapeHtml(explanation.what_happened || "Se ha detectado una variación relevante.")}</strong></p><p>${escapeHtml(explanation.comparison || "")}</p><p>${escapeHtml(explanation.why_it_matters || "")}</p><div class="growth-signal-recommendation"><span>Recomendación</span><strong>${escapeHtml(recommendationLabels[signal.recommendation_code] || explanation.suggested_action || signal.recommendation_code)}</strong></div><div class="growth-opportunity-actions">${related ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-signal-action="opportunities" data-growth-signal-id="${signal.id}">Ver oportunidades relacionadas</button>` : ""}<button class="ag-button ag-button--ghost ag-button--small" type="button" data-growth-signal-action="dismiss" data-growth-signal-id="${signal.id}">Descartar señal</button></div></article>`;
+  }).join("") : `<div class="growth-empty-state"><strong>No hay señales activas</strong><p>${growthSignalsSummary?.data_state === "insufficient_history_or_not_evaluated" ? "Todavía no hay suficiente histórico o no se ha ejecutado el análisis diario." : "Los datos evaluados no superan los umbrales conservadores actuales."}</p></div>`;
+  status.textContent = businessGrowthSignals.length ? `${businessGrowthSignals.length} activa${businessGrowthSignals.length === 1 ? "" : "s"}` : "Sin alertas";
+}
+
+async function loadBusinessGrowthSignals({ background = false } = {}) {
+  if (!businessGrowthSignals.length) growthLoadState.signals = "loading";
+  try {
+    const slug = getBusinessSlug();
+    const [signalsResponse, summaryResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/growth-signals?status=active`),
+      fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/growth-signals-summary`)
+    ]);
+    if (!signalsResponse.ok || !summaryResponse.ok) throw new Error("growth_signals_unavailable");
+    const [signalsBody, summaryBody] = await Promise.all([signalsResponse.json(), summaryResponse.json()]);
+    businessGrowthSignals = signalsBody.signals || [];
+    growthSignalsSummary = summaryBody;
+    growthLoadState.signals = "ready";
+    renderGrowth();
+  } catch (error) {
+    console.error(error);
+    growthLoadState.signals = "error";
+    if (!background) {
+      businessGrowthSignals = [];
+      growthSignalsSummary = null;
+    }
+    renderGrowth();
+  }
+}
+
+async function dismissGrowthSignal(signalId) {
+  if (growthSignalMutationIds.has(signalId)) return;
+  growthSignalMutationIds.add(signalId);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/growth-signals/${signalId}/dismiss`, { method: "POST" });
+    if (!response.ok) throw new Error("No se pudo descartar la señal.");
+    businessGrowthSignals = businessGrowthSignals.filter((signal) => signal.id !== signalId);
+    if (growthSignalsSummary) growthSignalsSummary.active_count = Math.max(0, growthSignalsSummary.active_count - 1);
+    renderGrowth();
+  } catch (error) {
+    alert(error.message || "No se pudo descartar la señal.");
+  } finally {
+    growthSignalMutationIds.delete(signalId);
+  }
+}
+
+async function openSignalOpportunities(signalId) {
+  const signal = businessGrowthSignals.find((item) => item.id === signalId);
+  if (!signal?.related_opportunities) return;
+  const filters = new URLSearchParams({ status: "pending", type: signal.related_opportunities.type });
+  if (signal.related_opportunities.service_id) filters.set("service_id", String(signal.related_opportunities.service_id));
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/opportunities?${filters}`);
+    if (!response.ok) throw new Error("No se pudieron abrir las oportunidades relacionadas.");
+    customerOpportunities = (await response.json()).opportunities || [];
+    growthLoadState.opportunities = "ready";
+    showAdminSection("growth-opportunities");
+    renderGrowth();
+  } catch (error) {
+    alert(error.message || "No se pudieron abrir las oportunidades relacionadas.");
+  }
 }
 
 async function loadCustomerOpportunities({ background = false } = {}) {
@@ -1687,6 +1780,7 @@ function renderGrowth() {
   renderGrowthOverview(tasks);
   renderGrowthOpportunities(tasks);
   renderGrowthActionMetrics();
+  renderBusinessGrowthSignals();
   renderReviewRequests();
 }
 
@@ -1713,7 +1807,8 @@ async function loadAdminPanel() {
         loadConversationTemplates(),
         loadConversations(),
         loadCustomerOpportunities(),
-        loadGrowthActionMetrics()
+        loadGrowthActionMetrics(),
+        loadBusinessGrowthSignals()
       ]);
       return;
     }
@@ -1739,6 +1834,7 @@ async function loadAdminPanel() {
       loadMessageOutbox(),
       loadCustomerOpportunities(),
       loadGrowthActionMetrics(),
+      loadBusinessGrowthSignals(),
       loadAdminGallery(),
       loadConversationTemplates(),
       loadConversationAutomation(),
@@ -5182,7 +5278,7 @@ function ensureAdminPollingTasks() {
   adminPollingTasks.set("operations", {
     run: async () => {
       const requests = [loadBookings({ background: true })];
-      requests.push(loadCustomerOpportunities({ background: true }), loadGrowthActionMetrics({ background: true }));
+      requests.push(loadCustomerOpportunities({ background: true }), loadGrowthActionMetrics({ background: true }), loadBusinessGrowthSignals({ background: true }));
       if (!isBusinessStaff()) requests.push(loadMessageOutbox({ background: true }), loadReviewRequests({ background: true }));
       await Promise.all(requests);
     },

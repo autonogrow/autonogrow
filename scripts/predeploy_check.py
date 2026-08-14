@@ -174,6 +174,9 @@ def check_required_files(reporter: Reporter) -> None:
         "alembic/versions/20260814_15_add_opportunity_actions_attribution.py",
         "docs/growth_actions_architecture.md",
         "docs/manual_test_growth_actions.md",
+        "alembic/versions/20260814_16_add_business_growth_signals.py",
+        "docs/business_growth_signals_architecture.md",
+        "docs/manual_test_business_growth_signals.md",
         "docs/whatsapp_embedded_signup_architecture.md",
         "docs/manual_test_whatsapp_embedded_signup.md",
         "deploy/autonogrow-operational-check.service",
@@ -380,8 +383,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260814_15":
-            reporter.fail("La head operativa esperada es 20260814_15")
+        if heads[0] != "20260814_16":
+            reporter.fail("La head operativa esperada es 20260814_16")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 

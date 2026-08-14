@@ -164,6 +164,12 @@ class Business(Base):
     booking_attributions = relationship(
         "BookingAttribution", back_populates="business", cascade="all, delete-orphan"
     )
+    growth_signals = relationship(
+        "BusinessGrowthSignal", back_populates="business", cascade="all, delete-orphan"
+    )
+    calendar_events = relationship(
+        "BusinessCalendarEvent", back_populates="business", cascade="all, delete-orphan"
+    )
     scheduled_customer_followups = relationship(
         "ScheduledCustomerFollowUp", back_populates="business", cascade="all, delete-orphan"
     )

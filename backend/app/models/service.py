@@ -80,6 +80,8 @@ class BusinessService(Base):
     bookings = relationship("Booking", back_populates="service")
     opportunities = relationship("CustomerOpportunity", back_populates="source_service")
     scheduled_followups = relationship("ScheduledCustomerFollowUp", back_populates="service")
+    growth_signals = relationship("BusinessGrowthSignal", back_populates="service")
+    calendar_events = relationship("BusinessCalendarEvent", back_populates="service")
     staff_members = relationship(
         "BusinessUser",
         secondary="business_user_services",

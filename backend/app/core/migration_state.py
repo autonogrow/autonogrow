@@ -35,6 +35,8 @@ POST_BASELINE_TABLES = {
     "customer_opportunities",
     "opportunity_actions",
     "booking_attributions",
+    "business_calendar_events",
+    "business_growth_signals",
 }
 POST_BASELINE_COLUMNS = {
     "bookings.follow_up_enabled_snapshot",
@@ -136,6 +138,21 @@ CRITICAL_COLUMNS: dict[str, set[str]] = {
         "action_id",
         "booking_id",
         "method",
+    },
+    "business_calendar_events": {
+        "id",
+        "business_id",
+        "title",
+        "starts_at",
+        "ends_at",
+    },
+    "business_growth_signals": {
+        "id",
+        "business_id",
+        "type",
+        "status",
+        "severity",
+        "dedupe_key",
     },
 }
 

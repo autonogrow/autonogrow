@@ -13,6 +13,7 @@ from app.models.booking_attachment import BookingAttachment
 from app.models.business import Business
 from app.models.business_channel_control import BusinessChannelControl
 from app.models.business_channel_integration import BusinessChannelIntegration
+from app.models.business_growth_signal import BusinessCalendarEvent, BusinessGrowthSignal
 from app.models.business_media import BusinessGalleryImage
 from app.models.business_onboarding import (
     BusinessOnboardingSession,
@@ -59,6 +60,8 @@ from app.models.whatsapp_embedded_signup_attempt import WhatsAppEmbeddedSignupAt
 
 __all__ = [
     "Business",
+    "BusinessGrowthSignal",
+    "BusinessCalendarEvent",
     "BusinessService",
     "Customer",
     "CustomerOpportunity",
