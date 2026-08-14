@@ -137,6 +137,21 @@ DESTINATION_ONLY_TABLES = ("alembic_version",)
 # Values are safe expected values after PostgreSQL applies its explicit default,
 # or None when omission is intentionally represented as SQL NULL.
 ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
+    "business_gallery_images": {
+        "service_id": {"action": "omit_as_null", "expected_value": None},
+    },
+    "instagram_raw_assets": {
+        "service_id": {"action": "omit_as_null", "expected_value": None},
+        "active": {"action": "use_destination_default", "expected_value": True},
+    },
+    "instagram_contents": {
+        "source_proposal_id": {"action": "omit_as_null", "expected_value": None},
+    },
+    "instagram_content_versions": {
+        "editorial_package_json": {"action": "omit_as_null", "expected_value": None},
+        "generation_source": {"action": "omit_as_null", "expected_value": None},
+        "generator_version": {"action": "omit_as_null", "expected_value": None},
+    },
     "business_channel_integrations": {
         "provider_account_id": {"action": "omit_as_null", "expected_value": None},
         "health_status": {"action": "use_destination_default", "expected_value": "unknown"},

@@ -257,6 +257,9 @@ class SocialContentProposal(Base):
         back_populates="proposal",
         cascade="all, delete-orphan",
     )
+    generated_content = relationship(
+        "InstagramContent", back_populates="source_proposal", uselist=False
+    )
 
     @property
     def source_signals(self):

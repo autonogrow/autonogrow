@@ -83,6 +83,8 @@ class BusinessService(Base):
     growth_signals = relationship("BusinessGrowthSignal", back_populates="service")
     received_reviews = relationship("BusinessReview", back_populates="service")
     social_content_proposals = relationship("SocialContentProposal", back_populates="service")
+    instagram_raw_assets = relationship("InstagramRawAsset", back_populates="service")
+    gallery_images = relationship("BusinessGalleryImage", back_populates="service")
     calendar_events = relationship("BusinessCalendarEvent", back_populates="service")
     staff_members = relationship(
         "BusinessUser",

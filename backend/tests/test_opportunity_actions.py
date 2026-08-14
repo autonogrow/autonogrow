@@ -797,6 +797,7 @@ def test_outbox_claim_retry_and_success_update_the_same_action(
         idempotency_key=f"whatsapp:outbound-message:{message.id}",
         status="pending",
         max_attempts=3,
+        available_at=NOW.replace(tzinfo=None),
     )
     db.add_all((action, outbox))
     db.commit()

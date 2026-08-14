@@ -603,6 +603,15 @@ def serialize_social_content_proposal(row: SocialContentProposal) -> dict[str, A
         "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
+        "generated_content": (
+            {
+                "id": row.generated_content.id,
+                "title": row.generated_content.title,
+                "status": row.generated_content.status,
+            }
+            if row.generated_content
+            else None
+        ),
     }
 
 

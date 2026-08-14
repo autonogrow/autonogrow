@@ -54,6 +54,12 @@ class InstagramRawAsset(Base):
     business_id: Mapped[int] = mapped_column(
         ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    service_id: Mapped[int | None] = mapped_column(
+        ForeignKey("services.id", ondelete="SET NULL"), index=True
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
     uploaded_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
@@ -65,6 +71,7 @@ class InstagramRawAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     business = relationship("Business", back_populates="instagram_raw_assets")
+    service = relationship("BusinessService", back_populates="instagram_raw_assets")
 
 
 class InstagramContent(Base):
@@ -77,11 +84,18 @@ class InstagramContent(Base):
         ),
         Index("ix_instagram_contents_business_status", "business_id", "status"),
         Index("ix_instagram_contents_business_planned", "business_id", "planned_publish_at"),
+        UniqueConstraint(
+            "source_proposal_id", name="uq_instagram_contents_source_proposal_id"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     business_id: Mapped[int] = mapped_column(
         ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_proposal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("social_content_proposals.id", ondelete="SET NULL"),
+        index=True,
     )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="draft", nullable=False, index=True)
@@ -95,6 +109,7 @@ class InstagramContent(Base):
     )
 
     business = relationship("Business", back_populates="instagram_contents")
+    source_proposal = relationship("SocialContentProposal", back_populates="generated_content")
     versions = relationship(
         "InstagramContentVersion",
         back_populates="content",
@@ -150,7 +165,7 @@ class InstagramContentVersion(Base):
         UniqueConstraint("content_id", "version_number", name="uq_instagram_content_version"),
         CheckConstraint("version_number > 0", name="ck_instagram_content_version_positive"),
         CheckConstraint(
-            "format IN ('single_image','carousel')",
+            "format IN ('single_image','carousel','reel','story')",
             name="ck_instagram_content_version_format",
         ),
     )
@@ -165,6 +180,9 @@ class InstagramContentVersion(Base):
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     caption: Mapped[str] = mapped_column(Text, default="", nullable=False)
     format: Mapped[str] = mapped_column(String(30), default="single_image", nullable=False)
+    editorial_package_json: Mapped[str | None] = mapped_column(Text)
+    generation_source: Mapped[str | None] = mapped_column(String(30))
+    generator_version: Mapped[str | None] = mapped_column(String(50))
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )

@@ -13,6 +13,9 @@ class BusinessGalleryImage(Base):
     business_id: Mapped[int] = mapped_column(
         ForeignKey("businesses.id", ondelete="CASCADE"), index=True
     )
+    service_id: Mapped[int | None] = mapped_column(
+        ForeignKey("services.id", ondelete="SET NULL"), index=True
+    )
     url: Mapped[str] = mapped_column(Text, nullable=False)
     alt_text: Mapped[str | None] = mapped_column(String(240))
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -20,3 +23,4 @@ class BusinessGalleryImage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     business = relationship("Business", back_populates="gallery_images")
+    service = relationship("BusinessService", back_populates="gallery_images")

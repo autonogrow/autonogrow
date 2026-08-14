@@ -199,6 +199,13 @@ def update_material(
         caption=caption,
         format=format,
         created_by_user_id=actor.id,
+        editorial_package_json=(
+            _updated_editorial_package(previous.editorial_package_json, caption, format)
+            if previous.editorial_package_json
+            else None
+        ),
+        generation_source="manual_edit" if previous.editorial_package_json else None,
+        generator_version=previous.generator_version,
     )
     db.add(version)
     db.flush()
@@ -231,6 +238,15 @@ def update_material(
     content.status = "draft"
     db.flush()
     return content, version, True
+
+
+def _updated_editorial_package(raw: str, caption: str, format: str) -> str:
+    import json
+
+    package = json.loads(raw)
+    package["caption"] = caption
+    package["editorial_format"] = "static_post" if format == "single_image" else format
+    return json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def submit_for_review(db: Session, business_id: int, content_id: int) -> InstagramContent:
@@ -449,12 +465,19 @@ def serialize_validation(validation: InstagramContentValidation) -> dict:
 
 
 def serialize_version(version: InstagramContentVersion, api_prefix: str) -> dict:
+    import json
+
     links = sorted(version.asset_links, key=lambda item: item.position)
     return {
         "id": version.id,
         "version_number": version.version_number,
         "caption": version.caption,
         "format": version.format,
+        "editorial_package": (
+            json.loads(version.editorial_package_json) if version.editorial_package_json else None
+        ),
+        "generation_source": version.generation_source,
+        "generator_version": version.generator_version,
         "created_by_user_id": version.created_by_user_id,
         "created_at": version.created_at.isoformat(),
         "assets": [
@@ -491,6 +514,7 @@ def serialize_content(
             content.business.timezone.strip() or get_settings().instagram_default_timezone
         ),
         "title": content.title,
+        "source_proposal_id": content.source_proposal_id,
         "status": content.status,
         "planned_publish_at": (
             content.planned_publish_at.isoformat() if content.planned_publish_at else None

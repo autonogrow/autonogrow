@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-InstagramFormat = Literal["single_image", "carousel"]
+InstagramFormat = Literal["single_image", "carousel", "reel", "story"]
 CommentKind = Literal["comment", "proposal", "change_request"]
 InstagramPublishJobStatus = Literal[
     "queued",

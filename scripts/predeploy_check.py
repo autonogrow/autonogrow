@@ -181,6 +181,7 @@ def check_required_files(reporter: Reporter) -> None:
         "docs/customer_memory_architecture.md",
         "docs/manual_test_customer_memory.md",
         "alembic/versions/20260814_18_add_social_content_intelligence.py",
+        "alembic/versions/20260814_19_add_social_content_generation.py",
         "docs/social_content_intelligence_architecture.md",
         "docs/manual_test_social_content_intelligence.md",
         "docs/whatsapp_embedded_signup_architecture.md",
@@ -389,8 +390,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260814_18":
-            reporter.fail("La head operativa esperada es 20260814_18")
+        if heads[0] != "20260814_19":
+            reporter.fail("La head operativa esperada es 20260814_19")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 

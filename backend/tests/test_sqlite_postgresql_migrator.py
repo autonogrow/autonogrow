@@ -315,6 +315,7 @@ def test_exact_30_table_staging_baseline_is_valid(tmp_path: Path) -> None:
         "businesses",
         "services",
         "bookings",
+        "business_gallery_images",
     }
     report = safe_source_database_report(source, source_tables)
     for table_name in OPTIONAL_SOURCE_TABLES:
@@ -532,4 +533,4 @@ def test_partial_destination_schema_is_rejected(tmp_path: Path) -> None:
 
 
 def test_alembic_has_expected_single_head() -> None:
-    assert head_revisions() == ("20260814_18",)
+    assert head_revisions() == ("20260814_19",)
