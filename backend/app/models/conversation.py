@@ -70,6 +70,7 @@ class Conversation(Base):
         cascade="all, delete-orphan",
         order_by="ConversationSuggestion.created_at, ConversationSuggestion.id",
     )
+    opportunities = relationship("CustomerOpportunity", back_populates="source_conversation")
 
 
 class ConversationMessage(Base):

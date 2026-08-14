@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 from app.models import Booking, Business, BusinessService, Customer, SyncJob, User
 from app.schemas.booking import BookingRequestCreate
 from app.services.availability_service import get_available_slots, get_public_bookable_staff
+from app.services.growth_opportunity_service import (
+    GrowthOpportunityService,
+)
 from app.services.message_outbox_service import (
     create_booking_rescheduled_message,
 )
@@ -311,6 +314,13 @@ def create_booking_request(
         staff_business_user_id=selected_staff_id,
         service_name=service.name,
         duration_minutes=duration_minutes,
+        follow_up_enabled_snapshot=service.follow_up_enabled,
+        follow_up_interval_days_snapshot=(
+            service.follow_up_interval_days if service.follow_up_enabled else None
+        ),
+        follow_up_window_days_snapshot=(
+            service.follow_up_window_days if service.follow_up_enabled else 0
+        ),
         start_datetime=start_datetime,
         end_datetime=end_datetime,
         preferred_date=start_datetime.date().isoformat(),
@@ -324,6 +334,7 @@ def create_booking_request(
 
     db.add(booking)
     db.flush()
+    GrowthOpportunityService(db).resolve_for_rebooking(booking)
 
     sync_payload = {
         "booking_id": booking.id,

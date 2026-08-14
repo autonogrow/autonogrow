@@ -31,13 +31,32 @@ POST_BASELINE_TABLES = {
     "instagram_content_validations",
     "instagram_content_comments",
     "instagram_publish_jobs",
+    "scheduled_customer_followups",
+    "customer_opportunities",
+}
+POST_BASELINE_COLUMNS = {
+    "bookings.follow_up_enabled_snapshot",
+    "services.follow_up_enabled",
+    "services.follow_up_interval_days",
 }
 
 CRITICAL_COLUMNS: dict[str, set[str]] = {
     "businesses": {"id", "slug", "name"},
     "users": {"id", "email", "google_sub"},
     "business_users": {"id", "business_id", "user_id", "role"},
-    "bookings": {"id", "business_id", "customer_id", "start_datetime"},
+    "bookings": {
+        "id",
+        "business_id",
+        "customer_id",
+        "start_datetime",
+        "follow_up_enabled_snapshot",
+    },
+    "services": {
+        "id",
+        "business_id",
+        "follow_up_enabled",
+        "follow_up_interval_days",
+    },
     "conversations": {"id", "business_id", "channel", "automation_mode"},
     "conversation_messages": {"id", "conversation_id", "direction", "body"},
     "automation_credit_transactions": {
@@ -82,6 +101,21 @@ CRITICAL_COLUMNS: dict[str, set[str]] = {
         "idempotency_key",
         "claim_expires_at",
     },
+    "scheduled_customer_followups": {
+        "id",
+        "business_id",
+        "customer_id",
+        "due_at",
+        "dedupe_key",
+    },
+    "customer_opportunities": {
+        "id",
+        "business_id",
+        "customer_id",
+        "type",
+        "status",
+        "dedupe_key",
+    },
 }
 
 
@@ -107,7 +141,8 @@ class DatabaseMigrationState:
     @property
     def is_baseline_compatible_legacy(self) -> bool:
         missing_baseline_tables = set(self.missing_tables) - POST_BASELINE_TABLES
-        return self.is_legacy and not missing_baseline_tables and not self.missing_critical_columns
+        missing_baseline_columns = set(self.missing_critical_columns) - POST_BASELINE_COLUMNS
+        return self.is_legacy and not missing_baseline_tables and not missing_baseline_columns
 
 
 def alembic_config() -> Config:
@@ -157,7 +192,11 @@ def inspect_database_migration_state(engine: Engine) -> DatabaseMigrationState:
         recommendation = "revisión manual: el repositorio no tiene una única head"
     elif is_empty:
         recommendation = "upgrade"
-    elif is_legacy and not (missing_tables - POST_BASELINE_TABLES) and not missing_columns:
+    elif (
+        is_legacy
+        and not (missing_tables - POST_BASELINE_TABLES)
+        and not (set(missing_columns) - POST_BASELINE_COLUMNS)
+    ):
         recommendation = "stamp baseline"
     elif is_legacy:
         recommendation = "revisión manual: la base heredada está incompleta"

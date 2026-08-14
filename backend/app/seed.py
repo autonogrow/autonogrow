@@ -82,6 +82,9 @@ BUSINESSES = [
                 "price_text": "25 €",
                 "duration_text": "60 min",
                 "duration_minutes": 60,
+                "follow_up_enabled": True,
+                "follow_up_interval_days": 21,
+                "follow_up_window_days": 4,
             },
             {
                 "name": "Retirada + manicura",
@@ -131,6 +134,9 @@ BUSINESSES = [
                 "price_text": "15 €",
                 "duration_text": "30 min",
                 "duration_minutes": 30,
+                "follow_up_enabled": True,
+                "follow_up_interval_days": 35,
+                "follow_up_window_days": 7,
             },
             {
                 "name": "Corte + barba",
@@ -187,6 +193,9 @@ BUSINESSES = [
                 "price_text": "Desde 60 €",
                 "duration_text": "45 min",
                 "duration_minutes": 45,
+                "follow_up_enabled": True,
+                "follow_up_interval_days": 180,
+                "follow_up_window_days": 14,
             },
             {
                 "name": "Presupuesto de reparación",

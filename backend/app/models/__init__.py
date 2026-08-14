@@ -32,6 +32,7 @@ from app.models.conversation import (
     ConversationTemplate,
 )
 from app.models.customer import Customer
+from app.models.customer_opportunity import CustomerOpportunity, ScheduledCustomerFollowUp
 from app.models.google_integration import GoogleIntegration
 from app.models.instagram_content import (
     InstagramContent,
@@ -59,6 +60,8 @@ __all__ = [
     "Business",
     "BusinessService",
     "Customer",
+    "CustomerOpportunity",
+    "ScheduledCustomerFollowUp",
     "Booking",
     "BookingAttachment",
     "WeeklyAvailability",

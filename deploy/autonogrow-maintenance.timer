@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily AutonoGrow retention maintenance
+Description=Daily AutonoGrow retention and growth opportunity maintenance
 
 [Timer]
 OnCalendar=*-*-* 03:40:00

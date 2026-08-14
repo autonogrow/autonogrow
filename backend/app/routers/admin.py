@@ -34,6 +34,10 @@ from app.services.booking_service import (
     reschedule_existing_booking,
     serialize_booking,
 )
+from app.services.growth_opportunity_service import (
+    GrowthOpportunityService,
+    snapshot_booking_follow_up,
+)
 from app.services.message_outbox_service import (
     create_booking_confirmed_message,
     create_booking_rejected_message,
@@ -144,6 +148,9 @@ def serialize_admin_service(service: BusinessService) -> dict:
         "duration_text": service.duration_text,
         "duration_minutes": service.duration_minutes,
         "active": service.active,
+        "follow_up_enabled": service.follow_up_enabled,
+        "follow_up_interval_days": service.follow_up_interval_days,
+        "follow_up_window_days": service.follow_up_window_days,
     }
 
 
@@ -237,6 +244,9 @@ def admin_create_service(
         duration_minutes=payload.duration_minutes,
         duration_text=f"{payload.duration_minutes} min",
         active=payload.active,
+        follow_up_enabled=payload.follow_up_enabled,
+        follow_up_interval_days=payload.follow_up_interval_days,
+        follow_up_window_days=payload.follow_up_window_days,
     )
     db.add(service)
     db.commit()
@@ -280,6 +290,21 @@ def admin_update_service(
     required_fields = {"name", "duration_minutes", "active"}
     if any(field in updates and updates[field] is None for field in required_fields):
         raise HTTPException(status_code=400, detail="Name, duration and active cannot be null")
+
+    effective_follow_up_enabled = updates.get("follow_up_enabled", service.follow_up_enabled)
+    effective_follow_up_interval = updates.get(
+        "follow_up_interval_days", service.follow_up_interval_days
+    )
+    effective_follow_up_window = updates.get(
+        "follow_up_window_days", service.follow_up_window_days
+    )
+    if effective_follow_up_enabled and effective_follow_up_interval is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Follow-up interval is required when follow-up is enabled",
+        )
+    if effective_follow_up_window is None:
+        raise HTTPException(status_code=422, detail="Follow-up window cannot be null")
 
     for field, value in updates.items():
         setattr(service, field, value)
@@ -492,6 +517,7 @@ def update_booking_status(
         outbox_message = create_booking_rejected_message(db, business=business, booking=booking)
 
     if payload.status == "completed":
+        snapshot_booking_follow_up(booking, booking.service)
         review_request = get_or_create_review_request(
             db,
             business=business,
@@ -504,6 +530,12 @@ def update_booking_status(
                 booking=booking,
                 review_request=review_request,
             )
+
+    growth_engine = GrowthOpportunityService(db)
+    if payload.status in {"requested", "pending", "confirmed"}:
+        growth_engine.resolve_for_rebooking(booking)
+    else:
+        growth_engine.evaluate_business(business.id)
 
     db.commit()
     action = {

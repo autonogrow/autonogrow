@@ -392,6 +392,7 @@
         <label>Precio visible<input id="new-service-price" type="text" placeholder="Ej.: 25 €" /></label>
         <label>Duración en minutos <span aria-hidden="true">*</span><input id="new-service-duration" type="number" min="1" max="1440" required aria-describedby="new-service-duration-error" /><small id="new-service-duration-error" class="ag-field-error"></small></label>
         <label class="field-wide">Descripción<textarea id="new-service-description" rows="2"></textarea></label>
+        <fieldset class="service-follow-up field-wide"><legend>Seguimiento del cliente</legend><label class="active-setting"><input id="new-service-follow-up-enabled" type="checkbox" /> Recomendar que el cliente vuelva después de este servicio</label><label>Volver aproximadamente en<input id="new-service-follow-up-interval" type="number" min="1" max="3650" placeholder="30" aria-describedby="new-service-follow-up-interval-help" /><small id="new-service-follow-up-interval-help">Días desde la cita completada.</small></label><label>Ventana opcional<input id="new-service-follow-up-window" type="number" min="0" max="365" value="0" /><small>Días antes y después de la fecha aproximada.</small></label></fieldset>
         <button id="create-service" class="btn btn-primary" type="button">Crear servicio</button>
       </fieldset>
 
@@ -732,6 +733,7 @@
         <div class="growth-hub-content">
           <header class="growth-hub-header"><div><p class="eyebrow">Crecimiento</p><h2 id="growth-opportunities-title">Oportunidades</h2><p>Recomendaciones concretas derivadas de reservas, mensajes y configuración.</p></div><span id="growth-opportunities-status" class="growth-human-status">Comprobando…</span></header>
           <div id="growth-opportunities-errors" class="growth-partial-error" role="alert" tabindex="-1" hidden></div>
+          <p class="growth-opportunities-help">Estas señales son deterministas: AutonoGrow muestra el motivo y nunca envía mensajes automáticamente.</p>
           <div id="growth-tasks-list" class="growth-tasks-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Calculando oportunidades.</span></div>
           <aside class="growth-review-automation-note"><div><strong>Solicitudes de reseña asistidas</strong><p>El sistema actual no envía automáticamente estas solicitudes ni consume créditos. Puedes configurar las automatizaciones de conversación por separado.</p></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="automations">Ver respuestas automáticas</button></aside>
         </div>

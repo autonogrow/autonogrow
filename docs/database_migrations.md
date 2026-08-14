@@ -1,5 +1,7 @@
 # Migraciones de base de datos
 
+La head de Sprint 7 es `20260814_14`, sucesora única de `20260806_13`. Añade configuración/snapshot de recurrencia, seguimientos manuales y oportunidades de clientes con constraints de estado, referencias e idempotencia compatibles con SQLite/PostgreSQL.
+
 La head vigente es `20260730_06`. Añade estado operativo, metadatos de backup y `request_id` nullable en inbox/outbox; baja a `20260730_05` solo con servicio detenido, backup verificado y código compatible.
 
 La head actual es `20260730_04` y depende de `20260730_03`. Añade checks de créditos y reservas e

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -16,6 +16,13 @@ class Booking(Base):
         CheckConstraint(
             "start_datetime IS NULL OR end_datetime IS NULL OR end_datetime > start_datetime",
             name="ck_bookings_datetime_order",
+        ),
+        CheckConstraint(
+            "(follow_up_interval_days_snapshot IS NULL OR "
+            "follow_up_interval_days_snapshot > 0) AND "
+            "(follow_up_window_days_snapshot IS NULL OR "
+            "follow_up_window_days_snapshot >= 0)",
+            name="ck_bookings_follow_up_snapshot",
         ),
         Index(
             "ix_bookings_business_staff_start_status",
@@ -56,6 +63,11 @@ class Booking(Base):
 
     service_name: Mapped[str] = mapped_column(String(200), nullable=False)
     duration_minutes: Mapped[int | None] = mapped_column(Integer)
+    follow_up_enabled_snapshot: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    follow_up_interval_days_snapshot: Mapped[int | None] = mapped_column(Integer)
+    follow_up_window_days_snapshot: Mapped[int | None] = mapped_column(Integer)
     start_datetime: Mapped[datetime | None] = mapped_column(DateTime)
     end_datetime: Mapped[datetime | None] = mapped_column(DateTime)
 
@@ -88,3 +100,5 @@ class Booking(Base):
     message_outbox = relationship(
         "MessageOutbox", back_populates="booking", cascade="all, delete-orphan"
     )
+    opportunities = relationship("CustomerOpportunity", back_populates="source_booking")
+    scheduled_followups = relationship("ScheduledCustomerFollowUp", back_populates="booking")

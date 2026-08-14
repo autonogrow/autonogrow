@@ -19,6 +19,8 @@ let allBookings = [];
 let reviewRequestsByBooking = new Map();
 let messageOutbox = [];
 let adminServices = [];
+let customerOpportunities = [];
+const opportunityMutationIds = new Set();
 let availabilitySettings = null;
 let availabilityExceptions = [];
 let exceptionDraftWindows = [];
@@ -89,7 +91,7 @@ const BRAND_PALETTES = {
   amber_barber: ["#92400e", "#451a03", "#fbbf24", "#fffbeb"], violet_modern: ["#7c3aed", "#4c1d95", "#c4b5fd", "#f5f3ff"]
 };
 const BRAND_COLOR_NAMES = ["primary", "secondary", "accent", "background"];
-const growthLoadState = { reviews: "loading", outbox: "loading" };
+const growthLoadState = { reviews: "loading", outbox: "loading", opportunities: "loading" };
 const dashboardDataState = {
   business: "loading",
   bookings: "loading",
@@ -356,6 +358,8 @@ function setupGrowthHub() {
     if (copy) { copyReviewMessage(Number(copy.dataset.reviewCopy)); return; }
     const status = event.target.closest("[data-review-status]");
     if (status) updateReviewRequestStatus(Number(status.dataset.reviewRequest), status.dataset.reviewStatus);
+    const opportunity = event.target.closest("[data-opportunity-action]");
+    if (opportunity) updateCustomerOpportunity(Number(opportunity.dataset.opportunityId), opportunity.dataset.opportunityAction);
   });
   renderGrowthNavigation();
 }
@@ -1345,7 +1349,7 @@ function hasUsableReviewPhone(booking) {
 }
 
 function growthSourcesSettled() {
-  return dashboardDataState.bookings !== "loading" && growthLoadState.reviews !== "loading" && growthLoadState.outbox !== "loading";
+  return dashboardDataState.bookings !== "loading" && growthLoadState.reviews !== "loading" && growthLoadState.outbox !== "loading" && growthLoadState.opportunities !== "loading";
 }
 
 function growthSourceErrors() {
@@ -1353,6 +1357,7 @@ function growthSourceErrors() {
   if (dashboardDataState.bookings === "error") errors.push("No se pudieron comprobar las reservas.");
   if (growthLoadState.reviews === "error") errors.push("No se pudieron actualizar las solicitudes de reseña.");
   if (growthLoadState.outbox === "error") errors.push("No se pudo comprobar el estado de los mensajes asistidos.");
+  if (growthLoadState.opportunities === "error") errors.push("No se pudieron actualizar las oportunidades de clientes.");
   return errors;
 }
 
@@ -1385,7 +1390,7 @@ function renderGrowthOverview(tasks) {
   const activeTasks = tasks.filter((task) => ["recommended", "needs_attention", "blocked", "not_available"].includes(task.status));
   const completed = tasks.filter((task) => task.status === "completed").length;
   const percentage = tasks.length ? Math.round((completed / tasks.length) * 100) : 100;
-  const metricValues = { "growth-metric-candidates": candidates.length, "growth-metric-prepared": prepared, "growth-metric-sent": sent, "growth-metric-failed": failed, "growth-metric-opportunities": activeTasks.length };
+  const metricValues = { "growth-metric-candidates": candidates.length, "growth-metric-prepared": prepared, "growth-metric-sent": sent, "growth-metric-failed": failed, "growth-metric-opportunities": customerOpportunities.filter((item) => item.status === "pending").length };
   Object.entries(metricValues).forEach(([id, value]) => { document.getElementById(id).textContent = String(value); });
   document.querySelector(".growth-metrics")?.setAttribute("aria-busy", "false");
   document.getElementById("growth-progress-count").textContent = `${completed} de ${tasks.length} condiciones resueltas`;
@@ -1413,8 +1418,45 @@ function renderGrowthOpportunities(tasks) {
   if (!container) return;
   const visible = tasks.filter((task) => ["recommended", "needs_attention", "blocked", "not_available"].includes(task.status));
   container.setAttribute("aria-busy", "false");
-  container.innerHTML = visible.length ? visible.map((task) => `<article class="growth-task growth-task-${task.status}" data-growth-task="${escapeHtml(task.id)}"><span class="growth-task-status">${escapeHtml(growthTaskStateLabel(task.status))}</span><div class="growth-task-copy"><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(task.description)}</p><span>Depende de: ${escapeHtml(task.dependency)}</span></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="${escapeHtml(task.action)}"${task.channel ? ` data-channel="${escapeHtml(task.channel)}"` : ""}>${escapeHtml(task.action_label)}</button></article>`).join("") : `<div class="growth-empty-state"><strong>No hay oportunidades activas</strong><p>Cuando cambien reservas, mensajes o configuración, las nuevas acciones aparecerán aquí.</p></div>`;
-  document.getElementById("growth-opportunities-status").textContent = visible.length ? `${visible.length} activas` : "Sin oportunidades";
+  const typeLabels = { cancelled_not_rebooked: "Cancelación sin nueva reserva", no_show_not_rebooked: "No presentado sin nueva reserva", lead_not_converted: "Consulta sin reserva", service_due: "Servicio pendiente de repetición", scheduled_followup: "Seguimiento indicado" };
+  const persisted = customerOpportunities.map((item) => `<article class="growth-task growth-task-${escapeHtml(item.priority)}" data-customer-opportunity="${item.id}"><span class="growth-task-status">${escapeHtml(typeLabels[item.type] || item.type)}</span><div class="growth-task-copy"><h3>${escapeHtml(item.customer?.name || "Cliente sin nombre")}</h3><p>${escapeHtml(item.reason_text)}</p><span>Fecha relevante: ${escapeHtml(formatDateTime(item.due_at))}</span><details><summary>Ver contexto</summary><p>${escapeHtml(item.reason_text)}</p></details></div><div class="growth-opportunity-actions"><button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="actioned" data-opportunity-id="${item.id}">Marcar gestionada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-opportunity-action="dismissed" data-opportunity-id="${item.id}">Descartar</button></div></article>`).join("");
+  const operational = visible.length ? `<details class="growth-operational-recommendations"><summary>Mejoras operativas (${visible.length})</summary>${visible.map((task) => `<article class="growth-task growth-task-${task.status}" data-growth-task="${escapeHtml(task.id)}"><span class="growth-task-status">${escapeHtml(growthTaskStateLabel(task.status))}</span><div class="growth-task-copy"><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(task.description)}</p><span>Depende de: ${escapeHtml(task.dependency)}</span></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="${escapeHtml(task.action)}"${task.channel ? ` data-channel="${escapeHtml(task.channel)}"` : ""}>${escapeHtml(task.action_label)}</button></article>`).join("")}</details>` : "";
+  container.innerHTML = persisted || operational ? `${persisted}${operational}` : `<div class="growth-empty-state"><strong>No hay oportunidades activas</strong><p>Cuando venza un seguimiento o una reserva necesite atención, aparecerá aquí.</p></div>`;
+  document.getElementById("growth-opportunities-status").textContent = customerOpportunities.length ? `${customerOpportunities.length} pendientes` : "Sin oportunidades";
+}
+
+async function loadCustomerOpportunities({ background = false } = {}) {
+  if (!customerOpportunities.length) growthLoadState.opportunities = "loading";
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/opportunities?status=pending`);
+    if (!response.ok) throw new Error("opportunities_unavailable");
+    const data = await response.json();
+    customerOpportunities = data.opportunities || [];
+    growthLoadState.opportunities = "ready";
+    renderGrowth();
+  } catch (error) {
+    console.error(error);
+    growthLoadState.opportunities = "error";
+    if (!background) customerOpportunities = [];
+    renderGrowth();
+  }
+}
+
+async function updateCustomerOpportunity(opportunityId, status) {
+  if (opportunityMutationIds.has(opportunityId)) return;
+  opportunityMutationIds.add(opportunityId);
+  try {
+    const action = status === "dismissed" ? "dismiss" : "actioned";
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/opportunities/${opportunityId}/${action}`, { method: "POST" });
+    if (!response.ok) throw new Error("No se pudo actualizar la oportunidad.");
+    customerOpportunities = customerOpportunities.filter((item) => item.id !== opportunityId);
+    renderGrowth();
+  } catch (error) {
+    console.error(error);
+    alert(error.message || "No se pudo actualizar la oportunidad.");
+  } finally {
+    opportunityMutationIds.delete(opportunityId);
+  }
 }
 
 function renderGrowth() {
@@ -1475,6 +1517,7 @@ async function loadAdminPanel() {
       loadAvailabilityExceptions(),
       loadBookings(),
       loadMessageOutbox(),
+      loadCustomerOpportunities(),
       loadAdminGallery(),
       loadConversationTemplates(),
       loadConversationAutomation(),
@@ -2751,6 +2794,7 @@ function renderAdminServices() {
         <label>Duración<input class="service-duration" type="number" min="1" max="1440" value="${service.duration_minutes || ""}" aria-describedby="service-${service.id}-duration-error" /><small id="service-${service.id}-duration-error" class="ag-field-error"></small></label>
         <label class="field-wide">Descripción<textarea class="service-description" rows="2">${escapeHtml(service.description || "")}</textarea></label>
         <label class="active-setting"><input class="service-active" type="checkbox" ${service.active ? "checked" : ""} />Activo</label>
+        <fieldset class="service-follow-up field-wide"><legend>Seguimiento del cliente</legend><label class="active-setting"><input class="service-follow-up-enabled" type="checkbox" ${service.follow_up_enabled ? "checked" : ""} /> Recomendar que el cliente vuelva después de este servicio</label><label>Volver aproximadamente en<input class="service-follow-up-interval" type="number" min="1" max="3650" value="${service.follow_up_interval_days || ""}" /><small>Días desde la cita completada.</small></label><label>Ventana opcional<input class="service-follow-up-window" type="number" min="0" max="365" value="${service.follow_up_window_days ?? 0}" /><small>Días antes y después.</small></label></fieldset>
       </div>
       <p class="configuration-impact-note">Al desactivar un servicio dejará de ofrecerse para nuevas reservas; las reservas existentes se conservan.</p>
       <div class="settings-actions"><span class="configuration-item-save-state">Sin cambios</span><button class="btn btn-small btn-secondary" data-save-service type="button" data-admin-action="save-service" data-id="${service.id}">Guardar servicio</button></div>
@@ -2767,7 +2811,10 @@ function readServiceForm(container) {
     description: container.querySelector(".service-description").value.trim(),
     price_text: container.querySelector(".service-price").value.trim(),
     duration_minutes: Number(container.querySelector(".service-duration").value),
-    active: container.querySelector(".service-active").checked
+    active: container.querySelector(".service-active").checked,
+    follow_up_enabled: container.querySelector(".service-follow-up-enabled").checked,
+    follow_up_interval_days: container.querySelector(".service-follow-up-interval").value ? Number(container.querySelector(".service-follow-up-interval").value) : null,
+    follow_up_window_days: Number(container.querySelector(".service-follow-up-window").value || 0)
   };
 }
 
@@ -2787,6 +2834,12 @@ function validateServicePayload(payload, container) {
     const error = container?.querySelector("[id$='duration-error']");
     if (error) error.textContent = "Introduce una duración válida entre 1 y 1440 minutos.";
     throw new Error("Introduce una duración válida entre 1 y 1440 minutos.");
+  }
+  if (payload.follow_up_enabled && (!Number.isInteger(payload.follow_up_interval_days) || payload.follow_up_interval_days < 1 || payload.follow_up_interval_days > 3650)) {
+    throw new Error("Indica cada cuántos días conviene que vuelva el cliente.");
+  }
+  if (!Number.isInteger(payload.follow_up_window_days) || payload.follow_up_window_days < 0 || payload.follow_up_window_days > 365) {
+    throw new Error("La ventana de seguimiento debe estar entre 0 y 365 días.");
   }
 }
 
@@ -2858,7 +2911,10 @@ async function createAdminService() {
     description: document.getElementById("new-service-description").value.trim(),
     price_text: document.getElementById("new-service-price").value.trim(),
     duration_minutes: Number(document.getElementById("new-service-duration").value),
-    active: true
+    active: true,
+    follow_up_enabled: document.getElementById("new-service-follow-up-enabled").checked,
+    follow_up_interval_days: document.getElementById("new-service-follow-up-interval").value ? Number(document.getElementById("new-service-follow-up-interval").value) : null,
+    follow_up_window_days: Number(document.getElementById("new-service-follow-up-window").value || 0)
   };
 
   try {
@@ -2880,8 +2936,10 @@ async function createAdminService() {
       throw new Error(safeConfigurationError(result, "No se pudo crear el servicio."));
     }
 
-    ["new-service-name", "new-service-description", "new-service-price", "new-service-duration"]
+    ["new-service-name", "new-service-description", "new-service-price", "new-service-duration", "new-service-follow-up-interval"]
       .forEach((id) => { document.getElementById(id).value = ""; });
+    document.getElementById("new-service-follow-up-enabled").checked = false;
+    document.getElementById("new-service-follow-up-window").value = "0";
     snapshotConfigurationForm("service-new");
     feedback.className = "inline-feedback success";
     feedback.textContent = "Servicio creado correctamente.";
@@ -4903,7 +4961,7 @@ function ensureAdminPollingTasks() {
   adminPollingTasks.set("operations", {
     run: async () => {
       const requests = [loadBookings({ background: true })];
-      if (!isBusinessStaff()) requests.push(loadMessageOutbox({ background: true }), loadReviewRequests({ background: true }));
+      if (!isBusinessStaff()) requests.push(loadMessageOutbox({ background: true }), loadReviewRequests({ background: true }), loadCustomerOpportunities({ background: true }));
       await Promise.all(requests);
     },
     inFlight: false,

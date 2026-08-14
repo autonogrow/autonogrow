@@ -24,6 +24,7 @@ MODEL_MODULES = (
     "app.models.channel_queue",
     "app.models.conversation",
     "app.models.customer",
+    "app.models.customer_opportunity",
     "app.models.google_integration",
     "app.models.instagram_oauth_attempt",
     "app.models.instagram_content",

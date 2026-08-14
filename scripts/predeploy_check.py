@@ -168,6 +168,9 @@ def check_required_files(reporter: Reporter) -> None:
         "alembic/versions/20260803_08_add_instagram_oauth_attempts.py",
         "alembic/versions/20260803_09_add_whatsapp_embedded_signup_attempts.py",
         "alembic/versions/20260804_10_add_meta_integration_health.py",
+        "alembic/versions/20260814_14_add_customer_opportunities.py",
+        "docs/customer_opportunities_architecture.md",
+        "docs/manual_test_customer_opportunities.md",
         "docs/whatsapp_embedded_signup_architecture.md",
         "docs/manual_test_whatsapp_embedded_signup.md",
         "deploy/autonogrow-operational-check.service",
@@ -356,7 +359,7 @@ def check_dependency_locks(reporter: Reporter) -> None:
             reporter.passed(f"{relative} contiene solo versiones exactas")
 
     production_lock = (ROOT / "backend/requirements.txt").read_text(encoding="utf-8-sig")
-    if "psycopg==3.3.4" in production_lock and "psycopg-binary==3.3.4" in production_lock:
+    if "psycopg[binary]==3.3.4" in production_lock and "psycopg-binary==3.3.4" in production_lock:
         reporter.passed("psycopg 3 y su distribución binary están fijados")
     else:
         reporter.fail("El lock de producción no contiene psycopg 3 binary fijado")
@@ -374,8 +377,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260804_10":
-            reporter.fail("La head operativa esperada es 20260804_10")
+        if heads[0] != "20260814_14":
+            reporter.fail("La head operativa esperada es 20260814_14")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 

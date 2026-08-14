@@ -29,3 +29,9 @@ class Customer(Base):
 
     business = relationship("Business", back_populates="customers")
     bookings = relationship("Booking", back_populates="customer")
+    opportunities = relationship(
+        "CustomerOpportunity", back_populates="customer", cascade="all, delete-orphan"
+    )
+    scheduled_followups = relationship(
+        "ScheduledCustomerFollowUp", back_populates="customer", cascade="all, delete-orphan"
+    )

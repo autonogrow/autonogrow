@@ -2331,3 +2331,12 @@ input {
 .instagram-caption { padding: var(--ag-space-3); white-space: pre-wrap; border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
 .instagram-comments { padding-left: var(--ag-space-5); }
 @media (max-width: 760px) { .instagram-editorial-grid { grid-template-columns: 1fr; } }
+
+/* Sprint 7 customer opportunities */
+.service-follow-up { border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); display: grid; gap: var(--ag-space-3); grid-template-columns: repeat(2, minmax(0, 1fr)); padding: var(--ag-space-4); }
+.service-follow-up legend { font-weight: 700; padding: 0 var(--ag-space-2); }
+.service-follow-up .active-setting { grid-column: 1 / -1; }
+.growth-opportunity-actions { align-items: center; display: flex; flex-wrap: wrap; gap: var(--ag-space-2); }
+.growth-operational-recommendations { border-top: 1px solid var(--ag-color-border); margin-top: var(--ag-space-4); padding-top: var(--ag-space-4); }
+.growth-operational-recommendations > summary { cursor: pointer; font-weight: 700; margin-bottom: var(--ag-space-3); }
+@media (max-width: 639px) { .service-follow-up { grid-template-columns: 1fr; } .growth-opportunity-actions { width: 100%; } }

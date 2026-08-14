@@ -46,6 +46,7 @@ COPY_ORDER = (
     "customers",
     "bookings",
     "booking_attachments",
+    "scheduled_customer_followups",
     "google_integrations",
     "sync_jobs",
     "review_requests",
@@ -56,6 +57,7 @@ COPY_ORDER = (
     "conversation_messages",
     "conversation_suggestions",
     "conversation_automation_settings",
+    "customer_opportunities",
     "automation_credit_transactions",
     "business_channel_integrations",
     "business_channel_controls",
@@ -103,6 +105,8 @@ OPTIONAL_SOURCE_TABLES = (
     "instagram_oauth_attempts",
     "whatsapp_embedded_signup_attempts",
     "meta_integration_jobs",
+    "scheduled_customer_followups",
+    "customer_opportunities",
     "operational_states",
     "backup_records",
 )
@@ -176,6 +180,29 @@ ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
         "position": {"action": "use_destination_default", "expected_value": 0},
         "source_key": {"action": "omit_as_null", "expected_value": None},
         "archived_at": {"action": "omit_as_null", "expected_value": None},
+        "follow_up_enabled": {
+            "action": "use_destination_default",
+            "expected_value": False,
+        },
+        "follow_up_interval_days": {"action": "omit_as_null", "expected_value": None},
+        "follow_up_window_days": {
+            "action": "use_destination_default",
+            "expected_value": 0,
+        },
+    },
+    "bookings": {
+        "follow_up_enabled_snapshot": {
+            "action": "use_destination_default",
+            "expected_value": False,
+        },
+        "follow_up_interval_days_snapshot": {
+            "action": "omit_as_null",
+            "expected_value": None,
+        },
+        "follow_up_window_days_snapshot": {
+            "action": "omit_as_null",
+            "expected_value": None,
+        },
     },
     "availability_settings": {
         "auto_confirm_bookings": {

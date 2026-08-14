@@ -9,6 +9,8 @@ from app.models.utc_datetime import UTCDateTime
 INSTAGRAM_PUBLISH_JOB_STATUSES = (
     "queued",
     "claimed",
+    "creating_container",
+    "publishing",
     "simulating_publish",
     "published",
     "retry_wait",
@@ -28,7 +30,8 @@ class InstagramPublishJob(Base):
         CheckConstraint("attempt_count >= 0", name="ck_instagram_publish_jobs_attempts"),
         CheckConstraint("max_attempts > 0", name="ck_instagram_publish_jobs_max_attempts"),
         CheckConstraint(
-            "status IN ('queued','claimed','simulating_publish','published','retry_wait',"
+            "status IN ('queued','claimed','creating_container','publishing',"
+            "'simulating_publish','published','retry_wait',"
             "'failed','action_required','cancelled')",
             name="ck_instagram_publish_jobs_status",
         ),

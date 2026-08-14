@@ -25,7 +25,10 @@ class BusinessService(Base):
         CheckConstraint(
             "(duration_minutes IS NULL OR duration_minutes > 0) AND "
             "(price_amount IS NULL OR price_amount >= 0) AND "
-            "buffer_before_minutes >= 0 AND buffer_after_minutes >= 0 AND position >= 0",
+            "buffer_before_minutes >= 0 AND buffer_after_minutes >= 0 AND position >= 0 AND "
+            "(follow_up_interval_days IS NULL OR follow_up_interval_days > 0) AND "
+            "follow_up_window_days >= 0 AND "
+            "(follow_up_enabled = false OR follow_up_interval_days IS NOT NULL)",
             name="ck_services_onboarding_values",
         ),
     )
@@ -62,11 +65,21 @@ class BusinessService(Base):
     source_key: Mapped[str | None] = mapped_column(String(200), index=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    follow_up_enabled: Mapped[bool] = mapped_column(
+        default=False, server_default=text("false"), nullable=False
+    )
+    follow_up_interval_days: Mapped[int | None] = mapped_column(Integer)
+    follow_up_window_days: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     business = relationship("Business", back_populates="services")
     bookings = relationship("Booking", back_populates="service")
+    opportunities = relationship("CustomerOpportunity", back_populates="source_service")
+    scheduled_followups = relationship("ScheduledCustomerFollowUp", back_populates="service")
     staff_members = relationship(
         "BusinessUser",
         secondary="business_user_services",

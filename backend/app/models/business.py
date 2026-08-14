@@ -155,6 +155,12 @@ class Business(Base):
         back_populates="business",
         cascade="all, delete-orphan",
     )
+    customer_opportunities = relationship(
+        "CustomerOpportunity", back_populates="business", cascade="all, delete-orphan"
+    )
+    scheduled_customer_followups = relationship(
+        "ScheduledCustomerFollowUp", back_populates="business", cascade="all, delete-orphan"
+    )
     onboarding_sessions = relationship(
         "BusinessOnboardingSession", back_populates="business", cascade="all, delete-orphan"
     )

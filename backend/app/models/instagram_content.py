@@ -135,6 +135,7 @@ class InstagramFinalAsset(Base):
     storage_key: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
     media_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     content = relationship("InstagramContent", back_populates="final_assets")
