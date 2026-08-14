@@ -33,11 +33,14 @@ POST_BASELINE_TABLES = {
     "instagram_publish_jobs",
     "scheduled_customer_followups",
     "customer_opportunities",
+    "opportunity_actions",
+    "booking_attributions",
 }
 POST_BASELINE_COLUMNS = {
     "bookings.follow_up_enabled_snapshot",
     "services.follow_up_enabled",
     "services.follow_up_interval_days",
+    "bookings.price_amount_snapshot",
 }
 
 CRITICAL_COLUMNS: dict[str, set[str]] = {
@@ -50,6 +53,7 @@ CRITICAL_COLUMNS: dict[str, set[str]] = {
         "customer_id",
         "start_datetime",
         "follow_up_enabled_snapshot",
+        "price_amount_snapshot",
     },
     "services": {
         "id",
@@ -115,6 +119,23 @@ CRITICAL_COLUMNS: dict[str, set[str]] = {
         "type",
         "status",
         "dedupe_key",
+    },
+    "opportunity_actions": {
+        "id",
+        "business_id",
+        "opportunity_id",
+        "customer_id",
+        "status",
+        "action_type",
+        "message_id",
+    },
+    "booking_attributions": {
+        "id",
+        "business_id",
+        "opportunity_id",
+        "action_id",
+        "booking_id",
+        "method",
     },
 }
 

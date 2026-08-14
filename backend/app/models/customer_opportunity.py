@@ -111,6 +111,12 @@ class CustomerOpportunity(Base):
     source_service = relationship("BusinessService", back_populates="opportunities")
     source_conversation = relationship("Conversation", back_populates="opportunities")
     scheduled_followup = relationship("ScheduledCustomerFollowUp", back_populates="opportunity")
+    actions = relationship(
+        "OpportunityAction", back_populates="opportunity", cascade="all, delete-orphan"
+    )
+    attributions = relationship(
+        "BookingAttribution", back_populates="opportunity", cascade="all, delete-orphan"
+    )
 
 
 class ScheduledCustomerFollowUp(Base):

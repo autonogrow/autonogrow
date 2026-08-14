@@ -227,6 +227,17 @@
             <article><span>Solicitudes con error</span><strong id="growth-metric-failed">—</strong></article>
             <article><span>Oportunidades activas</span><strong id="growth-metric-opportunities">—</strong></article>
           </section>
+          <section class="growth-results-card" aria-labelledby="growth-results-title">
+            <div class="section-header"><div><h3 id="growth-results-title">Últimos 30 días</h3><p>Resultados atribuibles observados, sin afirmar causalidad absoluta.</p></div></div>
+            <div class="growth-results-metrics" aria-busy="true">
+              <article><span>Oportunidades detectadas</span><strong id="growth-result-detected">—</strong></article>
+              <article><span>Gestionadas</span><strong id="growth-result-handled">—</strong></article>
+              <article><span>Reservas atribuidas</span><strong id="growth-result-booked">—</strong></article>
+              <article><span>Citas completadas</span><strong id="growth-result-completed">—</strong></article>
+              <article><span>Facturación atribuida</span><strong id="growth-result-revenue">—</strong></article>
+            </div>
+            <div id="growth-funnel" class="growth-funnel" aria-label="Funnel de oportunidades"></div>
+          </section>
           <section class="growth-priority-card" aria-labelledby="growth-priority-title"><div class="section-header"><div><h3 id="growth-priority-title">Qué conviene hacer primero</h3><p>Bloqueos y acciones ordenados por utilidad operativa.</p></div></div><div id="growth-priority-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Calculando prioridades.</span></div></section>
           <section class="growth-activity-card" aria-labelledby="growth-activity-title"><div class="section-header"><div><h3 id="growth-activity-title">Actividad reciente</h3><p>Preparaciones y cambios reales registrados en solicitudes de reseña.</p></div></div><div id="growth-activity-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando actividad.</span></div></section>
           <div class="growth-overview growth-readiness" aria-label="Preparación operativa">
@@ -739,6 +750,26 @@
         </div>
       </div>
     </section>
+
+    <div id="growth-action-modal" class="modal-overlay ag-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="growth-action-modal-title" aria-describedby="growth-action-modal-description" aria-hidden="true">
+      <div class="modal-card ag-modal growth-action-modal-card">
+        <button class="modal-close ag-modal__close" type="button" data-growth-action-modal="close" aria-label="Cerrar">×</button>
+        <p class="eyebrow">Acción asistida</p>
+        <h2 id="growth-action-modal-title">Preparar mensaje</h2>
+        <p id="growth-action-modal-description">Revisa el texto. Nada se enviará hasta que pulses Enviar.</p>
+        <dl class="growth-action-context">
+          <div><dt>Canal</dt><dd id="growth-action-channel">Sin canal disponible</dd></div>
+          <div><dt>Motivo</dt><dd id="growth-action-reason">—</dd></div>
+          <div><dt>Estado</dt><dd id="growth-action-status">Borrador</dd></div>
+        </dl>
+        <label for="growth-action-text">Mensaje<textarea id="growth-action-text" maxlength="4096" rows="8"></textarea></label>
+        <p id="growth-action-notice" class="inline-feedback" role="status" aria-live="polite"></p>
+        <div class="growth-action-modal-actions">
+          <button class="ag-button ag-button--ghost" type="button" data-growth-action-modal="copy">Copiar texto</button>
+          <button id="growth-action-send" class="ag-button ag-button--primary" type="button" data-growth-action-modal="send">Enviar</button>
+        </div>
+      </div>
+    </div>
 
     <section class="section admin-section instagram-editorial" data-admin-section="instagram-content" aria-labelledby="admin-instagram-content-title">
       <div class="section-heading"><div><p class="eyebrow">Revisión y planificación</p><h2 id="admin-instagram-content-title">Contenido de Instagram</h2><p>Revisa y valida versiones; consulta la programación y publicación simulada en modo solo lectura.</p></div><button id="admin-instagram-refresh" class="btn btn-secondary" type="button">Actualizar</button></div>

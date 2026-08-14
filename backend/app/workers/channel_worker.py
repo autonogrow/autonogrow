@@ -14,6 +14,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.audit import record_audit
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal, is_sqlite_locked_error
 from app.core.observability import request_id_context
@@ -238,6 +239,23 @@ class ChannelWorker:
                 if row.conversation_message_id
                 else None
             )
+            action = message.opportunity_action if message is not None else None
+            if action is not None and (
+                action.status == "cancelled" or action.opportunity.status != "pending"
+            ):
+                assert message is not None
+                row.status = "cancelled"
+                row.failed_at = datetime.utcnow()
+                row.locked_by = None
+                row.lock_expires_at = None
+                row.next_retry_at = None
+                row.safe_error_message = "Opportunity is no longer relevant"
+                message.delivery_status = "cancelled"
+                action.status = "cancelled"
+                action.cancelled_at = datetime.utcnow()
+                action.failure_reason = "opportunity_no_longer_relevant"
+                db.commit()
+                return None
             integration = db.get(BusinessChannelIntegration, row.integration_id)
             error_code = None
             sender = self.provider_senders.get(row.provider)
@@ -336,6 +354,25 @@ class ChannelWorker:
             message_id=row.conversation_message_id,
             safe_details={"outbox_id": row.id, "attempt": row.attempt_count, "status": row.status},
         )
+        message = (
+            db.get(ConversationMessage, row.conversation_message_id)
+            if row.conversation_message_id
+            else None
+        )
+        if message is not None and message.opportunity_action is not None:
+            record_audit(
+                db,
+                action="action_failed",
+                business_id=row.business_id,
+                resource_type="opportunity_action",
+                resource_id=message.opportunity_action.id,
+                metadata={
+                    "channel": row.channel,
+                    "outbox_status": row.status,
+                    "reason": row.last_error_code,
+                },
+                commit=False,
+            )
 
     def _process_outbox(self, outbox_id: int) -> None:
         prepared = self._prepare_delivery(outbox_id)
@@ -362,6 +399,16 @@ class ChannelWorker:
             integration = db.get(BusinessChannelIntegration, row.integration_id)
             if result.ok:
                 finish_outbox_job(row, message, provider_message_id=result.provider_message_id)
+                if message is not None and message.opportunity_action is not None:
+                    record_audit(
+                        db,
+                        action="action_sent",
+                        business_id=row.business_id,
+                        resource_type="opportunity_action",
+                        resource_id=message.opportunity_action.id,
+                        metadata={"channel": row.channel, "outbox_id": row.id},
+                        commit=False,
+                    )
                 if integration:
                     integration.last_success_at = datetime.utcnow()
                     integration.last_error_code = None

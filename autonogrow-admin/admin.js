@@ -20,6 +20,10 @@ let reviewRequestsByBooking = new Map();
 let messageOutbox = [];
 let adminServices = [];
 let customerOpportunities = [];
+let growthActionMetrics = null;
+let selectedOpportunityAction = null;
+let selectedOpportunityForAction = null;
+let growthActionReturnFocus = null;
 const opportunityMutationIds = new Set();
 let availabilitySettings = null;
 let availabilityExceptions = [];
@@ -305,7 +309,10 @@ function renderConfigurationOverview() {
 }
 
 function growthNavigationMarkup(activeSection) {
-  return `<nav class="growth-navigation" aria-label="Crecimiento"><p>Crecimiento</p>${GROWTH_HUB_CATEGORIES.map((category) => `<button type="button" data-growth-target="${category.id}" ${category.id === activeSection ? 'aria-current="page"' : ""}><span><strong>${category.label}</strong><small>${category.description}</small></span></button>`).join("")}</nav>`;
+  const categories = isBusinessStaff()
+    ? GROWTH_HUB_CATEGORIES.filter((category) => category.id !== "reviews")
+    : GROWTH_HUB_CATEGORIES;
+  return `<nav class="growth-navigation" aria-label="Crecimiento"><p>Crecimiento</p>${categories.map((category) => `<button type="button" data-growth-target="${category.id}" ${category.id === activeSection ? 'aria-current="page"' : ""}><span><strong>${category.label}</strong><small>${category.description}</small></span></button>`).join("")}</nav>`;
 }
 
 function renderGrowthNavigation() {
@@ -359,7 +366,26 @@ function setupGrowthHub() {
     const status = event.target.closest("[data-review-status]");
     if (status) updateReviewRequestStatus(Number(status.dataset.reviewRequest), status.dataset.reviewStatus);
     const opportunity = event.target.closest("[data-opportunity-action]");
-    if (opportunity) updateCustomerOpportunity(Number(opportunity.dataset.opportunityId), opportunity.dataset.opportunityAction);
+    if (opportunity) {
+      const opportunityId = Number(opportunity.dataset.opportunityId);
+      const opportunityAction = opportunity.dataset.opportunityAction;
+      if (opportunityAction === "prepare") prepareOpportunityMessage(opportunityId, opportunity);
+      else if (opportunityAction === "conversation") openOpportunityConversation(opportunityId);
+      else updateCustomerOpportunity(opportunityId, opportunityAction);
+    }
+    const modalAction = event.target.closest("[data-growth-action-modal]");
+    if (modalAction?.dataset.growthActionModal === "close") closeGrowthActionModal();
+    if (modalAction?.dataset.growthActionModal === "copy") copyGrowthOpportunityText();
+    if (modalAction?.dataset.growthActionModal === "send") sendGrowthOpportunityAction();
+  });
+  document.getElementById("growth-action-modal")?.addEventListener("click", (event) => {
+    if (event.target.id === "growth-action-modal") closeGrowthActionModal();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.getElementById("growth-action-modal")?.classList.contains("open")) {
+      event.preventDefault();
+      closeGrowthActionModal();
+    }
   });
   renderGrowthNavigation();
 }
@@ -438,7 +464,7 @@ function setupBusinessConfiguration() {
 
 function applyRoleVisibility() {
   const staffOnly = isBusinessStaff();
-  const allowed = new Set(["summary", "bookings", "conversations"]);
+  const allowed = new Set(["summary", "growth", "growth-opportunities", "bookings", "conversations"]);
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
     tab.hidden = tab.classList.contains("admin-tab--legacy") || (staffOnly && !allowed.has(tab.dataset.section));
     if (tab.dataset.section === "instagram-content" && adminAuthUser?.is_owner) tab.hidden = true;
@@ -1419,10 +1445,41 @@ function renderGrowthOpportunities(tasks) {
   const visible = tasks.filter((task) => ["recommended", "needs_attention", "blocked", "not_available"].includes(task.status));
   container.setAttribute("aria-busy", "false");
   const typeLabels = { cancelled_not_rebooked: "Cancelación sin nueva reserva", no_show_not_rebooked: "No presentado sin nueva reserva", lead_not_converted: "Consulta sin reserva", service_due: "Servicio pendiente de repetición", scheduled_followup: "Seguimiento indicado" };
-  const persisted = customerOpportunities.map((item) => `<article class="growth-task growth-task-${escapeHtml(item.priority)}" data-customer-opportunity="${item.id}"><span class="growth-task-status">${escapeHtml(typeLabels[item.type] || item.type)}</span><div class="growth-task-copy"><h3>${escapeHtml(item.customer?.name || "Cliente sin nombre")}</h3><p>${escapeHtml(item.reason_text)}</p><span>Fecha relevante: ${escapeHtml(formatDateTime(item.due_at))}</span><details><summary>Ver contexto</summary><p>${escapeHtml(item.reason_text)}</p></details></div><div class="growth-opportunity-actions"><button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="actioned" data-opportunity-id="${item.id}">Marcar gestionada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-opportunity-action="dismissed" data-opportunity-id="${item.id}">Descartar</button></div></article>`).join("");
+  const channelLabels = { whatsapp: "WhatsApp", instagram: "Instagram" };
+  const actionLabels = { draft: "Borrador", approved: "Pendiente de envío", sending: "Enviando", sent: "Enviado", failed: "Fallido", cancelled: "Cancelado", completed: "Completado" };
+  const persisted = customerOpportunities.map((item) => {
+    const latest = item.latest_action;
+    const channel = item.channel?.channel ? (channelLabels[item.channel.channel] || item.channel.channel) : "Sin canal disponible";
+    const prepareLabel = latest?.status === "draft" ? "Continuar borrador" : "Preparar mensaje";
+    return `<article class="growth-task growth-task-${escapeHtml(item.priority)}" data-customer-opportunity="${item.id}"><span class="growth-task-status">${escapeHtml(typeLabels[item.type] || item.type)}</span><div class="growth-task-copy"><h3>${escapeHtml(item.customer?.name || "Cliente sin nombre")}</h3><p>${escapeHtml(item.reason_text)}</p><div class="growth-opportunity-meta"><span>${escapeHtml(item.source_service_name || "Sin servicio específico")}</span><span>${escapeHtml(channel)}</span><span>${escapeHtml(latest ? actionLabels[latest.status] || latest.status : "Sin acciones")}</span></div><span>Fecha relevante: ${escapeHtml(formatDateTime(item.due_at))}</span><details><summary>Ver contexto</summary><p>${escapeHtml(item.reason_text)}</p></details></div><div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${item.id}">${escapeHtml(prepareLabel)}</button>${item.channel?.conversation_id ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="conversation" data-opportunity-id="${item.id}">Ver conversación</button>` : ""}<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="actioned" data-opportunity-id="${item.id}">Marcar gestionada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-opportunity-action="dismissed" data-opportunity-id="${item.id}">Descartar</button></div></article>`;
+  }).join("");
   const operational = visible.length ? `<details class="growth-operational-recommendations"><summary>Mejoras operativas (${visible.length})</summary>${visible.map((task) => `<article class="growth-task growth-task-${task.status}" data-growth-task="${escapeHtml(task.id)}"><span class="growth-task-status">${escapeHtml(growthTaskStateLabel(task.status))}</span><div class="growth-task-copy"><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(task.description)}</p><span>Depende de: ${escapeHtml(task.dependency)}</span></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="${escapeHtml(task.action)}"${task.channel ? ` data-channel="${escapeHtml(task.channel)}"` : ""}>${escapeHtml(task.action_label)}</button></article>`).join("")}</details>` : "";
   container.innerHTML = persisted || operational ? `${persisted}${operational}` : `<div class="growth-empty-state"><strong>No hay oportunidades activas</strong><p>Cuando venza un seguimiento o una reserva necesite atención, aparecerá aquí.</p></div>`;
   document.getElementById("growth-opportunities-status").textContent = customerOpportunities.length ? `${customerOpportunities.length} pendientes` : "Sin oportunidades";
+}
+
+function renderGrowthActionMetrics() {
+  const metrics = growthActionMetrics?.summary;
+  const values = {
+    "growth-result-detected": metrics?.opportunities_detected,
+    "growth-result-handled": metrics?.opportunities_handled,
+    "growth-result-booked": metrics?.bookings_attributed,
+    "growth-result-completed": metrics?.attributed_bookings_completed,
+    "growth-result-revenue": metrics?.attributed_revenue == null
+      ? "Sin importe fiable"
+      : `${metrics.attributed_revenue} ${metrics.revenue_currency || ""}`.trim()
+  };
+  Object.entries(values).forEach(([id, value]) => {
+    const node = document.getElementById(id);
+    if (node) node.textContent = value == null ? "—" : String(value);
+  });
+  document.querySelector(".growth-results-metrics")?.setAttribute("aria-busy", "false");
+  const funnel = growthActionMetrics?.funnel;
+  const labels = { detected: "Detectadas", viewed: "Vistas", actioned: "Gestionadas", sent: "Enviadas", booked: "Reservadas", completed: "Completadas" };
+  const container = document.getElementById("growth-funnel");
+  if (container) container.innerHTML = funnel
+    ? Object.entries(labels).map(([key, label]) => `<span><small>${escapeHtml(label)}</small><strong>${Number(funnel[key] || 0)}</strong></span>`).join("")
+    : "";
 }
 
 async function loadCustomerOpportunities({ background = false } = {}) {
@@ -1442,14 +1499,172 @@ async function loadCustomerOpportunities({ background = false } = {}) {
   }
 }
 
+async function loadGrowthActionMetrics({ background = false } = {}) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/growth-metrics?period=30d`);
+    if (!response.ok) throw new Error("growth_metrics_unavailable");
+    growthActionMetrics = await response.json();
+    renderGrowthActionMetrics();
+  } catch (error) {
+    console.error(error);
+    if (!background) growthActionMetrics = null;
+    renderGrowthActionMetrics();
+  }
+}
+
+function growthActionUnavailableMessage(action) {
+  const messages = {
+    no_customer_channel: "No hay un canal conectado para este cliente. Puedes copiar el texto y gestionarlo manualmente.",
+    whatsapp_template_required: "La ventana de atención de 24 horas está cerrada. No se enviará sin una plantilla oficial; puedes copiar el texto.",
+    provider_not_configured: "La integración del canal no está disponible. Puedes copiar el texto.",
+    integrated_delivery_not_in_plan: "El envío integrado no está habilitado para este negocio.",
+    delivery_not_available: "El canal no está disponible para enviar en este momento."
+  };
+  return messages[action?.unavailable_reason] || "El envío integrado no está disponible; puedes copiar el texto.";
+}
+
+function openGrowthActionModal(action, opportunity, trigger = null) {
+  const modal = document.getElementById("growth-action-modal");
+  selectedOpportunityAction = action;
+  selectedOpportunityForAction = opportunity;
+  growthActionReturnFocus = trigger || document.activeElement;
+  const channel = { whatsapp: "WhatsApp", instagram: "Instagram" }[action.channel] || "Sin canal disponible";
+  const status = { draft: "Borrador editable", approved: "Aprobado y pendiente", sending: "Enviando", sent: "Enviado", failed: "Fallido", cancelled: "Cancelado", completed: "Completado" }[action.status] || action.status;
+  document.getElementById("growth-action-channel").textContent = channel;
+  document.getElementById("growth-action-reason").textContent = opportunity.reason_text;
+  document.getElementById("growth-action-status").textContent = status;
+  const textarea = document.getElementById("growth-action-text");
+  textarea.value = action.final_text || action.suggested_text || "";
+  textarea.disabled = action.status !== "draft";
+  const notice = document.getElementById("growth-action-notice");
+  notice.className = `inline-feedback ${action.can_send ? "" : "error"}`;
+  notice.textContent = action.can_send
+    ? "Revisa el texto. Solo se enviará cuando pulses Enviar."
+    : growthActionUnavailableMessage(action);
+  const send = document.getElementById("growth-action-send");
+  send.disabled = action.status !== "draft" || !action.can_send;
+  send.textContent = ["approved", "sending"].includes(action.status) ? "Pendiente" : "Enviar";
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-scroll-locked");
+  window.requestAnimationFrame(() => textarea.focus());
+}
+
+function closeGrowthActionModal() {
+  const modal = document.getElementById("growth-action-modal");
+  if (!modal.classList.contains("open")) return;
+  modal.classList.remove("open");
+  modal.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-scroll-locked");
+  const focus = growthActionReturnFocus;
+  growthActionReturnFocus = null;
+  selectedOpportunityAction = null;
+  selectedOpportunityForAction = null;
+  if (focus?.isConnected) focus.focus({ preventScroll: true });
+}
+
+async function prepareOpportunityMessage(opportunityId, trigger) {
+  if (opportunityMutationIds.has(opportunityId)) return;
+  opportunityMutationIds.add(opportunityId);
+  trigger.disabled = true;
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/opportunities/${opportunityId}/actions/prepare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action_type: "contact_customer" })
+    });
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo preparar el mensaje."));
+    const opportunity = customerOpportunities.find((item) => item.id === opportunityId);
+    if (!opportunity) throw new Error("La oportunidad ya no está disponible.");
+    opportunity.latest_action = body.action;
+    openGrowthActionModal(body.action, opportunity, trigger);
+    renderGrowth();
+  } catch (error) {
+    alert(error.message || "No se pudo preparar el mensaje.");
+  } finally {
+    opportunityMutationIds.delete(opportunityId);
+    if (trigger?.isConnected) trigger.disabled = false;
+  }
+}
+
+async function persistGrowthActionDraft() {
+  const action = selectedOpportunityAction;
+  const text = document.getElementById("growth-action-text").value.trim();
+  if (!action || action.status !== "draft") return action;
+  if (!text) throw new Error("El mensaje no puede estar vacío.");
+  if (text === action.final_text) return action;
+  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/actions/${action.id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ final_text: text })
+  });
+  const body = await readAdminResponseBody(response);
+  if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar el borrador."));
+  selectedOpportunityAction = body.action;
+  return body.action;
+}
+
+async function sendGrowthOpportunityAction() {
+  const button = document.getElementById("growth-action-send");
+  if (!selectedOpportunityAction || button.disabled) return;
+  button.disabled = true;
+  button.textContent = "Preparando envío…";
+  const notice = document.getElementById("growth-action-notice");
+  try {
+    const action = await persistGrowthActionDraft();
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/actions/${action.id}/send`, { method: "POST" });
+    const body = await readAdminResponseBody(response);
+    if (body?.action) selectedOpportunityAction = body.action;
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar el mensaje."));
+    notice.className = "inline-feedback success";
+    notice.textContent = body.action.status === "sent"
+      ? "Mensaje enviado por el proveedor."
+      : "Mensaje aprobado y pendiente de entrega. Todavía no se muestra como enviado.";
+    document.getElementById("growth-action-status").textContent = body.action.status === "sent" ? "Enviado" : "Pendiente de entrega";
+    document.getElementById("growth-action-text").disabled = true;
+    button.textContent = body.action.status === "sent" ? "Enviado" : "Pendiente";
+    const opportunity = customerOpportunities.find((item) => item.id === selectedOpportunityForAction?.id);
+    if (opportunity) opportunity.latest_action = body.action;
+    await Promise.allSettled([loadCustomerOpportunities({ background: true }), loadGrowthActionMetrics({ background: true })]);
+  } catch (error) {
+    notice.className = "inline-feedback error";
+    notice.textContent = error.message || "No se pudo enviar el mensaje. Puedes copiarlo para gestionarlo manualmente.";
+    button.disabled = !selectedOpportunityAction?.can_send;
+    button.textContent = "Reintentar envío";
+  }
+}
+
+async function copyGrowthOpportunityText() {
+  const text = document.getElementById("growth-action-text").value;
+  const notice = document.getElementById("growth-action-notice");
+  try {
+    await navigator.clipboard.writeText(text);
+    notice.className = "inline-feedback success";
+    notice.textContent = "Texto copiado. AutonoGrow no lo marca como enviado.";
+  } catch (_) {
+    notice.className = "inline-feedback error";
+    notice.textContent = "No se pudo copiar automáticamente. Selecciona el texto y cópialo manualmente.";
+  }
+}
+
+async function openOpportunityConversation(opportunityId) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/opportunities/${opportunityId}/open-conversation`, { method: "POST" });
+  const body = await readAdminResponseBody(response);
+  if (!response.ok || !body.conversation_id) return alert(conversationErrorMessage(body, "No se pudo abrir la conversación."));
+  showAdminSection("conversations");
+  await selectConversation(body.conversation_id);
+}
+
 async function updateCustomerOpportunity(opportunityId, status) {
   if (opportunityMutationIds.has(opportunityId)) return;
   opportunityMutationIds.add(opportunityId);
   try {
-    const action = status === "dismissed" ? "dismiss" : "actioned";
+    const action = status === "dismissed" ? "dismiss" : "mark-handled";
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/opportunities/${opportunityId}/${action}`, { method: "POST" });
     if (!response.ok) throw new Error("No se pudo actualizar la oportunidad.");
     customerOpportunities = customerOpportunities.filter((item) => item.id !== opportunityId);
+    loadGrowthActionMetrics({ background: true });
     renderGrowth();
   } catch (error) {
     console.error(error);
@@ -1471,6 +1686,7 @@ function renderGrowth() {
   }
   renderGrowthOverview(tasks);
   renderGrowthOpportunities(tasks);
+  renderGrowthActionMetrics();
   renderReviewRequests();
 }
 
@@ -1479,6 +1695,8 @@ async function loadAdminPanel() {
 
   try {
     if (isBusinessStaff()) {
+      growthLoadState.reviews = "ready";
+      growthLoadState.outbox = "ready";
       dashboardDataState.services = "not_applicable";
       dashboardDataState.availability = "not_applicable";
       dashboardDataState.channels = "not_applicable";
@@ -1493,7 +1711,9 @@ async function loadAdminPanel() {
         loadBookings(),
         loadMyStaffAvailability(),
         loadConversationTemplates(),
-        loadConversations()
+        loadConversations(),
+        loadCustomerOpportunities(),
+        loadGrowthActionMetrics()
       ]);
       return;
     }
@@ -1518,6 +1738,7 @@ async function loadAdminPanel() {
       loadBookings(),
       loadMessageOutbox(),
       loadCustomerOpportunities(),
+      loadGrowthActionMetrics(),
       loadAdminGallery(),
       loadConversationTemplates(),
       loadConversationAutomation(),
@@ -4961,7 +5182,8 @@ function ensureAdminPollingTasks() {
   adminPollingTasks.set("operations", {
     run: async () => {
       const requests = [loadBookings({ background: true })];
-      if (!isBusinessStaff()) requests.push(loadMessageOutbox({ background: true }), loadReviewRequests({ background: true }), loadCustomerOpportunities({ background: true }));
+      requests.push(loadCustomerOpportunities({ background: true }), loadGrowthActionMetrics({ background: true }));
+      if (!isBusinessStaff()) requests.push(loadMessageOutbox({ background: true }), loadReviewRequests({ background: true }));
       await Promise.all(requests);
     },
     inFlight: false,

@@ -58,6 +58,8 @@ COPY_ORDER = (
     "conversation_suggestions",
     "conversation_automation_settings",
     "customer_opportunities",
+    "opportunity_actions",
+    "booking_attributions",
     "automation_credit_transactions",
     "business_channel_integrations",
     "business_channel_controls",
@@ -107,6 +109,8 @@ OPTIONAL_SOURCE_TABLES = (
     "meta_integration_jobs",
     "scheduled_customer_followups",
     "customer_opportunities",
+    "opportunity_actions",
+    "booking_attributions",
     "operational_states",
     "backup_records",
 )
@@ -191,6 +195,14 @@ ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
         },
     },
     "bookings": {
+        "price_amount_snapshot": {
+            "action": "omit_as_null",
+            "expected_value": None,
+        },
+        "currency_snapshot": {
+            "action": "omit_as_null",
+            "expected_value": None,
+        },
         "follow_up_enabled_snapshot": {
             "action": "use_destination_default",
             "expected_value": False,

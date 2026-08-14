@@ -13,6 +13,7 @@ class BookingRequestCreate(BaseModel):
     start_datetime: str | None = None
     notes: str | None = Field(default=None, max_length=1000)
     source: str = Field(default="landing", max_length=40)
+    attribution_token: str | None = Field(default=None, max_length=512)
 
 
 class BookingOut(BaseModel):

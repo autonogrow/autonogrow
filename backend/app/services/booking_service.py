@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models import Booking, Business, BusinessService, Customer, SyncJob, User
 from app.schemas.booking import BookingRequestCreate
 from app.services.availability_service import get_available_slots, get_public_bookable_staff
+from app.services.booking_attribution_service import attribute_new_booking
 from app.services.growth_opportunity_service import (
     GrowthOpportunityService,
 )
@@ -241,6 +242,12 @@ def serialize_booking(booking: Booking) -> dict[str, Any]:
         "staff_business_user_id": booking.staff_business_user_id,
         "staff_display_name": staff_display_name,
         "duration_minutes": booking.duration_minutes,
+        "price_amount_snapshot": (
+            str(booking.price_amount_snapshot)
+            if booking.price_amount_snapshot is not None
+            else None
+        ),
+        "currency_snapshot": booking.currency_snapshot,
         "start_datetime": booking.start_datetime.isoformat() if booking.start_datetime else None,
         "end_datetime": booking.end_datetime.isoformat() if booking.end_datetime else None,
         "preferred_date": booking.preferred_date,
@@ -314,6 +321,8 @@ def create_booking_request(
         staff_business_user_id=selected_staff_id,
         service_name=service.name,
         duration_minutes=duration_minutes,
+        price_amount_snapshot=service.price_amount,
+        currency_snapshot=service.currency,
         follow_up_enabled_snapshot=service.follow_up_enabled,
         follow_up_interval_days_snapshot=(
             service.follow_up_interval_days if service.follow_up_enabled else None
@@ -334,6 +343,11 @@ def create_booking_request(
 
     db.add(booking)
     db.flush()
+    attribute_new_booking(
+        db,
+        booking=booking,
+        attribution_token=payload.attribution_token,
+    )
     GrowthOpportunityService(db).resolve_for_rebooking(booking)
 
     sync_payload = {

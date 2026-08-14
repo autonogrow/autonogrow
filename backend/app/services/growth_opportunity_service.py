@@ -94,6 +94,9 @@ class GrowthOpportunityService:
         self._detect_leads(business_id)
         self._detect_manual_followups(business_id)
         self._expire(business_id)
+        from app.services.opportunity_action_service import expire_drafts
+
+        expire_drafts(self.db, business_id=business_id, now=self.now)
         return self.result
 
     def resolve_for_rebooking(self, booking: Booking) -> int:
@@ -162,6 +165,13 @@ class GrowthOpportunityService:
             return
         opportunity.status = "resolved"
         opportunity.resolved_at = self.now
+        from app.services.opportunity_action_service import (
+            invalidate_actions_for_resolved_opportunity,
+        )
+
+        invalidate_actions_for_resolved_opportunity(
+            self.db, opportunity=opportunity, now=self.now
+        )
         self.result.resolved += 1
 
     def _resolve_existing(self, business_id: int) -> None:
@@ -455,6 +465,13 @@ class GrowthOpportunityService:
         )
         for row in rows:
             row.status = "expired"
+            from app.services.opportunity_action_service import (
+                invalidate_actions_for_resolved_opportunity,
+            )
+
+            invalidate_actions_for_resolved_opportunity(
+                self.db, opportunity=row, now=self.now
+            )
             self.result.expired += 1
 
 

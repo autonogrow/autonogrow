@@ -79,6 +79,16 @@ function getBusinessSlug() {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(value) && value.length <= 200 ? value : "";
 }
 
+function getOpportunityAttributionToken() {
+  const value = new URLSearchParams(window.location.search).get("oa");
+  return value && value.length <= 512 ? value : "";
+}
+
+function getLinkedServiceId() {
+  const value = Number(new URLSearchParams(window.location.search).get("service_id"));
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
 function safeExternalUrl(value) {
   if (!value || typeof value !== "string") return "";
   try {
@@ -359,6 +369,11 @@ async function loadPublicBusiness() {
     document.querySelector('meta[name="robots"]').content = "index, follow";
     await loadSecondarySources(slug, businessLoadVersion);
     await servicesPromise;
+    const linkedServiceId = getLinkedServiceId();
+    const linkedService = (bookingState.business.services || []).find(
+      (service) => Number(service.id) === linkedServiceId
+    );
+    if (linkedService && !bookingState.service) await selectBookingService(linkedService, false);
   } catch (error) {
     if (landingState.businessLoadVersion !== businessLoadVersion) return;
     showUnavailable(error.status === 404 ? "not-found" : "network");
@@ -1130,6 +1145,8 @@ async function submitBooking(event) {
   if (bookingState.customer.phone) payload.customer_phone = bookingState.customer.phone;
   if (bookingState.customer.notes) payload.notes = bookingState.customer.notes;
   if (bookingState.staff) payload.staff_business_user_id = Number(bookingState.staff.id);
+  const attributionToken = getOpportunityAttributionToken();
+  if (attributionToken) payload.attribution_token = attributionToken;
 
   try {
     const result = await requestJson(`/api/businesses/${encodeURIComponent(getBusinessSlug())}/bookings`, {

@@ -71,6 +71,7 @@ class Conversation(Base):
         order_by="ConversationSuggestion.created_at, ConversationSuggestion.id",
     )
     opportunities = relationship("CustomerOpportunity", back_populates="source_conversation")
+    opportunity_actions = relationship("OpportunityAction", back_populates="conversation")
 
 
 class ConversationMessage(Base):
@@ -91,6 +92,9 @@ class ConversationMessage(Base):
     )
 
     conversation = relationship("Conversation", back_populates="messages")
+    opportunity_action = relationship(
+        "OpportunityAction", back_populates="message", uselist=False
+    )
 
 
 class ConversationTemplate(Base):

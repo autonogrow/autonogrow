@@ -4,7 +4,7 @@
 
 Sprint 7 detecta, persiste, actualiza, resuelve y expira oportunidades comerciales explicables. No genera ni envía mensajes, no aplica descuentos y no utiliza IA o modelos predictivos. La unidad operativa es `CustomerOpportunity`, siempre ligada a un negocio y a un cliente.
 
-Las futuras señales sin cliente (por ejemplo, capacidad libre de agenda o estacionalidad) deben usar una entidad separada y pequeña, conceptualmente `BusinessGrowthSignal`. No se hace nullable `customer_id` ni se mezcla ahora una señal agregada con el ciclo de vida de un cliente. Ambas familias podrán converger en una capa de acciones sugeridas en Sprint 8/9.
+Las futuras señales sin cliente (por ejemplo, capacidad libre de agenda o estacionalidad) deben usar una entidad separada y pequeña, conceptualmente `BusinessGrowthSignal`. No se hace nullable `customer_id` ni se mezcla ahora una señal agregada con el ciclo de vida de un cliente. Sprint 8A añade `OpportunityAction` y `BookingAttribution` como capa operativa separada; una futura señal agregada podrá consumir la misma abstracción sin cambiar este detector.
 
 ## Modelo
 
@@ -69,6 +69,10 @@ Owner, `business_admin` y `business_staff` reutilizan `require_business_access` 
 
 El contexto relacional, tipo, timestamps, business y `reason_code/reason_text` permiten que una futura capa combine `service_due` con `BusinessGrowthSignal` (capacidad, horarios, estacionalidad configurable). Esa capa podrá sugerir una acción o contenido RRSS sin acoplar publicación, descuentos o mensajes a este detector.
 
+## Extensión Sprint 8A
+
+Las acciones asistidas, aprobación explícita, entrega por conversaciones, atribución conservadora y métricas se documentan en `docs/growth_actions_architecture.md`. El detector no envía por sí mismo: resolver oportunidades y cancelar drafts obsoletos sigue ocurriendo dentro de la transacción de booking/mantenimiento.
+
 ## Fuera de alcance
 
-No hay IA, scoring opaco, inferencia de intervalos, campañas, promociones, contenido social, publicación, envío automático, atribución, rentabilidad ni revenue recovered.
+No hay IA, scoring opaco, inferencia de intervalos, campañas, promociones, contenido social, publicación ni envío comercial automático. Sprint 8A mide atribución observable; no afirma causalidad ni usa “revenue recovered”.

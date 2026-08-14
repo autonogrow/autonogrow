@@ -1,6 +1,17 @@
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -23,6 +34,10 @@ class Booking(Base):
             "(follow_up_window_days_snapshot IS NULL OR "
             "follow_up_window_days_snapshot >= 0)",
             name="ck_bookings_follow_up_snapshot",
+        ),
+        CheckConstraint(
+            "price_amount_snapshot IS NULL OR price_amount_snapshot >= 0",
+            name="ck_bookings_price_snapshot_nonnegative",
         ),
         Index(
             "ix_bookings_business_staff_start_status",
@@ -63,6 +78,8 @@ class Booking(Base):
 
     service_name: Mapped[str] = mapped_column(String(200), nullable=False)
     duration_minutes: Mapped[int | None] = mapped_column(Integer)
+    price_amount_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    currency_snapshot: Mapped[str | None] = mapped_column(String(3))
     follow_up_enabled_snapshot: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
@@ -102,3 +119,7 @@ class Booking(Base):
     )
     opportunities = relationship("CustomerOpportunity", back_populates="source_booking")
     scheduled_followups = relationship("ScheduledCustomerFollowUp", back_populates="booking")
+    opportunity_actions = relationship(
+        "OpportunityAction", foreign_keys="OpportunityAction.booking_id", back_populates="booking"
+    )
+    attribution = relationship("BookingAttribution", back_populates="booking", uselist=False)

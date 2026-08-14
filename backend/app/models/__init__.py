@@ -49,6 +49,7 @@ from app.models.instagram_publish_job import InstagramPublishJob
 from app.models.message_outbox import MessageOutbox
 from app.models.meta_integration_job import MetaIntegrationJob
 from app.models.operations import BackupRecord, OperationalState
+from app.models.opportunity_action import BookingAttribution, OpportunityAction
 from app.models.review_request import ReviewRequest
 from app.models.service import BusinessService
 from app.models.sync_job import SyncJob
@@ -61,6 +62,8 @@ __all__ = [
     "BusinessService",
     "Customer",
     "CustomerOpportunity",
+    "OpportunityAction",
+    "BookingAttribution",
     "ScheduledCustomerFollowUp",
     "Booking",
     "BookingAttachment",

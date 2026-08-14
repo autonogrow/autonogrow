@@ -29,6 +29,7 @@ from app.schemas.business import BusinessSettingsUpdate
 from app.schemas.message_outbox import MessageOutboxStatusUpdate
 from app.schemas.review_request import ReviewRequestStatusUpdate
 from app.schemas.service import AdminServiceCreate, AdminServiceUpdate
+from app.services.booking_attribution_service import sync_attributed_booking_status
 from app.services.booking_service import (
     list_bookings_for_business,
     reschedule_existing_booking,
@@ -518,6 +519,7 @@ def update_booking_status(
 
     if payload.status == "completed":
         snapshot_booking_follow_up(booking, booking.service)
+        sync_attributed_booking_status(db, booking=booking)
         review_request = get_or_create_review_request(
             db,
             business=business,

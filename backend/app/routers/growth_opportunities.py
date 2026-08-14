@@ -27,6 +27,11 @@ from app.services.growth_opportunity_service import (
     serialize_scheduled_followup,
     utc_now,
 )
+from app.services.opportunity_action_service import (
+    invalidate_actions_for_resolved_opportunity,
+    resolve_action_channel,
+    serialize_action,
+)
 
 router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}",
@@ -56,6 +61,30 @@ def opportunity_or_404(
     if row is None:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return row
+
+
+def serialize_opportunity_detail(db: Session, row: CustomerOpportunity) -> dict:
+    result = serialize_opportunity(row)
+    latest_action = sorted(row.actions, key=lambda action: (action.created_at, action.id), reverse=True)
+    channel = resolve_action_channel(db, opportunity=row)
+    result["source_service_name"] = (
+        row.source_service.name
+        if row.source_service is not None
+        else (row.source_booking.service_name if row.source_booking is not None else None)
+    )
+    result["channel"] = {
+        "channel": channel.channel,
+        "conversation_id": channel.conversation.id if channel.conversation else None,
+        "can_send": channel.can_send,
+        "unavailable_reason": channel.unavailable_reason,
+        "assisted_delivery_available": bool(
+            channel.capabilities and channel.capabilities.assisted_delivery_available
+        ),
+    }
+    result["latest_action"] = (
+        serialize_action(db, latest_action[0]) if latest_action else None
+    )
+    return result
 
 
 @router.get("/opportunities")
@@ -94,7 +123,7 @@ def list_opportunities(
             CustomerOpportunity.status == "pending",
         )
         .count(),
-        "opportunities": [serialize_opportunity(row) for row in rows],
+        "opportunities": [serialize_opportunity_detail(db, row) for row in rows],
     }
 
 
@@ -105,13 +134,10 @@ def get_opportunity(
     db: Session = Depends(get_db),
 ):
     business = business_or_404(db, business_slug)
-    return {
-        "opportunity": serialize_opportunity(
-            opportunity_or_404(
-                db, business_id=business.id, opportunity_id=opportunity_id
-            )
-        )
-    }
+    row = opportunity_or_404(
+        db, business_id=business.id, opportunity_id=opportunity_id
+    )
+    return {"opportunity": serialize_opportunity_detail(db, row)}
 
 
 def transition_opportunity(
@@ -141,6 +167,7 @@ def transition_opportunity(
         row.actioned_at = now
     else:
         row.dismissed_at = now
+    invalidate_actions_for_resolved_opportunity(db, opportunity=row, now=now)
     db.commit()
     db.refresh(row)
     record_audit(
@@ -337,6 +364,9 @@ def cancel_scheduled_followup(
     if row.opportunity and row.opportunity.status in {"pending", "actioned"}:
         row.opportunity.status = "dismissed"
         row.opportunity.dismissed_at = now
+        invalidate_actions_for_resolved_opportunity(
+            db, opportunity=row.opportunity, now=now
+        )
     db.commit()
     db.refresh(row)
     record_audit(

@@ -195,6 +195,8 @@ def claim_outbox_jobs(
             message = db.get(ConversationMessage, row.conversation_message_id)
             if message:
                 message.delivery_status = "processing"
+                if message.opportunity_action is not None:
+                    message.opportunity_action.status = "sending"
     db.flush()
     return [row.id for row in rows]
 
@@ -218,6 +220,12 @@ def finish_outbox_job(
     if message:
         message.delivery_status = "sent"
         message.provider_message_id = provider_message_id
+        if message.opportunity_action is not None:
+            action = message.opportunity_action
+            action.status = "sent" if action.status != "completed" else action.status
+            action.sent_at = action.sent_at or current
+            action.failed_at = None
+            action.failure_reason = None
 
 
 def fail_outbox_job(
@@ -254,3 +262,11 @@ def fail_outbox_job(
     row.updated_at = current
     if message:
         message.delivery_status = {"retry": "retry", "blocked": "blocked"}.get(row.status, "failed")
+        if message.opportunity_action is not None:
+            action = message.opportunity_action
+            if row.status == "retry":
+                action.status = "approved"
+            else:
+                action.status = "failed"
+                action.failed_at = current
+                action.failure_reason = classification.safe_message[:500]
