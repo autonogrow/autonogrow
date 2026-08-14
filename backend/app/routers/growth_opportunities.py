@@ -19,6 +19,10 @@ from app.models import (
     User,
 )
 from app.schemas.customer_opportunity import OpportunityStatusUpdate, ScheduledFollowUpCreate
+from app.services.customer_memory_service import (
+    CustomerMemoryService,
+    group_active_memories_by_customer,
+)
 from app.services.growth_opportunity_service import (
     GrowthOpportunityService,
     as_utc,
@@ -63,7 +67,13 @@ def opportunity_or_404(
     return row
 
 
-def serialize_opportunity_detail(db: Session, row: CustomerOpportunity) -> dict:
+def serialize_opportunity_detail(
+    db: Session,
+    row: CustomerOpportunity,
+    *,
+    customer_context: dict | None = None,
+    include_full_customer_context: bool = False,
+) -> dict:
     result = serialize_opportunity(row)
     latest_action = sorted(row.actions, key=lambda action: (action.created_at, action.id), reverse=True)
     channel = resolve_action_channel(db, opportunity=row)
@@ -84,6 +94,16 @@ def serialize_opportunity_detail(db: Session, row: CustomerOpportunity) -> dict:
     result["latest_action"] = (
         serialize_action(db, latest_action[0]) if latest_action else None
     )
+    if include_full_customer_context:
+        customer_context = CustomerMemoryService(db).compact_context(
+            business_id=row.business_id, customer_id=row.customer_id
+        )
+    result["customer_context"] = customer_context or {
+        "explicit": [],
+        "last_service": None,
+        "last_visit_at": None,
+        "most_frequent_service": None,
+    }
     return result
 
 
@@ -128,6 +148,11 @@ def list_opportunities(
     rows = query.order_by(
         CustomerOpportunity.due_at.desc(), CustomerOpportunity.id.desc()
     ).limit(limit).all()
+    memories_by_customer = group_active_memories_by_customer(
+        db,
+        business_id=business.id,
+        customer_ids={row.customer_id for row in rows},
+    )
     return {
         "business_slug": business.slug,
         "pending_count": db.query(CustomerOpportunity)
@@ -136,7 +161,19 @@ def list_opportunities(
             CustomerOpportunity.status == "pending",
         )
         .count(),
-        "opportunities": [serialize_opportunity_detail(db, row) for row in rows],
+        "opportunities": [
+            serialize_opportunity_detail(
+                db,
+                row,
+                customer_context={
+                    "explicit": memories_by_customer.get(row.customer_id, []),
+                    "last_service": None,
+                    "last_visit_at": None,
+                    "most_frequent_service": None,
+                },
+            )
+            for row in rows
+        ],
     }
 
 
@@ -150,7 +187,11 @@ def get_opportunity(
     row = opportunity_or_404(
         db, business_id=business.id, opportunity_id=opportunity_id
     )
-    return {"opportunity": serialize_opportunity_detail(db, row)}
+    result = serialize_opportunity_detail(
+        db, row, include_full_customer_context=True
+    )
+    db.commit()
+    return {"opportunity": result}
 
 
 def transition_opportunity(

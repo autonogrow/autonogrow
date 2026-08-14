@@ -32,6 +32,7 @@ from app.routers.conversations import (
     webhook_router as test_webhook_router,
 )
 from app.routers.customer import router as customer_router
+from app.routers.customer_memory import router as customer_memory_router
 from app.routers.customers import router as customers_router
 from app.routers.growth_actions import router as growth_actions_router
 from app.routers.growth_opportunities import router as growth_opportunities_router
@@ -135,6 +136,7 @@ app.include_router(availability_router)
 app.include_router(bookings_router)
 app.include_router(attachments_router)
 app.include_router(customers_router)
+app.include_router(customer_memory_router)
 app.include_router(admin_availability_router)
 app.include_router(admin_router)
 app.include_router(growth_opportunities_router)

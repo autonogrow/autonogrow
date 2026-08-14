@@ -33,6 +33,7 @@ from app.models.conversation import (
     ConversationTemplate,
 )
 from app.models.customer import Customer
+from app.models.customer_memory import CustomerMemoryItem
 from app.models.customer_opportunity import CustomerOpportunity, ScheduledCustomerFollowUp
 from app.models.google_integration import GoogleIntegration
 from app.models.instagram_content import (
@@ -64,6 +65,7 @@ __all__ = [
     "BusinessCalendarEvent",
     "BusinessService",
     "Customer",
+    "CustomerMemoryItem",
     "CustomerOpportunity",
     "OpportunityAction",
     "BookingAttribution",

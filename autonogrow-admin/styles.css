@@ -1987,6 +1987,26 @@ input {
 .conversation-customer-booking { display: grid; gap: var(--ag-space-2); padding: var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); }
 .conversation-customer-booking > span { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); font-weight: var(--ag-font-weight-semibold); text-transform: uppercase; }
 .conversation-customer-booking p { margin: 0; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
+.customer-memory { display: grid; gap: var(--ag-space-3); padding-top: var(--ag-space-3); border-top: 1px solid var(--ag-color-border); }
+.customer-memory-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ag-space-2); }
+.customer-memory-heading h4,
+.customer-memory-heading p,
+.customer-memory-help { margin: 0; }
+.customer-memory-heading p,
+.customer-memory-help { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
+.customer-memory-item { display: grid; gap: var(--ag-space-2); padding: var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); }
+.customer-memory-item--sensitive { border-left: 3px solid var(--ag-color-warning); }
+.customer-memory-item > span,
+.customer-memory-item > small { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); font-weight: var(--ag-font-weight-semibold); }
+.customer-memory-item > p { margin: 0; overflow-wrap: anywhere; }
+.customer-memory-item > div,
+.customer-memory-form__actions { display: flex; flex-wrap: wrap; gap: var(--ag-space-1); }
+.customer-memory-form { display: grid; gap: var(--ag-space-3); padding: var(--ag-space-3); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
+.customer-memory-form label { display: grid; gap: var(--ag-space-1); color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
+.customer-memory-form .customer-memory-sensitive { display: flex; align-items: center; }
+.customer-memory-form > p { margin: 0; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); }
+.growth-customer-context { margin-top: var(--ag-space-2); padding: var(--ag-space-3); border-radius: var(--ag-radius-md); background: var(--ag-color-info-bg); }
+.growth-customer-context p { margin: var(--ag-space-1) 0 0; }
 .conversation-customer-backdrop { position: fixed; inset: 0; z-index: 69; border: 0; background: rgba(15, 23, 42, 0.5); }
 .conversation-customer-backdrop[hidden] { display: none; }
 .conversation-drawer-open { overflow: hidden; }

@@ -37,6 +37,7 @@ POST_BASELINE_TABLES = {
     "booking_attributions",
     "business_calendar_events",
     "business_growth_signals",
+    "customer_memory_items",
 }
 POST_BASELINE_COLUMNS = {
     "bookings.follow_up_enabled_snapshot",
@@ -153,6 +154,15 @@ CRITICAL_COLUMNS: dict[str, set[str]] = {
         "status",
         "severity",
         "dedupe_key",
+    },
+    "customer_memory_items": {
+        "id",
+        "business_id",
+        "customer_id",
+        "category",
+        "key",
+        "status",
+        "source_type",
     },
 }
 

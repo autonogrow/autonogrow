@@ -32,6 +32,9 @@ class Customer(Base):
     opportunities = relationship(
         "CustomerOpportunity", back_populates="customer", cascade="all, delete-orphan"
     )
+    memory_items = relationship(
+        "CustomerMemoryItem", back_populates="customer", cascade="all, delete-orphan"
+    )
     opportunity_actions = relationship(
         "OpportunityAction", back_populates="customer", cascade="all, delete-orphan"
     )

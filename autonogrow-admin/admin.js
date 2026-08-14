@@ -61,6 +61,10 @@ let conversationAssistedOpening = false;
 let conversationStatusUpdating = false;
 let conversationCustomerPanelOpen = false;
 let conversationCustomerReturnFocus = null;
+const customerMemorySummaries = new Map();
+const customerMemoryLoadingIds = new Set();
+let customerMemoryFormState = null;
+const customerMemoryMutationIds = new Set();
 let conversationLoadVersion = 0;
 let conversationDetailVersion = 0;
 let conversationAutomationLoadVersion = 0;
@@ -1458,7 +1462,9 @@ function renderGrowthOpportunities(tasks) {
     const latest = item.latest_action;
     const channel = item.channel?.channel ? (channelLabels[item.channel.channel] || item.channel.channel) : "Sin canal disponible";
     const prepareLabel = latest?.status === "draft" ? "Continuar borrador" : "Preparar mensaje";
-    return `<article class="growth-task growth-task-${escapeHtml(item.priority)}" data-customer-opportunity="${item.id}"><span class="growth-task-status">${escapeHtml(typeLabels[item.type] || item.type)}</span><div class="growth-task-copy"><h3>${escapeHtml(item.customer?.name || "Cliente sin nombre")}</h3><p>${escapeHtml(item.reason_text)}</p><div class="growth-opportunity-meta"><span>${escapeHtml(item.source_service_name || "Sin servicio específico")}</span><span>${escapeHtml(channel)}</span><span>${escapeHtml(latest ? actionLabels[latest.status] || latest.status : "Sin acciones")}</span></div><span>Fecha relevante: ${escapeHtml(formatDateTime(item.due_at))}</span><details><summary>Ver contexto</summary><p>${escapeHtml(item.reason_text)}</p></details></div><div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${item.id}">${escapeHtml(prepareLabel)}</button>${item.channel?.conversation_id ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="conversation" data-opportunity-id="${item.id}">Ver conversación</button>` : ""}<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="actioned" data-opportunity-id="${item.id}">Marcar gestionada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-opportunity-action="dismissed" data-opportunity-id="${item.id}">Descartar</button></div></article>`;
+    const memory = item.customer_context?.explicit || [];
+    const context = memory.length ? `<div class="growth-customer-context"><strong>Contexto del cliente</strong>${memory.map((entry) => `<p>${escapeHtml(entry.value)}</p>`).join("")}</div>` : "";
+    return `<article class="growth-task growth-task-${escapeHtml(item.priority)}" data-customer-opportunity="${item.id}"><span class="growth-task-status">${escapeHtml(typeLabels[item.type] || item.type)}</span><div class="growth-task-copy"><h3>${escapeHtml(item.customer?.name || "Cliente sin nombre")}</h3><p>${escapeHtml(item.reason_text)}</p><div class="growth-opportunity-meta"><span>${escapeHtml(item.source_service_name || "Sin servicio específico")}</span><span>${escapeHtml(channel)}</span><span>${escapeHtml(latest ? actionLabels[latest.status] || latest.status : "Sin acciones")}</span></div><span>Fecha relevante: ${escapeHtml(formatDateTime(item.due_at))}</span><details><summary>Ver contexto</summary><p>${escapeHtml(item.reason_text)}</p>${context}</details></div><div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${item.id}">${escapeHtml(prepareLabel)}</button>${item.channel?.conversation_id ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="conversation" data-opportunity-id="${item.id}">Ver conversación</button>` : ""}<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="actioned" data-opportunity-id="${item.id}">Marcar gestionada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-opportunity-action="dismissed" data-opportunity-id="${item.id}">Descartar</button></div></article>`;
   }).join("");
   const operational = visible.length ? `<details class="growth-operational-recommendations"><summary>Mejoras operativas (${visible.length})</summary>${visible.map((task) => `<article class="growth-task growth-task-${task.status}" data-growth-task="${escapeHtml(task.id)}"><span class="growth-task-status">${escapeHtml(growthTaskStateLabel(task.status))}</span><div class="growth-task-copy"><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(task.description)}</p><span>Depende de: ${escapeHtml(task.dependency)}</span></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="${escapeHtml(task.action)}"${task.channel ? ` data-channel="${escapeHtml(task.channel)}"` : ""}>${escapeHtml(task.action_label)}</button></article>`).join("")}</details>` : "";
   container.innerHTML = persisted || operational ? `${persisted}${operational}` : `<div class="growth-empty-state"><strong>No hay oportunidades activas</strong><p>Cuando venza un seguimiento o una reserva necesite atención, aparecerá aquí.</p></div>`;
@@ -4335,6 +4341,55 @@ function customerBookingsForConversation(conversation) {
     .sort((left, right) => new Date(right.start_datetime || right.created_at) - new Date(left.start_datetime || left.created_at));
 }
 
+function customerIdForConversation(conversation) {
+  const ids = new Set(customerBookingsForConversation(conversation).map((booking) => Number(booking.customer_id)).filter((id) => Number.isInteger(id) && id > 0));
+  return ids.size === 1 ? [...ids][0] : null;
+}
+
+function customerMemoryCategoryLabel(category) {
+  return ({ preference: "Preferencia", service_interest: "Interés", availability_preference: "Horario", operational_note: "Nota", relationship: "Relación", other: "Otro" })[category] || category;
+}
+
+function customerMemoryKeyForCategory(category) {
+  return ({ availability_preference: "preferred_time", service_interest: "service", preference: "preference", operational_note: "note" })[category] || "note";
+}
+
+function customerMemoryDateValue(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toISOString().slice(0, 10) : "";
+}
+
+function renderCustomerMemoryForm(customerId, summary) {
+  if (customerMemoryFormState?.customerId !== customerId) return "";
+  const existing = summary?.explicit?.find((item) => item.id === customerMemoryFormState.memoryId);
+  const category = existing?.category || "preference";
+  const submitLabel = customerMemoryFormState.mode === "supersede" ? "Guardar sustitución" : (customerMemoryFormState.mode === "edit" ? "Guardar cambios" : "Añadir recuerdo");
+  const options = [["preference", "Preferencia"], ["service_interest", "Interés"], ["availability_preference", "Horario"], ["operational_note", "Nota"]];
+  return `<form id="customer-memory-form" class="customer-memory-form" data-customer-id="${customerId}" data-mode="${escapeHtml(customerMemoryFormState.mode)}" data-memory-id="${Number(existing?.id || 0)}">
+    <label>Tipo<select id="customer-memory-category" class="ag-input" ${existing ? "disabled" : ""}>${options.map(([value, label]) => `<option value="${value}" ${category === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+    <label>Contenido<textarea id="customer-memory-value" class="ag-input" maxlength="2000" rows="3" required>${escapeHtml(existing?.value || "")}</textarea></label>
+    <label>Caduca<input id="customer-memory-expires" class="ag-input" type="date" value="${escapeHtml(customerMemoryDateValue(existing?.expires_at))}" /></label>
+    <label class="customer-memory-sensitive"><input id="customer-memory-sensitive" type="checkbox" ${existing?.is_sensitive ? "checked" : ""} /> Marcar como sensible</label>
+    <p>No guardes contraseñas, tarjetas completas ni información clínica innecesaria.</p>
+    <div class="customer-memory-form__actions"><button class="ag-button ag-button--primary ag-button--small" type="submit">${submitLabel}</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="cancel-customer-memory-form">Cancelar</button></div>
+    <p id="customer-memory-form-feedback" class="inline-feedback" role="status"></p>
+  </form>`;
+}
+
+function renderCustomerMemorySection(customerId) {
+  if (!customerId) return `<section class="customer-memory"><div class="customer-memory-heading"><h4>Memoria</h4></div><p class="customer-memory-help">Hace falta un único cliente vinculado por sus reservas para mostrar contexto privado.</p></section>`;
+  const state = customerMemorySummaries.get(customerId);
+  if (!state || state.status === "loading") return `<section class="customer-memory" aria-busy="true"><div class="customer-memory-heading"><h4>Memoria</h4></div><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div></section>`;
+  if (state.status === "error") return `<section class="customer-memory"><div class="customer-memory-heading"><h4>Memoria</h4><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="retry-customer-memory" data-id="${customerId}">Reintentar</button></div><p class="customer-memory-help">No se pudo cargar el contexto. Las reservas siguen disponibles.</p></section>`;
+  const summary = state.data;
+  const derived = summary.derived || {};
+  const memories = summary.explicit || [];
+  const cards = memories.map((item) => `<article class="customer-memory-item ${item.is_sensitive ? "customer-memory-item--sensitive" : ""}"><span>${escapeHtml(customerMemoryCategoryLabel(item.category))}${item.is_sensitive ? " · Sensible" : ""}</span><p>${escapeHtml(item.value)}</p>${item.expires_at ? `<small>Caduca: ${escapeHtml(formatConversationDate(item.expires_at))}</small>` : ""}<div><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="edit-customer-memory" data-id="${item.id}" data-customer-id="${customerId}">Editar</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="supersede-customer-memory" data-id="${item.id}" data-customer-id="${customerId}">Sustituir</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="obsolete-customer-memory" data-id="${item.id}" data-customer-id="${customerId}">Obsoleta</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="delete-customer-memory" data-id="${item.id}" data-customer-id="${customerId}">Eliminar</button></div></article>`).join("");
+  const frequent = derived.most_frequent_service;
+  return `<section class="customer-memory"><div class="customer-memory-heading"><div><h4>Memoria</h4><p>Contexto explícito del equipo</p></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="add-customer-memory" data-id="${customerId}">+ Añadir</button></div>${cards || `<p class="customer-memory-help">Todavía no hay recuerdos activos.</p>`}${renderCustomerMemoryForm(customerId, summary)}</section>
+    <section class="customer-memory customer-memory--activity"><div class="customer-memory-heading"><div><h4>Actividad</h4><p>Datos observados, no preferencias declaradas</p></div></div><dl class="conversation-customer-stats"><div><dt>Visitas completadas</dt><dd>${Number(derived.visit_count || 0)}</dd></div><div><dt>Última visita</dt><dd>${derived.last_visit_at ? escapeHtml(formatConversationDate(derived.last_visit_at)) : "Sin visitas"}</dd></div><div><dt>Servicio más frecuente</dt><dd>${escapeHtml(frequent?.name || "Sin evidencia")}</dd></div><div><dt>Comportamiento observado</dt><dd>${derived.observed_return_interval_days ? `~${Number(derived.observed_return_interval_days)} días` : "Evidencia insuficiente"}</dd></div></dl>${derived.configured_recurrence ? `<p class="customer-memory-help">La recurrencia configurada (${Number(derived.configured_recurrence.interval_days)} días) tiene prioridad sobre el intervalo observado.</p>` : ""}</section>`;
+}
+
 function renderConversationCustomerPanel(conversation) {
   const content = document.getElementById("conversation-customer-content");
   if (!content) return;
@@ -4343,6 +4398,7 @@ function renderConversationCustomerPanel(conversation) {
     return;
   }
   const bookings = customerBookingsForConversation(conversation);
+  const customerId = customerIdForConversation(conversation);
   const now = new Date();
   const upcoming = [...bookings].reverse().find((booking) => booking.start_datetime && new Date(booking.start_datetime) >= now && !["cancelled", "rejected", "completed", "no_show"].includes(booking.status));
   const previous = bookings.find((booking) => booking !== upcoming && booking.start_datetime && new Date(booking.start_datetime) < now);
@@ -4362,7 +4418,70 @@ function renderConversationCustomerPanel(conversation) {
     ${bookingCard(upcoming, "Próxima reserva")}
     ${bookingCard(previous, "Última reserva")}
     ${bookings.length ? "" : `<div class="conversation-state conversation-state--compact"><p>No hay reservas vinculadas de forma fiable. Solo se relacionan teléfonos coincidentes.</p></div>`}
+    ${renderCustomerMemorySection(customerId)}
   `;
+  if (customerId && !customerMemorySummaries.has(customerId)) void loadCustomerMemorySummary(customerId);
+}
+
+function openCustomerMemoryForm(mode, customerId, memoryId = null) {
+  customerMemoryFormState = { mode, customerId, memoryId };
+  if (selectedConversation) renderConversationCustomerPanel(selectedConversation);
+  queueMicrotask(() => document.getElementById("customer-memory-value")?.focus());
+}
+
+async function mutateCustomerMemory(action, customerId, memoryId) {
+  if (customerMemoryMutationIds.has(memoryId)) return;
+  const message = action === "obsolete" ? "¿Marcar este recuerdo como obsoleto? Se conservará en el historial." : "¿Eliminar este recuerdo? Se conservará únicamente como registro histórico.";
+  if (!window.confirm(message)) return;
+  customerMemoryMutationIds.add(memoryId);
+  try {
+    const suffix = action === "obsolete" ? "/obsolete" : "";
+    const response = await customerMemoryRequest(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/customer-memory/${memoryId}${suffix}`, { method: action === "delete" ? "DELETE" : "POST" });
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(body.detail || "No se pudo actualizar el recuerdo.");
+    customerMemoryFormState = null;
+    customerMemorySummaries.delete(customerId);
+    await loadCustomerMemorySummary(customerId, { force: true });
+  } catch (error) {
+    window.alert(error.message || "No se pudo actualizar el recuerdo.");
+  } finally {
+    customerMemoryMutationIds.delete(memoryId);
+  }
+}
+
+async function submitCustomerMemoryForm(form) {
+  const customerId = Number(form.dataset.customerId);
+  const memoryId = Number(form.dataset.memoryId);
+  const mode = form.dataset.mode;
+  const feedback = document.getElementById("customer-memory-form-feedback");
+  const submit = form.querySelector("button[type='submit']");
+  const category = document.getElementById("customer-memory-category").value;
+  const expiration = document.getElementById("customer-memory-expires").value;
+  const common = { value: document.getElementById("customer-memory-value").value.trim(), is_sensitive: document.getElementById("customer-memory-sensitive").checked, expires_at: expiration ? new Date(`${expiration}T23:59:59`).toISOString() : null };
+  let endpoint = `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/customers/${customerId}/memory`;
+  let method = "POST";
+  let payload = { ...common, category, key: customerMemoryKeyForCategory(category), source_type: "manual" };
+  if (mode === "edit") {
+    endpoint = `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/customer-memory/${memoryId}`;
+    method = "PATCH";
+    payload = common;
+  } else if (mode === "supersede") {
+    endpoint = `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/customer-memory/${memoryId}/supersede`;
+    payload = common;
+  }
+  submit.disabled = true;
+  feedback.textContent = "Guardando…";
+  try {
+    const response = await customerMemoryRequest(endpoint, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(body.detail || "No se pudo guardar el recuerdo.");
+    customerMemoryFormState = null;
+    customerMemorySummaries.delete(customerId);
+    await loadCustomerMemorySummary(customerId, { force: true });
+  } catch (error) {
+    feedback.textContent = error.message || "No se pudo guardar el recuerdo.";
+    submit.disabled = false;
+  }
 }
 
 function openConversationCustomerPanel(trigger) {
@@ -4640,6 +4759,30 @@ function showChannelAutomationFeedback(message, isError = false) {
   summary.textContent = message || "";
   summary.classList.toggle("is-success", !isError);
   if (isError) summary.focus({ preventScroll: true });
+}
+
+async function customerMemoryRequest(input, options = {}) {
+  return fetch(input, options);
+}
+
+async function loadCustomerMemorySummary(customerId, { force = false } = {}) {
+  if (!Number.isInteger(customerId) || customerId <= 0) return;
+  if (!force && (customerMemoryLoadingIds.has(customerId) || customerMemorySummaries.has(customerId))) return;
+  customerMemoryLoadingIds.add(customerId);
+  customerMemorySummaries.set(customerId, { status: "loading" });
+  if (selectedConversation && customerIdForConversation(selectedConversation) === customerId) renderConversationCustomerPanel(selectedConversation);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/customers/${customerId}/memory-summary`);
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(body.detail || "No se pudo cargar la memoria del cliente.");
+    customerMemorySummaries.set(customerId, { status: "ready", data: body });
+  } catch (error) {
+    console.error(error);
+    customerMemorySummaries.set(customerId, { status: "error" });
+  } finally {
+    customerMemoryLoadingIds.delete(customerId);
+    if (selectedConversation && customerIdForConversation(selectedConversation) === customerId) renderConversationCustomerPanel(selectedConversation);
+  }
 }
 
 function templateValidation(name, body) {
@@ -6596,6 +6739,11 @@ function setupConversationInterface() {
   document.getElementById("conversation-reset-filters").addEventListener("click", resetConversationFilters);
   document.getElementById("conversation-customer-close").addEventListener("click", () => closeConversationCustomerPanel());
   document.getElementById("conversation-customer-backdrop").addEventListener("click", () => closeConversationCustomerPanel());
+  document.addEventListener("submit", (event) => {
+    if (event.target?.id !== "customer-memory-form") return;
+    event.preventDefault();
+    void submitCustomerMemoryForm(event.target);
+  });
   document.getElementById("conversation-detail").addEventListener("scroll", (event) => {
     if (event.target.id !== "conversation-thread") return;
     const distanceFromBottom = event.target.scrollHeight - event.target.scrollTop - event.target.clientHeight;
@@ -6676,6 +6824,19 @@ function setupAdminDelegatedActions() {
     else if (action === "dismiss-conversation-suggestion" && Number.isInteger(id)) dismissConversationSuggestion(id);
     else if (action === "close-conversation-mobile-detail") closeConversationMobileDetail();
     else if (action === "open-conversation-customer-panel") openConversationCustomerPanel(button);
+    else if (action === "add-customer-memory" && Number.isInteger(id)) openCustomerMemoryForm("create", id);
+    else if (action === "retry-customer-memory" && Number.isInteger(id)) {
+      customerMemorySummaries.delete(id);
+      void loadCustomerMemorySummary(id, { force: true });
+    }
+    else if (action === "cancel-customer-memory-form") {
+      customerMemoryFormState = null;
+      if (selectedConversation) renderConversationCustomerPanel(selectedConversation);
+    }
+    else if (action === "edit-customer-memory" && Number.isInteger(id)) openCustomerMemoryForm("edit", Number(button.dataset.customerId), id);
+    else if (action === "supersede-customer-memory" && Number.isInteger(id)) openCustomerMemoryForm("supersede", Number(button.dataset.customerId), id);
+    else if (action === "obsolete-customer-memory" && Number.isInteger(id)) void mutateCustomerMemory("obsolete", Number(button.dataset.customerId), id);
+    else if (action === "delete-customer-memory" && Number.isInteger(id)) void mutateCustomerMemory("delete", Number(button.dataset.customerId), id);
     else if (action === "change-conversation-status" && ["pending", "closed"].includes(button.dataset.status)) changeConversationStatus(button.dataset.status);
     else if (action === "toggle-conversation-automation") toggleConversationAutomation(button.dataset.active === "true");
     else if (action === "scroll-conversation-bottom") scrollConversationThreadToBottom();

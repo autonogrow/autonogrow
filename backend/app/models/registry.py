@@ -25,6 +25,7 @@ MODEL_MODULES = (
     "app.models.channel_queue",
     "app.models.conversation",
     "app.models.customer",
+    "app.models.customer_memory",
     "app.models.customer_opportunity",
     "app.models.opportunity_action",
     "app.models.google_integration",

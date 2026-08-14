@@ -235,6 +235,7 @@ def serialize_booking(booking: Booking) -> dict[str, Any]:
         )
     return {
         "id": booking.id,
+        "customer_id": booking.customer_id,
         "customer_name": booking.customer.name,
         "customer_phone": booking.customer.phone,
         "service_id": booking.service_id,

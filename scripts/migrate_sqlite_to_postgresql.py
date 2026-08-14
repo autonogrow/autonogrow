@@ -45,6 +45,7 @@ COPY_ORDER = (
     "business_user_availability",
     "business_user_availability_exceptions",
     "customers",
+    "customer_memory_items",
     "bookings",
     "booking_attachments",
     "scheduled_customer_followups",
@@ -115,6 +116,7 @@ OPTIONAL_SOURCE_TABLES = (
     "booking_attributions",
     "business_calendar_events",
     "business_growth_signals",
+    "customer_memory_items",
     "operational_states",
     "backup_records",
 )
