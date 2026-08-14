@@ -50,15 +50,26 @@ def normalize_base_url(value: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, "/", "", ""))
 
 
-def fetch(base_url: str, path: str, timeout: float) -> HttpResult:
+def fetch(
+    base_url: str,
+    path: str,
+    timeout: float,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+) -> HttpResult:
     url = urljoin(base_url, path.lstrip("/"))
     parsed_url = urlsplit(url)
     if parsed_url.scheme not in {"http", "https"} or parsed_url.username or parsed_url.password:
         raise ValueError("La URL resultante del smoke test no es HTTP(S) segura")
     request = Request(
         url,
-        method="GET",
-        headers={"Accept": "application/json", "User-Agent": "AutonoGrow-Staging-Smoke/1.0"},
+        method=method,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "AutonoGrow-Staging-Smoke/1.0",
+            **(headers or {}),
+        },
     )
     try:
         # The scheme and absence of URL credentials are checked immediately above.
@@ -141,6 +152,25 @@ def check_status(reporter: Reporter, label: str, result: HttpResult, allowed: se
         reporter.fail(f"{label}: status inesperado {result.status}")
 
 
+def check_build_metadata(reporter: Reporter, result: HttpResult) -> None:
+    payload = parse_json(result)
+    expected = {"app_env", "app_version", "release_id", "git_commit", "build_time"}
+    if result.status == 200 and isinstance(payload, dict) and expected <= payload.keys():
+        reporter.passed("GET /api/config/build expone metadata técnica sin secretos")
+    else:
+        reporter.fail("GET /api/config/build no permite correlacionar la release")
+
+
+def check_error_sanity(reporter: Reporter, result: HttpResult) -> None:
+    unsafe = any(
+        marker in result.body.lower() for marker in (b"traceback", b"sqlalchemy", b'file "')
+    )
+    if result.status == 404 and not unsafe:
+        reporter.passed("404 API no filtra stack trace")
+    else:
+        reporter.fail("404 API devuelve status o detalle inseguro")
+
+
 def check_legal_page(
     reporter: Reporter,
     label: str,
@@ -180,6 +210,24 @@ def main() -> int:
     health = fetch(base_url, "/health", args.timeout)
     check_health(reporter, health)
     check_security_headers(reporter, health, base_url)
+    if health.headers and health.headers.get("X-Request-ID"):
+        reporter.passed("GET /health incluye X-Request-ID")
+    else:
+        reporter.fail("GET /health no incluye X-Request-ID")
+
+    ready = fetch(base_url, "/ready", args.timeout)
+    if ready.status == 200 and parse_json(ready) == {"status": "ready"}:
+        reporter.passed("GET /ready confirma readiness sin exponer detalles")
+    else:
+        reporter.fail("GET /ready no confirma readiness")
+
+    landing = fetch(base_url, "/autonogrow-landing/", args.timeout)
+    if landing.status == 200 and b"AutonoGrow" in landing.body:
+        reporter.passed("Landing pública corresponde a AutonoGrow")
+    else:
+        reporter.fail("Landing pública ausente o inesperada")
+
+    check_build_metadata(reporter, fetch(base_url, "/api/config/build", args.timeout))
 
     auth_me = fetch(base_url, "/api/auth/me", args.timeout)
     check_status(reporter, "GET /api/auth/me sin sesión devuelve 401", auth_me, {401})
@@ -218,6 +266,29 @@ def main() -> int:
     check_status(
         reporter, "Ruta owner sin sesión rechazada sin error 500", private_owner, {401, 403}
     )
+
+    private_customer = fetch(base_url, "/api/customer/profile", args.timeout)
+    check_status(reporter, "Ruta customer sin sesión devuelve 401", private_customer, {401})
+
+    private_admin = fetch(base_url, "/api/admin/businesses/certification/settings", args.timeout)
+    check_status(reporter, "Ruta admin sin sesión rechazada", private_admin, {401, 403})
+
+    unknown = fetch(base_url, "/api/certification-route-does-not-exist", args.timeout)
+    check_error_sanity(reporter, unknown)
+
+    hostile_origin = "https://attacker.invalid"
+    cors = fetch(
+        base_url,
+        "/api/auth/logout",
+        args.timeout,
+        method="OPTIONS",
+        headers={"Origin": hostile_origin, "Access-Control-Request-Method": "POST"},
+    )
+    allowed_origin = cors.headers.get("Access-Control-Allow-Origin", "") if cors.headers else ""
+    if allowed_origin not in {hostile_origin, "*"}:
+        reporter.passed("CORS no autoriza origen hostil ni wildcard")
+    else:
+        reporter.fail("CORS autoriza un origen hostil o wildcard")
 
     print(
         f"Resumen: {reporter.counts['PASS']} PASS, "

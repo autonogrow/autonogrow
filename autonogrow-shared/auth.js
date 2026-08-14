@@ -91,5 +91,17 @@
     csrfToken = undefined;
   }
 
-  window.AutonoGrowAuth = { API_BASE_URL, request, getMe, getCsrfToken, secureRequestOptions, renderGoogleButton, logout };
+  async function showEnvironmentMarker() {
+    const config = await request("/api/config/public");
+    if (config.app_env !== "staging" || document.querySelector("[data-ag-environment-marker]")) return;
+    const marker = document.createElement("span");
+    marker.className = "ag-environment-marker";
+    marker.dataset.agEnvironmentMarker = "staging";
+    marker.textContent = "STAGING";
+    marker.setAttribute("aria-label", "Entorno de staging");
+    document.body.appendChild(marker);
+  }
+
+  window.AutonoGrowAuth = { API_BASE_URL, request, getMe, getCsrfToken, secureRequestOptions, renderGoogleButton, logout, showEnvironmentMarker };
+  showEnvironmentMarker().catch(() => {});
 })();

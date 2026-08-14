@@ -1,11 +1,13 @@
-app.example.com {
+staging.autonogrow.es {
     encode zstd gzip
 
     header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        # Deliberadamente sin includeSubDomains/preload: ampliar alcance requiere revisión DNS.
+        Strict-Transport-Security "max-age=31536000"
         X-Content-Type-Options "nosniff"
         X-Frame-Options "DENY"
         Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
         -Server
     }
 
@@ -13,12 +15,21 @@ app.example.com {
         max_size 10MB
     }
 
+    redir / /autonogrow-landing/ 302
+
+    @html_entry path /autonogrow-landing/ /autonogrow-admin/ /autonogrow-owner/ /autonogrow-customer/ /privacy/ /data-deletion/
+    header @html_entry Cache-Control "no-cache, no-store, must-revalidate"
+
+    @static_asset path_regexp static_asset \.(?:css|js|svg|png|jpe?g|webp|woff2?)$
+    header @static_asset Cache-Control "public, max-age=300, must-revalidate"
+
     @internal path /internal/* /.env* /backups/*
     respond @internal 404
 
     @probes path /health /ready
     handle @probes {
         reverse_proxy 127.0.0.1:8000 {
+            header_down -Server
             transport http {
                 dial_timeout 2s
                 response_header_timeout 3s
@@ -28,8 +39,14 @@ app.example.com {
 
     @backend path /api/* /uploads/businesses/*
     handle @backend {
-        reverse_proxy 127.0.0.1:8000
+        reverse_proxy 127.0.0.1:8000 {
+            header_down -Server
+        }
     }
+
+    # Las firmas y challenges viajan en query; el backend registra ruta/request-id sin query.
+    @sensitive_access_log path /api/public/instagram-assets/* /api/webhooks/instagram
+    log_skip @sensitive_access_log
 
     log {
         output file /var/log/caddy/autonogrow-access.log {

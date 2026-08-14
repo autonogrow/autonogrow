@@ -1,85 +1,46 @@
-# Checklist de despliegue staging
+# Despliegue certificado de staging
 
-- [ ] Release metadata y decisión GO/NO-GO registradas.
-- [ ] `/health` y `/ready` separados; métricas bloqueadas externamente.
-- [ ] Backup conjunto verificado y restore temporal reciente.
-- [ ] Timers y alertas reales siguen inactivos hasta Sprint 7.
+## Before deploy
 
-- [ ] PostgreSQL 16 creado con usuario de mínimo privilegio y acceso no público.
-- [ ] `DATABASE_URL=postgresql+psycopg://...` y `ALLOW_SQLITE_IN_PRODUCTION=false`.
-- [ ] Pool y timeouts revisados; `WORKER_CONCURRENCY_MODE=single` para el primer corte.
-- [ ] Ejecutar `alembic upgrade head` y confirmar head `20260730_04`.
-- [ ] Dry-run y migración real SQLite→PostgreSQL solo dentro de la ventana aprobada.
-- [ ] Checklist GO/NO-GO/ROLLBACK de `postgresql_rollback.md` firmado.
-- [ ] Confirmar `PROCESS_WEBHOOK_SYNCHRONOUSLY=false`.
-- [ ] Instalar backend y worker como servicios separados; un solo worker activo.
-- [ ] Verificar heartbeat y colas desde owner sin exponer payloads.
+- [ ] `git status --short` vacío; SHA/release ID y operador registrados.
+- [ ] pytest, Ruff, mypy, `pip check`, Alembic y `predeploy_check.py` sin fallos nuevos.
+- [ ] Backup PostgreSQL/uploads conocido y rollback de código/frontend preparado.
+- [ ] `/etc/autonogrow/backend.env` parte de la plantilla staging: sin placeholders,
+  `APP_ENV=staging`, dominio/origen/rutas exclusivos, metadata del build y modo publishing explícito.
+- [ ] `alembic current` y `alembic heads` revisados; una head `20260814_19`. No downgrade.
 
-Registrar fecha, responsable, dominio, versión desplegada y resultado de cada punto. No marcar producción como lista basándose únicamente en este staging.
+## Deploy
 
-## Dominio, red y proxy
+1. Instalar la release identificable en `/opt/autonogrow` sin `git pull` sobre el árbol activo.
+2. Instalar el lock en `/opt/autonogrow/.venv` y ejecutar `python -m pip check`.
+3. Detener workers, obtener backup/pre-check y ejecutar `python scripts/manage_migrations.py upgrade`.
+4. Ejecutar `python scripts/manage_migrations.py validate` antes de arrancar tráfico.
+5. Primera adopción del frontend atómico: mover el directorio legacy a una release conservada y
+   crear `/var/www/autonogrow` como symlink a ella. Después ejecutar con el SHA:
 
-- [ ] Dominio o subdominio elegido: `staging.example.com` sustituido por el real.
-- [ ] DNS A/AAAA apunta exclusivamente al VPS de staging esperado.
-- [ ] Puertos 80 y 443 abiertos.
-- [ ] Puerto 8000 cerrado desde Internet y accesible solo desde localhost/proxy.
-- [ ] Caddy o Nginx activo y configuración validada.
-- [ ] HTTP redirige a HTTPS.
-- [ ] Certificado HTTPS válido, cadena completa y renovación configurada.
-- [ ] `GET /health` por HTTPS devuelve 200 y el JSON mínimo esperado.
+   ```bash
+   sudo RELEASE_ID=SHA SOURCE_ROOT=/opt/autonogrow scripts/publish_frontend.sh
+   ```
 
-## Entorno y autenticación
+6. Instalar/actualizar unidades versionadas y ejecutar `sudo systemctl daemon-reload`.
+7. Validar Caddy antes de reload: `sudo caddy validate --config /etc/caddy/Caddyfile`.
+8. Reiniciar backend, channel worker e Instagram publisher; habilitar el timer de mantenimiento
+   existente. No crear otro scheduler.
+9. `sudo systemctl reload caddy` solo tras una validación correcta.
 
-- [ ] `APP_ENV=production`.
-- [ ] `DATABASE_MIGRATION_CHECK=true` y `ENABLE_LEGACY_STARTUP_MIGRATIONS=false`.
-- [ ] PostgreSQL validado; SQLite conservado únicamente como snapshot pre-migración.
-- [ ] `COOKIE_SECURE=true`.
-- [ ] `CSRF_ENABLED=true`, `RATE_LIMIT_ENABLED=true` y `SECURITY_HEADERS_ENABLED=true`.
-- [ ] `FRONTEND_ORIGINS` contiene únicamente el dominio HTTPS real de staging.
-- [ ] `DATABASE_URL` no se registra y `UPLOADS_DIR` queda fuera del repo/frontend.
-- [ ] Google OAuth permite el dominio HTTPS real de staging.
-- [ ] Login owner real funciona y solo muestra recursos autorizados.
-- [ ] Login business admin real funciona para su negocio y rechaza otro negocio.
-- [ ] Login customer real funciona y no muestra reservas de otra cuenta.
-- [ ] Cookies verificadas en navegador: Secure, HttpOnly donde corresponde, SameSite=Lax y Path=/.
+## After deploy
 
-## Flujos y controles
+```bash
+curl --fail --silent https://staging.autonogrow.es/health
+curl --fail --silent https://staging.autonogrow.es/ready
+python scripts/smoke_test_staging.py --base-url https://staging.autonogrow.es
+python scripts/certify_staging.py --base-url https://staging.autonogrow.es \
+  --expected-git-commit SHA --local-system --json-output /tmp/staging-certification.json
+```
 
-- [ ] Reserva pública anónima creada correctamente.
-- [ ] Reserva autenticada creada y vinculada a la cuenta correcta.
-- [ ] Mutación autenticada sin `X-CSRF-Token` devuelve 403.
-- [ ] La misma mutación con token válido funciona.
-- [ ] CORS rechaza un origen externo no autorizado.
-- [ ] Logos y galería cargan desde `/uploads/businesses/...`.
-- [ ] El path estático antiguo de adjuntos privados devuelve 404.
-- [ ] Adjunto privado sin sesión/token devuelve 401/403.
-- [ ] Adjunto privado con owner/admin/customer propietario o booking token correcto funciona.
-- [ ] `audit_logs` registra login, cambios sensibles, reservas y media sin tokens/cookies/mensajes completos.
-
-## Smoke test y operación
-
-- [ ] `python scripts/predeploy_check.py` termina con 0 FAIL antes de subir.
-- [ ] Servicio detenido y backup DB/uploads/keyring verificado antes de migrar.
-- [ ] `python scripts/check_database_migration_state.py` no informa ausencias.
-- [ ] Una base heredada completa se marcó con baseline solo mediante confirmación explícita.
-- [ ] `alembic upgrade head` terminó y `python scripts/manage_migrations.py validate` devuelve 0.
-- [ ] `alembic heads` devuelve únicamente `20260730_04`.
-- [ ] `python scripts/smoke_test_staging.py --base-url https://DOMINIO-STAGING` termina con 0 FAIL.
-- [ ] Backup local SQLite + uploads creado y verificado.
-- [ ] Backup copiado a almacenamiento externo cifrado.
-- [ ] Restauración probada en una ruta aislada, sin tocar staging activo.
-- [ ] Journald y logs del proxy revisados: sin secretos, tokens ni PII innecesaria.
-- [ ] Alertas básicas de disco, 5xx, certificado y backup revisadas.
-- [ ] Rollback preparado con versión anterior identificable y backup previo consistente.
-- [ ] Incidencias, excepciones y WARN documentados antes de decidir producción.
-- [ ] Las 40 pruebas IG-S1 siguen registradas en `docs/pending_final_validation.md`; cada ejecución
-  tiene estado, fecha, responsable y evidencia.
-- [ ] La matriz `docs/final_release_validation_matrix.md` no contiene bloqueantes pendientes al
-  autorizar producción.
-# Onboarding multiempresa
-
-- [ ] Backup verificado antes de `alembic upgrade head`.
-- [ ] Head única `20260730_05` y PostgreSQL configurado.
-- [ ] Dry-run y aplicación explícita de `seed_onboarding_templates.py`.
-- [ ] Predeploy sin escrituras ejecutado.
-- [ ] Matriz manual de onboarding permanece pendiente hasta validación real.
+- [ ] `/api/config/build` devuelve `app_env=staging` y el SHA desplegado.
+- [ ] `systemctl is-active/is-enabled` correcto para backend/workers/timer; `NRestarts` sin bucle.
+- [ ] `python -m app.workers.instagram_publish_worker --check` pasa sin reclamar jobs.
+- [ ] `python scripts/run_maintenance.py --json` termina como dry-run/rollback.
+- [ ] Revisar logs recientes y completar `staging_manual_certification.md`.
+- [ ] No declarar `CERTIFIED` mientras haya `FAIL`, `BLOCKER` o gates manuales sin evidencia.

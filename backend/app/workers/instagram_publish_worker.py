@@ -12,11 +12,13 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.audit import record_audit
 from app.core.config import Settings, get_backend_dir, get_settings
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, engine
+from app.core.migration_state import inspect_database_migration_state
 from app.models import (
     BusinessChannelIntegration,
     InstagramContent,
@@ -553,12 +555,49 @@ class InstagramPublishWorker:
                 self.sleep(interval)
 
 
+def worker_startup_check(
+    settings: Settings,
+    *,
+    session_factory: sessionmaker[Session] = SessionLocal,
+    database_engine: Engine = engine,
+) -> dict[str, object]:
+    """Validate worker prerequisites without claiming jobs or changing application state."""
+    with session_factory() as db:
+        db.execute(text("SELECT 1"))
+        dialect = db.get_bind().dialect.name
+    if settings.app_env in {"staging", "production"}:
+        if dialect != "postgresql":
+            raise RuntimeError("Instagram publisher requires PostgreSQL in managed environments")
+        state = inspect_database_migration_state(database_engine)
+        if not state.is_at_head or len(state.head_revisions) != 1:
+            raise RuntimeError("Instagram publisher database is not at the single Alembic head")
+        __import__("psycopg")
+    adapter = get_instagram_publishing_adapter(settings)
+    return {
+        "ok": True,
+        "app_env": settings.app_env,
+        "database_dialect": dialect,
+        "publishing_mode": settings.instagram_publishing_mode,
+        "provider_adapter": type(adapter).__name__,
+        "worker_enabled": settings.instagram_publishing_worker_enabled,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Instagram publishing worker")
-    parser.add_argument("--once", action="store_true")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--once", action="store_true")
+    action.add_argument(
+        "--check",
+        action="store_true",
+        help="Valida configuración y DB sin reclamar ni publicar jobs",
+    )
     parser.add_argument("--poll-seconds", type=float)
     args = parser.parse_args()
     settings = get_settings()
+    if args.check:
+        print(json.dumps(worker_startup_check(settings), sort_keys=True))
+        return 0
     worker = InstagramPublishWorker(settings=settings)
     signal.signal(signal.SIGTERM, worker.request_stop)
     signal.signal(signal.SIGINT, worker.request_stop)

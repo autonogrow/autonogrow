@@ -8,3 +8,4 @@
 .auth-strip { width: min(1120px, calc(100% - 32px)); margin: 14px auto 0; display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
 .auth-strip button, .auth-strip a { border: 1px solid #d7dde5; border-radius: 999px; padding: 8px 14px; background: #fff; color: #1f2937; cursor: pointer; text-decoration: none; font: inherit; }
 [hidden] { display: none !important; }
+.ag-environment-marker { position: fixed; right: 12px; bottom: 12px; z-index: 10000; padding: 4px 9px; border: 1px solid #92400e; border-radius: 999px; background: #fef3c7; color: #78350f; font: 700 11px/1.2 system-ui, sans-serif; letter-spacing: .08em; box-shadow: 0 2px 8px rgba(15, 23, 42, .14); }

@@ -192,6 +192,10 @@ def check_required_files(reporter: Reporter) -> None:
         "deploy/autonogrow-backup.timer",
         "deploy/autonogrow-maintenance.service",
         "deploy/autonogrow-maintenance.timer",
+        "scripts/certify_staging.py",
+        "scripts/instagram_publication_preflight.py",
+        "docs/staging_certification.md",
+        "docs/staging_manual_certification.md",
     ]
     for relative in required:
         if (ROOT / relative).is_file():
@@ -230,8 +234,8 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "SMTP_USE_TLS=true",
         ),
         "deploy/staging.backend.env.example": (
-            "APP_ENV=production",
-            "FRONTEND_ORIGINS=https://staging.example.com",
+            "APP_ENV=staging",
+            "FRONTEND_ORIGINS=https://staging.autonogrow.es",
             "DATABASE_URL=postgresql+psycopg://",
             "ALLOW_SQLITE_IN_PRODUCTION=false",
             "DATABASE_POOL_SIZE=5",
@@ -251,6 +255,7 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "WHATSAPP_CUSTOMER_SERVICE_WINDOW_HOURS=24",
             "INTEGRATION_ENCRYPTION_KEYS_JSON=CHANGE_ME_JSON_KEYRING",
             "INTEGRATION_ENCRYPTION_ACTIVE_KEY_VERSION=v1",
+            "INSTAGRAM_ASSET_URL_BASE=https://staging.autonogrow.es",
             "INCIDENT_ALERTS_ENABLED=false",
             "INCIDENT_ALERT_MIN_SEVERITY=high",
             "INCIDENT_DEDUP_WINDOW_MINUTES=30",
@@ -264,14 +269,26 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "ReadWritePaths=/var/lib/autonogrow",
         ),
         "deploy/Caddyfile.example": (
-            "app.example.com",
+            "staging.autonogrow.es",
             "root * /var/www/autonogrow",
             "reverse_proxy 127.0.0.1:8000",
             "/uploads/businesses/*",
+            'Strict-Transport-Security "max-age=31536000"',
+            "header_down -Server",
+            "log_skip @sensitive_access_log",
+            "redir / /autonogrow-landing/ 302",
+            "@static_asset path_regexp",
+            'Cache-Control "no-cache, no-store, must-revalidate"',
         ),
         "deploy/autonogrow-worker.service": (
             "User=autonogrow",
             "python -m app.workers.channel_worker",
+            "KillSignal=SIGTERM",
+            "NoNewPrivileges=true",
+        ),
+        "deploy/autonogrow-instagram-publisher.service": (
+            "User=autonogrow",
+            "python -m app.workers.instagram_publish_worker",
             "KillSignal=SIGTERM",
             "NoNewPrivileges=true",
         ),

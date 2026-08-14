@@ -1,5 +1,5 @@
 [Unit]
-Description=AutonoGrow simulated Instagram publishing worker
+Description=AutonoGrow Instagram publishing worker
 After=network-online.target autonogrow.service
 Wants=network-online.target
 
