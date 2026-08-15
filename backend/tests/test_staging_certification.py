@@ -15,6 +15,7 @@ from scripts.certify_staging import (
     check_instagram_worker_preflight,
     check_publisher_systemd,
     check_readiness,
+    check_systemd_unit,
     normalize_base_url,
     tamper_signed_url,
 )
@@ -251,6 +252,69 @@ def test_staging_maintenance_timer_runs_after_the_backup_window() -> None:
     assert "RandomizedDelaySec=10min" in timer
     assert "Persistent=true" in timer
     assert (ROOT / "deploy/autonogrow-maintenance.service").is_file()
+
+
+def test_new_active_waiting_timer_without_last_trigger_passes(monkeypatch) -> None:
+    reporter = Reporter()
+    output = "\n".join(
+        (
+            "ActiveState=active",
+            "SubState=waiting",
+            "UnitFileState=enabled",
+            "Result=success",
+            "NextElapseUSecRealtime=Sun 2026-08-16 04:36:03 CEST",
+            "LastTriggerUSec=",
+        )
+    )
+    monkeypatch.setattr(
+        "scripts.certify_staging.command_result",
+        lambda *_args, **_kwargs: (0, output),
+    )
+
+    check_systemd_unit(reporter, "autonogrow-maintenance.timer")
+
+    assert reporter.results[-1].status == "PASS"
+    assert reporter.results[-1].detail == (
+        "active/waiting/enabled; próxima ejecución programada"
+    )
+
+
+@pytest.mark.parametrize(
+    "state",
+    (
+        SystemdUnitState(
+            "active",
+            "disabled",
+            None,
+            sub_state="waiting",
+            result="success",
+            next_elapse_realtime="Sun 2026-08-16 04:36:03 CEST",
+        ),
+        SystemdUnitState(
+            "failed",
+            "enabled",
+            None,
+            sub_state="failed",
+            result="failed",
+            next_elapse_realtime="Sun 2026-08-16 04:36:03 CEST",
+        ),
+        SystemdUnitState(
+            "active",
+            "enabled",
+            None,
+            sub_state="waiting",
+            result="success",
+            next_elapse_realtime="",
+        ),
+    ),
+)
+def test_unhealthy_or_unscheduled_timer_fails(monkeypatch, state) -> None:
+    reporter = Reporter()
+    monkeypatch.setattr("scripts.certify_staging.systemd_unit_state", lambda _unit: state)
+
+    check_systemd_unit(reporter, "autonogrow-maintenance.timer")
+
+    assert reporter.results[-1].status == "FAIL"
 
 
 def test_disabled_inactive_publisher_passes_with_valid_preflight(monkeypatch) -> None:

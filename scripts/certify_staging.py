@@ -44,7 +44,11 @@ class HttpResult:
 class SystemdUnitState:
     active_state: str
     unit_file_state: str
-    restarts: int
+    restarts: int | None
+    sub_state: str = ""
+    result: str = ""
+    next_elapse_realtime: str = ""
+    last_trigger: str = ""
 
 
 class Reporter:
@@ -460,28 +464,43 @@ def command_result(command: list[str], timeout: float = 20, *, cwd: Path = ROOT)
 
 def systemd_unit_state(unit: str) -> SystemdUnitState | None:
     code, output = command_result(
-        ["systemctl", "show", unit, "--property=ActiveState,UnitFileState,NRestarts"]
+        [
+            "systemctl",
+            "show",
+            unit,
+            "--property=ActiveState,SubState,UnitFileState,Result,NRestarts,"
+            "NextElapseUSecRealtime,LastTriggerUSec",
+        ]
     )
     if code != 0:
         return None
     values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
     try:
-        restarts = int(values["NRestarts"])
+        restarts_value = values.get("NRestarts", "")
+        restarts = int(restarts_value) if restarts_value else None
         return SystemdUnitState(
             active_state=values["ActiveState"],
             unit_file_state=values["UnitFileState"],
             restarts=restarts,
+            sub_state=values.get("SubState", ""),
+            result=values.get("Result", ""),
+            next_elapse_realtime=values.get("NextElapseUSecRealtime", ""),
+            last_trigger=values.get("LastTriggerUSec", ""),
         )
     except (KeyError, ValueError):
         return None
 
 
 def check_systemd_unit(reporter: Reporter, unit: str) -> None:
+    if unit.endswith(".timer"):
+        check_systemd_timer(reporter, unit)
+        return
     state = systemd_unit_state(unit)
     ok = bool(
         state
         and state.active_state == "active"
         and state.unit_file_state == "enabled"
+        and state.restarts is not None
         and state.restarts < 3
     )
     reporter.add(
@@ -490,6 +509,30 @@ def check_systemd_unit(reporter: Reporter, unit: str) -> None:
         "active/enabled sin restart loop"
         if ok
         else "Revisar estado o reinicios recientes",
+    )
+
+
+def check_systemd_timer(reporter: Reporter, unit: str) -> None:
+    state = systemd_unit_state(unit)
+    next_scheduled = bool(
+        state
+        and state.next_elapse_realtime
+        and state.next_elapse_realtime.lower() not in {"n/a", "never"}
+    )
+    healthy = bool(
+        state
+        and state.active_state == "active"
+        and state.sub_state == "waiting"
+        and state.unit_file_state == "enabled"
+        and state.result in {"", "success"}
+        and next_scheduled
+    )
+    reporter.add(
+        f"systemd {unit}",
+        "PASS" if healthy else "FAIL",
+        "active/waiting/enabled; próxima ejecución programada"
+        if healthy
+        else "Timer failed, inactivo, deshabilitado o sin próxima ejecución",
     )
 
 
@@ -504,7 +547,7 @@ def check_publisher_systemd(
     if state is None:
         reporter.add(f"systemd {unit}", "FAIL", "No se pudo consultar la unidad publisher")
         return
-    if state.active_state == "failed" or state.restarts >= 3:
+    if state.active_state == "failed" or state.restarts is None or state.restarts >= 3:
         reporter.add(
             f"systemd {unit}",
             "FAIL",
@@ -627,7 +670,12 @@ def check_caddy_config(reporter: Reporter, caddy_config: str) -> None:
 
 def check_caddy_runtime(reporter: Reporter) -> None:
     state = systemd_unit_state("caddy.service")
-    ok = bool(state and state.active_state == "active" and state.restarts < 3)
+    ok = bool(
+        state
+        and state.active_state == "active"
+        and state.restarts is not None
+        and state.restarts < 3
+    )
     reporter.add(
         "Caddy runtime",
         "PASS" if ok else "FAIL",
