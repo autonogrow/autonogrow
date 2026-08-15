@@ -218,6 +218,27 @@ def test_staff_and_customer_have_no_access(editorial_context, role):
     assert ctx["client"].get(f"{owner_base(ctx)}/contents").status_code == 403
 
 
+def test_owner_content_collection_contains_complete_workspace_items(editorial_context):
+    ctx = editorial_context
+    content_id, asset_id, _version_id = create_content_with_asset(ctx)
+
+    response = ctx["client"].get(f"{owner_base(ctx)}/contents")
+
+    assert response.status_code == 200
+    items = response.json()["contents"]
+    assert [item["id"] for item in items] == [content_id]
+    assert {
+        "current_version",
+        "versions",
+        "comments",
+        "final_assets",
+        "publish_jobs",
+        "publication_events",
+    } <= set(items[0])
+    assert items[0]["current_version"]["assets"][0]["id"] == asset_id
+    assert items[0]["final_assets"][0]["id"] == asset_id
+
+
 def test_admin_is_isolated_to_own_business_and_cannot_create_final_content(editorial_context):
     ctx = editorial_context
     content_id, _asset_id, _version_id = create_content_with_asset(ctx)

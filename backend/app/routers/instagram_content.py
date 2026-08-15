@@ -239,7 +239,14 @@ def _raw_or_404(db: Session, business_id: int, asset_id: int) -> InstagramRawAss
     return asset
 
 
-def _list_content(db: Session, business_id: int, api_prefix: str) -> dict:
+def _list_content(
+    db: Session,
+    business_id: int,
+    api_prefix: str,
+    *,
+    detailed: bool = False,
+    owner_technical: bool = True,
+) -> dict:
     require_service_enabled(db, business_id)
     from app.models import InstagramContent
 
@@ -249,7 +256,18 @@ def _list_content(db: Session, business_id: int, api_prefix: str) -> dict:
         .order_by(InstagramContent.updated_at.desc(), InstagramContent.id.desc())
         .all()
     )
-    return {"contents": [serialize_content(db, item, api_prefix) for item in items]}
+    return {
+        "contents": [
+            serialize_content(
+                db,
+                item,
+                api_prefix,
+                detailed=detailed,
+                owner_technical=owner_technical,
+            )
+            for item in items
+        ]
+    }
 
 
 @owner_router.get("/settings")
@@ -450,7 +468,7 @@ def admin_get_raw_file(
 @owner_router.get("/contents")
 def owner_list_contents(business_id: int, db: Session = Depends(get_db)):
     _owner_business(db, business_id)
-    return _list_content(db, business_id, _owner_prefix(business_id))
+    return _list_content(db, business_id, _owner_prefix(business_id), detailed=True)
 
 
 @admin_router.get("/contents")
@@ -461,7 +479,12 @@ def admin_list_contents(
 ):
     del actor
     business = _admin_business(db, business_slug)
-    return _list_content(db, business.id, _admin_prefix(business_slug))
+    return _list_content(
+        db,
+        business.id,
+        _admin_prefix(business_slug),
+        owner_technical=False,
+    )
 
 
 @owner_router.post("/contents", status_code=201)
