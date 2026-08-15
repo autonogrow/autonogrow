@@ -66,8 +66,83 @@ def test_admin_document_keeps_unique_landmarks_and_all_business_sections() -> No
         "channel-instagram",
         "channel-whatsapp",
         "messages",
+        "instagram-content",
     ):
         assert html.count(f'data-admin-section="{section}"') == 1
+
+
+def test_main_admin_section_visibility_depends_only_on_active_state() -> None:
+    html, css, js, _ = sources()
+    inventory = HtmlInventory()
+    inventory.feed(html)
+    sections = [attrs for _, attrs in inventory.tags if attrs.get("data-admin-section")]
+    tabs = [
+        attrs
+        for _, attrs in inventory.tags
+        if "admin-tab" in str(attrs.get("class") or "").split()
+    ]
+    required_destinations = {
+        "summary",
+        "growth",
+        "bookings",
+        "conversations",
+        "configuration",
+        "channels",
+        "instagram-content",
+    }
+    assert required_destinations <= {str(attrs["data-admin-section"]) for attrs in sections}
+    assert required_destinations <= {str(attrs["data-section"]) for attrs in tabs}
+    assert [
+        attrs["data-admin-section"]
+        for attrs in sections
+        if "admin-section-active" in str(attrs.get("class") or "").split()
+    ] == ["summary"]
+    assert [
+        attrs["data-section"]
+        for attrs in tabs
+        if "admin-tab-active" in str(attrs.get("class") or "").split()
+    ] == ["summary"]
+
+    section_classes = {
+        class_name
+        for _, attrs in inventory.tags
+        if attrs.get("data-admin-section") is not None
+        for class_name in str(attrs.get("class") or "").split()
+    }
+    section_classes.discard("admin-section-active")
+
+    css_without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    display_rules = re.findall(
+        r"([^{}]+)\{([^{}]*\bdisplay\s*:[^{}]+)\}",
+        css_without_comments,
+        flags=re.DOTALL,
+    )
+    unsafe_selectors: list[str] = []
+    for selector_list, declarations in display_rules:
+        if not re.search(r"(?:^|;)\s*display\s*:", declarations):
+            continue
+        for selector in selector_list.split(","):
+            rightmost_compound = re.split(r"\s+|[>+~]", selector.strip())[-1]
+            selector_classes = set(re.findall(r"\.([a-zA-Z0-9_-]+)", rightmost_compound))
+            if not selector_classes.intersection(section_classes):
+                continue
+            if rightmost_compound == ".admin-section":
+                assert re.search(r"(?:^|;)\s*display\s*:\s*none\s*;", declarations)
+            elif "admin-section-active" not in selector_classes:
+                unsafe_selectors.append(selector.strip())
+
+    assert unsafe_selectors == []
+    assert re.search(r"\.admin-section-active\s*\{\s*display\s*:\s*block\s*;", css)
+    assert ".agenda-section.admin-section-active { display: grid;" in css
+    assert ".conversations-section.admin-section-active { display: grid;" in css
+
+    navigation = function_block(js, "function showAdminSection", "function setupAdminNavigation")
+    assert (
+        'section.classList.toggle("admin-section-active", '
+        "section.dataset.adminSection === targetSection)"
+    ) in navigation
+    assert 'tab.classList.toggle("admin-tab-active", isActive)' in navigation
+    assert 'tab.setAttribute("aria-selected", String(isActive))' in navigation
 
 
 def test_primary_navigation_has_one_synchronous_current_item_and_normalizes_bad_hashes() -> None:
