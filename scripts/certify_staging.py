@@ -40,6 +40,13 @@ class HttpResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class SystemdUnitState:
+    active_state: str
+    unit_file_state: str
+    restarts: int
+
+
 class Reporter:
     def __init__(self) -> None:
         self.results: list[CheckResult] = []
@@ -451,26 +458,187 @@ def command_result(command: list[str], timeout: float = 20, *, cwd: Path = ROOT)
         return 127, ""
 
 
-def check_systemd_unit(reporter: Reporter, unit: str) -> None:
+def systemd_unit_state(unit: str) -> SystemdUnitState | None:
     code, output = command_result(
-        ["systemctl", "show", unit, "--property=ActiveState,UnitFileState,NRestarts", "--value"]
+        ["systemctl", "show", unit, "--property=ActiveState,UnitFileState,NRestarts"]
     )
-    values = [line.strip() for line in output.splitlines() if line.strip()]
-    ok = code == 0 and "active" in values and "enabled" in values
-    restarts = next((int(value) for value in values if value.isdigit()), 0)
-    status = "PASS" if ok and restarts < 3 else ("WARN" if ok else "FAIL")
+    if code != 0:
+        return None
+    values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    try:
+        restarts = int(values["NRestarts"])
+        return SystemdUnitState(
+            active_state=values["ActiveState"],
+            unit_file_state=values["UnitFileState"],
+            restarts=restarts,
+        )
+    except (KeyError, ValueError):
+        return None
+
+
+def check_systemd_unit(reporter: Reporter, unit: str) -> None:
+    state = systemd_unit_state(unit)
+    ok = bool(
+        state
+        and state.active_state == "active"
+        and state.unit_file_state == "enabled"
+        and state.restarts < 3
+    )
     reporter.add(
         f"systemd {unit}",
-        status,
+        "PASS" if ok else "FAIL",
         "active/enabled sin restart loop"
-        if status == "PASS"
+        if ok
         else "Revisar estado o reinicios recientes",
+    )
+
+
+def check_publisher_systemd(
+    reporter: Reporter,
+    *,
+    worker_enabled: bool | None,
+    preflight_ok: bool,
+) -> None:
+    unit = "autonogrow-instagram-publisher.service"
+    state = systemd_unit_state(unit)
+    if state is None:
+        reporter.add(f"systemd {unit}", "FAIL", "No se pudo consultar la unidad publisher")
+        return
+    if state.active_state == "failed" or state.restarts >= 3:
+        reporter.add(
+            f"systemd {unit}",
+            "FAIL",
+            "Publisher en estado failed o con reinicios recientes",
+        )
+        return
+    if not preflight_ok or worker_enabled is None:
+        reporter.add(
+            f"systemd {unit}",
+            "FAIL",
+            "Preflight inválido o configuración publisher inconsistente",
+        )
+        return
+    if not worker_enabled:
+        deliberately_disabled = (
+            state.active_state == "inactive" and state.unit_file_state == "disabled"
+        )
+        reporter.add(
+            f"systemd {unit}",
+            "PASS" if deliberately_disabled else "FAIL",
+            "Publisher deliberadamente deshabilitado; preflight correcto y no puede reclamar jobs."
+            if deliberately_disabled
+            else "Publisher deshabilitado por configuración, pero la unidad no está inactive/disabled",
+        )
+        return
+    operational = state.active_state == "active" and state.unit_file_state == "enabled"
+    reporter.add(
+        f"systemd {unit}",
+        "PASS" if operational else "FAIL",
+        "Publisher habilitado y active/enabled"
+        if operational
+        else "Publisher habilitado por configuración, pero la unidad no está active/enabled",
+    )
+
+
+def check_instagram_worker_preflight(
+    reporter: Reporter, backend: Path, settings: Any | None
+) -> tuple[bool, bool | None]:
+    code, output = command_result(
+        [sys.executable, "-m", "app.workers.instagram_publish_worker", "--check"],
+        timeout=30,
+        cwd=backend,
+    )
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        payload = None
+    worker_enabled = payload.get("worker_enabled") if isinstance(payload, dict) else None
+    expected_adapter = (
+        {
+            "simulated": "SimulatedInstagramPublishingAdapter",
+            "meta": "MetaInstagramPublishingAdapter",
+        }.get(settings.instagram_publishing_mode)
+        if settings is not None
+        else None
+    )
+    consistent = bool(
+        code == 0
+        and isinstance(payload, dict)
+        and payload.get("ok") is True
+        and isinstance(worker_enabled, bool)
+        and settings is not None
+        and payload.get("app_env") == settings.app_env
+        and payload.get("database_dialect") == "postgresql"
+        and payload.get("publishing_mode") == settings.instagram_publishing_mode
+        and payload.get("provider_adapter") == expected_adapter
+        and worker_enabled == settings.instagram_publishing_worker_enabled
+    )
+    reporter.add(
+        "Instagram worker preflight",
+        "PASS" if consistent else "FAIL",
+        "Configuración y DB válidas sin reclamar jobs"
+        if consistent
+        else "El check seguro del worker falló o no coincide con la configuración cargada",
+    )
+    return consistent, worker_enabled if isinstance(worker_enabled, bool) else None
+
+
+def _privilege_required(code: int, output: str) -> bool:
+    lowered = output.lower()
+    return code == 127 or any(
+        marker in lowered
+        for marker in (
+            "a password is required",
+            "password is required",
+            "no tty present",
+            "not allowed to execute",
+            "permission denied",
+            "operation not permitted",
+        )
+    )
+
+
+def check_caddy_config(reporter: Reporter, caddy_config: str) -> None:
+    command = ["caddy", "validate", "--config", caddy_config]
+    code, output = command_result(command)
+    if code == 0:
+        reporter.add("Caddy config", "PASS", "Configuración instalada válida")
+        return
+    if not _privilege_required(code, output):
+        reporter.add("Caddy config", "FAIL", "caddy validate detectó un fallo real")
+        return
+
+    sudo_code, sudo_output = command_result(["sudo", "-n", *command])
+    if sudo_code == 0:
+        reporter.add(
+            "Caddy config",
+            "PASS",
+            "Configuración válida con sudo no interactivo; el log protegido no es legible por deploy",
+        )
+    elif _privilege_required(sudo_code, sudo_output):
+        reporter.add(
+            "Caddy config",
+            "MANUAL_REQUIRED",
+            "El log está protegido; ejecutar sudo caddy validate y registrar la evidencia",
+        )
+    else:
+        reporter.add("Caddy config", "FAIL", "La validación privilegiada de Caddy falló")
+
+
+def check_caddy_runtime(reporter: Reporter) -> None:
+    state = systemd_unit_state("caddy.service")
+    ok = bool(state and state.active_state == "active" and state.restarts < 3)
+    reporter.add(
+        "Caddy runtime",
+        "PASS" if ok else "FAIL",
+        "Servicio activo sin restart loop" if ok else "Servicio inactivo, failed o inestable",
     )
 
 
 def run_local_system_checks(reporter: Reporter, caddy_config: str) -> None:
     backend = ROOT / "backend"
     sys.path.insert(0, str(backend))
+    settings = None
     try:
         from sqlalchemy import text
 
@@ -537,28 +705,17 @@ def run_local_system_checks(reporter: Reporter, caddy_config: str) -> None:
     for unit in (
         "autonogrow.service",
         "autonogrow-worker.service",
-        "autonogrow-instagram-publisher.service",
         "autonogrow-maintenance.timer",
     ):
         check_systemd_unit(reporter, unit)
-    code, _ = command_result(["caddy", "validate", "--config", caddy_config])
-    reporter.add(
-        "Caddy config",
-        "PASS" if code == 0 else "FAIL",
-        "Configuración instalada válida" if code == 0 else "caddy validate falló",
+    preflight_ok, worker_enabled = check_instagram_worker_preflight(reporter, backend, settings)
+    check_publisher_systemd(
+        reporter,
+        worker_enabled=worker_enabled,
+        preflight_ok=preflight_ok,
     )
-    code, _ = command_result(
-        [sys.executable, "-m", "app.workers.instagram_publish_worker", "--check"],
-        timeout=30,
-        cwd=backend,
-    )
-    reporter.add(
-        "Instagram worker preflight",
-        "PASS" if code == 0 else "FAIL",
-        "Configuración y DB válidas sin reclamar jobs"
-        if code == 0
-        else "El check seguro del worker falló",
-    )
+    check_caddy_runtime(reporter)
+    check_caddy_config(reporter, caddy_config)
     code, _ = command_result([sys.executable, "scripts/run_maintenance.py", "--json"], timeout=60)
     reporter.add(
         "Maintenance dry-run",
