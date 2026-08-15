@@ -19,6 +19,8 @@ from app.core.config import Settings
 from app.routers import config as config_router
 from app.workers.instagram_publish_worker import worker_startup_check
 
+ROOT = Path(__file__).resolve().parents[2]
+
 
 def test_normalize_base_url_rejects_credentials_and_non_root_paths() -> None:
     assert normalize_base_url("https://staging.example.test") == "https://staging.example.test/"
@@ -154,6 +156,7 @@ def test_worker_startup_check_is_read_only_and_does_not_claim_jobs() -> None:
 
     assert result["ok"] is True
     assert result["publishing_mode"] == "simulated"
+    assert result["worker_enabled"] is False
     assert result["database_dialect"] == "sqlite"
     assert before == after == []
 
@@ -190,3 +193,55 @@ def test_publication_preflight_cli_does_not_write_when_content_is_missing(
     payload = json.loads(capsys.readouterr().out)
     assert payload["code"] == "content_not_found"
     assert payload["ok"] is False
+
+
+def test_staging_systemd_services_match_the_deployed_runtime() -> None:
+    publisher = (ROOT / "deploy/autonogrow-instagram-publisher.service").read_text(
+        encoding="utf-8"
+    )
+    maintenance = (ROOT / "deploy/autonogrow-maintenance.service").read_text(encoding="utf-8")
+    forbidden = (
+        "/opt/autonogrow/.venv/bin/python",
+        "User=autonogrow",
+        "Group=autonogrow",
+        "/var/lib/autonogrow",
+        "/var/log/autonogrow",
+    )
+
+    assert all(marker not in publisher for marker in forbidden)
+    assert all(marker not in maintenance for marker in forbidden)
+    assert "User=deploy\nGroup=deploy" in publisher
+    assert "WorkingDirectory=/opt/autonogrow/backend" in publisher
+    assert publisher.count("EnvironmentFile=/etc/autonogrow/backend.env") == 1
+    assert "/etc/autonogrow/worker.env" not in publisher
+    assert (
+        "ExecStartPre=/opt/autonogrow/backend/.venv-next/bin/python -m "
+        "app.workers.instagram_publish_worker --check"
+    ) in publisher
+    assert (
+        "ExecStart=/opt/autonogrow/backend/.venv-next/bin/python -m "
+        "app.workers.instagram_publish_worker --poll-seconds 2"
+    ) in publisher
+    assert "ReadOnlyPaths=/var/lib/agw-staging" in publisher
+    assert "ReadWritePaths=" not in publisher
+
+    assert "User=deploy\nGroup=deploy" in maintenance
+    assert "WorkingDirectory=/opt/autonogrow" in maintenance
+    assert "EnvironmentFile=/etc/autonogrow/backend.env" in maintenance
+    assert (
+        "ExecStart=/usr/bin/flock -n /run/lock/autonogrow-maintenance.lock "
+        "/opt/autonogrow/backend/.venv-next/bin/python "
+        "/opt/autonogrow/scripts/run_maintenance.py --apply --json"
+    ) in maintenance
+    assert "ReadWritePaths=/run/lock" in maintenance
+    assert (ROOT / "backend/app/workers/instagram_publish_worker.py").is_file()
+    assert (ROOT / "scripts/run_maintenance.py").is_file()
+
+
+def test_staging_maintenance_timer_runs_after_the_backup_window() -> None:
+    timer = (ROOT / "deploy/autonogrow-maintenance.timer").read_text(encoding="utf-8")
+
+    assert "OnCalendar=*-*-* 04:30:00" in timer
+    assert "RandomizedDelaySec=10min" in timer
+    assert "Persistent=true" in timer
+    assert (ROOT / "deploy/autonogrow-maintenance.service").is_file()

@@ -190,8 +190,10 @@ def check_required_files(reporter: Reporter) -> None:
         "deploy/autonogrow-operational-check.timer",
         "deploy/autonogrow-backup.service",
         "deploy/autonogrow-backup.timer",
+        "deploy/autonogrow-instagram-publisher.service",
         "deploy/autonogrow-maintenance.service",
         "deploy/autonogrow-maintenance.timer",
+        "backend/app/workers/instagram_publish_worker.py",
         "scripts/certify_staging.py",
         "scripts/instagram_publication_preflight.py",
         "docs/staging_certification.md",
@@ -246,7 +248,8 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "SQLITE_BUSY_TIMEOUT_MS=5000",
             "SQLITE_JOURNAL_MODE=WAL",
             "SQLITE_SYNCHRONOUS=NORMAL",
-            "UPLOADS_DIR=/var/lib/autonogrow-staging/uploads",
+            "UPLOADS_DIR=/var/lib/agw-staging/uploads",
+            "BACKUP_STATE_DIR=/var/lib/agw-staging/operations",
             "INSTAGRAM_PROVIDER_ENABLED=false",
             "INSTAGRAM_REQUIRE_SIGNATURE=true",
             "WHATSAPP_WEBHOOK_ENABLED=false",
@@ -287,10 +290,32 @@ def check_deploy_templates(reporter: Reporter) -> None:
             "NoNewPrivileges=true",
         ),
         "deploy/autonogrow-instagram-publisher.service": (
-            "User=autonogrow",
-            "python -m app.workers.instagram_publish_worker",
+            "User=deploy",
+            "Group=deploy",
+            "WorkingDirectory=/opt/autonogrow/backend",
+            "EnvironmentFile=/etc/autonogrow/backend.env",
+            "ExecStartPre=/opt/autonogrow/backend/.venv-next/bin/python -m "
+            "app.workers.instagram_publish_worker --check",
+            "ExecStart=/opt/autonogrow/backend/.venv-next/bin/python -m "
+            "app.workers.instagram_publish_worker --poll-seconds 2",
+            "ReadOnlyPaths=/var/lib/agw-staging",
             "KillSignal=SIGTERM",
             "NoNewPrivileges=true",
+        ),
+        "deploy/autonogrow-maintenance.service": (
+            "User=deploy",
+            "Group=deploy",
+            "WorkingDirectory=/opt/autonogrow",
+            "EnvironmentFile=/etc/autonogrow/backend.env",
+            "ExecStart=/usr/bin/flock -n /run/lock/autonogrow-maintenance.lock "
+            "/opt/autonogrow/backend/.venv-next/bin/python "
+            "/opt/autonogrow/scripts/run_maintenance.py --apply --json",
+            "ReadWritePaths=/run/lock",
+        ),
+        "deploy/autonogrow-maintenance.timer": (
+            "OnCalendar=*-*-* 04:30:00",
+            "RandomizedDelaySec=10min",
+            "Persistent=true",
         ),
     }
     for relative, markers in checks.items():
@@ -307,6 +332,29 @@ def check_deploy_templates(reporter: Reporter) -> None:
         reporter.fail("Caddyfile expone o referencia la raíz privada de uploads")
     elif caddy.is_file():
         reporter.passed("Caddy no sirve la raíz privada de uploads")
+
+    staging_units = (
+        ROOT / "deploy/autonogrow-instagram-publisher.service",
+        ROOT / "deploy/autonogrow-maintenance.service",
+    )
+    forbidden_staging_markers = (
+        "/opt/autonogrow/.venv/bin/python",
+        "User=autonogrow",
+        "Group=autonogrow",
+        "/var/lib/autonogrow",
+        "/var/log/autonogrow",
+    )
+    invalid = {
+        path.name: marker
+        for path in staging_units
+        if path.is_file()
+        for marker in forbidden_staging_markers
+        if marker in path.read_text(encoding="utf-8-sig")
+    }
+    if invalid:
+        reporter.fail("Unidades staging conservan rutas o usuarios incompatibles")
+    else:
+        reporter.passed("Unidades staging alineadas con el runtime real")
 
 
 def check_frontend_api_base(reporter: Reporter) -> None:
@@ -817,7 +865,7 @@ def check_whatsapp_contract(reporter: Reporter) -> None:
         all(
             marker in admin_text
             for marker in (
-                "Enviar desde AutonoGrow",
+                "Envío desde AutonoGrow",
                 "Abrir en WhatsApp",
                 "integrated_delivery_available",
                 "assisted_delivery_available",

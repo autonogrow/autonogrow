@@ -17,8 +17,8 @@ Topología versionada:
 | PostgreSQL | servicio del host | DSN en `/etc/autonogrow/backend.env`; driver `psycopg` |
 | Colas de canales | `autonogrow-worker.service` | proceso y DB separados del backend |
 | Publicación Instagram | `autonogrow-instagram-publisher.service` | proceso y DB separados; modo env explícito |
-| Mantenimiento | `autonogrow-maintenance.timer` | una ejecución diaria 03:40; no existe segundo scheduler |
-| Uploads | backend/Caddy | `/var/lib/autonogrow-staging/uploads` |
+| Mantenimiento | `autonogrow-maintenance.timer` | una ejecución diaria 04:30 más hasta 10 min de jitter; no existe segundo scheduler |
+| Uploads | backend/Caddy | `/var/lib/agw-staging/uploads` |
 | Dependencias externas | Google/Meta/SMTP | configuración y secretos solo en environment del host |
 
 Head Alembic esperado: `20260814_19`, una sola head. El frontend anterior se copiaba directorio a
@@ -40,7 +40,7 @@ En el VPS, con el venv y environment del servicio cargados de forma segura:
 
 ```bash
 cd /opt/autonogrow
-/opt/autonogrow/.venv/bin/python scripts/certify_staging.py \
+/opt/autonogrow/backend/.venv-next/bin/python scripts/certify_staging.py \
   --base-url https://staging.autonogrow.es \
   --expected-git-commit SHA_ESPERADO \
   --local-system --json-output /tmp/staging-certification.json
@@ -80,7 +80,7 @@ el environment protegido y reiniciar el worker; volver a `simulated` usa el mism
 
 ```bash
 cd /opt/autonogrow
-/opt/autonogrow/.venv/bin/python scripts/instagram_publication_preflight.py \
+/opt/autonogrow/backend/.venv-next/bin/python scripts/instagram_publication_preflight.py \
   --business-id ID --content-id ID --json
 ```
 

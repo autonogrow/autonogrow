@@ -1,3 +1,4 @@
+# Staging unit: keep aligned with the runtime documented in staging_deploy_checklist.md.
 [Unit]
 Description=AutonoGrow Instagram publishing worker
 After=network-online.target autonogrow.service
@@ -5,11 +6,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=autonogrow
-Group=autonogrow
+User=deploy
+Group=deploy
 WorkingDirectory=/opt/autonogrow/backend
 EnvironmentFile=/etc/autonogrow/backend.env
-ExecStart=/opt/autonogrow/.venv/bin/python -m app.workers.instagram_publish_worker --poll-seconds 2
+ExecStartPre=/opt/autonogrow/backend/.venv-next/bin/python -m app.workers.instagram_publish_worker --check
+ExecStart=/opt/autonogrow/backend/.venv-next/bin/python -m app.workers.instagram_publish_worker --poll-seconds 2
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
@@ -18,7 +20,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/autonogrow /var/log/autonogrow
+ReadOnlyPaths=/var/lib/agw-staging
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictSUIDSGID=true
 LockPersonality=true

@@ -36,6 +36,19 @@ sudo systemctl status autonogrow-instagram-publisher
 sudo journalctl -u autonogrow-instagram-publisher -f
 ```
 
+La unidad versionada de staging se ejecuta como `deploy:deploy`, desde
+`/opt/autonogrow/backend`, con `/etc/autonogrow/backend.env` y
+`/opt/autonogrow/backend/.venv-next/bin/python`. No carga `/etc/autonogrow/worker.env`: los ajustes
+del publisher pertenecen al environment común del backend. El storage `/var/lib/agw-staging` se
+monta de solo lectura para consumir assets y los logs van exclusivamente a journald.
+
+Antes de arrancar el proceso, `ExecStartPre` ejecuta `--check` con el mismo usuario, directorio y
+environment de la unidad. Este check valida Settings, PostgreSQL, Alembic y el adaptador sin reclamar
+jobs. Con `INSTAGRAM_PUBLISHING_WORKER_ENABLED=false`, el bucle principal tampoco reclama jobs ni
+invoca el adaptador. Además, el modo `meta` no puede cargar si
+`INSTAGRAM_REAL_PUBLISHING_ACKNOWLEDGED=false`; con los flags seguros de staging un arranque
+accidental no puede publicar en Meta.
+
 Para recuperar una incidencia: corregir primero servicio/validación/integración/fecha y usar el
 reintento Owner o Business Admin solo si el resultado no es incierto. No se debe editar manualmente la clave de
 idempotencia, scopes, IDs de proveedor ni duplicar filas. La primera activación real sigue el

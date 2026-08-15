@@ -400,6 +400,19 @@ def test_worker_handles_simulated_outcomes(publishing_context, behavior, expecte
         assert ctx["db"].get(InstagramContent, job.content_item_id).status == "published"
 
 
+def test_disabled_worker_does_not_claim_or_publish(monkeypatch) -> None:
+    worker = InstagramPublishWorker(
+        settings=worker_settings(instagram_publishing_worker_enabled=False)
+    )
+    monkeypatch.setattr(
+        worker,
+        "_claim",
+        lambda: pytest.fail("a disabled publisher must not claim jobs"),
+    )
+
+    assert worker.run_once() == 0
+
+
 def test_retry_reuses_same_job_and_provider_identity(publishing_context):
     ctx = publishing_context
     job = queue_now(ctx)
