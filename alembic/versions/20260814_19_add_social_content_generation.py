@@ -59,7 +59,7 @@ def upgrade() -> None:
         with op.batch_alter_table("instagram_contents") as batch:
             batch.add_column(sa.Column("source_proposal_id", sa.Integer(), nullable=True))
             batch.create_foreign_key(
-                "fk_instagram_contents_source_proposal_id_social_content_proposals",
+                "fk_instagram_contents_source_proposal",
                 "social_content_proposals",
                 ["source_proposal_id"],
                 ["id"],
@@ -110,7 +110,7 @@ def downgrade() -> None:
         batch.drop_constraint("uq_instagram_contents_source_proposal_id", type_="unique")
         batch.drop_index("ix_instagram_contents_source_proposal_id")
         batch.drop_constraint(
-            "fk_instagram_contents_source_proposal_id_social_content_proposals",
+            "fk_instagram_contents_source_proposal",
             type_="foreignkey",
         )
         batch.drop_column("source_proposal_id")
