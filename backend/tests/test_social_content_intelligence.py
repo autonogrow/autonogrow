@@ -547,8 +547,10 @@ def test_admin_rrss_area_renders_recommended_ideas_and_actions() -> None:
     assert 'id="social-content-ideas-title">Ideas recomendadas' in html
     assert "loadSocialContentProposals" in js
     assert "social-content-proposals" in js
-    assert '>Usar idea</button>' in js
-    assert '>Descartar</button>' in js
+    assert ">Proponer esta idea</button>" in js
+    assert ">Descartar</button>" in js
+    assert "if (isBusinessStaff())" in js
+    assert "Puedes proponer ideas." in js
     assert "Usar una idea todavía no crea ni publica contenido" in html
 
 

@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 InstagramFormat = Literal["single_image", "carousel", "reel", "story"]
 CommentKind = Literal["comment", "proposal", "change_request"]
+EditorialReviewDecision = Literal["approve", "reject"]
 InstagramPublishJobStatus = Literal[
     "queued",
     "claimed",
@@ -114,6 +115,22 @@ class InstagramValidationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version_id: int
+
+
+class InstagramEditorialReviewCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version_id: int
+    decision: EditorialReviewDecision
+    note: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("note")
+    @classmethod
+    def strip_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 class InstagramCommentCreate(BaseModel):

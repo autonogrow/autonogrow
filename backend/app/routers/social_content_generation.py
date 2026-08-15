@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
-from app.core.security import require_business_admin
+from app.core.security import require_owner
 from app.models import Business, InstagramContent, SocialContentProposal, User
 from app.schemas.social_content_generation import (
     EditorialPackageEdit,
@@ -20,7 +20,7 @@ from app.services.social_content_generation_service import (
 router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}",
     tags=["social-content-generation"],
-    dependencies=[Depends(require_business_admin)],
+    dependencies=[Depends(require_owner)],
 )
 
 
@@ -77,7 +77,7 @@ def generate_social_content(
     proposal_id: int,
     payload: SocialContentGenerateRequest,
     request: Request,
-    actor: User = Depends(require_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _business_or_404(db, business_slug)
@@ -116,7 +116,7 @@ def regenerate_social_content(
     content_id: int,
     payload: SocialContentRegenerateRequest,
     request: Request,
-    actor: User = Depends(require_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _business_or_404(db, business_slug)
@@ -150,7 +150,7 @@ def edit_generated_social_content(
     content_id: int,
     payload: EditorialPackageEdit,
     request: Request,
-    actor: User = Depends(require_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _business_or_404(db, business_slug)

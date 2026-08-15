@@ -104,7 +104,7 @@ restaurar el constraint anterior y elimina la columna nueva.
 | validación JPEG/caption/checksum | Conservada e integrada en un preflight compartido |
 | estados, claims, leases y backoff | Conservados; siguen siendo persistentes e idempotentes |
 | OAuth y scope de publicación | Conservados; el scope solo se solicita en modo Meta |
-| UI Admin de solo lectura | Sustituida por aprobación, planificación, publicación, cancelación y retry autorizado |
+| UI Admin de solo lectura | Ampliada solo con participación y aprobación editorial; validación técnica, planificación, publicación, cancelación y retry son Owner-only |
 | formatos editoriales 9B | Conservados; Meta V1 los rechaza explícitamente salvo `single_image` |
 | requirements lock (`psycopg[binary]`, `uvicorn[standard]`) | Conservado: refleja los extras ya declarados en `requirements.in`; Pillow queda como dependencia directa de validación |
 | migración/head | No se añade modelo redundante: versión, job y auditoría cubren el cierre; head único `20260814_19` |

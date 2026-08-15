@@ -477,7 +477,7 @@ function setupBusinessConfiguration() {
 
 function applyRoleVisibility() {
   const staffOnly = isBusinessStaff();
-  const allowed = new Set(["summary", "growth", "growth-opportunities", "bookings", "conversations"]);
+  const allowed = new Set(["summary", "growth", "growth-opportunities", "instagram-content", "bookings", "conversations"]);
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
     tab.hidden = tab.classList.contains("admin-tab--legacy") || (staffOnly && !allowed.has(tab.dataset.section));
     if (tab.dataset.section === "instagram-content" && adminAuthUser?.is_owner) tab.hidden = true;
@@ -6899,8 +6899,8 @@ function renderSocialContentProposals() {
     const actions = item.status === "accepted"
       ? item.generated_content
         ? `<button class="btn btn-secondary" type="button" data-social-proposal-action="open" data-content-id="${item.generated_content.id}">Abrir borrador</button>`
-        : `<button class="btn btn-primary" type="button" data-social-proposal-action="generate" data-format="${escapeHtml(item.recommended_formats[0] || "static_post")}" ${busy ? "disabled" : ""}>Generar borrador</button>`
-      : `<button class="btn btn-primary" type="button" data-social-proposal-action="accept" ${busy ? "disabled" : ""}>Usar idea</button><button class="btn btn-secondary" type="button" data-social-proposal-action="dismiss" ${busy ? "disabled" : ""}>Descartar</button>`;
+        : `<span class="helper">Idea enviada a AutonoGrow para su preparación.</span>`
+      : `<button class="btn btn-primary" type="button" data-social-proposal-action="accept" ${busy ? "disabled" : ""}>Proponer esta idea</button><button class="btn btn-secondary" type="button" data-social-proposal-action="dismiss" ${busy ? "disabled" : ""}>Descartar</button>`;
     return `<article class="instagram-content-card" data-social-content-proposal="${item.id}"><header><div><h4>${escapeHtml(service)}</h4><p>${escapeHtml(socialContentLabel("priority", item.priority))}</p></div><span class="ag-badge ag-badge--neutral">${escapeHtml(formats)}</span></header><p>${escapeHtml(item.reason_text)}</p><dl><dt>Objetivo</dt><dd>${escapeHtml(socialContentLabel("objective", item.objective))}</dd><dt>Ángulo</dt><dd>${escapeHtml(socialContentLabel("angle", item.angle_code))}</dd><dt>CTA</dt><dd>${escapeHtml(socialContentLabel("cta", item.recommended_cta))}</dd><dt>Material</dt><dd>${escapeHtml(assets)}</dd></dl><div class="growth-action-card-actions">${actions}</div></article>`;
   }).join("");
 }
@@ -6927,7 +6927,7 @@ async function mutateSocialContentProposal(button) {
   const card = button.closest("[data-social-content-proposal]");
   const proposalId = Number(card?.dataset.socialContentProposal);
   const action = button.dataset.socialProposalAction;
-  if (!Number.isInteger(proposalId) || !["accept", "dismiss", "generate", "open"].includes(action) || socialContentProposalMutationIds.has(proposalId)) return;
+  if (!Number.isInteger(proposalId) || !["accept", "dismiss", "open"].includes(action) || socialContentProposalMutationIds.has(proposalId)) return;
   if (action === "open") {
     document.querySelector(`[data-admin-instagram-content="${button.dataset.contentId}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
@@ -6935,13 +6935,8 @@ async function mutateSocialContentProposal(button) {
   socialContentProposalMutationIds.add(proposalId);
   renderSocialContentProposals();
   try {
-    if (action === "generate") {
-      await adminInstagramJson(`${socialContentProposalsApi()}/${proposalId}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: button.dataset.format }) });
-      await loadAdminInstagramPanel();
-    } else {
-      await adminInstagramJson(`${socialContentProposalsApi()}/${proposalId}/${action}`, { method: "POST" });
-      await loadSocialContentProposals();
-    }
+    await adminInstagramJson(`${socialContentProposalsApi()}/${proposalId}/${action}`, { method: "POST" });
+    await loadSocialContentProposals();
   } catch (error) {
     document.getElementById("social-content-ideas-status").textContent = error.message;
   } finally {
@@ -6960,22 +6955,6 @@ function adminInstagramJobPanel(item) {
   const labels = { queued: "Programado", claimed: "En cola de ejecución", creating_container: "Preparando imagen", publishing: "Publicando en Instagram", simulating_publish: "Publicando (simulado)", published: "Publicado", retry_wait: "Reintento pendiente", failed: "Fallido", action_required: "Requiere revisión", cancelled: "Cancelado" };
   const when = job.scheduled_for ? new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(job.scheduled_for)) : "Sin fecha";
   return `<section class="instagram-publish-job"><p><strong>${escapeHtml(labels[job.status] || job.status)}</strong> · ${escapeHtml(when)}</p><p>Intentos: ${job.attempt_count}/${job.max_attempts}</p>${job.provider_permalink ? `<p><a href="${escapeHtml(job.provider_permalink)}" target="_blank" rel="noopener noreferrer">Ver publicación en Instagram</a></p>` : ""}<details><summary>Resultado</summary><dl><dt>Versión aprobada</dt><dd>${job.content_version_id}</dd>${job.provider_media_id ? `<dt>Media ID</dt><dd>${escapeHtml(job.provider_media_id)}</dd>` : ""}${job.provider_error_code ? `<dt>Código</dt><dd>${escapeHtml(job.provider_error_code)}</dd>` : ""}${job.safe_error_message ? `<dt>Estado seguro</dt><dd>${escapeHtml(job.safe_error_message)}</dd>` : ""}</dl></details></section>`;
-}
-
-function adminInstagramBusinessDateValue(item) {
-  if (!item.planned_publish_at) return "";
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: item.business_timezone }).formatToParts(new Date(item.planned_publish_at)).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
-  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
-}
-
-function adminInstagramPublicationActions(item) {
-  const job = item.publish_jobs?.[0];
-  const canPlan = ["validated", "scheduled"].includes(item.status);
-  const canPublish = canPlan;
-  const active = job && ["queued", "claimed", "creating_container", "publishing", "simulating_publish", "retry_wait"].includes(job.status);
-  const recoverable = job && ["failed", "action_required", "retry_wait"].includes(job.status) && !["unknown_result", "unknown_after_claim_expiry", "outcome_requires_review"].includes(job.provider_status);
-  if (!canPlan && !active && !recoverable) return "";
-  return `<section class="instagram-publish-actions"><h5>Planificación</h5>${canPlan ? `<form data-admin-instagram-plan><label>Fecha y hora · ${escapeHtml(item.business_timezone)}<input name="planned_publish_at" type="datetime-local" value="${escapeHtml(adminInstagramBusinessDateValue(item))}" required></label><button class="btn btn-primary" type="submit">${item.status === "scheduled" ? "Reprogramar" : "Programar"}</button></form>` : ""}<div class="growth-action-card-actions">${canPublish ? `<button class="btn btn-secondary" type="button" data-admin-instagram-publish-now>Publicar ahora</button>` : ""}${active ? `<button class="btn btn-secondary" type="button" data-admin-instagram-cancel-job>Cancelar programación</button>` : ""}${recoverable ? `<button class="btn btn-secondary" type="button" data-admin-instagram-retry>Reintentar</button>` : ""}</div></section>`;
 }
 
 function renderAdminInstagramPlanning() {
@@ -7000,21 +6979,13 @@ function renderAdminInstagramRaw(assets) {
     : `<p class="helper">Todavía no hay material bruto.</p>`;
 }
 
-function generatedEditorialEditor(item) {
+function generatedEditorialPreview(item) {
   const packageData = item.current_version.editorial_package;
   if (!packageData) return "";
-  const lines = (values, fields) => (values || []).map((value) => fields.map((field) => value[field] || "").join(" | ")).join("\n");
   const format = packageData.editorial_format;
-  const structured = format === "carousel"
-    ? `<label>Slides (título | texto | visual)<textarea name="slides" rows="5">${escapeHtml(lines(packageData.slides, ["title", "body", "visual"]))}</textarea></label>`
-    : format === "story"
-      ? `<label>Frames (texto | visual | CTA | sticker)<textarea name="story_frames" rows="5">${escapeHtml(lines(packageData.story_frames, ["text", "visual", "cta", "sticker"]))}</textarea></label>`
-      : format === "reel"
-        ? `<label>Texto en pantalla (una línea por bloque)<textarea name="on_screen_text" rows="4">${escapeHtml((packageData.on_screen_text || []).join("\n"))}</textarea></label><label>Planos (uno por línea)<textarea name="shot_list" rows="4">${escapeHtml((packageData.shot_list || []).join("\n"))}</textarea></label>`
-        : `<label>Texto en imagen (una línea por bloque)<textarea name="on_screen_text" rows="3">${escapeHtml((packageData.on_screen_text || []).join("\n"))}</textarea></label>`;
   const warnings = packageData.generation_context?.warnings || [];
   const missing = packageData.asset_plan?.missing || [];
-  return `<details class="generated-editor" open><summary>Paquete editorial · ${escapeHtml(socialContentLabel("format", format))}</summary>${warnings.length ? `<p class="helper">Aviso: las señales de origen han cambiado desde la aceptación.</p>` : ""}${missing.length ? `<p class="helper">Material pendiente: ${escapeHtml(missing.join(", "))}. No se generará multimedia automáticamente.</p>` : ""}<form data-generated-editor><label>Hook<input name="hook" maxlength="300" value="${escapeHtml(packageData.hook)}"></label><label>Titular<input name="headline" maxlength="200" value="${escapeHtml(packageData.headline)}"></label><label>Caption<textarea name="caption" maxlength="2200" rows="7">${escapeHtml(packageData.caption)}</textarea></label><label>CTA<input name="cta_text" maxlength="200" value="${escapeHtml(packageData.cta?.text || "")}"></label><label>Dirección visual<textarea name="visual_direction" maxlength="1200" rows="4">${escapeHtml(packageData.visual_direction)}</textarea></label>${structured}<label>Hashtags (separados por espacios)<input name="hashtags" value="${escapeHtml((packageData.hashtags || []).join(" "))}"></label><div class="growth-action-card-actions"><button class="btn btn-primary" type="submit">Guardar nueva versión</button><button class="btn btn-secondary" type="button" data-generated-regenerate>Regenerar todo</button></div></form></details>`;
+  return `<details><summary>Paquete editorial · ${escapeHtml(socialContentLabel("format", format))}</summary>${warnings.length ? `<p class="helper">Aviso: las señales de origen han cambiado desde la aceptación.</p>` : ""}${missing.length ? `<p class="helper">Material pendiente: ${escapeHtml(missing.join(", "))}.</p>` : ""}<dl><dt>Hook</dt><dd>${escapeHtml(packageData.hook)}</dd><dt>Titular</dt><dd>${escapeHtml(packageData.headline)}</dd><dt>CTA</dt><dd>${escapeHtml(packageData.cta?.text || "Sin CTA")}</dd><dt>Dirección visual</dt><dd>${escapeHtml(packageData.visual_direction)}</dd></dl></details>`;
 }
 
 function renderAdminInstagramContents() {
@@ -7033,13 +7004,21 @@ function renderAdminInstagramContents() {
     const history = item.versions.map((candidate) => `<li>v${candidate.version_number} · ${escapeHtml(candidate.format)}${candidate.validation ? candidate.validation.invalidated_at ? " · aprobación invalidada" : ` · aprobada con assets ${candidate.validation.approved_asset_ids.join(", ")}` : ""}</li>`).join("");
     const events = (item.publication_events || []).map((event) => `<li>${escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(event.created_at)))} · ${escapeHtml(event.action)}${event.actor_user_id ? ` · usuario ${event.actor_user_id}` : " · worker"}</li>`).join("");
     const unsupported = adminInstagramSettings?.publishing_mode === "meta" && version.format !== "single_image" ? `<p class="inline-feedback">Formato preparado para futuro soporte: la publicación real V1 solo admite una imagen JPEG.</p>` : "";
-    return `<article class="instagram-content-card" data-admin-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(adminInstagramStateLabel(item.status))} · versión ${version.version_number}</p></div><span class="ag-badge ag-badge--neutral">${item.planned_publish_at ? escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(item.planned_publish_at))) : "Sin fecha"}</span></header><p class="instagram-caption">${escapeHtml(version.caption) || "Sin caption"}</p>${unsupported}${generatedEditorialEditor(item)}<div class="instagram-final-assets">${assets || "<p class='helper'>Sin assets finales.</p>"}</div>${adminInstagramPublicationActions(item)}${adminInstagramJobPanel(item)}<details><summary>Historial de versiones y aprobación</summary><ul>${history}</ul></details>${events ? `<details><summary>Historial de publicación</summary><ul>${events}</ul></details>` : ""}${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong><p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}<form data-admin-instagram-comment><input type="hidden" name="version_id" value="${version.id}"><label>Tipo<select name="kind"><option value="comment">Comentario</option><option value="proposal">Propuesta</option><option value="change_request">Solicitar cambios</option></select></label><label>Mensaje<textarea name="body" maxlength="4000" required rows="3"></textarea></label><button class="btn btn-secondary" type="submit">Enviar</button></form>${item.status === "ready_for_review" ? `<button class="btn btn-primary" type="button" data-admin-instagram-validate data-content-id="${item.id}" data-version-id="${version.id}">Aprobar esta versión y sus assets</button>` : ""}</article>`;
+    const review = item.status === "ready_for_review" ? `<form data-admin-instagram-review><input type="hidden" name="version_id" value="${version.id}"><label>Nota editorial<textarea name="note" maxlength="4000" rows="3" placeholder="Opcional al aprobar; obligatoria al solicitar cambios"></textarea></label><div class="growth-action-card-actions"><button class="btn btn-primary" type="submit" name="decision" value="approve">Aprobar editorialmente</button><button class="btn btn-secondary" type="submit" name="decision" value="reject">Rechazar y solicitar cambios</button></div><p class="helper">AutonoGrow realizará después la validación técnica y decidirá la programación.</p></form>` : "";
+    return `<article class="instagram-content-card" data-admin-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(adminInstagramStateLabel(item.status))} · versión ${version.version_number}</p></div><span class="ag-badge ag-badge--neutral">${item.planned_publish_at ? escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(item.planned_publish_at))) : "Sin fecha"}</span></header><p class="instagram-caption">${escapeHtml(version.caption) || "Sin caption"}</p>${unsupported}${generatedEditorialPreview(item)}<div class="instagram-final-assets">${assets || "<p class='helper'>Sin assets finales.</p>"}</div>${adminInstagramJobPanel(item)}<details><summary>Historial de versiones y validación técnica</summary><ul>${history}</ul></details>${events ? `<details><summary>Historial de publicación</summary><ul>${events}</ul></details>` : ""}${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong><p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}<form data-admin-instagram-comment><input type="hidden" name="version_id" value="${version.id}"><label>Tipo<select name="kind"><option value="comment">Comentario</option><option value="proposal">Propuesta</option></select></label><label>Mensaje<textarea name="body" maxlength="4000" required rows="3"></textarea></label><button class="btn btn-secondary" type="submit">Enviar propuesta</button></form>${review}</article>`;
   }).join("");
 }
 
 async function loadAdminInstagramPanel() {
-  if (isBusinessStaff() || adminAuthUser?.is_owner) return;
+  if (adminAuthUser?.is_owner) return;
   const status = document.getElementById("admin-instagram-status");
+  if (isBusinessStaff()) {
+    document.getElementById("admin-instagram-disabled").hidden = true;
+    document.getElementById("admin-instagram-workspace").hidden = true;
+    status.textContent = "Puedes proponer ideas. AutonoGrow y el administrador gestionan el resto del flujo editorial.";
+    await loadSocialContentProposals();
+    return;
+  }
   const api = adminInstagramApi();
   status.textContent = "Cargando flujo editorial…";
   const proposalsPromise = loadSocialContentProposals();
@@ -7048,7 +7027,6 @@ async function loadAdminInstagramPanel() {
     const enabled = adminInstagramSettings.enabled;
     document.getElementById("admin-instagram-disabled").hidden = enabled;
     document.getElementById("admin-instagram-workspace").hidden = !enabled;
-    document.getElementById("admin-instagram-owner-validation").checked = adminInstagramSettings.owner_can_validate_instagram_content;
     if (!enabled) { status.textContent = "Servicio pendiente de activación por Owner."; await proposalsPromise; return; }
     const [raw, contentList, metrics] = await Promise.all([
       adminInstagramJson(`${api}/raw-assets`),
@@ -7061,19 +7039,8 @@ async function loadAdminInstagramPanel() {
     renderAdminInstagramPlanning();
     renderAdminInstagramContents();
     await proposalsPromise;
-    status.textContent = `${adminInstagramContents.length} contenidos · ${raw.assets.length} materiales brutos · publicación ${adminInstagramSettings.publishing_mode === "meta" ? "real" : "simulada"}`;
+    status.textContent = `${adminInstagramContents.length} contenidos · ${raw.assets.length} materiales brutos · AutonoGrow gestiona la validación y publicación`;
   } catch (error) { status.textContent = error.message; }
-}
-
-async function updateAdminInstagramDelegation() {
-  const input = document.getElementById("admin-instagram-owner-validation");
-  try {
-    await adminInstagramJson(`${adminInstagramApi()}/settings/validation-delegation`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ owner_can_validate_instagram_content: input.checked }) });
-    await loadAdminInstagramPanel();
-  } catch (error) {
-    input.checked = !input.checked;
-    document.getElementById("admin-instagram-status").textContent = error.message;
-  }
 }
 
 async function uploadAdminInstagramRaw(event) {
@@ -7096,107 +7063,36 @@ async function submitAdminInstagramComment(event) {
   } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
 }
 
-function splitEditorLines(value) {
-  return String(value || "").split("\n").map((line) => line.trim()).filter(Boolean);
-}
-
-async function saveGeneratedEditorial(event) {
+async function submitAdminInstagramReview(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const card = form.closest("[data-admin-instagram-content]");
-  const item = adminInstagramContents.find((candidate) => candidate.id === Number(card?.dataset.adminInstagramContent));
-  const packageData = item?.current_version?.editorial_package;
-  if (!item || !packageData) return;
+  if (!card) return;
   const data = new FormData(form);
-  const parseRows = (name, fields) => splitEditorLines(data.get(name)).map((line) => {
-    const parts = line.split("|").map((part) => part.trim());
-    return Object.fromEntries(fields.map((field, index) => [field, parts[index] || ""]));
-  });
+  const decision = event.submitter?.value;
+  const note = String(data.get("note") || "").trim();
+  if (!['approve', 'reject'].includes(decision)) return;
+  if (decision === "reject" && !note) {
+    document.getElementById("admin-instagram-status").textContent = "Explica los cambios necesarios antes de rechazar.";
+    return;
+  }
   const payload = {
-    hook: data.get("hook"),
-    headline: data.get("headline"),
-    caption: data.get("caption"),
-    cta_text: data.get("cta_text"),
-    visual_direction: data.get("visual_direction"),
-    hashtags: String(data.get("hashtags") || "").split(/\s+/).filter(Boolean),
-    on_screen_text: splitEditorLines(data.get("on_screen_text")),
-    shot_list: splitEditorLines(data.get("shot_list")),
-    slides: parseRows("slides", ["title", "body", "visual"]),
-    story_frames: parseRows("story_frames", ["text", "visual", "cta", "sticker"])
+    version_id: Number(data.get("version_id")),
+    decision,
+    note: note || null
   };
   try {
-    await adminInstagramJson(`${adminInstagramApi()}/contents/${item.id}/generated-draft`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/editorial-review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     await loadAdminInstagramPanel();
   } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
-}
-
-async function regenerateGeneratedEditorial(button) {
-  const card = button.closest("[data-admin-instagram-content]");
-  if (!card) return;
-  try {
-    button.disabled = true;
-    await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/regenerate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-    await loadAdminInstagramPanel();
-  } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
-  finally { button.disabled = false; }
-}
-
-async function validateAdminInstagram(button) {
-  try {
-    button.disabled = true;
-    await adminInstagramJson(`${adminInstagramApi()}/contents/${button.dataset.contentId}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version_id: Number(button.dataset.versionId) }) });
-    await loadAdminInstagramPanel();
-  } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
-  finally { button.disabled = false; }
-}
-
-async function planAdminInstagram(event) {
-  event.preventDefault();
-  const card = event.currentTarget.closest("[data-admin-instagram-content]");
-  const data = new FormData(event.currentTarget);
-  const planned = String(data.get("planned_publish_at") || "");
-  if (!card || !planned) return;
-  const item = adminInstagramContents.find((candidate) => candidate.id === Number(card.dataset.adminInstagramContent));
-  try {
-    await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/planned-date`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ planned_publish_at: `${planned}:00` }) });
-    if (item?.status === "validated") await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/schedule`, { method: "POST" });
-    await loadAdminInstagramPanel();
-  } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
-}
-
-async function mutateAdminInstagramPublication(button, action) {
-  const card = button.closest("[data-admin-instagram-content]");
-  if (!card) return;
-  if (action === "publish-now" && !window.confirm("¿Publicar ahora la versión aprobada en Instagram?")) return;
-  const path = action === "publish-now" ? "publish-now" : `publish-job/${action}`;
-  try {
-    button.disabled = true;
-    await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/${path}`, { method: "POST" });
-    await loadAdminInstagramPanel();
-  } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
-  finally { button.disabled = false; }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("admin-instagram-refresh").addEventListener("click", loadAdminInstagramPanel);
-  document.getElementById("admin-instagram-owner-validation").addEventListener("change", updateAdminInstagramDelegation);
   document.getElementById("admin-instagram-raw-form").addEventListener("submit", uploadAdminInstagramRaw);
   document.getElementById("admin-instagram-content-list").addEventListener("submit", (event) => {
     if (event.target.matches("[data-admin-instagram-comment]")) submitAdminInstagramComment(event);
-    if (event.target.matches("[data-generated-editor]")) saveGeneratedEditorial(event);
-    if (event.target.matches("[data-admin-instagram-plan]")) planAdminInstagram(event);
-  });
-  document.getElementById("admin-instagram-content-list").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-admin-instagram-validate]");
-    if (button) validateAdminInstagram(button);
-    const regenerate = event.target.closest("[data-generated-regenerate]");
-    if (regenerate) regenerateGeneratedEditorial(regenerate);
-    const publishNow = event.target.closest("[data-admin-instagram-publish-now]");
-    if (publishNow) mutateAdminInstagramPublication(publishNow, "publish-now");
-    const cancelJob = event.target.closest("[data-admin-instagram-cancel-job]");
-    if (cancelJob) mutateAdminInstagramPublication(cancelJob, "cancel");
-    const retryJob = event.target.closest("[data-admin-instagram-retry]");
-    if (retryJob) mutateAdminInstagramPublication(retryJob, "retry");
+    if (event.target.matches("[data-admin-instagram-review]")) submitAdminInstagramReview(event);
   });
   document.getElementById("social-content-ideas-list").addEventListener("click", (event) => {
     const button = event.target.closest("[data-social-proposal-action]");

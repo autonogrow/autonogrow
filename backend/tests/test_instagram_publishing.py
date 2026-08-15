@@ -577,7 +577,7 @@ def test_disabling_service_cancels_pending_and_reenable_does_not_revive(publishi
     assert ctx["db"].get(InstagramPublishJob, job.id).status == "cancelled"
 
 
-def test_owner_and_admin_ui_expose_real_and_simulated_states_and_authorized_actions():
+def test_owner_ui_exposes_publish_actions_and_admin_is_read_only():
     root = Path(__file__).resolve().parents[2]
     owner = (root / "autonogrow-owner" / "owner.js").read_text(encoding="utf-8")
     admin = (root / "autonogrow-admin" / "admin.js").read_text(encoding="utf-8")
@@ -604,7 +604,8 @@ def test_owner_and_admin_ui_expose_real_and_simulated_states_and_authorized_acti
         "data-admin-instagram-cancel-job",
         "data-admin-instagram-retry",
     ):
-        assert admin_action in admin
+        assert admin_action not in admin
+    assert "AutonoGrow gestiona la validación y publicación" in admin
 
 
 def meta_worker_settings(tmp_path: Path) -> Settings:

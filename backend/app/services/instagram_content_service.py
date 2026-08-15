@@ -310,7 +310,7 @@ def add_admin_comment(
     if kind == "change_request":
         if version.id != current_version(db, content).id:
             raise HTTPException(status_code=409, detail="Changes must target the current version")
-        if content.status not in {"ready_for_review", "validated", "scheduled"}:
+        if content.status != "ready_for_review":
             raise HTTPException(status_code=409, detail="Content is not in review")
         invalidate_validation(db, content, "changes_requested_by_admin")
         from app.services.instagram_publish_service import cancel_publish_job
@@ -339,15 +339,13 @@ def validate_content(
     actor: User,
     validator_role: str,
 ) -> InstagramContentValidation:
-    settings = require_service_enabled(db, business_id)
+    require_service_enabled(db, business_id)
     content = content_or_404(db, business_id, content_id, for_update=True)
     version = current_version(db, content)
     if version.id != version_id:
         raise HTTPException(status_code=409, detail="Validation must target the current version")
     if content.status != "ready_for_review":
         raise HTTPException(status_code=409, detail="Content is not ready for validation")
-    if validator_role == "owner_delegate" and not settings.owner_can_validate_instagram_content:
-        raise HTTPException(status_code=403, detail="Owner validation has not been delegated")
     existing = _active_validation(db, content)
     if existing is not None:
         raise HTTPException(status_code=409, detail="Current version is already validated")

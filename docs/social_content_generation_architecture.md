@@ -42,13 +42,14 @@ Los assets siempre se consultan con `business_id`. Se excluyen raw assets y gale
 
 ## API, permisos y auditoría
 
-Rutas Admin protegidas por `require_business_admin` (Business Admin y Owner del sistema):
+Las rutas heredadas bajo el prefijo Admin están protegidas por `require_owner`; Business Admin y
+Staff reciben 403 porque generar, regenerar o editar crea una versión final:
 
 - `POST /api/admin/businesses/{slug}/social-content-proposals/{id}/generate`
 - `POST /api/admin/businesses/{slug}/instagram-content/contents/{id}/regenerate`
 - `PUT /api/admin/businesses/{slug}/instagram-content/contents/{id}/generated-draft`
 
-Las búsquedas incluyen `business_id`; un ID ajeno devuelve 404. Cada mutación material queda auditada sin incluir caption, reseñas, señales completas ni PII. Admin muestra ideas aceptadas, permite generar/abrir el borrador y edita campos específicos por formato. La aprobación final continúa en las rutas de Instagram Content existentes.
+Las búsquedas incluyen `business_id`; un ID ajeno devuelve 404. Cada mutación material queda auditada sin incluir caption, reseñas, señales completas ni PII. Admin puede proponer la idea y consultar el borrador preparado, pero no generarlo ni editarlo. La matriz definitiva está en `instagram_content_permissions.md`.
 
 ## Evolución
 

@@ -5,12 +5,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
-from app.core.security import require_business_admin
+from app.core.database import Base, get_db
+from app.core.security import get_current_user, require_owner
 from app.models import (
     Business,
     BusinessGrowthSignal,
@@ -24,6 +26,7 @@ from app.models import (
     User,
 )
 from app.routers.social_content_generation import _proposal_or_404
+from app.routers.social_content_generation import router as social_content_generation_router
 from app.schemas.social_content_generation import EditorialPackageEdit
 from app.services.social_content_generation_service import (
     GENERATOR_VERSION,
@@ -38,7 +41,11 @@ NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 
 @pytest.fixture
 def db() -> Session:
-    engine = create_engine("sqlite:///:memory:")
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
     yield session
@@ -59,7 +66,8 @@ def records(db: Session) -> dict[str, object]:
     other = Business(slug="generation-b", name="Otro", status="active", timezone="UTC")
     actor = User(email="generation-admin@test.local")
     staff = User(email="generation-staff@test.local")
-    db.add_all((business, other, actor, staff))
+    owner = User(email="generation-owner@test.local", is_owner=True)
+    db.add_all((business, other, actor, staff, owner))
     db.flush()
     db.add_all(
         (
@@ -136,6 +144,7 @@ def records(db: Session) -> dict[str, object]:
         "other": other,
         "actor": actor,
         "staff": staff,
+        "owner": owner,
         "service": service,
         "proposal": proposal,
     }
@@ -357,12 +366,11 @@ def test_approved_review_never_copies_text_or_personal_data(db: Session, records
 
 
 def test_generation_permissions_and_proposal_tenant_isolation(db: Session, records) -> None:
-    assert (
-        require_business_admin(records["business"].slug, records["actor"], db) == records["actor"]
-    )
-    with pytest.raises(HTTPException) as forbidden:
-        require_business_admin(records["business"].slug, records["staff"], db)
-    assert forbidden.value.status_code == 403
+    assert require_owner(records["owner"]) == records["owner"]
+    for role in ("actor", "staff"):
+        with pytest.raises(HTTPException) as forbidden:
+            require_owner(records[role])
+        assert forbidden.value.status_code == 403
     with pytest.raises(HTTPException) as hidden:
         _proposal_or_404(
             db,
@@ -372,18 +380,66 @@ def test_generation_permissions_and_proposal_tenant_isolation(db: Session, recor
     assert hidden.value.status_code == 404
 
 
-def test_admin_exposes_generation_and_format_specific_editors() -> None:
+def test_generation_api_is_owner_only_and_tenant_scoped(db: Session, records) -> None:
+    app = FastAPI()
+    app.include_router(social_content_generation_router)
+    current_actor = {"user": records["owner"]}
+
+    def override_db():
+        yield db
+
+    def override_user():
+        return current_actor["user"]
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = override_user
+    with TestClient(app) as client:
+        proposal_id = records["proposal"].id
+        generated = client.post(
+            f"/api/admin/businesses/{records['business'].slug}/social-content-proposals/"
+            f"{proposal_id}/generate",
+            json={},
+        )
+        assert generated.status_code == 201
+
+        for role in ("actor", "staff"):
+            current_actor["user"] = records[role]
+            assert (
+                client.post(
+                    f"/api/admin/businesses/{records['business'].slug}/social-content-proposals/"
+                    f"{proposal_id}/generate",
+                    json={},
+                ).status_code
+                == 403
+            )
+
+        current_actor["user"] = records["owner"]
+        assert (
+            client.post(
+                f"/api/admin/businesses/{records['other'].slug}/social-content-proposals/"
+                f"{proposal_id}/generate",
+                json={},
+            ).status_code
+            == 404
+        )
+
+
+def test_admin_exposes_review_without_owner_generation_controls() -> None:
     admin = (Path(__file__).resolve().parents[2] / "autonogrow-admin" / "admin.js").read_text(
         encoding="utf-8"
     )
     for marker in (
+        "Idea enviada a AutonoGrow",
+        "Aprobar editorialmente",
+        "data-admin-instagram-review",
+        "/editorial-review",
+    ):
+        assert marker in admin
+    for forbidden in (
         "Generar borrador",
         "data-generated-editor",
         "data-generated-regenerate",
         "/generated-draft",
         "/regenerate",
-        'format === "carousel"',
-        'format === "story"',
-        'format === "reel"',
     ):
-        assert marker in admin
+        assert forbidden not in admin

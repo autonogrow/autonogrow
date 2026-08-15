@@ -14,6 +14,7 @@ from app.models import Business, InstagramFinalAsset, InstagramPublishJob, Insta
 from app.schemas.instagram_content import (
     InstagramCommentCreate,
     InstagramContentCreate,
+    InstagramEditorialReviewCreate,
     InstagramMaterialUpdate,
     InstagramPlannedDateUpdate,
     InstagramPublishJobHistory,
@@ -28,6 +29,7 @@ from app.services.instagram_content_service import (
     cancel_content,
     content_or_404,
     create_content,
+    current_version,
     get_or_create_settings,
     require_service_enabled,
     schedule_content,
@@ -332,7 +334,7 @@ def admin_update_validation_delegation(
     business_slug: str,
     payload: InstagramValidationDelegationUpdate,
     request: Request,
-    actor: User = Depends(require_instagram_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -613,6 +615,17 @@ def owner_get_final_file(
     return FileResponse(_private_file(asset.storage_key), media_type=asset.media_type)
 
 
+@admin_router.post("/contents/{content_id}/final-assets", status_code=201)
+async def admin_upload_final_asset_forbidden(
+    business_slug: str,
+    content_id: int,
+    file: UploadFile = File(...),
+    actor: User = Depends(require_owner),
+):
+    del business_slug, content_id, file, actor
+    raise HTTPException(status_code=403, detail="Final assets must use an Owner operation")
+
+
 @admin_router.get(
     "/contents/{content_id}/final-assets/{asset_id}/file", response_class=FileResponse
 )
@@ -719,7 +732,7 @@ def admin_update_planned_date(
     content_id: int,
     payload: InstagramPlannedDateUpdate,
     request: Request,
-    actor: User = Depends(require_instagram_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1001,7 +1014,7 @@ def admin_schedule_content(
     business_slug: str,
     content_id: int,
     request: Request,
-    actor: User = Depends(require_instagram_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1032,7 +1045,7 @@ def admin_publish_now(
     business_slug: str,
     content_id: int,
     request: Request,
-    actor: User = Depends(require_instagram_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1065,7 +1078,7 @@ def admin_publish_now(
 def admin_cancel_publish_job(
     business_slug: str,
     content_id: int,
-    actor: User = Depends(require_instagram_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1087,7 +1100,7 @@ def admin_cancel_publish_job(
 def admin_retry_publish_job(
     business_slug: str,
     content_id: int,
-    actor: User = Depends(require_instagram_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1136,6 +1149,68 @@ def admin_create_comment(
     db.commit()
     db.refresh(comment)
     return serialize_comment(comment)
+
+
+@admin_router.post("/contents/{content_id}/editorial-review", status_code=201)
+def admin_review_content(
+    business_slug: str,
+    content_id: int,
+    payload: InstagramEditorialReviewCreate,
+    request: Request,
+    actor: User = Depends(require_instagram_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = _admin_business(db, business_slug)
+    content = content_or_404(db, business.id, content_id, for_update=True)
+    version = current_version(db, content)
+    if version.id != payload.version_id:
+        raise HTTPException(status_code=409, detail="Review must target the current version")
+    if content.status != "ready_for_review":
+        raise HTTPException(status_code=409, detail="Content is not ready for editorial review")
+    if payload.decision == "reject" and payload.note is None:
+        raise HTTPException(status_code=422, detail="A rejection note is required")
+
+    approved = payload.decision == "approve"
+    comment = add_admin_comment(
+        db,
+        business_id=business.id,
+        content_id=content_id,
+        version_id=version.id,
+        actor=actor,
+        kind="comment" if approved else "change_request",
+        body=(
+            f"Aprobación editorial: {payload.note}"
+            if payload.note
+            else "Aprobación editorial registrada."
+        )
+        if approved
+        else payload.note or "",
+    )
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        action=(
+            "instagram_content_editorially_approved"
+            if approved
+            else "instagram_content_editorially_rejected"
+        ),
+        resource_type="instagram_content_comment",
+        resource_id=comment.id,
+        metadata={
+            "content_id": content_id,
+            "version_id": version.id,
+            "decision": payload.decision,
+        },
+    )
+    db.commit()
+    db.refresh(comment)
+    return {
+        "decision": payload.decision,
+        "content_status": content.status,
+        "comment": serialize_comment(comment),
+    }
 
 
 def _validate_and_commit(
@@ -1195,7 +1270,7 @@ def admin_validate_content(
     content_id: int,
     payload: InstagramValidationCreate,
     request: Request,
-    actor: User = Depends(require_instagram_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
