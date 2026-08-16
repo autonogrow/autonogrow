@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -31,6 +32,8 @@ from app.services.instagram_content_service import (
     create_content,
     current_version,
     get_or_create_settings,
+    prepare_content_removal,
+    prepare_raw_asset_removal,
     require_service_enabled,
     schedule_content,
     serialize_comment,
@@ -70,6 +73,7 @@ ALLOWED_MEDIA = {
     "image/webp": ".webp",
 }
 MAX_ASSET_BYTES = get_settings().upload_max_size_mb * 1024 * 1024
+logger = logging.getLogger(__name__)
 
 
 def _owner_business(db: Session, business_id: int) -> Business:
@@ -174,13 +178,71 @@ def _write_private_asset(
 
 
 def _private_file(storage_key: str) -> Path:
+    path = _private_storage_path(storage_key)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Asset file not found")
+    return path
+
+
+def _private_storage_path(storage_key: str) -> Path:
     root = (get_uploads_dir() / "_instagram_content").resolve()
     path = (get_uploads_dir() / storage_key).resolve()
     if root != path and root not in path.parents:
         raise HTTPException(status_code=404, detail="Asset not found")
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Asset file not found")
     return path
+
+
+def _restore_staged_files(staged: list[tuple[Path, Path]]) -> None:
+    for original, temporary in reversed(staged):
+        try:
+            if temporary.exists():
+                original.parent.mkdir(parents=True, exist_ok=True)
+                temporary.replace(original)
+        except OSError:
+            logger.exception("Could not restore a staged Instagram asset")
+
+
+def _stage_private_files(storage_keys: list[str]) -> list[tuple[Path, Path]]:
+    staged: list[tuple[Path, Path]] = []
+    staging_dir = (get_uploads_dir() / "_instagram_content" / "_delete_staging").resolve()
+    try:
+        for storage_key in storage_keys:
+            original = _private_storage_path(storage_key)
+            if not original.exists():
+                continue
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            temporary = staging_dir / f"{uuid4().hex}{original.suffix}"
+            original.replace(temporary)
+            staged.append((original, temporary))
+    except OSError as error:
+        _restore_staged_files(staged)
+        raise HTTPException(
+            status_code=500,
+            detail="No se pudo retirar el archivo de forma segura. Inténtalo de nuevo.",
+        ) from error
+    return staged
+
+
+def _commit_with_staged_files(
+    db: Session,
+    storage_keys: list[str],
+) -> None:
+    try:
+        staged = _stage_private_files(storage_keys)
+    except HTTPException:
+        db.rollback()
+        raise
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        _restore_staged_files(staged)
+        raise
+    for _original, temporary in staged:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("Could not purge a staged Instagram asset")
 
 
 def _list_raw(db: Session, business_id: int, api_prefix: str) -> dict:
@@ -252,7 +314,10 @@ def _list_content(
 
     items = (
         db.query(InstagramContent)
-        .filter(InstagramContent.business_id == business_id)
+        .filter(
+            InstagramContent.business_id == business_id,
+            InstagramContent.archived_at.is_(None),
+        )
         .order_by(InstagramContent.updated_at.desc(), InstagramContent.id.desc())
         .all()
     )
@@ -445,6 +510,39 @@ async def admin_upload_raw_asset(
     return serialize_raw_asset(asset, _admin_prefix(business_slug))
 
 
+@owner_router.delete("/raw-assets/{asset_id}")
+def owner_delete_raw_asset(
+    business_id: int,
+    asset_id: int,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    result = prepare_raw_asset_removal(db, business_id=business_id, asset_id=asset_id)
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business_id,
+        action="raw_asset_deleted",
+        resource_type="instagram_raw_asset",
+        resource_id=asset_id,
+    )
+    _commit_with_staged_files(db, result["storage_keys"])
+    return {"id": asset_id, "disposition": "deleted"}
+
+
+@admin_router.delete("/raw-assets/{asset_id}")
+def admin_delete_raw_asset_forbidden(
+    business_slug: str,
+    asset_id: int,
+    actor: User = Depends(require_instagram_business_admin),
+):
+    del business_slug, asset_id, actor
+    raise HTTPException(status_code=403, detail="Owner access required")
+
+
 @owner_router.get("/raw-assets/{asset_id}/file", response_class=FileResponse)
 def owner_get_raw_file(business_id: int, asset_id: int, db: Session = Depends(get_db)):
     _owner_business(db, business_id)
@@ -561,6 +659,74 @@ def admin_get_content(
         _admin_prefix(business_slug),
         owner_technical=False,
     )
+
+
+@owner_router.delete("/contents/{content_id}")
+def owner_remove_content(
+    business_id: int,
+    content_id: int,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    result = prepare_content_removal(
+        db,
+        business_id=business_id,
+        content_id=content_id,
+        actor=actor,
+    )
+    cancelled_job_id = result["cancelled_job_id"]
+    if cancelled_job_id is not None:
+        _audit(
+            db,
+            request=request,
+            actor=actor,
+            business_id=business_id,
+            action="publish_job_cancelled_by_delete",
+            resource_type="instagram_publish_job",
+            resource_id=cancelled_job_id,
+            metadata={"content_id": content_id},
+        )
+    previous_status = result["previous_status"]
+    if previous_status == "scheduled":
+        action = "scheduled_content_removed"
+    elif previous_status == "published":
+        action = "content_archived"
+    elif result["disposition"] == "archived":
+        action = "content_removed"
+    else:
+        action = "content_deleted"
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business_id,
+        action=action,
+        resource_type="instagram_content",
+        resource_id=content_id,
+        metadata={
+            "previous_status": previous_status,
+            "disposition": result["disposition"],
+            "review_cancelled": previous_status == "ready_for_review",
+        },
+    )
+    _commit_with_staged_files(db, result["storage_keys"])
+    return {
+        "id": content_id,
+        "disposition": result["disposition"],
+        "previous_status": previous_status,
+    }
+
+
+@admin_router.delete("/contents/{content_id}")
+def admin_remove_content_forbidden(
+    business_slug: str,
+    content_id: int,
+    actor: User = Depends(require_instagram_business_admin),
+):
+    del business_slug, content_id, actor
+    raise HTTPException(status_code=403, detail="Owner access required")
 
 
 @owner_router.post("/contents/{content_id}/final-assets", status_code=201)

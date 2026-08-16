@@ -23,6 +23,7 @@ from app.models import (
     InstagramContentSettings,
     InstagramContentValidation,
     InstagramContentVersion,
+    InstagramContentVersionAsset,
     InstagramFinalAsset,
     InstagramPublishJob,
     InstagramRawAsset,
@@ -101,6 +102,7 @@ def editorial_context(tmp_path, monkeypatch):
             "staff": staff,
             "other_admin": other_admin,
             "customer": customer,
+            "uploads_dir": tmp_path,
         }
     db.close()
     engine.dispose()
@@ -651,3 +653,242 @@ def test_owner_schedule_reschedule_publish_now_and_cancel_endpoints(editorial_co
         ctx["client"].post(f"{admin_base(ctx)}/contents/{content_id}/publish-now").status_code
         == 403
     )
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["draft", "changes_requested", "cancelled", "ready_for_review", "validated"],
+)
+def test_owner_physically_deletes_unpublished_content_and_orphan_files(
+    editorial_context, status
+):
+    ctx = editorial_context
+    content_id, asset_id, _version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = status
+    asset = ctx["db"].get(InstagramFinalAsset, asset_id)
+    asset_path = ctx["uploads_dir"] / asset.storage_key
+    asset_path.parent.mkdir(parents=True, exist_ok=True)
+    asset_path.write_bytes(b"final-asset")
+    ctx["db"].commit()
+
+    response = ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": content_id,
+        "disposition": "deleted",
+        "previous_status": status,
+    }
+    assert ctx["db"].get(InstagramContent, content_id) is None
+    assert ctx["db"].get(InstagramFinalAsset, asset_id) is None
+    assert not asset_path.exists()
+    audit = ctx["db"].query(AuditLog).filter_by(action="content_deleted").one()
+    metadata = json.loads(audit.metadata_json)
+    assert metadata["previous_status"] == status
+    assert metadata["review_cancelled"] is (status == "ready_for_review")
+
+
+@pytest.mark.parametrize(
+    ("status", "job_status", "expected_action"),
+    [
+        ("scheduled", "queued", "scheduled_content_removed"),
+        ("published", "published", "content_archived"),
+    ],
+)
+def test_owner_archives_historical_content_and_preserves_publish_identity(
+    editorial_context, status, job_status, expected_action
+):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = status
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status=job_status,
+        scheduled_for=datetime.now(timezone.utc) + timedelta(hours=1),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"archive-{status}-{content_id}",
+        provider_container_id="provider-container-preserved",
+        provider_media_id="provider-media-preserved" if status == "published" else None,
+        provider_permalink="https://instagram.example/p/preserved" if status == "published" else None,
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+    job_id = job.id
+
+    response = ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}")
+
+    assert response.status_code == 200
+    assert response.json()["disposition"] == "archived"
+    ctx["db"].expire_all()
+    stored_content = ctx["db"].get(InstagramContent, content_id)
+    stored_job = ctx["db"].get(InstagramPublishJob, job_id)
+    assert stored_content.archived_at is not None
+    assert stored_job.provider_container_id == "provider-container-preserved"
+    if status == "scheduled":
+        assert stored_content.status == "cancelled"
+        assert stored_job.status == "cancelled"
+        assert (
+            ctx["db"]
+            .query(AuditLog)
+            .filter_by(action="publish_job_cancelled_by_delete", resource_id=job_id)
+            .count()
+            == 1
+        )
+    else:
+        assert stored_content.status == "published"
+        assert stored_job.status == "published"
+        assert stored_job.provider_media_id == "provider-media-preserved"
+    assert ctx["db"].query(AuditLog).filter_by(action=expected_action).count() == 1
+    assert ctx["client"].get(f"{owner_base(ctx)}/contents/{content_id}").status_code == 404
+    assert ctx["client"].get(f"{owner_base(ctx)}/contents").json()["contents"] == []
+
+
+def test_owner_removal_returns_conflict_when_publication_has_started(editorial_context):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "scheduled"
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status="publishing",
+        scheduled_for=datetime.now(timezone.utc),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"publishing-{content_id}",
+        provider_container_id="in-flight-container",
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+
+    response = ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}")
+
+    assert response.status_code == 409
+    assert "publicación ya había comenzado" in response.json()["detail"]
+    ctx["db"].expire_all()
+    assert ctx["db"].get(InstagramContent, content_id).archived_at is None
+    assert ctx["db"].get(InstagramPublishJob, job.id).status == "publishing"
+    assert ctx["db"].query(AuditLog).filter_by(action="scheduled_content_removed").count() == 0
+
+
+def test_owner_deletes_unused_raw_asset_but_blocks_referenced_material(editorial_context):
+    ctx = editorial_context
+    enable_service(ctx)
+    unused = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={"file": ("unused.png", b"\x89PNG\r\n\x1a\nunused", "image/png")},
+        data={"label": "Sin uso"},
+    )
+    assert unused.status_code == 201
+    unused_id = unused.json()["id"]
+    unused_asset = ctx["db"].get(InstagramRawAsset, unused_id)
+    unused_path = ctx["uploads_dir"] / unused_asset.storage_key
+    assert unused_path.exists()
+
+    deleted = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{unused_id}")
+    assert deleted.status_code == 200
+    assert ctx["db"].get(InstagramRawAsset, unused_id) is None
+    assert not unused_path.exists()
+    assert ctx["db"].query(AuditLog).filter_by(action="raw_asset_deleted").count() == 1
+
+    referenced = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={"file": ("used.png", b"\x89PNG\r\n\x1a\nused", "image/png")},
+    )
+    referenced_id = referenced.json()["id"]
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    version = (
+        ctx["db"]
+        .query(InstagramContentVersion)
+        .filter_by(content_id=content_id)
+        .order_by(InstagramContentVersion.version_number.desc())
+        .first()
+    )
+    version.editorial_package_json = json.dumps(
+        {
+            "asset_plan": {
+                "recommended": [{"source": "instagram_raw_asset", "id": referenced_id}]
+            }
+        }
+    )
+    ctx["db"].commit()
+
+    blocked = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{referenced_id}")
+    assert blocked.status_code == 409
+    assert "está siendo utilizado" in blocked.json()["detail"]
+    assert ctx["db"].get(InstagramRawAsset, referenced_id) is not None
+
+
+def test_shared_final_asset_forces_archive_and_preserves_shared_link(editorial_context):
+    ctx = editorial_context
+    content_id, asset_id, _version_id = create_content_with_asset(ctx)
+    asset = ctx["db"].get(InstagramFinalAsset, asset_id)
+    asset_path = ctx["uploads_dir"] / asset.storage_key
+    asset_path.parent.mkdir(parents=True, exist_ok=True)
+    asset_path.write_bytes(b"shared-final")
+    second = ctx["client"].post(
+        f"{owner_base(ctx)}/contents",
+        json={"title": "Segundo", "caption": "Usa asset compartido", "format": "single_image"},
+    ).json()
+    second_version_id = second["current_version"]["id"]
+    ctx["db"].add(
+        InstagramContentVersionAsset(
+            version_id=second_version_id,
+            asset_id=asset_id,
+            position=0,
+            is_cover=True,
+        )
+    )
+    ctx["db"].commit()
+
+    response = ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}")
+
+    assert response.status_code == 200
+    assert response.json()["disposition"] == "archived"
+    assert ctx["db"].get(InstagramContent, content_id).archived_at is not None
+    assert ctx["db"].get(InstagramFinalAsset, asset_id) is not None
+    assert (
+        ctx["db"]
+        .query(InstagramContentVersionAsset)
+        .filter_by(version_id=second_version_id, asset_id=asset_id)
+        .count()
+        == 1
+    )
+    assert asset_path.exists()
+
+
+@pytest.mark.parametrize("role", ["admin", "staff"])
+def test_admin_and_staff_cannot_remove_instagram_material(editorial_context, role):
+    ctx = editorial_context
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    set_actor(ctx, ctx[role])
+
+    assert ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}").status_code == 403
+    assert ctx["client"].delete(f"{admin_base(ctx)}/contents/{content_id}").status_code == 403
+
+
+def test_owner_removal_is_isolated_by_business(editorial_context):
+    ctx = editorial_context
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    raw = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={"file": ("isolated.png", b"\x89PNG\r\n\x1a\nisolated", "image/png")},
+    ).json()
+    ctx["db"].add(
+        InstagramContentSettings(business_id=ctx["other_business"].id, enabled=True)
+    )
+    ctx["db"].commit()
+    other_base = (
+        f"/api/owner/businesses/{ctx['other_business'].id}/instagram-content"
+    )
+
+    assert ctx["client"].delete(f"{other_base}/contents/{content_id}").status_code == 404
+    assert ctx["client"].delete(f"{other_base}/raw-assets/{raw['id']}").status_code == 404
+    assert ctx["db"].get(InstagramContent, content_id) is not None
+    assert ctx["db"].get(InstagramRawAsset, raw["id"]) is not None

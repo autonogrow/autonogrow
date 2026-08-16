@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -12,6 +13,7 @@ from app.models import (
     InstagramContentVersion,
     InstagramContentVersionAsset,
     InstagramFinalAsset,
+    InstagramPublishJob,
     InstagramRawAsset,
     User,
 )
@@ -43,6 +45,7 @@ def content_or_404(
     query = db.query(InstagramContent).filter(
         InstagramContent.id == content_id,
         InstagramContent.business_id == business_id,
+        InstagramContent.archived_at.is_(None),
     )
     if for_update:
         query = query.with_for_update()
@@ -414,6 +417,156 @@ def cancel_content(
     cancel_publish_job(db, content, reason="editorial_content_cancelled", actor=actor)
     db.flush()
     return content
+
+
+def _package_references_raw_asset(package_json: str | None, asset_id: int) -> bool:
+    if not package_json:
+        return False
+    try:
+        package = json.loads(package_json)
+    except (TypeError, ValueError):
+        return "instagram_raw_asset" in package_json and str(asset_id) in package_json
+    recommended = package.get("asset_plan", {}).get("recommended", [])
+    return any(
+        isinstance(item, dict)
+        and item.get("source") == "instagram_raw_asset"
+        and item.get("id") == asset_id
+        for item in recommended
+    )
+
+
+def raw_asset_reference_content_ids(db: Session, business_id: int, asset_id: int) -> list[int]:
+    rows = (
+        db.query(InstagramContentVersion.content_id, InstagramContentVersion.editorial_package_json)
+        .filter(
+            InstagramContentVersion.business_id == business_id,
+            InstagramContentVersion.editorial_package_json.is_not(None),
+        )
+        .all()
+    )
+    return sorted(
+        {
+            content_id
+            for content_id, package_json in rows
+            if _package_references_raw_asset(package_json, asset_id)
+        }
+    )
+
+
+def content_has_cross_content_asset_references(db: Session, content: InstagramContent) -> bool:
+    asset_ids = [asset.id for asset in content.final_assets]
+    if not asset_ids:
+        return False
+    return (
+        db.query(InstagramContentVersionAsset.id)
+        .join(
+            InstagramContentVersion,
+            InstagramContentVersion.id == InstagramContentVersionAsset.version_id,
+        )
+        .filter(
+            InstagramContentVersionAsset.asset_id.in_(asset_ids),
+            InstagramContentVersion.content_id != content.id,
+        )
+        .first()
+        is not None
+    )
+
+
+def prepare_content_removal(
+    db: Session,
+    *,
+    business_id: int,
+    content_id: int,
+    actor: User,
+) -> dict:
+    require_service_enabled(db, business_id)
+    content = content_or_404(db, business_id, content_id, for_update=True)
+    previous_status = content.status
+    cancelled_job_id: int | None = None
+
+    if previous_status != "published":
+        from app.services.instagram_publish_service import cancel_publish_job
+
+        cancelled_job = cancel_publish_job(
+            db,
+            content,
+            reason="content_removed_by_owner",
+            actor=actor,
+        )
+        if cancelled_job is not None:
+            if cancelled_job.status != "cancelled":
+                db.rollback()
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "La publicación ya había comenzado. Revisa su resultado antes de retirar "
+                        "el contenido."
+                    ),
+                )
+            cancelled_job_id = cancelled_job.id
+
+    has_publish_history = (
+        db.query(InstagramPublishJob.id)
+        .filter(
+            InstagramPublishJob.business_id == business_id,
+            InstagramPublishJob.content_item_id == content.id,
+        )
+        .first()
+        is not None
+    )
+    has_cross_references = content_has_cross_content_asset_references(db, content)
+    must_archive = (
+        previous_status in {"scheduled", "published"}
+        or has_publish_history
+        or has_cross_references
+    )
+
+    storage_keys: list[str] = []
+    if must_archive:
+        content.archived_at = utc_now()
+        if previous_status != "published":
+            content.status = "cancelled"
+        db.flush()
+        disposition = "archived"
+    else:
+        storage_keys = [asset.storage_key for asset in content.final_assets]
+        db.delete(content)
+        db.flush()
+        disposition = "deleted"
+
+    return {
+        "id": content_id,
+        "disposition": disposition,
+        "previous_status": previous_status,
+        "cancelled_job_id": cancelled_job_id,
+        "storage_keys": storage_keys,
+        "shared_asset_references": has_cross_references,
+    }
+
+
+def prepare_raw_asset_removal(db: Session, *, business_id: int, asset_id: int) -> dict:
+    require_service_enabled(db, business_id)
+    asset = (
+        db.query(InstagramRawAsset)
+        .filter(
+            InstagramRawAsset.id == asset_id,
+            InstagramRawAsset.business_id == business_id,
+        )
+        .with_for_update()
+        .first()
+    )
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Material bruto no encontrado.")
+    references = raw_asset_reference_content_ids(db, business_id, asset_id)
+    if references:
+        raise HTTPException(
+            status_code=409,
+            detail="Este material está siendo utilizado por contenido editorial y no puede borrarse.",
+        )
+    storage_key = asset.storage_key
+    db.delete(asset)
+    db.flush()
+    return {"id": asset_id, "storage_keys": [storage_key]}
 
 
 def serialize_settings(settings: InstagramContentSettings) -> dict:

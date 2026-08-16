@@ -44,6 +44,7 @@ POST_BASELINE_COLUMNS = {
     "services.follow_up_enabled",
     "services.follow_up_interval_days",
     "bookings.price_amount_snapshot",
+    "instagram_contents.archived_at",
 }
 
 CRITICAL_COLUMNS: dict[str, set[str]] = {

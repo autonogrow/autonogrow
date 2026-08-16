@@ -86,20 +86,85 @@ def test_owner_instagram_mutations_reject_duplicate_submissions_and_avoid_full_r
     ):
         block = source_block(mutations, f"async function {function_name}", "\n}")
         assert 'form.dataset.ownerInstagramSubmitting === "true"' in block
-        assert "setOwnerInstagramFormBusy(form, true)" in block
+        assert "setOwnerInstagramFormBusy(form, true" in block
         assert "setOwnerInstagramFormBusy(form, false)" in block
+        assert "beginOwnerInstagramMutation(mutationKey)" in block
+        assert "endOwnerInstagramMutation(mutationKey)" in block
 
     actions = source_block(
         mutations,
         "async function handleOwnerInstagramAction",
         "async function uploadOwnerInstagramFinal",
     )
-    assert "ownerInstagramMutationKeys.has(mutationKey)" in actions
-    assert "ownerInstagramMutationKeys.add(mutationKey)" in actions
-    assert "ownerInstagramMutationKeys.delete(mutationKey)" in actions
-    assert "button.disabled = true" in actions
+    assert "beginOwnerInstagramMutation(mutationKey)" in actions
+    assert "endOwnerInstagramMutation(mutationKey)" in actions
+    assert 'const mutationKey = `content:${contentId}`' in actions
+    assert "setOwnerInstagramScopeBusy(card, true" in actions
     assert "await refreshOwnerInstagramContent(api, contentId)" in actions
     assert "await loadOwnerInstagramPanel()" not in mutations
+
+    refresh_state = source_block(
+        js,
+        "function updateOwnerInstagramRefreshState",
+        "function startOwnerInstagramCooldown",
+    )
+    assert "ownerInstagramMutationKeys.size > 0" in refresh_state
+    assert "ownerInstagramLoading || coolingDown || mutating" in refresh_state
+
+
+def test_owner_instagram_removal_is_confirmed_reactive_and_conflict_safe() -> None:
+    js = OWNER_JS.read_text(encoding="utf-8")
+    actions = source_block(
+        js,
+        "async function handleOwnerInstagramAction",
+        "async function uploadOwnerInstagramFinal",
+    )
+    reconcile = source_block(
+        js,
+        "async function reconcileOwnerInstagramContent",
+        "function setOwnerInstagramFormBusy",
+    )
+
+    assert 'data-owner-instagram-action="remove"' in js
+    assert 'item.status === "published" ? "Archivar" : "Eliminar"' in js
+    for status in ("ready_for_review", "validated", "scheduled", "published"):
+        assert f'item.status === "{status}"' in js
+    assert "window.confirm(ownerInstagramRemovalConfirmation(item))" in actions
+    assert 'options = { method: "DELETE" }' in actions
+    assert "ownerInstagramContents = ownerInstagramContents.filter" in actions
+    assert "renderOwnerInstagramContents()" in actions
+    assert "await loadOwnerInstagramPanel()" not in actions
+    assert "error.status === 409" in actions
+    assert "await reconcileOwnerInstagramContent(api, contentId)" in actions
+    assert "error.status !== 404" in reconcile
+    assert '"Eliminando…"' in actions
+    assert '"Archivando…"' in actions
+
+
+def test_owner_instagram_raw_removal_and_busy_copy_are_guarded() -> None:
+    js = OWNER_JS.read_text(encoding="utf-8")
+    raw_delete = source_block(
+        js,
+        "async function deleteOwnerInstagramRaw",
+        "async function createOwnerInstagramContent",
+    )
+
+    assert 'data-owner-instagram-raw-delete="${asset.id}"' in js
+    assert "beginOwnerInstagramMutation(mutationKey)" in raw_delete
+    assert 'method: "DELETE"' in raw_delete
+    assert "ownerInstagramRawAssets = ownerInstagramRawAssets.filter" in raw_delete
+    assert "setOwnerInstagramScopeBusy(scope, true, button, \"Eliminando…\")" in raw_delete
+    for label in (
+        "Creando…",
+        "Subiendo…",
+        "Guardando…",
+        "Reprogramando…",
+        "Cancelando…",
+        "Validando…",
+        "Programando…",
+        "Enviando…",
+    ):
+        assert label in js
 
 
 def test_owner_instagram_copy_tracks_real_or_simulated_publishing_mode() -> None:

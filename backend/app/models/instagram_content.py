@@ -107,6 +107,7 @@ class InstagramContent(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), index=True)
 
     business = relationship("Business", back_populates="instagram_contents")
     source_proposal = relationship("SocialContentProposal", back_populates="generated_content")
