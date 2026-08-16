@@ -167,6 +167,69 @@ def test_owner_instagram_raw_removal_and_busy_copy_are_guarded() -> None:
         assert label in js
 
 
+def test_owner_raw_library_actions_are_secure_reactive_and_single_flight() -> None:
+    html = OWNER_HTML.read_text(encoding="utf-8")
+    js = OWNER_JS.read_text(encoding="utf-8")
+    handler = source_block(
+        js,
+        "async function handleOwnerInstagramRawAction",
+        "async function downloadOwnerInstagramPreviewAsset",
+    )
+
+    for label in (
+        "Previsualizar",
+        "Descargar",
+        "Usar en contenido",
+        "Crear contenido con este material",
+        "Usar como final",
+        "Eliminar",
+        "Ver",
+        "Desasociar",
+        "Material de origen",
+        "Assets finales",
+    ):
+        assert label in js or label in html
+    for state in (
+        "Abriendo…",
+        "Descargando…",
+        "Asociando…",
+        "Desasociando…",
+        "Preparando contenido…",
+        "Usando como final…",
+    ):
+        assert state in handler
+    assert "beginOwnerInstagramMutationGroup(mutationKeys)" in handler
+    assert "endOwnerInstagramMutationGroup(mutationKeys)" in handler
+    assert "applyOwnerInstagramRawContentPayload(payload)" in handler
+    assert "await loadOwnerInstagramPanel()" not in handler
+    assert "error.status === 409" in handler
+    assert "/associations/${contentId}" in handler
+    assert "/create-content`" in handler
+    assert "/use-as-final`" in handler
+
+
+def test_owner_raw_preview_and_download_use_authenticated_fetch_and_accessible_dialog() -> None:
+    html = OWNER_HTML.read_text(encoding="utf-8")
+    js = OWNER_JS.read_text(encoding="utf-8")
+    preview = source_block(
+        js,
+        "async function ownerInstagramFileResponse",
+        "function beginOwnerInstagramMutation",
+    )
+
+    assert 'id="owner-instagram-preview-dialog"' in html
+    assert 'role="dialog"' in html
+    assert 'aria-modal="true"' in html
+    assert 'aria-label="Cerrar previsualización"' in html
+    assert "await fetch(url)" in preview
+    assert "ownerInstagramRetryAfterSeconds(response)" in preview
+    assert "URL.createObjectURL" in preview
+    assert "URL.revokeObjectURL" in preview
+    assert 'anchor.download = ownerInstagramDownloadFilename' in preview
+    assert 'event.key === "Escape"' in js
+    assert "File System Access" not in js
+
+
 def test_owner_instagram_copy_tracks_real_or_simulated_publishing_mode() -> None:
     html = OWNER_HTML.read_text(encoding="utf-8")
     js = OWNER_JS.read_text(encoding="utf-8")

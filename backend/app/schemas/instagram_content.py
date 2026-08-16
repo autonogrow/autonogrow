@@ -82,6 +82,12 @@ class InstagramContentCreate(BaseModel):
         return normalized
 
 
+class InstagramRawContentTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content_id: int = Field(gt=0)
+
+
 class InstagramMaterialUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

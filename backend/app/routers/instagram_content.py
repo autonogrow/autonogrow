@@ -1,17 +1,26 @@
 import hashlib
 import logging
+import re
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.audit import record_audit
 from app.core.config import get_settings, get_uploads_dir
 from app.core.database import get_db
 from app.core.security import get_business_membership, get_current_user, require_owner
-from app.models import Business, InstagramFinalAsset, InstagramPublishJob, InstagramRawAsset, User
+from app.models import (
+    Business,
+    InstagramContent,
+    InstagramContentRawAsset,
+    InstagramFinalAsset,
+    InstagramPublishJob,
+    InstagramRawAsset,
+    User,
+)
 from app.schemas.instagram_content import (
     InstagramCommentCreate,
     InstagramContentCreate,
@@ -20,6 +29,7 @@ from app.schemas.instagram_content import (
     InstagramPlannedDateUpdate,
     InstagramPublishJobHistory,
     InstagramPublishJobRead,
+    InstagramRawContentTarget,
     InstagramServiceUpdate,
     InstagramTitleUpdate,
     InstagramValidationCreate,
@@ -27,13 +37,17 @@ from app.schemas.instagram_content import (
 )
 from app.services.instagram_content_service import (
     add_admin_comment,
+    associate_raw_asset,
     cancel_content,
     content_or_404,
     create_content,
     current_version,
+    disassociate_raw_asset,
     get_or_create_settings,
     prepare_content_removal,
+    prepare_raw_asset_as_final,
     prepare_raw_asset_removal,
+    raw_asset_or_404,
     require_service_enabled,
     schedule_content,
     serialize_comment,
@@ -153,6 +167,11 @@ async def _read_image(file: UploadFile) -> tuple[bytes, str, str]:
         raise HTTPException(status_code=400, detail="The file is empty")
     if len(content) > MAX_ASSET_BYTES:
         raise HTTPException(status_code=400, detail="The file exceeds the upload limit")
+    _validate_image_content(content, content_type)
+    return content, content_type, extension
+
+
+def _validate_image_content(content: bytes, media_type: str) -> None:
     signatures = {
         "image/jpeg": content.startswith(b"\xff\xd8\xff"),
         "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
@@ -160,9 +179,14 @@ async def _read_image(file: UploadFile) -> tuple[bytes, str, str]:
         and content.startswith(b"RIFF")
         and content[8:12] == b"WEBP",
     }
-    if not signatures[content_type]:
+    if media_type not in signatures or not signatures[media_type]:
         raise HTTPException(status_code=400, detail="File content does not match its image type")
-    return content, content_type, extension
+
+
+def _safe_download_filename(value: str, asset_id: int, media_type: str) -> str:
+    extension = ALLOWED_MEDIA.get(media_type, "")
+    normalized = re.sub(r'[\x00-\x1f\x7f/\\"]', "_", Path(value).name).strip(" .")
+    return normalized[:255] or f"material-{asset_id}{extension}"
 
 
 def _write_private_asset(
@@ -173,7 +197,11 @@ def _write_private_asset(
     )
     path = get_uploads_dir() / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
+    try:
+        path.write_bytes(content)
+    except OSError:
+        path.unlink(missing_ok=True)
+        raise
     return relative.as_posix()
 
 
@@ -249,6 +277,11 @@ def _list_raw(db: Session, business_id: int, api_prefix: str) -> dict:
     require_service_enabled(db, business_id)
     assets = (
         db.query(InstagramRawAsset)
+        .options(
+            selectinload(InstagramRawAsset.content_links).selectinload(
+                InstagramContentRawAsset.content
+            )
+        )
         .filter(InstagramRawAsset.business_id == business_id)
         .order_by(InstagramRawAsset.created_at.desc(), InstagramRawAsset.id.desc())
         .all()
@@ -310,10 +343,13 @@ def _list_content(
     owner_technical: bool = True,
 ) -> dict:
     require_service_enabled(db, business_id)
-    from app.models import InstagramContent
-
     items = (
         db.query(InstagramContent)
+        .options(
+            selectinload(InstagramContent.source_asset_links).selectinload(
+                InstagramContentRawAsset.raw_asset
+            )
+        )
         .filter(
             InstagramContent.business_id == business_id,
             InstagramContent.archived_at.is_(None),
@@ -332,6 +368,23 @@ def _list_content(
             )
             for item in items
         ]
+    }
+
+
+def _raw_content_payload(
+    db: Session,
+    *,
+    business_id: int,
+    asset_id: int,
+    content_id: int,
+) -> dict:
+    db.expire_all()
+    api_prefix = _owner_prefix(business_id)
+    asset = raw_asset_or_404(db, business_id, asset_id)
+    content = content_or_404(db, business_id, content_id)
+    return {
+        "raw_asset": serialize_raw_asset(asset, api_prefix),
+        "content": serialize_content(db, content, api_prefix, detailed=True),
     }
 
 
@@ -550,6 +603,253 @@ def owner_get_raw_file(business_id: int, asset_id: int, db: Session = Depends(ge
     return FileResponse(_private_file(asset.storage_key), media_type=asset.media_type)
 
 
+@owner_router.get("/raw-assets/{asset_id}/download", response_class=FileResponse)
+def owner_download_raw_file(
+    business_id: int,
+    asset_id: int,
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    asset = _raw_or_404(db, business_id, asset_id)
+    return FileResponse(
+        _private_file(asset.storage_key),
+        media_type=asset.media_type,
+        filename=_safe_download_filename(
+            asset.original_filename,
+            asset.id,
+            asset.media_type,
+        ),
+        content_disposition_type="attachment",
+    )
+
+
+@owner_router.post("/raw-assets/{asset_id}/associations")
+def owner_associate_raw_asset(
+    business_id: int,
+    asset_id: int,
+    payload: InstagramRawContentTarget,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    content, _asset, link, created = associate_raw_asset(
+        db,
+        business_id=business_id,
+        content_id=payload.content_id,
+        asset_id=asset_id,
+        actor=actor,
+    )
+    if created:
+        _audit(
+            db,
+            request=request,
+            actor=actor,
+            business_id=business_id,
+            action="raw_asset_associated",
+            resource_type="instagram_content_raw_asset",
+            resource_id=link.id,
+            metadata={"content_id": content.id, "raw_asset_id": asset_id},
+        )
+    db.commit()
+    return _raw_content_payload(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+        content_id=content.id,
+    )
+
+
+@owner_router.delete("/raw-assets/{asset_id}/associations/{content_id}")
+def owner_disassociate_raw_asset(
+    business_id: int,
+    asset_id: int,
+    content_id: int,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    content, _asset = disassociate_raw_asset(
+        db,
+        business_id=business_id,
+        content_id=content_id,
+        asset_id=asset_id,
+    )
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business_id,
+        action="raw_asset_disassociated",
+        resource_type="instagram_raw_asset",
+        resource_id=asset_id,
+        metadata={"content_id": content.id},
+    )
+    db.commit()
+    return _raw_content_payload(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+        content_id=content.id,
+    )
+
+
+@owner_router.post("/raw-assets/{asset_id}/create-content", status_code=201)
+def owner_create_content_from_raw_asset(
+    business_id: int,
+    asset_id: int,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    asset = raw_asset_or_404(db, business_id, asset_id, for_update=True)
+    source_name = (asset.label or Path(asset.original_filename).stem).strip()
+    title = f"Contenido desde {source_name or 'material bruto'}"[:200]
+    content = create_content(
+        db,
+        business_id=business_id,
+        actor=actor,
+        title=title,
+        caption="",
+        format="single_image",
+        planned_publish_at=None,
+    )
+    _content, _asset, link, _created = associate_raw_asset(
+        db,
+        business_id=business_id,
+        content_id=content.id,
+        asset_id=asset_id,
+        actor=actor,
+    )
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business_id,
+        action="instagram_content_created",
+        resource_type="instagram_content",
+        resource_id=content.id,
+        metadata={"version_number": 1, "source_raw_asset_id": asset_id},
+    )
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business_id,
+        action="raw_asset_associated",
+        resource_type="instagram_content_raw_asset",
+        resource_id=link.id,
+        metadata={"content_id": content.id, "raw_asset_id": asset_id},
+    )
+    db.commit()
+    return _raw_content_payload(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+        content_id=content.id,
+    )
+
+
+@owner_router.post("/raw-assets/{asset_id}/use-as-final", status_code=201)
+def owner_use_raw_asset_as_final(
+    business_id: int,
+    asset_id: int,
+    payload: InstagramRawContentTarget,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    content, raw_asset, existing, associated = prepare_raw_asset_as_final(
+        db,
+        business_id=business_id,
+        content_id=payload.content_id,
+        asset_id=asset_id,
+        actor=actor,
+    )
+    storage_key: str | None = None
+    try:
+        if existing is None:
+            extension = ALLOWED_MEDIA.get(raw_asset.media_type)
+            if extension is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El tipo de material no es válido como asset final.",
+                )
+            raw_content = _private_file(raw_asset.storage_key).read_bytes()
+            if not raw_content or len(raw_content) > MAX_ASSET_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El material no cumple el tamaño permitido para un asset final.",
+                )
+            _validate_image_content(raw_content, raw_asset.media_type)
+            storage_key = _write_private_asset(
+                raw_content,
+                business_id=business_id,
+                collection=f"final/{content.id}",
+                extension=extension,
+            )
+            final_asset = InstagramFinalAsset(
+                business_id=business_id,
+                content_id=content.id,
+                uploaded_by_user_id=actor.id,
+                source_raw_asset_id=raw_asset.id,
+                original_filename=raw_asset.original_filename,
+                storage_key=storage_key,
+                media_type=raw_asset.media_type,
+                size_bytes=len(raw_content),
+                sha256=hashlib.sha256(raw_content).hexdigest(),
+            )
+            db.add(final_asset)
+            db.flush()
+            _audit(
+                db,
+                request=request,
+                actor=actor,
+                business_id=business_id,
+                action="raw_asset_used_as_final",
+                resource_type="instagram_final_asset",
+                resource_id=final_asset.id,
+                metadata={
+                    "content_id": content.id,
+                    "source_raw_asset_id": raw_asset.id,
+                },
+            )
+        if associated:
+            link = (
+                db.query(InstagramContentRawAsset)
+                .filter_by(content_id=content.id, raw_asset_id=raw_asset.id)
+                .one()
+            )
+            _audit(
+                db,
+                request=request,
+                actor=actor,
+                business_id=business_id,
+                action="raw_asset_associated",
+                resource_type="instagram_content_raw_asset",
+                resource_id=link.id,
+                metadata={"content_id": content.id, "raw_asset_id": raw_asset.id},
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        if storage_key is not None:
+            try:
+                _private_storage_path(storage_key).unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Could not remove a failed final asset copy")
+        raise
+    return _raw_content_payload(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+        content_id=content.id,
+    )
+
+
 @admin_router.get("/raw-assets/{asset_id}/file", response_class=FileResponse)
 def admin_get_raw_file(
     business_slug: str,
@@ -561,6 +861,29 @@ def admin_get_raw_file(
     business = _admin_business(db, business_slug)
     asset = _raw_or_404(db, business.id, asset_id)
     return FileResponse(_private_file(asset.storage_key), media_type=asset.media_type)
+
+
+@admin_router.post("/raw-assets/{asset_id}/associations")
+@admin_router.post("/raw-assets/{asset_id}/create-content")
+@admin_router.post("/raw-assets/{asset_id}/use-as-final")
+def admin_raw_asset_owner_operation_forbidden(
+    business_slug: str,
+    asset_id: int,
+    actor: User = Depends(require_instagram_business_admin),
+):
+    del business_slug, asset_id, actor
+    raise HTTPException(status_code=403, detail="Owner access required")
+
+
+@admin_router.delete("/raw-assets/{asset_id}/associations/{content_id}")
+def admin_disassociate_raw_asset_forbidden(
+    business_slug: str,
+    asset_id: int,
+    content_id: int,
+    actor: User = Depends(require_instagram_business_admin),
+):
+    del business_slug, asset_id, content_id, actor
+    raise HTTPException(status_code=403, detail="Owner access required")
 
 
 @owner_router.get("/contents")

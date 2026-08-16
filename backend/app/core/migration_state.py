@@ -24,6 +24,7 @@ POST_BASELINE_TABLES = {
     "backup_records",
     "instagram_content_settings",
     "instagram_raw_assets",
+    "instagram_content_raw_assets",
     "instagram_contents",
     "instagram_final_assets",
     "instagram_content_versions",
@@ -45,6 +46,7 @@ POST_BASELINE_COLUMNS = {
     "services.follow_up_interval_days",
     "bookings.price_amount_snapshot",
     "instagram_contents.archived_at",
+    "instagram_final_assets.source_raw_asset_id",
 }
 
 CRITICAL_COLUMNS: dict[str, set[str]] = {

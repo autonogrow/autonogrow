@@ -39,6 +39,7 @@ from app.models.google_integration import GoogleIntegration
 from app.models.instagram_content import (
     InstagramContent,
     InstagramContentComment,
+    InstagramContentRawAsset,
     InstagramContentSettings,
     InstagramContentValidation,
     InstagramContentVersion,
@@ -88,6 +89,7 @@ __all__ = [
     "InstagramContent",
     "InstagramContentComment",
     "InstagramContentSettings",
+    "InstagramContentRawAsset",
     "InstagramContentValidation",
     "InstagramContentVersion",
     "InstagramContentVersionAsset",

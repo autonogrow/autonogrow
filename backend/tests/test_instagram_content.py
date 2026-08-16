@@ -20,6 +20,7 @@ from app.models import (
     BusinessChannelIntegration,
     BusinessUser,
     InstagramContent,
+    InstagramContentRawAsset,
     InstagramContentSettings,
     InstagramContentValidation,
     InstagramContentVersion,
@@ -892,3 +893,240 @@ def test_owner_removal_is_isolated_by_business(editorial_context):
     assert ctx["client"].delete(f"{other_base}/raw-assets/{raw['id']}").status_code == 404
     assert ctx["db"].get(InstagramContent, content_id) is not None
     assert ctx["db"].get(InstagramRawAsset, raw["id"]) is not None
+
+
+def upload_raw_asset(ctx, filename: str = "foto-cliente.png") -> dict:
+    enable_service(ctx)
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={"file": (filename, b"\x89PNG\r\n\x1a\nraw-source", "image/png")},
+        data={"label": "Foto cliente"},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def test_owner_previews_and_downloads_raw_asset_with_safe_original_name(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx, 'carpeta/cliente"final.png')
+
+    preview = ctx["client"].get(f"{owner_base(ctx)}/raw-assets/{raw['id']}/file")
+    download = ctx["client"].get(f"{owner_base(ctx)}/raw-assets/{raw['id']}/download")
+
+    assert preview.status_code == 200
+    assert preview.content == b"\x89PNG\r\n\x1a\nraw-source"
+    assert preview.headers["content-type"] == "image/png"
+    assert download.status_code == 200
+    assert download.content == preview.content
+    assert download.headers["content-type"] == "image/png"
+    disposition = download.headers["content-disposition"]
+    assert disposition.startswith("attachment;")
+    assert "cliente" in disposition
+    assert "final.png" in disposition
+    assert '"final.png"' not in disposition
+
+
+def test_owner_associates_disassociates_and_creates_content_from_raw(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx)
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+
+    associated = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+        json={"content_id": content_id},
+    )
+
+    assert associated.status_code == 200
+    assert [item["id"] for item in associated.json()["content"]["source_assets"]] == [raw["id"]]
+    assert associated.json()["raw_asset"]["associations"][0]["content_id"] == content_id
+    assert ctx["db"].query(InstagramContentRawAsset).count() == 1
+    assert ctx["db"].query(AuditLog).filter_by(action="raw_asset_associated").count() == 1
+
+    removed = ctx["client"].delete(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_id}"
+    )
+    assert removed.status_code == 200
+    assert removed.json()["content"]["source_assets"] == []
+    assert removed.json()["raw_asset"]["associations"] == []
+    assert ctx["db"].query(InstagramContentRawAsset).count() == 0
+    assert ctx["db"].query(AuditLog).filter_by(action="raw_asset_disassociated").count() == 1
+
+    created = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/create-content"
+    )
+    assert created.status_code == 201
+    assert created.json()["content"]["status"] == "draft"
+    assert created.json()["content"]["final_assets"] == []
+    assert created.json()["content"]["source_assets"][0]["id"] == raw["id"]
+
+
+def test_owner_cannot_disassociate_historical_or_final_source(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx)
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    assert (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+            json={"content_id": content_id},
+        )
+        .status_code
+        == 200
+    )
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "validated"
+    ctx["db"].commit()
+
+    historical = ctx["client"].delete(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_id}"
+    )
+    assert historical.status_code == 409
+    assert "borradores" in historical.json()["detail"]
+    assert ctx["db"].query(InstagramContentRawAsset).count() == 1
+
+    content.status = "draft"
+    ctx["db"].commit()
+    used = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/use-as-final",
+        json={"content_id": content_id},
+    )
+    assert used.status_code == 201
+    blocked = ctx["client"].delete(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_id}"
+    )
+    assert blocked.status_code == 409
+    assert "trazabilidad" in blocked.json()["detail"]
+
+
+def test_owner_uses_raw_as_final_with_copy_provenance_and_delete_protection(
+    editorial_context,
+):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx)
+    raw_row = ctx["db"].get(InstagramRawAsset, raw["id"])
+    raw_path = ctx["uploads_dir"] / raw_row.storage_key
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/use-as-final",
+        json={"content_id": content_id},
+    )
+
+    assert response.status_code == 201
+    derived = [
+        item
+        for item in response.json()["content"]["final_assets"]
+        if item["source_raw_asset_id"] == raw["id"]
+    ]
+    assert len(derived) == 1
+    final_row = ctx["db"].get(InstagramFinalAsset, derived[0]["id"])
+    final_path = ctx["uploads_dir"] / final_row.storage_key
+    assert final_path != raw_path
+    assert final_path.read_bytes() == raw_path.read_bytes()
+    assert ctx["db"].query(AuditLog).filter_by(action="raw_asset_used_as_final").count() == 1
+
+    blocked_delete = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}")
+    assert blocked_delete.status_code == 409
+    assert raw_path.exists()
+    assert final_path.exists()
+
+    removed_content = ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}")
+    assert removed_content.status_code == 200
+    assert ctx["db"].query(InstagramContentRawAsset).filter_by(raw_asset_id=raw["id"]).count() == 0
+    assert not final_path.exists()
+    removed_raw = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}")
+    assert removed_raw.status_code == 200
+    assert not raw_path.exists()
+
+
+def test_use_as_final_rejects_invalid_stored_media(editorial_context):
+    ctx = editorial_context
+    enable_service(ctx)
+    storage_key = f"_instagram_content/{ctx['business'].id}/raw/invalid.gif"
+    path = ctx["uploads_dir"] / storage_key
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"GIF89a-invalid")
+    raw = InstagramRawAsset(
+        business_id=ctx["business"].id,
+        uploaded_by_user_id=ctx["owner"].id,
+        original_filename="invalid.gif",
+        storage_key=storage_key,
+        media_type="image/gif",
+        size_bytes=14,
+    )
+    ctx["db"].add(raw)
+    ctx["db"].commit()
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw.id}/use-as-final",
+        json={"content_id": content_id},
+    )
+
+    assert response.status_code == 400
+    assert ctx["db"].query(InstagramContentRawAsset).filter_by(raw_asset_id=raw.id).count() == 0
+    assert (
+        ctx["db"].query(InstagramFinalAsset).filter_by(source_raw_asset_id=raw.id).count() == 0
+    )
+
+
+def test_raw_library_operations_block_cross_business_idor(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx)
+    ctx["db"].add(InstagramContentSettings(business_id=ctx["other_business"].id, enabled=True))
+    ctx["db"].commit()
+    other_base = f"/api/owner/businesses/{ctx['other_business'].id}/instagram-content"
+    other_content = ctx["client"].post(
+        f"{other_base}/contents",
+        json={"title": "Otro negocio", "caption": "", "format": "single_image"},
+    ).json()
+
+    assert ctx["client"].get(f"{other_base}/raw-assets/{raw['id']}/file").status_code == 404
+    assert (
+        ctx["client"].get(f"{other_base}/raw-assets/{raw['id']}/download").status_code == 404
+    )
+    assert (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+            json={"content_id": other_content["id"]},
+        )
+        .status_code
+        == 404
+    )
+    assert (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/raw-assets/{raw['id']}/use-as-final",
+            json={"content_id": other_content["id"]},
+        )
+        .status_code
+        == 404
+    )
+
+
+@pytest.mark.parametrize("role", ["admin", "staff"])
+def test_admin_and_staff_get_no_owner_raw_library_privileges(editorial_context, role):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx)
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    set_actor(ctx, ctx[role])
+
+    assert (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/raw-assets/{raw['id']}/use-as-final",
+            json={"content_id": content_id},
+        )
+        .status_code
+        == 403
+    )
+    assert (
+        ctx["client"]
+        .post(
+            f"{admin_base(ctx)}/raw-assets/{raw['id']}/use-as-final",
+            json={"content_id": content_id},
+        )
+        .status_code
+        == 403
+    )

@@ -146,6 +146,76 @@ def test_empty_database_upgrades_to_single_head_with_complete_schema(
     assert any(item["referred_table"] == "businesses" for item in integration_foreign_keys)
 
 
+def test_raw_asset_link_migration_backfills_legacy_editorial_references(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "raw-asset-backfill.db"
+    database_url = upgrade(path, "20260815_20")
+    engine = create_database_engine(database_url, settings=sqlite_settings())
+    now = datetime.utcnow()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO businesses "
+                "(id, slug, name, status, created_at, updated_at) "
+                "VALUES (1, 'migration-business', 'Migration Business', 'active', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO instagram_raw_assets "
+                "(id, business_id, active, original_filename, storage_key, media_type, "
+                "size_bytes, created_at) VALUES "
+                "(10, 1, 1, 'source.jpg', 'raw/source.jpg', 'image/jpeg', 4, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO instagram_contents "
+                "(id, business_id, title, status, created_at, updated_at) "
+                "VALUES (20, 1, 'Legacy draft', 'draft', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO instagram_content_versions "
+                "(id, business_id, content_id, version_number, caption, format, "
+                "editorial_package_json, created_at) VALUES "
+                "(30, 1, 20, 1, '', 'single_image', :package, :now)"
+            ),
+            {
+                "package": '{"asset_plan":{"recommended":['
+                '{"source":"instagram_raw_asset","id":10}]}}',
+                "now": now,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO instagram_content_versions "
+                "(id, business_id, content_id, version_number, caption, format, "
+                "editorial_package_json, created_at) VALUES "
+                "(31, 1, 20, 2, '', 'single_image', :package, :now)"
+            ),
+            {"package": '{"asset_plan":[]}', "now": now},
+        )
+    engine.dispose()
+
+    upgrade(path)
+    engine = create_database_engine(database_url, settings=sqlite_settings())
+    with engine.connect() as connection:
+        link = connection.execute(
+            text(
+                "SELECT business_id, content_id, raw_asset_id, associated_by_user_id "
+                "FROM instagram_content_raw_assets"
+            )
+        ).one()
+        assert link == (1, 20, 10, None)
+    engine.dispose()
+
+
 def test_diagnostic_distinguishes_empty_legacy_and_current(tmp_path: Path) -> None:
     empty_engine = create_database_engine(
         f"sqlite:///{(tmp_path / 'empty.db').as_posix()}", settings=sqlite_settings()

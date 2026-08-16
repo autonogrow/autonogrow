@@ -72,6 +72,7 @@ COPY_ORDER = (
     "instagram_content_settings",
     "instagram_raw_assets",
     "instagram_contents",
+    "instagram_content_raw_assets",
     "instagram_final_assets",
     "instagram_content_versions",
     "instagram_content_version_assets",
@@ -104,6 +105,7 @@ OPTIONAL_SOURCE_TABLES = (
     "instagram_content_settings",
     "instagram_raw_assets",
     "instagram_contents",
+    "instagram_content_raw_assets",
     "instagram_final_assets",
     "instagram_content_versions",
     "instagram_content_version_assets",
@@ -143,6 +145,9 @@ ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
     "instagram_raw_assets": {
         "service_id": {"action": "omit_as_null", "expected_value": None},
         "active": {"action": "use_destination_default", "expected_value": True},
+    },
+    "instagram_final_assets": {
+        "source_raw_asset_id": {"action": "omit_as_null", "expected_value": None},
     },
     "instagram_contents": {
         "source_proposal_id": {"action": "omit_as_null", "expected_value": None},

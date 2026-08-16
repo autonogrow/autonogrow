@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.models import (
     InstagramContent,
     InstagramContentComment,
+    InstagramContentRawAsset,
     InstagramContentSettings,
     InstagramContentValidation,
     InstagramContentVersion,
@@ -436,6 +437,24 @@ def _package_references_raw_asset(package_json: str | None, asset_id: int) -> bo
 
 
 def raw_asset_reference_content_ids(db: Session, business_id: int, asset_id: int) -> list[int]:
+    linked_content_ids = {
+        content_id
+        for (content_id,) in db.query(InstagramContentRawAsset.content_id)
+        .filter(
+            InstagramContentRawAsset.business_id == business_id,
+            InstagramContentRawAsset.raw_asset_id == asset_id,
+        )
+        .all()
+    }
+    final_content_ids = {
+        content_id
+        for (content_id,) in db.query(InstagramFinalAsset.content_id)
+        .filter(
+            InstagramFinalAsset.business_id == business_id,
+            InstagramFinalAsset.source_raw_asset_id == asset_id,
+        )
+        .all()
+    }
     rows = (
         db.query(InstagramContentVersion.content_id, InstagramContentVersion.editorial_package_json)
         .filter(
@@ -444,13 +463,151 @@ def raw_asset_reference_content_ids(db: Session, business_id: int, asset_id: int
         )
         .all()
     )
-    return sorted(
-        {
-            content_id
-            for content_id, package_json in rows
-            if _package_references_raw_asset(package_json, asset_id)
-        }
+    historical_content_ids = {
+        content_id
+        for content_id, package_json in rows
+        if _package_references_raw_asset(package_json, asset_id)
+    }
+    return sorted(linked_content_ids | final_content_ids | historical_content_ids)
+
+
+def raw_asset_or_404(
+    db: Session,
+    business_id: int,
+    asset_id: int,
+    *,
+    for_update: bool = False,
+) -> InstagramRawAsset:
+    require_service_enabled(db, business_id)
+    query = db.query(InstagramRawAsset).filter(
+        InstagramRawAsset.id == asset_id,
+        InstagramRawAsset.business_id == business_id,
     )
+    if for_update:
+        query = query.with_for_update()
+    asset = query.first()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Material bruto no encontrado.")
+    return asset
+
+
+def _require_mutable_source_content(content: InstagramContent) -> None:
+    if content.status not in {"draft", "changes_requested"}:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "El material de origen solo puede cambiarse en borradores o contenidos con "
+                "cambios solicitados."
+            ),
+        )
+
+
+def associate_raw_asset(
+    db: Session,
+    *,
+    business_id: int,
+    content_id: int,
+    asset_id: int,
+    actor: User,
+) -> tuple[InstagramContent, InstagramRawAsset, InstagramContentRawAsset, bool]:
+    content = content_or_404(db, business_id, content_id, for_update=True)
+    _require_mutable_source_content(content)
+    asset = raw_asset_or_404(db, business_id, asset_id, for_update=True)
+    existing = (
+        db.query(InstagramContentRawAsset)
+        .filter(
+            InstagramContentRawAsset.business_id == business_id,
+            InstagramContentRawAsset.content_id == content_id,
+            InstagramContentRawAsset.raw_asset_id == asset_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        return content, asset, existing, False
+    link = InstagramContentRawAsset(
+        business_id=business_id,
+        content_id=content_id,
+        raw_asset_id=asset_id,
+        associated_by_user_id=actor.id,
+    )
+    db.add(link)
+    db.flush()
+    return content, asset, link, True
+
+
+def disassociate_raw_asset(
+    db: Session,
+    *,
+    business_id: int,
+    content_id: int,
+    asset_id: int,
+) -> tuple[InstagramContent, InstagramRawAsset]:
+    content = content_or_404(db, business_id, content_id, for_update=True)
+    _require_mutable_source_content(content)
+    asset = raw_asset_or_404(db, business_id, asset_id, for_update=True)
+    if (
+        db.query(InstagramFinalAsset.id)
+        .filter(
+            InstagramFinalAsset.business_id == business_id,
+            InstagramFinalAsset.content_id == content_id,
+            InstagramFinalAsset.source_raw_asset_id == asset_id,
+        )
+        .first()
+        is not None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Este material es el origen de un asset final y debe conservar su trazabilidad.",
+        )
+    if any(
+        _package_references_raw_asset(version.editorial_package_json, asset_id)
+        for version in content.versions
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Este material forma parte de una versión editorial histórica.",
+        )
+    link = (
+        db.query(InstagramContentRawAsset)
+        .filter(
+            InstagramContentRawAsset.business_id == business_id,
+            InstagramContentRawAsset.content_id == content_id,
+            InstagramContentRawAsset.raw_asset_id == asset_id,
+        )
+        .first()
+    )
+    if link is None:
+        raise HTTPException(status_code=404, detail="La asociación no existe.")
+    db.delete(link)
+    db.flush()
+    return content, asset
+
+
+def prepare_raw_asset_as_final(
+    db: Session,
+    *,
+    business_id: int,
+    content_id: int,
+    asset_id: int,
+    actor: User,
+) -> tuple[InstagramContent, InstagramRawAsset, InstagramFinalAsset | None, bool]:
+    content, asset, _link, associated = associate_raw_asset(
+        db,
+        business_id=business_id,
+        content_id=content_id,
+        asset_id=asset_id,
+        actor=actor,
+    )
+    existing = (
+        db.query(InstagramFinalAsset)
+        .filter(
+            InstagramFinalAsset.business_id == business_id,
+            InstagramFinalAsset.content_id == content_id,
+            InstagramFinalAsset.source_raw_asset_id == asset_id,
+        )
+        .first()
+    )
+    return content, asset, existing, associated
 
 
 def content_has_cross_content_asset_references(db: Session, content: InstagramContent) -> bool:
@@ -546,17 +703,7 @@ def prepare_content_removal(
 
 def prepare_raw_asset_removal(db: Session, *, business_id: int, asset_id: int) -> dict:
     require_service_enabled(db, business_id)
-    asset = (
-        db.query(InstagramRawAsset)
-        .filter(
-            InstagramRawAsset.id == asset_id,
-            InstagramRawAsset.business_id == business_id,
-        )
-        .with_for_update()
-        .first()
-    )
-    if asset is None:
-        raise HTTPException(status_code=404, detail="Material bruto no encontrado.")
+    asset = raw_asset_or_404(db, business_id, asset_id, for_update=True)
     references = raw_asset_reference_content_ids(db, business_id, asset_id)
     if references:
         raise HTTPException(
@@ -579,8 +726,13 @@ def serialize_settings(settings: InstagramContentSettings) -> dict:
     }
 
 
-def serialize_raw_asset(asset: InstagramRawAsset, api_prefix: str) -> dict:
-    return {
+def serialize_raw_asset(
+    asset: InstagramRawAsset,
+    api_prefix: str,
+    *,
+    include_associations: bool = True,
+) -> dict:
+    payload = {
         "id": asset.id,
         "original_filename": asset.original_filename,
         "media_type": asset.media_type,
@@ -588,7 +740,22 @@ def serialize_raw_asset(asset: InstagramRawAsset, api_prefix: str) -> dict:
         "label": asset.label,
         "created_at": asset.created_at.isoformat(),
         "file_url": f"{api_prefix}/raw-assets/{asset.id}/file",
+        "preview_url": f"{api_prefix}/raw-assets/{asset.id}/file",
+        "download_url": f"{api_prefix}/raw-assets/{asset.id}/download",
     }
+    if include_associations:
+        payload["associations"] = [
+            {
+                "content_id": link.content_id,
+                "content_title": link.content.title,
+                "content_status": link.content.status,
+                "content_archived": link.content.archived_at is not None,
+                "associated_by_user_id": link.associated_by_user_id,
+                "created_at": link.created_at.isoformat(),
+            }
+            for link in sorted(asset.content_links, key=lambda item: item.created_at)
+        ]
+    return payload
 
 
 def serialize_final_asset(asset: InstagramFinalAsset, api_prefix: str) -> dict:
@@ -598,6 +765,7 @@ def serialize_final_asset(asset: InstagramFinalAsset, api_prefix: str) -> dict:
         "media_type": asset.media_type,
         "size_bytes": asset.size_bytes,
         "created_at": asset.created_at.isoformat(),
+        "source_raw_asset_id": asset.source_raw_asset_id,
         "file_url": f"{api_prefix}/contents/{asset.content_id}/final-assets/{asset.id}/file",
     }
 
@@ -689,6 +857,17 @@ def serialize_content(
         payload["comments"] = [serialize_comment(item) for item in content.comments]
         payload["final_assets"] = [
             serialize_final_asset(item, api_prefix) for item in content.final_assets
+        ]
+        payload["source_assets"] = [
+            {
+                **serialize_raw_asset(
+                    link.raw_asset,
+                    api_prefix,
+                    include_associations=False,
+                ),
+                "association_created_at": link.created_at.isoformat(),
+            }
+            for link in sorted(content.source_asset_links, key=lambda item: item.created_at)
         ]
         from app.services.instagram_publish_service import (
             publication_history_events,

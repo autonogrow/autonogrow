@@ -72,6 +72,17 @@ class InstagramRawAsset(Base):
 
     business = relationship("Business", back_populates="instagram_raw_assets")
     service = relationship("BusinessService", back_populates="instagram_raw_assets")
+    content_links = relationship(
+        "InstagramContentRawAsset",
+        back_populates="raw_asset",
+        passive_deletes=True,
+        lazy="selectin",
+    )
+    final_derivatives = relationship(
+        "InstagramFinalAsset",
+        back_populates="source_raw_asset",
+        passive_deletes=True,
+    )
 
 
 class InstagramContent(Base):
@@ -129,12 +140,58 @@ class InstagramContent(Base):
     publish_jobs = relationship(
         "InstagramPublishJob", back_populates="content", cascade="all, delete-orphan"
     )
+    source_asset_links = relationship(
+        "InstagramContentRawAsset",
+        back_populates="content",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class InstagramContentRawAsset(Base):
+    __tablename__ = "instagram_content_raw_assets"
+    __table_args__ = (
+        UniqueConstraint("content_id", "raw_asset_id", name="uq_instagram_content_raw_asset"),
+        Index(
+            "ix_instagram_content_raw_assets_business_content",
+            "business_id",
+            "content_id",
+        ),
+        Index(
+            "ix_instagram_content_raw_assets_business_raw",
+            "business_id",
+            "raw_asset_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    content_id: Mapped[int] = mapped_column(
+        ForeignKey("instagram_contents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    raw_asset_id: Mapped[int] = mapped_column(
+        ForeignKey("instagram_raw_assets.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    associated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    content = relationship("InstagramContent", back_populates="source_asset_links", lazy="joined")
+    raw_asset = relationship("InstagramRawAsset", back_populates="content_links", lazy="joined")
 
 
 class InstagramFinalAsset(Base):
     __tablename__ = "instagram_final_assets"
     __table_args__ = (
         Index("ix_instagram_final_assets_content_created", "content_id", "created_at"),
+        UniqueConstraint(
+            "content_id",
+            "source_raw_asset_id",
+            name="uq_instagram_final_asset_content_raw_source",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -147,6 +204,9 @@ class InstagramFinalAsset(Base):
     uploaded_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
+    source_raw_asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("instagram_raw_assets.id", ondelete="RESTRICT"), index=True
+    )
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_key: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
     media_type: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -155,6 +215,7 @@ class InstagramFinalAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     content = relationship("InstagramContent", back_populates="final_assets")
+    source_raw_asset = relationship("InstagramRawAsset", back_populates="final_derivatives")
     version_links = relationship(
         "InstagramContentVersionAsset", back_populates="asset", cascade="all, delete-orphan"
     )
