@@ -380,6 +380,17 @@
       <footer><button id="owner-instagram-preview-download" class="button button-secondary" type="button">Descargar</button><button id="owner-instagram-preview-done" class="button button-primary" type="button">Cerrar</button></footer>
     </section>
   </div>
+  <div id="owner-instagram-associations-dialog" class="owner-dialog-backdrop" hidden>
+    <section class="owner-dialog instagram-associations-dialog" role="dialog" aria-modal="true" aria-labelledby="owner-instagram-associations-title" aria-describedby="owner-instagram-associations-description" tabindex="-1">
+      <header><div><p class="eyebrow">Material de origen</p><h2 id="owner-instagram-associations-title">Asociaciones</h2></div><button id="owner-instagram-associations-close" class="ag-button ag-button--icon" type="button" aria-label="Cerrar gestor de asociaciones">×</button></header>
+      <p id="owner-instagram-associations-description" class="owner-dialog-consequence"></p>
+      <dl class="owner-dialog-context"><div><dt>Archivo</dt><dd id="owner-instagram-associations-filename"></dd></div><div><dt>Contenidos asociados</dt><dd id="owner-instagram-associations-count"></dd></div></dl>
+      <div class="instagram-associations-toolbar"><button id="owner-instagram-associations-remove-all" class="button button-secondary button-small" type="button" data-owner-instagram-association-mutation hidden>Desasociar todos los permitidos</button></div>
+      <div id="owner-instagram-associations-list" class="instagram-associations-list"></div>
+      <p id="owner-instagram-associations-error" class="owner-dialog-error" role="alert"></p>
+      <footer><button id="owner-instagram-associations-delete" class="button button-danger" type="button" data-owner-instagram-association-mutation hidden>Eliminar material</button><button id="owner-instagram-associations-done" class="button button-primary" type="button">Cerrar</button></footer>
+    </section>
+  </div>
   <div id="owner-critical-dialog" class="owner-dialog-backdrop" hidden>
     <section class="owner-dialog" role="dialog" aria-modal="true" aria-labelledby="owner-dialog-title" aria-describedby="owner-dialog-consequence" tabindex="-1">
       <header><div><p id="owner-dialog-kicker" class="eyebrow">Acción crítica</p><h2 id="owner-dialog-title">Confirmar acción</h2></div><button id="owner-dialog-close" class="ag-button ag-button--icon" type="button" aria-label="Cerrar confirmación">×</button></header>

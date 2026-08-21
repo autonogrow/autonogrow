@@ -230,6 +230,42 @@ def test_owner_raw_preview_and_download_use_authenticated_fetch_and_accessible_d
     assert "File System Access" not in js
 
 
+def test_owner_raw_association_manager_is_accessible_reactive_and_server_authoritative() -> None:
+    html = OWNER_HTML.read_text(encoding="utf-8")
+    js = OWNER_JS.read_text(encoding="utf-8")
+    styles = (ROOT / "autonogrow-owner" / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="owner-instagram-associations-dialog"' in html
+    assert 'role="dialog"' in html
+    assert 'aria-modal="true"' in html
+    assert 'aria-describedby="owner-instagram-associations-description"' in html
+    assert 'aria-label="Cerrar gestor de asociaciones"' in html
+    for label in (
+        "Asociaciones",
+        "Abrir contenido",
+        "Desasociar",
+        "Desasociar todos los permitidos",
+        "Eliminar material",
+    ):
+        assert label in js or label in html
+
+    assert "association.modifiable ?" in js
+    assert "association.protected_reason" in js
+    assert "data-owner-instagram-association-mutation" in js
+    assert 'error.code === "raw_asset_in_use"' in js
+    assert "showOwnerInstagramAssociationManager(error.detail, button)" in js
+    assert "payload.association_manager" in js
+    assert "renderOwnerInstagramAssociationManager()" in js
+    assert "scrollIntoView" in js
+    assert "instagram-content-card--located" in js
+    assert 'document.querySelector("main").inert = true' in js
+    assert 'event.key === "Escape" && !ownerInstagramAssociationBusy' in js
+    assert 'event.key === "Tab"' in js
+    assert "ownerInstagramRetryAfterSeconds(response)" in js
+    assert "setOwnerInstagramAssociationBusy(false, button)" in js
+    assert "height: 100%" in styles
+
+
 def test_owner_instagram_copy_tracks_real_or_simulated_publishing_mode() -> None:
     html = OWNER_HTML.read_text(encoding="utf-8")
     js = OWNER_JS.read_text(encoding="utf-8")

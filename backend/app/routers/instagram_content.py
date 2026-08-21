@@ -42,11 +42,13 @@ from app.services.instagram_content_service import (
     content_or_404,
     create_content,
     current_version,
+    disassociate_permitted_raw_asset_associations,
     disassociate_raw_asset,
     get_or_create_settings,
     prepare_content_removal,
     prepare_raw_asset_as_final,
     prepare_raw_asset_removal,
+    raw_asset_association_manager,
     raw_asset_or_404,
     require_service_enabled,
     schedule_content,
@@ -586,6 +588,16 @@ def owner_delete_raw_asset(
     return {"id": asset_id, "disposition": "deleted"}
 
 
+@owner_router.get("/raw-assets/{asset_id}/associations")
+def owner_get_raw_asset_associations(
+    business_id: int,
+    asset_id: int,
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    return raw_asset_association_manager(db, business_id=business_id, asset_id=asset_id)
+
+
 @admin_router.delete("/raw-assets/{asset_id}")
 def admin_delete_raw_asset_forbidden(
     business_slug: str,
@@ -693,6 +705,49 @@ def owner_disassociate_raw_asset(
         asset_id=asset_id,
         content_id=content.id,
     )
+
+
+@owner_router.delete("/raw-assets/{asset_id}/associations")
+def owner_disassociate_permitted_raw_asset_associations(
+    business_id: int,
+    asset_id: int,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    content_ids = disassociate_permitted_raw_asset_associations(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+    )
+    if content_ids:
+        _audit(
+            db,
+            request=request,
+            actor=actor,
+            business_id=business_id,
+            action="raw_asset_associations_disassociated",
+            resource_type="instagram_raw_asset",
+            resource_id=asset_id,
+            metadata={"content_ids": content_ids},
+        )
+    db.commit()
+    db.expire_all()
+    api_prefix = _owner_prefix(business_id)
+    asset = raw_asset_or_404(db, business_id, asset_id)
+    contents = [content_or_404(db, business_id, content_id) for content_id in content_ids]
+    return {
+        "association_manager": raw_asset_association_manager(
+            db,
+            business_id=business_id,
+            asset_id=asset_id,
+        ),
+        "raw_asset": serialize_raw_asset(asset, api_prefix),
+        "contents": [
+            serialize_content(db, content, api_prefix, detailed=True) for content in contents
+        ],
+    }
 
 
 @owner_router.post("/raw-assets/{asset_id}/create-content", status_code=201)
@@ -876,10 +931,12 @@ def admin_raw_asset_owner_operation_forbidden(
 
 
 @admin_router.delete("/raw-assets/{asset_id}/associations/{content_id}")
+@admin_router.delete("/raw-assets/{asset_id}/associations")
+@admin_router.get("/raw-assets/{asset_id}/associations")
 def admin_disassociate_raw_asset_forbidden(
     business_slug: str,
     asset_id: int,
-    content_id: int,
+    content_id: int | None = None,
     actor: User = Depends(require_instagram_business_admin),
 ):
     del business_slug, asset_id, content_id, actor

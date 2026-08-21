@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -32,6 +32,7 @@ from app.models import (
     User,
 )
 from app.routers.instagram_content import admin_router, owner_router
+from app.services.instagram_content_service import raw_asset_association_manager
 
 
 @pytest.fixture
@@ -792,6 +793,13 @@ def test_owner_deletes_unused_raw_asset_but_blocks_referenced_material(editorial
     unused_path = ctx["uploads_dir"] / unused_asset.storage_key
     assert unused_path.exists()
 
+    empty_manager = ctx["client"].get(
+        f"{owner_base(ctx)}/raw-assets/{unused_id}/associations"
+    )
+    assert empty_manager.status_code == 200
+    assert empty_manager.json()["association_count"] == 0
+    assert empty_manager.json()["associations"] == []
+
     deleted = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{unused_id}")
     assert deleted.status_code == 200
     assert ctx["db"].get(InstagramRawAsset, unused_id) is None
@@ -822,7 +830,8 @@ def test_owner_deletes_unused_raw_asset_but_blocks_referenced_material(editorial
 
     blocked = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{referenced_id}")
     assert blocked.status_code == 409
-    assert "está siendo utilizado" in blocked.json()["detail"]
+    assert blocked.json()["detail"]["code"] == "raw_asset_in_use"
+    assert "está siendo utilizado" in blocked.json()["detail"]["message"]
     assert ctx["db"].get(InstagramRawAsset, referenced_id) is not None
 
 
@@ -958,6 +967,156 @@ def test_owner_associates_disassociates_and_creates_content_from_raw(editorial_c
     assert created.json()["content"]["status"] == "draft"
     assert created.json()["content"]["final_assets"] == []
     assert created.json()["content"]["source_assets"][0]["id"] == raw["id"]
+
+
+def test_raw_asset_association_manager_describes_and_batches_only_safe_links(
+    editorial_context,
+):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx)
+
+    def create_draft(title: str) -> int:
+        response = ctx["client"].post(
+            f"{owner_base(ctx)}/contents",
+            json={"title": title, "caption": "", "format": "single_image"},
+        )
+        assert response.status_code == 201
+        return response.json()["id"]
+
+    draft_ids = [create_draft("Borrador A"), create_draft("Borrador B")]
+    protected_id = create_draft("Promo validada")
+    for content_id in [*draft_ids, protected_id]:
+        response = ctx["client"].post(
+            f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+            json={"content_id": content_id},
+        )
+        assert response.status_code == 200
+
+    final = InstagramFinalAsset(
+        business_id=ctx["business"].id,
+        content_id=protected_id,
+        uploaded_by_user_id=ctx["owner"].id,
+        source_raw_asset_id=raw["id"],
+        original_filename="derivado.png",
+        storage_key=f"_instagram_content/{ctx['business'].id}/final/derivado.png",
+        media_type="image/png",
+        size_bytes=12,
+    )
+    protected = ctx["db"].get(InstagramContent, protected_id)
+    protected.status = "validated"
+    protected.versions[-1].editorial_package_json = json.dumps(
+        {"asset_plan": {"recommended": [{"source": "instagram_raw_asset", "id": raw["id"]}]}}
+    )
+    ctx["db"].add(final)
+    ctx["db"].commit()
+
+    manager_response = ctx["client"].get(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations"
+    )
+    assert manager_response.status_code == 200
+    manager = manager_response.json()
+    assert manager["association_count"] == 3
+    assert manager["modifiable_count"] == 2
+    protected_association = next(
+        item for item in manager["associations"] if item["content_id"] == protected_id
+    )
+    assert protected_association == {
+        "content_id": protected_id,
+        "content_title": "Promo validada",
+        "content_status": "validated",
+        "content_archived": False,
+        "is_source_material": True,
+        "has_final_derivative": True,
+        "has_historical_reference": True,
+        "modifiable": False,
+        "protected_reason": "Existe un material final cuya procedencia depende de este archivo.",
+    }
+
+    blocked = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}")
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["associations"] == manager["associations"]
+
+    batch = ctx["client"].delete(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations"
+    )
+    assert batch.status_code == 200
+    assert {item["id"] for item in batch.json()["contents"]} == set(draft_ids)
+    assert batch.json()["association_manager"]["association_count"] == 1
+    assert batch.json()["association_manager"]["modifiable_count"] == 0
+    remaining_ids = {
+        row.content_id
+        for row in ctx["db"].query(InstagramContentRawAsset).filter_by(raw_asset_id=raw["id"])
+    }
+    assert remaining_ids == {protected_id}
+    assert (
+        ctx["db"]
+        .query(AuditLog)
+        .filter_by(action="raw_asset_associations_disassociated")
+        .count()
+        == 1
+    )
+    assert (
+        ctx["client"]
+        .delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{protected_id}")
+        .status_code
+        == 409
+    )
+
+
+def test_raw_asset_association_manager_is_owner_only_and_business_isolated(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx)
+    ctx["db"].add(InstagramContentSettings(business_id=ctx["other_business"].id, enabled=True))
+    ctx["db"].commit()
+    other_base = f"/api/owner/businesses/{ctx['other_business'].id}/instagram-content"
+
+    assert ctx["client"].get(f"{other_base}/raw-assets/{raw['id']}/associations").status_code == 404
+    assert ctx["client"].delete(f"{other_base}/raw-assets/{raw['id']}/associations").status_code == 404
+
+    set_actor(ctx, ctx["admin"])
+    assert (
+        ctx["client"].get(f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations").status_code
+        == 403
+    )
+    assert (
+        ctx["client"].get(f"{admin_base(ctx)}/raw-assets/{raw['id']}/associations").status_code
+        == 403
+    )
+
+
+def test_raw_asset_association_manager_uses_constant_queries(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx)
+    for index in range(4):
+        content = ctx["client"].post(
+            f"{owner_base(ctx)}/contents",
+            json={"title": f"Contenido {index}", "caption": "", "format": "single_image"},
+        ).json()
+        assert (
+            ctx["client"]
+            .post(
+                f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+                json={"content_id": content["id"]},
+            )
+            .status_code
+            == 200
+        )
+
+    statements = []
+
+    def count_statement(*_args):
+        statements.append(1)
+
+    event.listen(ctx["db"].bind, "before_cursor_execute", count_statement)
+    try:
+        manager = raw_asset_association_manager(
+            ctx["db"], business_id=ctx["business"].id, asset_id=raw["id"]
+        )
+    finally:
+        event.remove(ctx["db"].bind, "before_cursor_execute", count_statement)
+
+    assert manager["association_count"] == 4
+    assert len(statements) <= 7
 
 
 def test_owner_cannot_disassociate_historical_or_final_source(editorial_context):

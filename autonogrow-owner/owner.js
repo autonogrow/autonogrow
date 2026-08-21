@@ -23,6 +23,9 @@ let ownerInstagramRetryTimer = null;
 let ownerInstagramPreviewObjectUrl = null;
 let ownerInstagramPreviewAssetId = null;
 let ownerInstagramPreviewReturnFocus = null;
+let ownerInstagramAssociationData = null;
+let ownerInstagramAssociationReturnFocus = null;
+let ownerInstagramAssociationBusy = false;
 const ownerInstagramMutationKeys = new Set();
 const OWNER_CREDIT_PRESETS = [100, 200, 500];
 const PALETTES = { slate_gold: ["#334155", "#0f172a", "#f59e0b", "#f8fafc"], rose_beauty: ["#be123c", "#831843", "#f9a8d4", "#fff1f2"], emerald_clean: ["#047857", "#064e3b", "#6ee7b7", "#ecfdf5"], blue_clinic: ["#2563eb", "#1e3a8a", "#93c5fd", "#eff6ff"], amber_barber: ["#92400e", "#451a03", "#fbbf24", "#fffbeb"], violet_modern: ["#7c3aed", "#4c1d95", "#c4b5fd", "#f5f3ff"] };
@@ -1549,7 +1552,7 @@ function renderOwnerInstagramRaw(assets) {
         ? `<ul class="instagram-comments">${asset.associations.map((association) => `<li>${escapeHtml(association.content_title)} · ${escapeHtml(ownerInstagramStateLabel(association.content_status))}${association.content_archived ? " · Archivado" : ""}</li>`).join("")}</ul>`
         : `<p class="helper">Sin contenidos asociados.</p>`;
       const options = eligibleContents.map((content) => `<option value="${content.id}">${escapeHtml(content.title)}</option>`).join("");
-      return `<article class="instagram-raw-card" data-owner-instagram-raw="${asset.id}"><header><div><strong>${escapeHtml(asset.label || asset.original_filename)}</strong><p class="helper">${escapeHtml(asset.original_filename)} · ${escapeHtml(asset.media_type)}</p></div><span class="ag-badge ag-badge--neutral">Origen</span></header>${associations}<label>Contenido destino<select class="instagram-raw-target" data-owner-instagram-raw-target ${options ? "" : "disabled"}><option value="">Selecciona un contenido</option>${options}</select></label><div class="instagram-raw-actions"><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="preview" data-raw-asset-id="${asset.id}">Previsualizar</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="download" data-raw-asset-id="${asset.id}">Descargar</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="associate" data-raw-asset-id="${asset.id}" ${options ? "" : "disabled"}>Usar en contenido</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="create-content" data-raw-asset-id="${asset.id}">Crear contenido con este material</button><button class="button button-primary button-small" type="button" data-owner-instagram-raw-action="use-final" data-raw-asset-id="${asset.id}" ${options ? "" : "disabled"}>Usar como final</button><button class="button button-ghost button-small" type="button" data-owner-instagram-raw-delete="${asset.id}">Eliminar</button></div></article>`;
+      return `<article class="instagram-raw-card" data-owner-instagram-raw="${asset.id}"><header><div><strong>${escapeHtml(asset.label || asset.original_filename)}</strong><p class="helper">${escapeHtml(asset.original_filename)} · ${escapeHtml(asset.media_type)}</p></div><span class="ag-badge ag-badge--neutral">Origen</span></header>${associations}<label>Contenido destino<select class="instagram-raw-target" data-owner-instagram-raw-target ${options ? "" : "disabled"}><option value="">Selecciona un contenido</option>${options}</select></label><div class="instagram-raw-actions"><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="preview" data-raw-asset-id="${asset.id}">Previsualizar</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="download" data-raw-asset-id="${asset.id}">Descargar</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="associations" data-raw-asset-id="${asset.id}">Asociaciones</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="associate" data-raw-asset-id="${asset.id}" ${options ? "" : "disabled"}>Usar en contenido</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="create-content" data-raw-asset-id="${asset.id}">Crear contenido con este material</button><button class="button button-primary button-small" type="button" data-owner-instagram-raw-action="use-final" data-raw-asset-id="${asset.id}" ${options ? "" : "disabled"}>Usar como final</button><button class="button button-ghost button-small" type="button" data-owner-instagram-raw-delete="${asset.id}">Eliminar</button></div></article>`;
     }).join("")
     : `<p class="helper">Todavía no hay material bruto.</p>`;
 }
@@ -1650,8 +1653,11 @@ async function ownerInstagramJson(url, options = {}) {
     throw ownerInstagramRateLimitError(retryAfter);
   }
   if (!response.ok) {
-    const error = new Error(body.detail || "No se pudo completar la operación editorial.");
+    const detail = body.detail;
+    const error = new Error(typeof detail === "string" ? detail : detail?.message || "No se pudo completar la operación editorial.");
     error.status = response.status;
+    error.detail = detail;
+    error.code = typeof detail === "object" ? detail?.code : null;
     throw error;
   }
   return body;
@@ -1726,6 +1732,188 @@ async function openOwnerInstagramPreview(asset, trigger) {
   byId("owner-instagram-preview-dialog").hidden = false;
   document.body.classList.add("owner-dialog-open");
   byId("owner-instagram-preview-close").focus();
+}
+
+function ownerInstagramAssociationUsage(association) {
+  const uses = [];
+  if (association.is_source_material) uses.push("Material de origen");
+  if (association.has_final_derivative) uses.push("Origen de material final");
+  if (association.has_historical_reference) uses.push("Historial editorial");
+  return uses.join(" + ") || "Dependencia editorial";
+}
+
+function renderOwnerInstagramAssociationManager() {
+  const data = ownerInstagramAssociationData;
+  if (!data) return;
+  const count = data.association_count || 0;
+  byId("owner-instagram-associations-title").textContent = data.raw_asset.label || data.raw_asset.original_filename;
+  byId("owner-instagram-associations-filename").textContent = data.raw_asset.original_filename;
+  byId("owner-instagram-associations-count").textContent = String(count);
+  byId("owner-instagram-associations-description").textContent = count
+    ? "Este material está siendo utilizado y no puede eliminarse todavía."
+    : "Este material no tiene asociaciones y ya puede eliminarse de forma segura.";
+  byId("owner-instagram-associations-remove-all").hidden = data.modifiable_count < 2;
+  byId("owner-instagram-associations-delete").hidden = count !== 0;
+  byId("owner-instagram-associations-list").innerHTML = count
+    ? data.associations.map((association) => `<article class="instagram-association-row" data-owner-instagram-association="${association.content_id}"><header><div><h3>${escapeHtml(association.content_title)}</h3><p>${escapeHtml(ownerInstagramStateLabel(association.content_status))}${association.content_archived ? " · Archivado" : ""}</p></div><span class="ag-badge ag-badge--neutral">${escapeHtml(ownerInstagramAssociationUsage(association))}</span></header><dl><div><dt>Uso</dt><dd>${escapeHtml(ownerInstagramAssociationUsage(association))}</dd></div><div><dt>Modificable</dt><dd>${association.modifiable ? "Sí" : "No"}</dd></div></dl>${association.protected_reason ? `<p class="instagram-association-protection">${escapeHtml(association.protected_reason)}</p>` : ""}<div class="instagram-editorial-actions"><button class="button button-secondary button-small" type="button" data-owner-instagram-association-open="${association.content_id}">Abrir contenido</button>${association.modifiable ? `<button class="button button-ghost button-small" type="button" data-owner-instagram-association-remove="${association.content_id}" data-owner-instagram-association-mutation>Desasociar</button>` : ""}</div></article>`).join("")
+    : `<p class="instagram-associations-empty">Este archivo no se utiliza en ningún contenido.</p>`;
+}
+
+function showOwnerInstagramAssociationManager(data, trigger) {
+  const wasHidden = byId("owner-instagram-associations-dialog").hidden;
+  ownerInstagramAssociationData = data;
+  if (wasHidden) ownerInstagramAssociationReturnFocus = trigger || null;
+  byId("owner-instagram-associations-error").textContent = "";
+  renderOwnerInstagramAssociationManager();
+  byId("owner-instagram-associations-dialog").hidden = false;
+  document.body.classList.add("owner-dialog-open");
+  document.querySelector("main").inert = true;
+  byId("owner-instagram-associations-close").focus();
+}
+
+async function openOwnerInstagramAssociationManager(assetId, trigger, initialData = null) {
+  if (initialData) {
+    showOwnerInstagramAssociationManager(initialData, trigger);
+    return;
+  }
+  const api = ownerInstagramApi();
+  if (!api || !assetId) return;
+  trigger.disabled = true;
+  trigger.setAttribute("aria-busy", "true");
+  try {
+    const data = await ownerInstagramJson(`${api}/raw-assets/${assetId}/associations`);
+    showOwnerInstagramAssociationManager(data, trigger);
+  } catch (error) {
+    showOwnerInstagramError(error);
+  } finally {
+    if (trigger.isConnected) {
+      trigger.disabled = false;
+      trigger.removeAttribute("aria-busy");
+    }
+  }
+}
+
+function closeOwnerInstagramAssociationManager(restoreFocus = true) {
+  if (ownerInstagramAssociationBusy) return;
+  byId("owner-instagram-associations-dialog").hidden = true;
+  document.body.classList.remove("owner-dialog-open");
+  document.querySelector("main").inert = false;
+  if (restoreFocus) ownerInstagramAssociationReturnFocus?.focus();
+  ownerInstagramAssociationData = null;
+  ownerInstagramAssociationReturnFocus = null;
+  byId("owner-instagram-associations-error").textContent = "";
+}
+
+function setOwnerInstagramAssociationBusy(busy, trigger = null, label = "Procesando…") {
+  ownerInstagramAssociationBusy = busy;
+  const dialog = byId("owner-instagram-associations-dialog");
+  const panel = dialog.querySelector("[role='dialog']");
+  if (busy) panel.setAttribute("aria-busy", "true");
+  else panel.removeAttribute("aria-busy");
+  dialog.querySelectorAll("[data-owner-instagram-association-mutation], #owner-instagram-associations-close, #owner-instagram-associations-done").forEach((control) => { control.disabled = busy; });
+  if (!trigger) return;
+  if (busy) {
+    trigger.dataset.ownerInstagramLabel = trigger.textContent;
+    trigger.textContent = label;
+  } else if (trigger.dataset.ownerInstagramLabel) {
+    trigger.textContent = trigger.dataset.ownerInstagramLabel;
+    delete trigger.dataset.ownerInstagramLabel;
+  }
+}
+
+async function refreshOwnerInstagramAssociationManager(api, assetId) {
+  const data = await ownerInstagramJson(`${api}/raw-assets/${assetId}/associations`);
+  if (ownerInstagramAssociationData?.raw_asset.id === assetId) {
+    ownerInstagramAssociationData = data;
+    renderOwnerInstagramAssociationManager();
+  }
+  return data;
+}
+
+async function disassociateOwnerInstagramAssociation(button) {
+  const api = ownerInstagramApi();
+  const assetId = ownerInstagramAssociationData?.raw_asset.id;
+  const contentId = Number(button.dataset.ownerInstagramAssociationRemove);
+  const keys = [`raw:${assetId}`, `content:${contentId}`];
+  if (!api || !assetId || !contentId || !beginOwnerInstagramMutationGroup(keys)) return;
+  setOwnerInstagramAssociationBusy(true, button, "Desasociando…");
+  byId("owner-instagram-associations-error").textContent = "";
+  try {
+    const payload = await ownerInstagramJson(`${api}/raw-assets/${assetId}/associations/${contentId}`, { method: "DELETE" });
+    applyOwnerInstagramRawContentPayload(payload);
+    ownerInstagramAssociationData.associations = ownerInstagramAssociationData.associations.filter((association) => association.content_id !== contentId);
+    ownerInstagramAssociationData.association_count = ownerInstagramAssociationData.associations.length;
+    ownerInstagramAssociationData.modifiable_count = ownerInstagramAssociationData.associations.filter((association) => association.modifiable).length;
+    renderOwnerInstagramAssociationManager();
+    await refreshOwnerInstagramAssociationManager(api, assetId);
+    byId("owner-instagram-status").textContent = "Material desasociado.";
+  } catch (error) {
+    if ([404, 409].includes(error.status)) {
+      try {
+        await refreshOwnerInstagramAssociationManager(api, assetId);
+      } catch (refreshError) {
+        byId("owner-instagram-associations-error").textContent = refreshError.message;
+      }
+    }
+    if (error.status !== 404) byId("owner-instagram-associations-error").textContent = error.message;
+    if (error.status === 429) showOwnerInstagramError(error);
+  } finally {
+    setOwnerInstagramAssociationBusy(false, button);
+    endOwnerInstagramMutationGroup(keys);
+  }
+}
+
+async function disassociateAllOwnerInstagramAssociations(button) {
+  const api = ownerInstagramApi();
+  const assetId = ownerInstagramAssociationData?.raw_asset.id;
+  const key = `raw:${assetId}`;
+  if (!api || !assetId || !beginOwnerInstagramMutation(key)) return;
+  setOwnerInstagramAssociationBusy(true, button, "Desasociando…");
+  byId("owner-instagram-associations-error").textContent = "";
+  try {
+    const payload = await ownerInstagramJson(`${api}/raw-assets/${assetId}/associations`, { method: "DELETE" });
+    upsertOwnerInstagramRawAsset(payload.raw_asset);
+    payload.contents.forEach((content) => {
+      const index = ownerInstagramContents.findIndex((item) => item.id === content.id);
+      if (index === -1) ownerInstagramContents.unshift(content);
+      else ownerInstagramContents[index] = content;
+    });
+    renderOwnerInstagramRaw(ownerInstagramRawAssets);
+    renderOwnerInstagramContents();
+    ownerInstagramAssociationData = payload.association_manager;
+    renderOwnerInstagramAssociationManager();
+    byId("owner-instagram-status").textContent = "Asociaciones permitidas eliminadas.";
+  } catch (error) {
+    byId("owner-instagram-associations-error").textContent = error.message;
+    if ([404, 409].includes(error.status)) {
+      try {
+        await refreshOwnerInstagramAssociationManager(api, assetId);
+      } catch (refreshError) {
+        byId("owner-instagram-associations-error").textContent = refreshError.message;
+      }
+    }
+    if (error.status === 429) showOwnerInstagramError(error);
+  } finally {
+    setOwnerInstagramAssociationBusy(false, button);
+    endOwnerInstagramMutation(key);
+  }
+}
+
+function openOwnerInstagramAssociatedContent(contentId) {
+  const card = document.querySelector(`[data-owner-instagram-content="${contentId}"]`);
+  if (!card) {
+    byId("owner-instagram-associations-error").textContent = "Este contenido no está disponible en el workspace activo.";
+    return;
+  }
+  closeOwnerInstagramAssociationManager(false);
+  card.classList.add("instagram-content-card--located");
+  card.setAttribute("tabindex", "-1");
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  card.focus({ preventScroll: true });
+  window.setTimeout(() => {
+    card.classList.remove("instagram-content-card--located");
+    card.removeAttribute("tabindex");
+  }, 2400);
 }
 
 function beginOwnerInstagramMutation(key) {
@@ -1926,21 +2114,33 @@ async function uploadOwnerInstagramRaw(event) {
 
 async function deleteOwnerInstagramRaw(button) {
   const api = ownerInstagramApi();
-  const assetId = Number(button.dataset.ownerInstagramRawDelete);
+  const assetId = Number(button.dataset.ownerInstagramRawDelete || ownerInstagramAssociationData?.raw_asset.id);
   const scope = button.closest("[data-owner-instagram-raw]");
   const mutationKey = `raw:${assetId}`;
-  if (!api || !assetId || !scope || !window.confirm("¿Eliminar este material bruto?")) return;
+  const fromManager = button.id === "owner-instagram-associations-delete";
+  if (!api || !assetId || !window.confirm("¿Eliminar este material bruto?")) return;
   if (!beginOwnerInstagramMutation(mutationKey)) return;
-  setOwnerInstagramScopeBusy(scope, true, button, "Eliminando…");
+  if (fromManager) setOwnerInstagramAssociationBusy(true, button, "Eliminando…");
+  else if (scope) setOwnerInstagramScopeBusy(scope, true, button, "Eliminando…");
   try {
     await ownerInstagramJson(`${api}/raw-assets/${assetId}`, { method: "DELETE" });
     ownerInstagramRawAssets = ownerInstagramRawAssets.filter((item) => item.id !== assetId);
     renderOwnerInstagramRaw(ownerInstagramRawAssets);
+    if (fromManager) {
+      setOwnerInstagramAssociationBusy(false, button);
+      closeOwnerInstagramAssociationManager(false);
+    }
     byId("owner-instagram-status").textContent = "Material bruto eliminado.";
   } catch (error) {
-    showOwnerInstagramError(error);
+    if (error.status === 409 && error.code === "raw_asset_in_use") {
+      showOwnerInstagramAssociationManager(error.detail, button);
+    } else {
+      showOwnerInstagramError(error);
+      if (fromManager) byId("owner-instagram-associations-error").textContent = error.message;
+    }
   } finally {
-    if (scope.isConnected) setOwnerInstagramScopeBusy(scope, false, button);
+    if (scope?.isConnected) setOwnerInstagramScopeBusy(scope, false, button);
+    if (fromManager && ownerInstagramAssociationBusy) setOwnerInstagramAssociationBusy(false, button);
     endOwnerInstagramMutation(mutationKey);
   }
 }
@@ -1955,6 +2155,10 @@ async function handleOwnerInstagramRawAction(button) {
   const target = rawCard?.querySelector("[data-owner-instagram-raw-target]");
   const contentId = Number(button.dataset.contentId || target?.value) || null;
   if (!api || !asset || !action) return;
+  if (action === "associations") {
+    await openOwnerInstagramAssociationManager(assetId, button);
+    return;
+  }
   if (["associate", "use-final"].includes(action) && !contentId) {
     byId("owner-instagram-status").textContent = "Selecciona primero un contenido destino.";
     target?.focus();
@@ -2133,7 +2337,10 @@ async function uploadOwnerInstagramFinal(event) {
 let onboardingReadiness = null;
 
 document.querySelectorAll("[data-tab]").forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.dataset.tab)));
-byId("owner-instagram-business").addEventListener("change", loadOwnerInstagramPanel);
+byId("owner-instagram-business").addEventListener("change", () => {
+  if (!byId("owner-instagram-associations-dialog").hidden) closeOwnerInstagramAssociationManager(false);
+  loadOwnerInstagramPanel();
+});
 byId("owner-instagram-refresh").addEventListener("click", loadOwnerInstagramPanel);
 byId("owner-instagram-enabled").addEventListener("change", updateOwnerInstagramService);
 byId("owner-instagram-raw-form").addEventListener("submit", uploadOwnerInstagramRaw);
@@ -2159,7 +2366,29 @@ byId("owner-instagram-preview-download").addEventListener("click", downloadOwner
 byId("owner-instagram-preview-dialog").addEventListener("click", (event) => {
   if (event.target === event.currentTarget) closeOwnerInstagramPreview();
 });
+byId("owner-instagram-associations-close").addEventListener("click", () => closeOwnerInstagramAssociationManager());
+byId("owner-instagram-associations-done").addEventListener("click", () => closeOwnerInstagramAssociationManager());
+byId("owner-instagram-associations-delete").addEventListener("click", (event) => deleteOwnerInstagramRaw(event.currentTarget));
+byId("owner-instagram-associations-remove-all").addEventListener("click", (event) => disassociateAllOwnerInstagramAssociations(event.currentTarget));
+byId("owner-instagram-associations-list").addEventListener("click", (event) => {
+  const remove = event.target.closest("[data-owner-instagram-association-remove]");
+  if (remove) { disassociateOwnerInstagramAssociation(remove); return; }
+  const open = event.target.closest("[data-owner-instagram-association-open]");
+  if (open) openOwnerInstagramAssociatedContent(Number(open.dataset.ownerInstagramAssociationOpen));
+});
 document.addEventListener("keydown", (event) => {
+  const associationDialog = byId("owner-instagram-associations-dialog");
+  if (!associationDialog.hidden) {
+    if (event.key === "Escape" && !ownerInstagramAssociationBusy) closeOwnerInstagramAssociationManager();
+    if (event.key === "Tab") {
+      const focusable = Array.from(associationDialog.querySelectorAll("button:not([disabled]):not([hidden]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"));
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+    return;
+  }
   if (event.key === "Escape" && !byId("owner-instagram-preview-dialog").hidden) closeOwnerInstagramPreview();
 });
 byId("refresh-button").addEventListener("click", async () => {
