@@ -32,6 +32,31 @@ def function_block(js: str, start: str, end: str) -> str:
     return js.split(start, 1)[1].split(end, 1)[0]
 
 
+def test_templates_are_initialized_before_parallel_automation_load() -> None:
+    _, _, js = read_sources()
+    panel = function_block(js, "async function loadAdminPanel()", "function channelOnboardingStatusLabel")
+    templates = panel.index("await loadConversationTemplates();")
+    parallel_loads = panel.index("await Promise.all([", templates)
+    automation = panel.index("loadConversationAutomation()", parallel_loads)
+
+    assert templates < parallel_loads < automation
+
+
+def test_delegated_instagram_forms_use_the_submitted_form() -> None:
+    _, _, js = read_sources()
+    comment = function_block(
+        js, "async function submitAdminInstagramComment", "async function submitAdminInstagramReview"
+    )
+    review = function_block(
+        js, "async function submitAdminInstagramReview", 'document.addEventListener("DOMContentLoaded"'
+    )
+
+    assert "const form = event.target;" in comment
+    assert "const form = event.target;" in review
+    assert "event.currentTarget" not in comment
+    assert "event.currentTarget" not in review
+
+
 def test_conversations_has_three_panel_architecture_and_preserves_contracts() -> None:
     html, _, _ = read_sources()
     inventory = IdInventory()

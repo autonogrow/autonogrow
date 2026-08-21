@@ -1,0 +1,207 @@
+from __future__ import annotations
+
+import re
+
+import pytest
+from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
+
+
+def _open_admin(journey, *, mobile: bool = False):
+    session = journey(email="admin-a@e2e.test", mobile=mobile)
+    page = session.goto("/autonogrow-admin/?b=salon-e2e#bookings")
+    expect(page.locator("#admin-app")).to_be_visible()
+    expect(page.locator("#business-name")).to_have_text("Salón E2E")
+    return session, page
+
+
+def _open_owner_instagram(journey):
+    session = journey(email="owner@e2e.test")
+    page = session.goto("/autonogrow-owner/")
+    expect(page.locator("#owner-app")).to_be_visible()
+    page.locator('[data-tab="instagram-content"]').click()
+    expect(page.locator("#owner-instagram-business")).to_be_visible()
+    page.locator("#owner-instagram-business").select_option(label="Salón E2E")
+    expect(page.locator("#owner-instagram-workspace")).to_be_visible()
+    expect(page.locator("#owner-instagram-status")).to_contain_text("contenidos", timeout=15_000)
+    return session, page
+
+
+def test_admin_controlled_login_navigation_and_owner_separation(journey) -> None:
+    session = journey()
+    page = session.goto("/autonogrow-admin/?b=salon-e2e")
+    page.locator("#admin-google-button button").evaluate("button => button.click()")
+    expect(page.locator("#admin-app")).to_be_visible()
+    expect(page.locator("#business-name")).to_have_text("Salón E2E")
+    expect(page.get_by_role("navigation", name="Secciones del panel")).to_be_visible()
+    assert (
+        page.request.get(
+            "/api/owner/businesses/1/instagram-content/raw-assets", timeout=5000
+        ).status
+        == 403
+    )
+    assert page.locator("[data-tab='operations']").count() == 0
+
+
+def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> None:
+    _session, page = _open_admin(journey)
+    expect(page.get_by_role("tab", name="Día")).to_have_attribute("aria-selected", "true")
+    page.get_by_role("tab", name="Semana").click()
+    expect(page.get_by_role("tab", name="Semana")).to_have_attribute("aria-selected", "true")
+    page.get_by_role("tab", name="Mes").click()
+    expect(page.get_by_role("tab", name="Mes")).to_have_attribute("aria-selected", "true")
+    page.get_by_role("button", name="Hoy", exact=True).click()
+    page.get_by_role("tab", name="Día").click()
+    page.get_by_role("button", name=re.compile("Invitado Fixture, Color E2E")).click()
+    pending = page.locator(".booking-card", has_text="Invitado Fixture")
+    expect(pending).to_be_visible()
+    expect(pending).to_contain_text("Color E2E")
+    page.once("dialog", lambda dialog: dialog.accept())
+    pending.get_by_role("button", name="Confirmar").click()
+    expect(pending).to_contain_text("Confirmada", timeout=15_000)
+    expect(pending).to_contain_text(re.compile(r"60\s*min"))
+
+
+def test_admin_instagram_calendar_editorial_action_and_permissions(journey) -> None:
+    _session, page = _open_admin(journey)
+    page.locator('[data-section="instagram-content"]').click()
+    expect(page.locator("#admin-instagram-workspace")).to_be_visible()
+    expect(page.get_by_role("tab", name="Semana").last).to_have_attribute("aria-selected", "true")
+    page.get_by_role("tab", name="Mes").last.click()
+    expect(page.get_by_role("tab", name="Mes").last).to_have_attribute("aria-selected", "true")
+    page.get_by_role("button", name=re.compile("SALON lanzamiento")).click()
+    detail = page.locator("[data-admin-instagram-content]")
+    expect(detail).to_contain_text("Caption de revisión SALON")
+    with page.expect_response(lambda response: "editorial-review" in response.url) as review_info:
+        detail.get_by_role("button", name="Aprobar editorialmente").click()
+    assert review_info.value.status == 201
+    assert review_info.value.json()["decision"] == "approve"
+    reviewed = page.request.get(
+        "/api/admin/businesses/salon-e2e/instagram-content/contents/1"
+    ).json()
+    assert any("editorial registrada" in comment["body"] for comment in reviewed["comments"])
+    assert (
+        page.request.post(
+            "/api/owner/businesses/1/instagram-content/contents/1/schedule", data={}
+        ).status
+        == 403
+    )
+    assert page.locator("[data-owner-instagram-action]").count() == 0
+
+
+def test_whatsapp_assisted_opens_safe_url_without_claiming_sent(journey) -> None:
+    session, page = _open_admin(journey)
+    page.get_by_role("button", name="Crecimiento", exact=True).click()
+    page.locator('[data-growth-target="reviews"]:visible').click()
+    pending = page.locator("#review-requests-pending-list")
+    expect(pending).to_contain_text("Invitado Fixture")
+    button = pending.get_by_role("button", name="Abrir en WhatsApp")
+    expect(button).to_be_visible()
+    opened_urls: list[str] = []
+    page.on("popup", lambda popup: opened_urls.append(popup.url))
+    page.once("dialog", lambda dialog: dialog.accept())
+    with page.expect_popup() as popup_info:
+        button.click()
+    popup = popup_info.value
+    popup.wait_for_load_state("domcontentloaded")
+    opened_urls.append(popup.url)
+    feedback = pending.locator("[data-review-feedback]")
+    expect(feedback).to_contain_text("WhatsApp abierto", timeout=10_000)
+    assert opened_urls
+    assert any(url.startswith("https://wa.me/34611000111") for url in session.whatsapp_urls), (
+        session.whatsapp_urls
+    )
+    popup.close()
+    expect(pending).to_contain_text("Abierta en WhatsApp")
+    expect(pending).to_contain_text(re.compile("no lo marc. como enviado", re.IGNORECASE))
+    expect(pending).not_to_contain_text("Marcada como enviada")
+
+
+def test_owner_business_switching_isolates_bookings_and_instagram(journey) -> None:
+    _session, page = _open_owner_instagram(journey)
+    expect(page.locator("#owner-instagram-workspace")).to_contain_text("SALON")
+    page.locator("#owner-instagram-business").select_option(label="Fisio E2E")
+    expect(page.locator("#owner-instagram-workspace")).to_contain_text("FISIO")
+    expect(page.locator("#owner-instagram-workspace")).not_to_contain_text("SALON")
+    page.locator("#owner-instagram-business").select_option(label="Salón E2E")
+    expect(page.locator("#owner-instagram-workspace")).to_contain_text("SALON")
+
+    bookings_a = page.request.get("/api/admin/businesses/salon-e2e/bookings").json()
+    bookings_b = page.request.get("/api/admin/businesses/fisio-e2e/bookings").json()
+    assert {item["service_name"] for item in bookings_a["bookings"]} >= {
+        "Corte E2E",
+        "Color E2E",
+    }
+    assert {item["service_name"] for item in bookings_b["bookings"]} == {"Sesión Fisio E2E"}
+
+
+def test_owner_instagram_calendar_views_filter_and_quick_action(journey) -> None:
+    _session, page = _open_owner_instagram(journey)
+    expect(page.get_by_role("tab", name="Semana").last).to_have_attribute("aria-selected", "true")
+    page.get_by_role("tab", name="Mes").last.click()
+    expect(page.get_by_role("tab", name="Mes").last).to_have_attribute("aria-selected", "true")
+    page.locator("#owner-instagram-state-filter").select_option("ready_for_review")
+    item = page.get_by_role("button", name=re.compile("SALON lanzamiento"))
+    expect(item).to_be_visible()
+    expect(item).to_contain_text("Revisar")
+    item.click()
+    expect(page.locator("#owner-instagram-detail-title")).to_have_text("SALON lanzamiento")
+    expect(page.locator("[data-owner-instagram-action='validate']")).to_be_visible()
+
+
+def test_owner_raw_association_manager_protects_and_updates_without_reload(journey) -> None:
+    session, page = _open_owner_instagram(journey)
+    page.locator("summary", has_text="Crear contenido y gestionar material").click()
+    shared = page.locator("[data-owner-instagram-raw]", has_text="Material compartido SALON")
+    session.expect_response_error(409, "DELETE", "/instagram-content/raw-assets/")
+    page.once("dialog", lambda confirmation: confirmation.accept())
+    shared.get_by_role("button", name="Eliminar").click()
+    dialog = page.locator("#owner-instagram-associations-dialog")
+    expect(dialog).to_be_visible()
+    expect(page.locator("#owner-instagram-associations-count")).to_have_text("2")
+    protected = page.locator("[data-owner-instagram-association]", has_text="histórico protegido")
+    expect(protected).to_contain_text("ModificableNo")
+    expect(protected.get_by_role("button", name="Desasociar")).to_have_count(0)
+    modifiable = page.locator(
+        "[data-owner-instagram-association]", has_text="SALON borrador eliminable"
+    )
+    modifiable.get_by_role("button", name="Desasociar").click()
+    expect(page.locator("#owner-instagram-associations-count")).to_have_text("1")
+    protected.get_by_role("button", name="Abrir contenido").click()
+    expect(page.locator("#owner-instagram-detail-title")).to_have_text("SALON histórico protegido")
+
+    freeable = page.locator("[data-owner-instagram-raw]", has_text="Material liberable SALON")
+    freeable.get_by_role("button", name="Asociaciones").click()
+    expect(dialog).to_be_visible()
+    dialog.get_by_role("button", name="Desasociar", exact=True).click()
+    expect(page.locator("#owner-instagram-associations-count")).to_have_text("0")
+    expect(page.locator("#owner-instagram-associations-delete")).to_be_visible()
+    page.once("dialog", lambda confirmation: confirmation.accept())
+    page.locator("#owner-instagram-associations-delete").click()
+    expect(dialog).to_be_hidden()
+    expect(freeable).to_have_count(0)
+
+
+def test_owner_sees_technical_controls_admin_cannot_use(journey) -> None:
+    _session, owner = _open_owner_instagram(journey)
+    owner.get_by_role("button", name=re.compile("SALON lanzamiento")).click()
+    expect(owner.locator("[data-owner-instagram-action='validate']")).to_be_visible()
+    assert owner.request.get("/api/owner/businesses/1/instagram-content/raw-assets").status == 200
+
+    _admin_session, admin = _open_admin(journey)
+    assert admin.request.get("/api/owner/businesses/1/instagram-content/raw-assets").status == 403
+
+
+def test_mobile_admin_confirms_booking_and_opens_instagram(journey) -> None:
+    _session, page = _open_admin(journey, mobile=True)
+    page.get_by_role("button", name=re.compile("Invitado Fixture, Color E2E")).click()
+    pending = page.locator(".booking-card", has_text="Invitado Fixture")
+    page.once("dialog", lambda dialog: dialog.accept())
+    pending.get_by_role("button", name="Confirmar").click()
+    expect(pending).to_contain_text("Confirmada", timeout=15_000)
+    page.locator("[data-ag-shell-open]:not([data-ag-shell-more])").click()
+    page.locator('[data-section="instagram-content"]').click()
+    expect(page.locator("#admin-instagram-workspace")).to_be_visible()
+    expect(page.get_by_role("button", name=re.compile("SALON lanzamiento"))).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")

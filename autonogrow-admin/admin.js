@@ -1930,6 +1930,8 @@ async function loadAdminPanel() {
     dashboardDataState.business = "ready";
     applyBusinessData(currentBusiness);
     renderBusinessSettings();
+    // Automation rules reference the default templates, so initialize templates first.
+    await loadConversationTemplates();
     await Promise.all([
       loadAdminServices(),
       loadStaffMembers(),
@@ -1941,7 +1943,6 @@ async function loadAdminPanel() {
       loadGrowthActionMetrics(),
       loadBusinessGrowthSignals(),
       loadAdminGallery(),
-      loadConversationTemplates(),
       loadConversationAutomation(),
       loadBusinessChannelOnboarding(),
       loadConversations()
@@ -7425,8 +7426,9 @@ async function uploadAdminInstagramRaw(event) {
 
 async function submitAdminInstagramComment(event) {
   event.preventDefault();
-  const card = event.currentTarget.closest("[data-admin-instagram-content]");
-  const data = new FormData(event.currentTarget);
+  const form = event.target;
+  const card = form.closest("[data-admin-instagram-content]");
+  const data = new FormData(form);
   if (!card) return;
   try {
     await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version_id: Number(data.get("version_id")), kind: data.get("kind"), body: data.get("body") }) });
@@ -7436,7 +7438,7 @@ async function submitAdminInstagramComment(event) {
 
 async function submitAdminInstagramReview(event) {
   event.preventDefault();
-  const form = event.currentTarget;
+  const form = event.target;
   const card = form.closest("[data-admin-instagram-content]");
   if (!card) return;
   const data = new FormData(form);

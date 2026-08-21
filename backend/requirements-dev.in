@@ -2,6 +2,7 @@
 
 pytest
 pytest-cov
+pytest-playwright
 ruff
 mypy
 pip-audit

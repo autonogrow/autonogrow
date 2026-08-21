@@ -9,6 +9,36 @@ permissions:
   contents: read
 
 jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install locked development dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Critical browser journeys
+        run: python scripts/run_e2e.py -q
+
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e-failure
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   sqlite:
     runs-on: ubuntu-latest
     timeout-minutes: 20
