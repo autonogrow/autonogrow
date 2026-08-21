@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi import HTTPException
@@ -38,6 +39,7 @@ from app.routers.growth_actions import (
     manually_attribute_booking,
     mark_opportunity_handled,
     prepare_opportunity_action,
+    prepare_opportunity_assisted_delivery,
     send_opportunity_action,
 )
 from app.schemas.opportunity_action import (
@@ -380,7 +382,95 @@ def test_prepare_rejects_closed_and_cross_tenant_and_handles_no_channel(
     )["action"]
     assert prepared["channel"] is None
     assert prepared["can_send"] is False
+    assert prepared["assisted_delivery_available"] is True
+    assert prepared["delivery_mode"] == "assisted"
     assert prepared["unavailable_reason"] == "no_customer_channel"
+
+
+def test_assisted_opportunity_uses_customer_phone_without_delivery_side_effects(
+    db: Session, records: dict[str, object]
+) -> None:
+    row = opportunity(
+        db,
+        records,
+        opportunity_type="scheduled_followup",
+        customer_key="other_customer_a",
+    )
+    action = prepare_opportunity_action(
+        "action-a",
+        row.id,
+        OpportunityActionPrepare(),
+        request(),
+        actor=records["staff"],
+        db=db,
+    )["action"]
+    initial_conversations = db.query(Conversation).count()
+
+    result = prepare_opportunity_assisted_delivery(
+        "action-a",
+        action["id"],
+        request(f"/actions/{action['id']}/assisted-delivery"),
+        actor=records["staff"],
+        db=db,
+    )
+
+    parsed = urlparse(result["whatsapp_url"])
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "wa.me"
+    assert parsed.path == "/34600000002"
+    assert parse_qs(parsed.query)["text"] == [action["final_text"]]
+    assert result["delivery_mode"] == "assisted"
+    assert result["sent"] is False
+    assert result["action"]["status"] == "draft"
+    assert result["action"]["message_id"] is None
+    assert db.query(Conversation).count() == initial_conversations
+    assert db.query(ConversationMessage).count() == 0
+    assert db.query(ChannelOutboxMessage).count() == 0
+    assert "opportunity_action_assisted_delivery_opened" in {
+        log.action for log in db.query(AuditLog).all()
+    }
+
+    with pytest.raises(HTTPException) as hidden:
+        prepare_opportunity_assisted_delivery(
+            "action-b",
+            action["id"],
+            request(),
+            actor=records["other"],
+            db=db,
+        )
+    assert hidden.value.status_code == 404
+
+
+def test_opportunity_without_valid_phone_is_unavailable(
+    db: Session, records: dict[str, object]
+) -> None:
+    customer = records["other_customer_a"]
+    assert isinstance(customer, Customer)
+    customer.phone = "sin telefono"
+    row = opportunity(
+        db,
+        records,
+        opportunity_type="lead_not_converted",
+        customer_key="other_customer_a",
+    )
+
+    action = prepare_opportunity_action(
+        "action-a",
+        row.id,
+        OpportunityActionPrepare(),
+        request(),
+        actor=records["staff"],
+        db=db,
+    )["action"]
+
+    assert action["delivery_mode"] == "unavailable"
+    assert action["assisted_delivery_available"] is False
+    with pytest.raises(HTTPException) as unavailable:
+        prepare_opportunity_assisted_delivery(
+            "action-a", action["id"], request(), actor=records["staff"], db=db
+        )
+    assert unavailable.value.status_code == 409
+    assert "teléfono válido" in unavailable.value.detail
 
 
 def test_edit_only_draft_and_staff_permissions_are_preserved(
@@ -538,6 +628,78 @@ def test_send_blocks_closed_whatsapp_window_without_simulating_success(
     assert body["detail"]["reason"] == "whatsapp_template_required"
     assert body["action"]["status"] == "draft"
     assert db.query(ConversationMessage).count() == 0
+
+
+def test_failed_integrated_action_can_offer_assisted_without_duplicate_delivery(
+    db: Session,
+    records: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation = records["conversation_a"]
+    assert isinstance(conversation, Conversation)
+    row = opportunity(
+        db,
+        records,
+        opportunity_type="cancelled_not_rebooked",
+        conversation=conversation,
+    )
+    monkeypatch.setattr(
+        "app.services.opportunity_action_service.conversation_delivery_capabilities",
+        available_capabilities,
+    )
+    monkeypatch.setattr(
+        "app.routers.growth_actions.conversation_delivery_capabilities",
+        available_capabilities,
+    )
+    action = prepare_opportunity_action(
+        "action-a",
+        row.id,
+        OpportunityActionPrepare(),
+        request(),
+        actor=records["admin"],
+        db=db,
+    )["action"]
+
+    def failed_send(
+        session: Session, *, conversation: Conversation, body: str, sender_type: str
+    ) -> OutboundMessageResult:
+        message = ConversationMessage(
+            conversation_id=conversation.id,
+            direction="outbound",
+            sender_type=sender_type,
+            body=body,
+            delivery_status="failed",
+            provider_message_id=None,
+        )
+        session.add(message)
+        session.flush()
+        return OutboundMessageResult(
+            message,
+            provider_configured=True,
+            provider_attempted=True,
+            client_error_message="No se pudo entregar.",
+        )
+
+    monkeypatch.setattr("app.routers.growth_actions.send_outbound_message", failed_send)
+    failed = send_opportunity_action(
+        "action-a", action["id"], request(), actor=records["admin"], db=db
+    )
+    failed_body = json.loads(failed.body)
+    assert failed.status_code == 502
+    assert failed_body["action"]["status"] == "failed"
+    assert db.query(ConversationMessage).count() == 1
+
+    assisted = prepare_opportunity_assisted_delivery(
+        "action-a", action["id"], request(), actor=records["admin"], db=db
+    )
+
+    message = db.query(ConversationMessage).one()
+    assert assisted["sent"] is False
+    assert assisted["action"]["status"] == "failed"
+    assert db.query(ConversationMessage).count() == 1
+    assert db.query(ChannelOutboxMessage).count() == 0
+    assert message.delivery_status == "failed"
+    assert message.provider_message_id is None
 
 
 def test_booking_before_send_invalidates_draft_and_queued_action(

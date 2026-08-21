@@ -361,6 +361,7 @@ def test_dispatcher_and_delivery_capabilities_require_usable_integration(databas
                 "integration_status",
                 "integrated_delivery_available",
                 "assisted_delivery_available",
+                "delivery_mode",
                 "customer_service_window_open",
                 "delivery_unavailable_reason",
             )
@@ -375,6 +376,7 @@ def test_dispatcher_and_delivery_capabilities_require_usable_integration(databas
         "integration_status": None,
         "integrated_delivery_available": False,
         "assisted_delivery_available": True,
+        "delivery_mode": "assisted",
         "customer_service_window_open": True,
         "delivery_unavailable_reason": "provider_not_configured",
     }
@@ -389,6 +391,7 @@ def test_dispatcher_and_delivery_capabilities_require_usable_integration(databas
         "integration_status": "disconnected",
         "integrated_delivery_available": False,
         "assisted_delivery_available": True,
+        "delivery_mode": "assisted",
         "customer_service_window_open": True,
         "delivery_unavailable_reason": "delivery_not_available",
     }
@@ -417,6 +420,7 @@ def test_dispatcher_and_delivery_capabilities_require_usable_integration(databas
         "integration_status": "connected",
         "integrated_delivery_available": True,
         "assisted_delivery_available": True,
+        "delivery_mode": "integrated",
         "customer_service_window_open": True,
         "delivery_unavailable_reason": None,
     }
@@ -436,6 +440,47 @@ def test_dispatcher_and_delivery_capabilities_require_usable_integration(databas
     assert serialized_state()["customer_service_window_open"] is True
     assert serialized_state()["integrated_delivery_available"] is False
     assert serialized_state()["delivery_unavailable_reason"] == "integrated_delivery_not_in_plan"
+
+
+@pytest.mark.parametrize(
+    ("integration_status", "health_status"),
+    [("revoked", "healthy"), ("connected", "suspended")],
+)
+def test_revoked_or_suspended_integration_uses_assisted_delivery(
+    database, integration_status, health_status
+):
+    db, _ = database
+    settings = outbound_settings()
+    business = add_business(db)
+    integration = add_integration(db, business, settings, state=integration_status)
+    integration.health_status = health_status
+    conversation, _ = add_whatsapp_conversation(db, business)
+    db.commit()
+
+    capabilities = conversation_delivery_capabilities(
+        db,
+        conversation=conversation,
+        settings=settings,
+    )
+
+    assert not capabilities.integrated_delivery_available
+    assert capabilities.assisted_delivery_available
+    assert capabilities.delivery_mode == "assisted"
+
+
+def test_invalid_recipient_makes_delivery_unavailable(database):
+    db, _ = database
+    business = add_business(db)
+    conversation, _ = add_whatsapp_conversation(db, business)
+    conversation.customer_phone = "sin-telefono"
+    conversation.external_user_id = "invalid"
+    db.commit()
+
+    capabilities = conversation_delivery_capabilities(db, conversation=conversation)
+
+    assert not capabilities.integrated_delivery_available
+    assert not capabilities.assisted_delivery_available
+    assert capabilities.delivery_mode == "unavailable"
 
 
 def test_manual_integrated_send_creates_idempotent_outbox_and_worker_persists_mid(database):

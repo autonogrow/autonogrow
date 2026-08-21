@@ -216,7 +216,28 @@ def test_dashboard_agenda_and_outbox_share_the_same_review_state() -> None:
     assert "Cita #" not in outbox
     assert "maskedOutboxPhone(message.customer_phone)" in outbox
     assert "WhatsApp terminado en" in js
+    assert 'message.delivery_mode === "assisted"' in outbox
     assert "isSafeWhatsAppUrl(message.whatsapp_url)" in outbox
+    assert "Abrir en WhatsApp" in outbox
+
+
+def test_opportunity_actions_expose_integrated_assisted_and_unavailable_ux() -> None:
+    html, _, js = sources()
+    modal = function_block(js, "function openGrowthActionModal", "function closeGrowthActionModal")
+    assisted = function_block(js, "async function openGrowthOpportunityWhatsApp", "async function copyGrowthOpportunityText")
+    assert 'id="growth-action-send"' in html
+    assert 'id="growth-action-whatsapp"' in html
+    assert "Enviar por WhatsApp" in html
+    assert "Abrir en WhatsApp" in html
+    for mode in ("integrated", "assisted", "unavailable"):
+        assert mode in js
+    assert "Este cliente no tiene un teléfono válido" in js
+    assert "AutonoGrow no lo marcará como enviado" in modal
+    assert "opportunityAssistedOpening" in assisted
+    assert "isSafeWhatsAppUrl(body.whatsapp_url)" in assisted
+    assert 'response.status === 429' in assisted
+    assert 'response.headers.get("Retry-After")' in js
+    assert "whatsappWindow.location.href = body.whatsapp_url" in assisted
 
 
 def test_accessibility_and_responsive_structure_are_explicit() -> None:

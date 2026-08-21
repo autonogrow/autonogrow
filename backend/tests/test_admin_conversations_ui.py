@@ -103,10 +103,12 @@ def test_composer_uses_canonical_capabilities_and_never_legacy_instagram_flag() 
     assert "instagram_provider_configured" not in composer
     assert "provider_configured" in provider
     assert "delivery_supported" in provider
-    assert "integrated_delivery_available" in composer
+    assert "delivery_mode" in composer
     assert "assisted_delivery_available" in composer
     assert 'conversation.channel === "manual"' in composer
     assert "ventana de atención de 24 horas" in composer
+    assert "Enviar por WhatsApp" in composer
+    assert "Abrir en WhatsApp" in composer
 
 
 def test_unavailable_channel_is_history_only_and_whatsapp_is_explicitly_assisted() -> None:
@@ -129,6 +131,18 @@ def test_send_actions_block_double_submission_and_keep_assisted_draft() -> None:
     assert "conversationAssistedOpening" in assisted
     assert "isSafeWhatsAppUrl(body.whatsapp_url)" in assisted
     assert 'textarea.value = ""' not in assisted
+
+
+def test_integrated_whatsapp_keeps_assisted_as_a_permanent_alternative() -> None:
+    _, _, js = read_sources()
+    composer = function_block(js, "function conversationComposerModel", "function renderConversationComposer")
+    render = function_block(js, "function renderConversationComposer", "function renderConversationDetail")
+    assert "conversation.delivery_mode" in composer
+    assert 'deliveryMode === "integrated"' in composer
+    assert "whatsapp && conversation.assisted_delivery_available" in composer
+    assert "assistedAction" in composer
+    assert "conversation-send-button" in render
+    assert "conversation-whatsapp-button" in render
 
 
 def test_whatsapp_assisted_url_is_restricted_to_safe_wa_me_https() -> None:

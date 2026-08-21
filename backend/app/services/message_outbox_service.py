@@ -253,6 +253,7 @@ def serialize_message_outbox(message: MessageOutbox) -> dict[str, Any]:
         "message_type": message.message_type,
         "message": message.message,
         "whatsapp_url": message.whatsapp_url,
+        "delivery_mode": "assisted" if message.whatsapp_url else "unavailable",
         "status": message.status,
         "created_at": message.created_at.isoformat() if message.created_at else None,
         "opened_at": message.opened_at.isoformat() if message.opened_at else None,

@@ -63,6 +63,14 @@ class ConversationDeliveryCapabilities:
     assisted_delivery_available: bool
     unavailable_reason: str | None
 
+    @property
+    def delivery_mode(self) -> str:
+        if self.integrated_delivery_available:
+            return "integrated"
+        if self.assisted_delivery_available:
+            return "assisted"
+        return "unavailable"
+
 
 class ConversationDeliveryUnavailable(ValueError):
     def __init__(self, reason: str, safe_message: str, *, status_code: int = 409) -> None:
@@ -195,6 +203,7 @@ def serialize_conversation(
         ),
         "integrated_delivery_available": capabilities.integrated_delivery_available,
         "assisted_delivery_available": capabilities.assisted_delivery_available,
+        "delivery_mode": capabilities.delivery_mode,
         "customer_service_window_open": capabilities.customer_service_window_open,
         "delivery_unavailable_reason": capabilities.unavailable_reason,
         # Compatibility for the current Admin panel. New consumers must use

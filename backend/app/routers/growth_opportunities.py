@@ -86,10 +86,9 @@ def serialize_opportunity_detail(
         "channel": channel.channel,
         "conversation_id": channel.conversation.id if channel.conversation else None,
         "can_send": channel.can_send,
+        "delivery_mode": channel.delivery_mode,
         "unavailable_reason": channel.unavailable_reason,
-        "assisted_delivery_available": bool(
-            channel.capabilities and channel.capabilities.assisted_delivery_available
-        ),
+        "assisted_delivery_available": channel.assisted_delivery_available,
     }
     result["latest_action"] = (
         serialize_action(db, latest_action[0]) if latest_action else None

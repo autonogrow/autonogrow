@@ -26,6 +26,7 @@ let growthActionMetrics = null;
 let selectedOpportunityAction = null;
 let selectedOpportunityForAction = null;
 let growthActionReturnFocus = null;
+let opportunityAssistedOpening = false;
 const opportunityMutationIds = new Set();
 const growthSignalMutationIds = new Set();
 let availabilitySettings = null;
@@ -390,6 +391,7 @@ function setupGrowthHub() {
     if (modalAction?.dataset.growthActionModal === "close") closeGrowthActionModal();
     if (modalAction?.dataset.growthActionModal === "copy") copyGrowthOpportunityText();
     if (modalAction?.dataset.growthActionModal === "send") sendGrowthOpportunityAction();
+    if (modalAction?.dataset.growthActionModal === "whatsapp") openGrowthOpportunityWhatsApp();
   });
   document.getElementById("growth-action-modal")?.addEventListener("click", (event) => {
     if (event.target.id === "growth-action-modal") closeGrowthActionModal();
@@ -1615,6 +1617,9 @@ async function loadGrowthActionMetrics({ background = false } = {}) {
 }
 
 function growthActionUnavailableMessage(action) {
+  if (action?.delivery_mode === "unavailable" && !action?.assisted_delivery_available) {
+    return "Este cliente no tiene un teléfono válido. Puedes copiar el texto para gestionarlo por otro canal.";
+  }
   const messages = {
     no_customer_channel: "No hay un canal conectado para este cliente. Puedes copiar el texto y gestionarlo manualmente.",
     whatsapp_template_required: "La ventana de atención de 24 horas está cerrada. No se enviará sin una plantilla oficial; puedes copiar el texto.",
@@ -1630,7 +1635,8 @@ function openGrowthActionModal(action, opportunity, trigger = null) {
   selectedOpportunityAction = action;
   selectedOpportunityForAction = opportunity;
   growthActionReturnFocus = trigger || document.activeElement;
-  const channel = { whatsapp: "WhatsApp", instagram: "Instagram" }[action.channel] || "Sin canal disponible";
+  const channel = { whatsapp: "WhatsApp", instagram: "Instagram" }[action.channel]
+    || (action.delivery_mode === "assisted" ? "WhatsApp asistido" : "Sin canal disponible");
   const status = { draft: "Borrador editable", approved: "Aprobado y pendiente", sending: "Enviando", sent: "Enviado", failed: "Fallido", cancelled: "Cancelado", completed: "Completado" }[action.status] || action.status;
   document.getElementById("growth-action-channel").textContent = channel;
   document.getElementById("growth-action-reason").textContent = opportunity.reason_text;
@@ -1639,13 +1645,21 @@ function openGrowthActionModal(action, opportunity, trigger = null) {
   textarea.value = action.final_text || action.suggested_text || "";
   textarea.disabled = action.status !== "draft";
   const notice = document.getElementById("growth-action-notice");
-  notice.className = `inline-feedback ${action.can_send ? "" : "error"}`;
-  notice.textContent = action.can_send
-    ? "Revisa el texto. Solo se enviará cuando pulses Enviar."
-    : growthActionUnavailableMessage(action);
+  const integrated = action.delivery_mode === "integrated" && action.can_send;
+  const assisted = action.assisted_delivery_available === true;
+  notice.className = `inline-feedback ${integrated || assisted ? "" : "error"}`;
+  notice.textContent = integrated
+    ? "Puedes enviarlo desde AutonoGrow o abrir WhatsApp para revisarlo y enviarlo tú."
+    : assisted
+      ? "Se abrirá WhatsApp con el mensaje preparado para que puedas revisarlo y enviarlo. AutonoGrow no lo marcará como enviado."
+      : growthActionUnavailableMessage(action);
   const send = document.getElementById("growth-action-send");
-  send.disabled = action.status !== "draft" || !action.can_send;
-  send.textContent = ["approved", "sending"].includes(action.status) ? "Pendiente" : "Enviar";
+  send.hidden = !integrated;
+  send.disabled = action.status !== "draft" || !integrated;
+  send.textContent = ["approved", "sending"].includes(action.status) ? "Pendiente" : "Enviar por WhatsApp";
+  const whatsapp = document.getElementById("growth-action-whatsapp");
+  whatsapp.hidden = !assisted;
+  whatsapp.disabled = !assisted || !["draft", "failed"].includes(action.status);
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
   document.body.classList.add("modal-scroll-locked");
@@ -1718,6 +1732,7 @@ async function sendGrowthOpportunityAction() {
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/actions/${action.id}/send`, { method: "POST" });
     const body = await readAdminResponseBody(response);
     if (body?.action) selectedOpportunityAction = body.action;
+    if (response.status === 429) throw new Error(adminRateLimitMessage(response));
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar el mensaje."));
     notice.className = "inline-feedback success";
     notice.textContent = body.action.status === "sent"
@@ -1734,6 +1749,42 @@ async function sendGrowthOpportunityAction() {
     notice.textContent = error.message || "No se pudo enviar el mensaje. Puedes copiarlo para gestionarlo manualmente.";
     button.disabled = !selectedOpportunityAction?.can_send;
     button.textContent = "Reintentar envío";
+    const whatsapp = document.getElementById("growth-action-whatsapp");
+    const assisted = selectedOpportunityAction?.assisted_delivery_available === true;
+    whatsapp.hidden = !assisted;
+    whatsapp.disabled = !assisted;
+  }
+}
+
+async function openGrowthOpportunityWhatsApp() {
+  if (!selectedOpportunityAction || opportunityAssistedOpening) return;
+  const whatsappWindow = openBlankWhatsAppWindow();
+  const button = document.getElementById("growth-action-whatsapp");
+  const send = document.getElementById("growth-action-send");
+  const notice = document.getElementById("growth-action-notice");
+  opportunityAssistedOpening = true;
+  button.disabled = true;
+  send.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const action = await persistGrowthActionDraft();
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/actions/${action.id}/assisted-delivery`, { method: "POST" });
+    const body = await readAdminResponseBody(response);
+    if (response.status === 429) throw new Error(adminRateLimitMessage(response));
+    if (!response.ok || !isSafeWhatsAppUrl(body.whatsapp_url)) throw new Error(conversationErrorMessage(body, "No se pudo abrir WhatsApp de forma segura."));
+    if (!whatsappWindow) throw new Error("El navegador bloqueó la nueva ventana de WhatsApp.");
+    whatsappWindow.location.href = body.whatsapp_url;
+    notice.className = "inline-feedback success";
+    notice.textContent = "WhatsApp abierto. El mensaje sigue preparado y no se considera enviado.";
+  } catch (error) {
+    whatsappWindow?.close();
+    notice.className = "inline-feedback error";
+    notice.textContent = error.message || "No se pudo abrir WhatsApp.";
+  } finally {
+    opportunityAssistedOpening = false;
+    button.removeAttribute("aria-busy");
+    button.disabled = !selectedOpportunityAction?.assisted_delivery_available;
+    send.disabled = selectedOpportunityAction?.status !== "draft" || !selectedOpportunityAction?.can_send;
   }
 }
 
@@ -3822,6 +3873,19 @@ async function loadReviewRequests({ background = false } = {}) {
   }
 }
 
+function adminRetryAfterSeconds(response) {
+  const raw = response.headers.get("Retry-After");
+  const seconds = Number.parseInt(raw || "", 10);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+function adminRateLimitMessage(response) {
+  const seconds = adminRetryAfterSeconds(response);
+  return seconds
+    ? `Hay demasiadas solicitudes. Vuelve a intentarlo en ${seconds} segundos.`
+    : "Hay demasiadas solicitudes. Espera un momento antes de volver a intentarlo.";
+}
+
 function conversationErrorMessage(body, fallback) {
   const normalized = typeof body?.detail?.message === "string"
     ? { message: body.detail.message }
@@ -4203,13 +4267,19 @@ function renderConversationMessages(messages) {
 }
 
 function conversationComposerModel(conversation) {
+  const deliveryMode = conversation.delivery_mode || (
+    conversation.integrated_delivery_available
+      ? "integrated"
+      : conversation.assisted_delivery_available ? "assisted" : "unavailable"
+  );
   if (conversation.channel === "manual") {
     return { canCompose: true, canSend: true, assisted: false, notice: "La respuesta quedará registrada en el historial del negocio.", action: "Registrar respuesta" };
   }
-  if (conversation.integrated_delivery_available) {
-    return { canCompose: true, canSend: true, assisted: false, notice: `Se enviará mediante ${conversationChannelLabel(conversation.channel)}.`, action: "Enviar respuesta" };
+  if (deliveryMode === "integrated") {
+    const whatsapp = conversation.channel === "whatsapp";
+    return { canCompose: true, canSend: true, assisted: whatsapp && conversation.assisted_delivery_available, notice: `Se enviará mediante ${conversationChannelLabel(conversation.channel)}.`, action: whatsapp ? "Enviar por WhatsApp" : "Enviar respuesta", assistedAction: "Abrir en WhatsApp" };
   }
-  if (conversation.channel === "whatsapp" && conversation.assisted_delivery_available) {
+  if (deliveryMode === "assisted" && conversation.channel === "whatsapp" && conversation.assisted_delivery_available) {
     const closedWindow = conversation.delivery_unavailable_reason === "whatsapp_template_required" || conversation.customer_service_window_open === false;
     return {
       canCompose: true,
@@ -4218,7 +4288,8 @@ function conversationComposerModel(conversation) {
       notice: closedWindow
         ? "La ventana de atención de 24 horas está cerrada. Para volver a escribir desde AutonoGrow necesitas una plantilla aprobada, o puedes continuar desde WhatsApp. AutonoGrow no marcará el mensaje como enviado."
         : "El envío integrado no está disponible. Continúa en WhatsApp; AutonoGrow no marcará el mensaje como enviado.",
-      action: "Abrir en WhatsApp"
+      action: "Abrir en WhatsApp",
+      assistedAction: "Abrir en WhatsApp"
     };
   }
   const reconnect = businessChannelHealth.find((item) => item.channel === conversation.channel)?.reconnection_required;
@@ -4246,7 +4317,7 @@ function renderConversationComposer(conversation, quickReplies) {
       <small>${escapeHtml(model.notice)}</small>
       <div>
         ${model.canSend ? `<button id="conversation-send-button" class="ag-button ag-button--primary" type="button" data-admin-action="send-conversation-reply">${escapeHtml(model.action)}</button>` : ""}
-        ${model.assisted ? `<button id="conversation-whatsapp-button" class="btn btn-whatsapp" type="button" data-admin-action="open-conversation-whatsapp">${escapeHtml(model.action)}</button>` : ""}
+        ${model.assisted ? `<button id="conversation-whatsapp-button" class="btn btn-whatsapp" type="button" data-admin-action="open-conversation-whatsapp">${escapeHtml(model.assistedAction || model.action)}</button>` : ""}
       </div>
     </div>
   </div>`;
@@ -4589,6 +4660,7 @@ async function sendConversationReply() {
       }
     );
     const body = await readAdminResponseBody(response);
+    if (response.status === 429) throw new Error(adminRateLimitMessage(response));
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar el mensaje."));
     selectedConversationSuggestionId = null;
     if (textarea) textarea.value = "";
@@ -4602,7 +4674,7 @@ async function sendConversationReply() {
     if (button?.isConnected) {
       button.disabled = false;
       button.removeAttribute("aria-busy");
-      button.textContent = selectedConversation?.channel === "manual" ? "Registrar respuesta" : "Enviar respuesta";
+      button.textContent = selectedConversation ? conversationComposerModel(selectedConversation).action : "Enviar respuesta";
     }
   }
 }
@@ -4638,6 +4710,7 @@ async function openConversationWhatsApp() {
       }
     );
     const body = await readAdminResponseBody(response);
+    if (response.status === 429) throw new Error(adminRateLimitMessage(response));
     if (!response.ok || !isSafeWhatsAppUrl(body.whatsapp_url)) throw new Error(conversationErrorMessage(body, "No se pudo abrir WhatsApp de forma segura."));
     if (!whatsappWindow) throw new Error("El navegador bloqueó la nueva ventana de WhatsApp.");
     whatsappWindow.location.href = body.whatsapp_url;
@@ -5247,7 +5320,7 @@ function renderMessageCards(messages, emptyMessage = "No hay mensajes para este 
   }
 
   return messages.map((message) => {
-    const phoneIsValid = isSafeWhatsAppUrl(message.whatsapp_url);
+    const phoneIsValid = message.delivery_mode === "assisted" && isSafeWhatsAppUrl(message.whatsapp_url);
     const isClosed = ["sent", "skipped"].includes(message.status);
     return `
       <article class="message-outbox-item">
@@ -5263,7 +5336,7 @@ function renderMessageCards(messages, emptyMessage = "No hay mensajes para este 
         ${phoneIsValid ? "" : `<p class="message-phone-warning">Este cliente no tiene un teléfono válido para WhatsApp.</p>`}
         <div class="message-actions">
           <button class="btn btn-small btn-whatsapp" type="button" data-admin-action="open-whatsapp-message" data-id="${message.id}" ${!phoneIsValid || isClosed ? "disabled" : ""}>
-            Enviar por WhatsApp
+            Abrir en WhatsApp
           </button>
           <button class="btn btn-small btn-success" type="button" data-admin-action="update-outbox-status" data-id="${message.id}" data-status="sent" ${message.status === "sent" ? "disabled" : ""}>
             Marcar como enviado
@@ -5346,6 +5419,9 @@ async function openPreparedWhatsAppMessage(message, whatsappWindow) {
     );
     const result = await response.json().catch(() => null);
 
+    if (response.status === 429) {
+      throw new Error(adminRateLimitMessage(response));
+    }
     if (!response.ok) {
       throw new Error(safeConfigurationError(result, "No se pudo preparar el mensaje."));
     }
@@ -5358,7 +5434,9 @@ async function openPreparedWhatsAppMessage(message, whatsappWindow) {
   } catch (error) {
     whatsappWindow.close();
     console.error(error);
-    alert("No se pudo abrir WhatsApp de forma segura. Comprueba el teléfono e inténtalo de nuevo.");
+    alert(error.message?.startsWith("Hay demasiadas solicitudes")
+      ? error.message
+      : "No se pudo abrir WhatsApp de forma segura. Comprueba el teléfono e inténtalo de nuevo.");
     return false;
   }
 }
@@ -6053,6 +6131,7 @@ async function createReviewRequest(bookingId) {
     );
     const result = await response.json().catch(() => null);
 
+    if (response.status === 429) throw new Error(adminRateLimitMessage(response));
     if (!response.ok) {
       throw new Error("review_request_failed");
     }
@@ -6067,7 +6146,9 @@ async function createReviewRequest(bookingId) {
     showGrowthReviewFeedback("Solicitud preparada. Puedes copiar el mensaje o abrirlo en WhatsApp.");
   } catch (error) {
     console.error(error);
-    showGrowthReviewFeedback("No pudimos preparar la solicitud. Comprueba el enlace y vuelve a intentarlo.", true);
+    showGrowthReviewFeedback(error.message?.startsWith("Hay demasiadas solicitudes")
+      ? error.message
+      : "No pudimos preparar la solicitud. Comprueba el enlace y vuelve a intentarlo.", true);
   } finally {
     reviewMutationKeys.delete(mutationKey);
     document.querySelectorAll(`[data-review-create="${bookingId}"]`).forEach((button) => { button.disabled = false; });
@@ -6097,6 +6178,7 @@ async function openReviewWhatsApp(reviewRequestId) {
     );
     const result = await response.json().catch(() => null);
 
+    if (response.status === 429) throw new Error(adminRateLimitMessage(response));
     if (!response.ok) {
       throw new Error("review_request_open_failed");
     }
@@ -6112,7 +6194,9 @@ async function openReviewWhatsApp(reviewRequestId) {
   } catch (error) {
     whatsappWindow?.close();
     console.error(error);
-    showGrowthReviewFeedback("No pudimos abrir WhatsApp. Comprueba el canal y vuelve a intentarlo.", true, reviewRequestId);
+    showGrowthReviewFeedback(error.message?.startsWith("Hay demasiadas solicitudes")
+      ? error.message
+      : "No pudimos abrir WhatsApp. Comprueba el canal y vuelve a intentarlo.", true, reviewRequestId);
   } finally {
     reviewMutationKeys.delete(mutationKey);
     document.querySelectorAll(`[data-review-open="${reviewRequestId}"]`).forEach((button) => { button.disabled = false; });
@@ -6633,6 +6717,7 @@ async function updateBookingStatus(bookingId, status) {
 
     const result = await response.json().catch(() => null);
 
+    if (response.status === 429) throw new Error(adminRateLimitMessage(response));
     if (!response.ok) {
       throw new Error(safeConfigurationError(result, "No se pudo cambiar el estado de la cita."));
     }

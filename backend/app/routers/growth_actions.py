@@ -35,6 +35,7 @@ from app.services.conversation_service import (
 from app.services.growth_metrics_service import growth_metrics
 from app.services.opportunity_action_service import (
     OpportunityActionService,
+    build_action_assisted_whatsapp_url,
     invalidate_actions_for_resolved_opportunity,
     serialize_action,
     sync_action_from_message,
@@ -351,6 +352,50 @@ def send_opportunity_action(
     if not delivery.ok:
         return JSONResponse(status_code=502, content=response)
     return response
+
+
+@router.post("/actions/{action_id}/assisted-delivery")
+def prepare_opportunity_assisted_delivery(
+    business_slug: str,
+    action_id: int,
+    request: Request,
+    actor: User = Depends(require_business_access),
+    db: Session = Depends(get_db),
+):
+    business = business_or_404(db, business_slug)
+    row = action_or_404(db, business_id=business.id, action_id=action_id)
+    sync_action_from_message(row)
+    if row.status not in {"draft", "failed"}:
+        raise HTTPException(
+            status_code=409,
+            detail="La acción ya no admite entrega asistida.",
+        )
+    if row.opportunity.status != "pending":
+        raise HTTPException(status_code=409, detail="La oportunidad ya no está pendiente.")
+    try:
+        whatsapp_url = build_action_assisted_whatsapp_url(row)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="Este cliente no tiene un teléfono válido.",
+        ) from error
+    record_audit(
+        db,
+        action="opportunity_action_assisted_delivery_opened",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="opportunity_action",
+        resource_id=row.id,
+        metadata={"opportunity_id": row.opportunity_id, "channel": "whatsapp"},
+    )
+    return {
+        "ok": True,
+        "delivery_mode": "assisted",
+        "sent": False,
+        "whatsapp_url": whatsapp_url,
+        "action": serialize_action(db, row),
+    }
 
 
 @router.post("/actions/{action_id}/cancel")

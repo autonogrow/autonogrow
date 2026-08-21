@@ -18,6 +18,7 @@ from app.services.conversation_service import (
     ConversationDeliveryCapabilities,
     conversation_delivery_capabilities,
 )
+from app.services.message_outbox_service import build_whatsapp_url
 from app.services.opportunity_template_service import (
     OpportunityMessageTemplateService,
     booking_url,
@@ -38,6 +39,7 @@ def _normalized_phone(value: str | None) -> str:
 class ActionChannelResolution:
     conversation: Conversation | None
     capabilities: ConversationDeliveryCapabilities | None
+    assisted_phone: str | None = None
 
     @property
     def channel(self) -> str | None:
@@ -49,6 +51,24 @@ class ActionChannelResolution:
             self.capabilities is not None
             and self.capabilities.integrated_delivery_available
         )
+
+    @property
+    def assisted_delivery_available(self) -> bool:
+        if self.capabilities is not None:
+            return self.capabilities.assisted_delivery_available
+        try:
+            build_whatsapp_url(self.assisted_phone, "test")
+        except ValueError:
+            return False
+        return True
+
+    @property
+    def delivery_mode(self) -> str:
+        if self.can_send:
+            return "integrated"
+        if self.assisted_delivery_available:
+            return "assisted"
+        return "unavailable"
 
     @property
     def unavailable_reason(self) -> str | None:
@@ -103,16 +123,39 @@ def resolve_action_channel(
             and _normalized_phone(row.customer_phone) == phone
         )
 
-    fallback: ActionChannelResolution | None = None
+    assisted_fallback: ActionChannelResolution | None = None
+    unavailable_fallback: ActionChannelResolution | None = None
     for conversation in candidates:
         if conversation.channel not in {"whatsapp", "instagram"}:
             continue
         capabilities = conversation_delivery_capabilities(db, conversation=conversation)
         resolution = ActionChannelResolution(conversation, capabilities)
-        fallback = fallback or resolution
         if resolution.can_send:
             return resolution
-    return fallback or ActionChannelResolution(None, None)
+        if resolution.assisted_delivery_available:
+            assisted_fallback = assisted_fallback or resolution
+        else:
+            unavailable_fallback = unavailable_fallback or resolution
+    phone_fallback = ActionChannelResolution(None, None, opportunity.customer.phone)
+    if assisted_fallback is not None:
+        return assisted_fallback
+    if phone_fallback.assisted_delivery_available:
+        return phone_fallback
+    return unavailable_fallback or phone_fallback
+
+
+def build_action_assisted_whatsapp_url(action: OpportunityAction) -> str:
+    if action.action_type != "contact_customer":
+        raise ValueError("assisted_delivery_not_available")
+    phone = (
+        action.conversation.customer_phone or action.conversation.external_user_id
+        if action.conversation is not None
+        else action.customer.phone
+    )
+    body = (action.final_text or action.suggested_text or "").strip()
+    if not body:
+        raise ValueError("empty_message")
+    return build_whatsapp_url(phone, body)
 
 
 def sync_action_from_message(
@@ -284,7 +327,7 @@ def serialize_action(db: Session, row: OpportunityAction) -> dict[str, Any]:
             conversation_delivery_capabilities(db, conversation=row.conversation),
         )
         if row.conversation is not None
-        else ActionChannelResolution(None, None)
+        else ActionChannelResolution(None, None, row.customer.phone)
     )
     action_booking_url = None
     if row.action_type == "contact_customer":
@@ -303,10 +346,8 @@ def serialize_action(db: Session, row: OpportunityAction) -> dict[str, Any]:
         "suggested_text": row.suggested_text,
         "final_text": row.final_text,
         "can_send": resolution.can_send,
-        "assisted_delivery_available": bool(
-            resolution.capabilities
-            and resolution.capabilities.assisted_delivery_available
-        ),
+        "assisted_delivery_available": resolution.assisted_delivery_available,
+        "delivery_mode": resolution.delivery_mode,
         "unavailable_reason": resolution.unavailable_reason,
         "booking_url": action_booking_url,
         "created_by_user_id": row.created_by_user_id,
