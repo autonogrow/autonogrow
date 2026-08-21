@@ -1,3 +1,4 @@
+from pathlib import Path
 from secrets import compare_digest
 from uuid import uuid4
 
@@ -139,11 +140,7 @@ async def upload_booking_attachments(
             detail=f"Máximo {MAX_FILES_PER_REQUEST} fotos por solicitud.",
         )
 
-    upload_dir = get_uploads_dir() / business.slug / str(booking.id)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
-    created_attachments = []
-
+    validated_files: list[tuple[UploadFile, bytes, str, str]] = []
     for file in files:
         content_type = file.content_type
 
@@ -153,13 +150,11 @@ async def upload_booking_attachments(
                 detail=f"Tipo de archivo no permitido: {content_type}",
             )
 
-        content = await file.read()
+        content = await file.read(MAX_FILE_SIZE_BYTES + 1)
         size_bytes = len(content)
 
-        if not image_signature_matches(content, content_type):
-            raise HTTPException(
-                status_code=400, detail=f"Contenido de imagen inválido: {file.filename}"
-            )
+        if not content:
+            raise HTTPException(status_code=400, detail=f"El archivo {file.filename} está vacío.")
 
         if size_bytes > MAX_FILE_SIZE_BYTES:
             raise HTTPException(
@@ -167,37 +162,54 @@ async def upload_booking_attachments(
                 detail=f"El archivo {file.filename} supera el límite de {get_settings().upload_max_size_mb} MB.",
             )
 
+        if not image_signature_matches(content, content_type):
+            raise HTTPException(
+                status_code=400, detail=f"Contenido de imagen inválido: {file.filename}"
+            )
+
         extension = ALLOWED_CONTENT_TYPES[content_type]
         stored_filename = f"{uuid4().hex}{extension}"
-        file_path = upload_dir / stored_filename
+        validated_files.append((file, content, content_type, stored_filename))
 
-        file_path.write_bytes(content)
+    upload_dir = get_uploads_dir() / business.slug / str(booking.id)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    created_attachments = []
+    written_paths = []
+    try:
+        for file, content, content_type, stored_filename in validated_files:
+            file_path = upload_dir / stored_filename
+            written_paths.append(file_path)
+            file_path.write_bytes(content)
 
-        attachment = BookingAttachment(
-            business_id=business.id,
-            booking_id=booking.id,
-            original_filename=file.filename or stored_filename,
-            stored_filename=stored_filename,
-            file_path=str(file_path),
-            content_type=content_type,
-            size_bytes=size_bytes,
-        )
+            attachment = BookingAttachment(
+                business_id=business.id,
+                booking_id=booking.id,
+                original_filename=Path(file.filename or stored_filename).name[:300],
+                stored_filename=stored_filename,
+                file_path=str(file_path),
+                content_type=content_type,
+                size_bytes=len(content),
+            )
 
-        db.add(attachment)
-        db.flush()
+            db.add(attachment)
+            db.flush()
 
-        created_attachments.append(
-            {
-                "id": attachment.id,
-                "original_filename": attachment.original_filename,
-                "stored_filename": attachment.stored_filename,
-                "content_type": attachment.content_type,
-                "size_bytes": attachment.size_bytes,
-                "url": private_attachment_url(business.slug, booking.id, attachment.id),
-            }
-        )
-
-    db.commit()
+            created_attachments.append(
+                {
+                    "id": attachment.id,
+                    "original_filename": attachment.original_filename,
+                    "stored_filename": attachment.stored_filename,
+                    "content_type": attachment.content_type,
+                    "size_bytes": attachment.size_bytes,
+                    "url": private_attachment_url(business.slug, booking.id, attachment.id),
+                }
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        for path in written_paths:
+            path.unlink(missing_ok=True)
+        raise
     record_audit(
         db,
         action="media_uploaded",

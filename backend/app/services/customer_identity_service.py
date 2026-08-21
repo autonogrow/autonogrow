@@ -8,6 +8,7 @@ from phonenumbers import PhoneNumberFormat
 from sqlalchemy.orm import Session
 
 from app.models import Customer, CustomerAccountLink, User
+from app.services.idempotent_insert_service import insert_rows_ignore_conflicts
 
 INSTAGRAM_USERNAME = re.compile(r"^[a-z0-9._]{1,30}$")
 
@@ -71,6 +72,19 @@ def link_customer_account(
     customer: Customer,
     method: str,
 ) -> CustomerAccountLink:
+    db.flush()
+    insert_rows_ignore_conflicts(
+        db,
+        CustomerAccountLink,
+        [
+            {
+                "user_id": user.id,
+                "customer_id": customer.id,
+                "business_id": customer.business_id,
+                "link_method": method,
+            }
+        ],
+    )
     customer_link = (
         db.query(CustomerAccountLink)
         .filter(CustomerAccountLink.customer_id == customer.id)
@@ -92,12 +106,4 @@ def link_customer_account(
         if account_link.customer_id != customer.id:
             raise ValueError("identity_conflict")
         return account_link
-    link = CustomerAccountLink(
-        user_id=user.id,
-        customer_id=customer.id,
-        business_id=customer.business_id,
-        link_method=method,
-    )
-    db.add(link)
-    db.flush()
-    return link
+    raise RuntimeError("Customer account link upsert did not persist a row")

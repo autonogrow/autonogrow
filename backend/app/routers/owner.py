@@ -4,10 +4,11 @@ import json
 import re
 import unicodedata
 from datetime import datetime, timedelta
+from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -452,6 +453,124 @@ def build_health(db: Session, business: Business, metrics: dict) -> dict:
     return health
 
 
+def _grouped_count(
+    db: Session,
+    model,
+    business_ids: list[int],
+    *filters,
+) -> dict[int, int]:
+    if not business_ids:
+        return {}
+    return {
+        business_id: count
+        for business_id, count in db.query(model.business_id, func.count(model.id))
+        .filter(model.business_id.in_(business_ids), *filters)
+        .group_by(model.business_id)
+        .all()
+    }
+
+
+def serialize_owner_summaries(db: Session, businesses: list[Business]) -> list[dict]:
+    if not businesses:
+        return []
+    business_ids = [business.id for business in businesses]
+    now = datetime.now(ZoneInfo("Europe/Madrid")).replace(tzinfo=None)
+    today_start = datetime.combine(now.date(), datetime.min.time())
+    tomorrow = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+    today_condition = or_(
+        and_(Booking.start_datetime >= today_start, Booking.start_datetime < tomorrow),
+        Booking.preferred_date == now.date().isoformat(),
+    )
+    upcoming_condition = and_(
+        Booking.status.in_(UPCOMING_BOOKING_STATUSES),
+        or_(
+            Booking.start_datetime >= now,
+            and_(
+                Booking.start_datetime.is_(None),
+                Booking.preferred_date >= now.date().isoformat(),
+            ),
+        ),
+    )
+    booking_metrics = {
+        row.business_id: row
+        for row in db.query(
+            Booking.business_id.label("business_id"),
+            func.count(Booking.id).label("total_bookings"),
+            func.sum(case((Booking.status.in_(PENDING_BOOKING_STATUSES), 1), else_=0)).label(
+                "pending_bookings"
+            ),
+            func.sum(case((today_condition, 1), else_=0)).label("today_bookings"),
+            func.sum(case((upcoming_condition, 1), else_=0)).label("upcoming_bookings"),
+        )
+        .filter(Booking.business_id.in_(business_ids))
+        .group_by(Booking.business_id)
+        .all()
+    }
+    active_services = _grouped_count(
+        db, BusinessService, business_ids, BusinessService.active.is_(True)
+    )
+    pending_outbox = _grouped_count(
+        db, MessageOutbox, business_ids, MessageOutbox.status == "pending"
+    )
+    pending_reviews = _grouped_count(
+        db, ReviewRequest, business_ids, ReviewRequest.status == "pending"
+    )
+    active_galleries = _grouped_count(
+        db, BusinessGalleryImage, business_ids, BusinessGalleryImage.active.is_(True)
+    )
+    availability = {
+        settings.business_id: settings
+        for settings in db.query(AvailabilitySettings)
+        .filter(AvailabilitySettings.business_id.in_(business_ids))
+        .all()
+    }
+
+    summaries = []
+    for business in businesses:
+        booking_row = booking_metrics.get(business.id)
+        metrics = {
+            "total_bookings": booking_row.total_bookings if booking_row else 0,
+            "pending_bookings": booking_row.pending_bookings if booking_row else 0,
+            "today_bookings": booking_row.today_bookings if booking_row else 0,
+            "upcoming_bookings": booking_row.upcoming_bookings if booking_row else 0,
+            "active_services": active_services.get(business.id, 0),
+            "message_outbox_pending": pending_outbox.get(business.id, 0),
+            "review_requests_pending": pending_reviews.get(business.id, 0),
+        }
+        settings = availability.get(business.id)
+        has_schedule = False
+        if settings:
+            try:
+                weekly_schedule = json.loads(settings.weekly_schedule_json)
+                has_schedule = any(bool(windows) for windows in weekly_schedule.values())
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        health = {
+            "has_basic_info": bool(business.name and business.category and business.city),
+            "has_phone": bool(business.phone and business.phone.strip()),
+            "has_active_services": metrics["active_services"] > 0,
+            "has_schedule": has_schedule,
+            "has_reviews_url": bool(business.reviews_url and business.reviews_url.strip()),
+            "has_logo": bool(business.logo_url),
+            "has_gallery": active_galleries.get(business.id, 0) > 0,
+            "has_colors": bool(
+                business.primary_color
+                and business.secondary_color
+                and business.accent_color
+                and business.background_color
+            ),
+        }
+        health["is_public_ready"] = bool(
+            business.status == "active"
+            and health["has_basic_info"]
+            and health["has_phone"]
+            and health["has_active_services"]
+            and health["has_schedule"]
+        )
+        summaries.append({**serialize_business(business), "metrics": metrics, "health": health})
+    return summaries
+
+
 def serialize_owner_summary(db: Session, business: Business) -> dict:
     metrics = build_metrics(db, business)
     return {
@@ -462,9 +581,19 @@ def serialize_owner_summary(db: Session, business: Business) -> dict:
 
 
 @router.get("/businesses")
-def list_owner_businesses(db: Session = Depends(get_db)):
-    businesses = db.query(Business).order_by(Business.created_at.desc(), Business.id.desc()).all()
-    return [serialize_owner_summary(db, business) for business in businesses]
+def list_owner_businesses(
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    db: Session = Depends(get_db),
+):
+    businesses = (
+        db.query(Business)
+        .order_by(Business.created_at.desc(), Business.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return serialize_owner_summaries(db, businesses)
 
 
 @router.get("/incidents")

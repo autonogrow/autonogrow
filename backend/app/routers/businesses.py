@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -11,8 +13,19 @@ router = APIRouter(prefix="/api/businesses", tags=["businesses"])
 
 
 @router.get("", response_model=list[BusinessOut])
-def list_businesses(db: Session = Depends(get_db)):
-    return db.query(Business).filter(Business.status == "active").order_by(Business.id.asc()).all()
+def list_businesses(
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(Business)
+        .filter(Business.status == "active")
+        .order_by(Business.id.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
 @router.get("/{slug}", response_model=BusinessOut)

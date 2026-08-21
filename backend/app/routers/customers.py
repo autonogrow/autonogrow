@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -14,7 +16,12 @@ router = APIRouter(
 
 
 @router.get("", response_model=list[CustomerOut])
-def list_customers(business_slug: str, db: Session = Depends(get_db)):
+def list_customers(
+    business_slug: str,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    db: Session = Depends(get_db),
+):
     business = db.query(Business).filter(Business.slug == business_slug).first()
 
     if business is None:
@@ -24,5 +31,7 @@ def list_customers(business_slug: str, db: Session = Depends(get_db)):
         db.query(Customer)
         .filter(Customer.business_id == business.id)
         .order_by(Customer.created_at.desc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )

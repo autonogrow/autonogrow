@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -595,6 +596,8 @@ def list_message_outbox(
     status: str | None = Query(default=None),
     message_type: str | None = Query(default=None),
     booking_id: int | None = Query(default=None),
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
     db: Session = Depends(get_db),
 ):
     business = db.query(Business).filter(Business.slug == business_slug).first()
@@ -616,7 +619,12 @@ def list_message_outbox(
         (MessageOutbox.status == "opened", 1),
         else_=2,
     )
-    messages = query.order_by(status_order, MessageOutbox.created_at.desc()).all()
+    messages = (
+        query.order_by(status_order, MessageOutbox.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
     return {
         "business_slug": business.slug,
@@ -702,7 +710,12 @@ def update_outbox_message_status(
 
 
 @router.get("/review-requests", dependencies=[Depends(require_business_admin)])
-def list_review_requests(business_slug: str, db: Session = Depends(get_db)):
+def list_review_requests(
+    business_slug: str,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    db: Session = Depends(get_db),
+):
     business = db.query(Business).filter(Business.slug == business_slug).first()
 
     if business is None:
@@ -712,6 +725,8 @@ def list_review_requests(business_slug: str, db: Session = Depends(get_db)):
         db.query(ReviewRequest)
         .filter(ReviewRequest.business_id == business.id)
         .order_by(ReviewRequest.created_at.desc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
 

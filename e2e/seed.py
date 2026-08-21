@@ -4,9 +4,10 @@ import base64
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -108,7 +109,9 @@ def _booking(
 
 
 def _seed_instagram(db: Session, business: Business, owner: User, marker: str) -> None:
-    utc_now = datetime.now(timezone.utc)
+    local_today = datetime.now(ZoneInfo("Europe/Madrid")).date()
+    local_midday = datetime.combine(local_today, time(hour=12), ZoneInfo("Europe/Madrid"))
+    fixture_planned_at = local_midday.astimezone(timezone.utc)
     db.add(
         InstagramContentSettings(
             business_id=business.id,
@@ -121,14 +124,14 @@ def _seed_instagram(db: Session, business: Business, owner: User, marker: str) -
         business_id=business.id,
         title=f"{marker} lanzamiento",
         status="ready_for_review",
-        planned_publish_at=utc_now + timedelta(days=2, hours=3),
+        planned_publish_at=fixture_planned_at,
         created_by_user_id=owner.id,
     )
     published = InstagramContent(
         business_id=business.id,
         title=f"{marker} histórico protegido",
         status="published",
-        planned_publish_at=utc_now - timedelta(days=2),
+        planned_publish_at=fixture_planned_at - timedelta(hours=2),
         created_by_user_id=owner.id,
     )
     removable = InstagramContent(

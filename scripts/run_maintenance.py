@@ -7,6 +7,7 @@ import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import delete
 
@@ -28,6 +29,9 @@ from app.services.growth_opportunity_service import GrowthOpportunityService  # 
 from app.services.social_content_intelligence_service import (  # noqa: E402
     SocialContentIntelligenceService,
 )
+from app.services.storage_reconciliation_service import (  # noqa: E402
+    reconcile_managed_storage,
+)
 
 TASKS = (
     "queue-history",
@@ -35,7 +39,9 @@ TASKS = (
     "growth-opportunities",
     "growth-signals",
     "social-content-intelligence",
+    "storage-reconciliation",
 )
+DEFAULT_TASKS = tuple(task for task in TASKS if task != "storage-reconciliation")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -45,33 +51,41 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     settings = get_settings()
-    selected = (args.task,) if args.task else TASKS
+    selected = (args.task,) if args.task else DEFAULT_TASKS
     now = datetime.utcnow()
-    counts: dict[str, int | dict[str, int]] = {}
+    counts: dict[str, Any] = {}
     with SessionLocal() as db:
         if "queue-history" in selected:
             inbox_cutoff = now - timedelta(days=settings.webhook_inbox_retention_days)
             outbox_cutoff = now - timedelta(days=settings.outbox_retention_days)
-            inbox = delete(WebhookInboxEvent).where(
+            inbox_filters = (
                 WebhookInboxEvent.status.in_(("processed", "ignored", "cancelled")),
                 WebhookInboxEvent.updated_at < inbox_cutoff,
             )
-            outbox = delete(ChannelOutboxMessage).where(
+            outbox_filters = (
                 ChannelOutboxMessage.status.in_(("sent", "cancelled")),
                 ChannelOutboxMessage.updated_at < outbox_cutoff,
             )
-            counts["queue_history"] = (
-                (db.execute(inbox).rowcount or 0) + (db.execute(outbox).rowcount or 0)
-                if args.apply
-                else 0
-            )
+            if args.apply:
+                inbox_count = db.execute(delete(WebhookInboxEvent).where(*inbox_filters)).rowcount or 0
+                outbox_count = db.execute(
+                    delete(ChannelOutboxMessage).where(*outbox_filters)
+                ).rowcount or 0
+            else:
+                inbox_count = db.query(WebhookInboxEvent).filter(*inbox_filters).count()
+                outbox_count = db.query(ChannelOutboxMessage).filter(*outbox_filters).count()
+            counts["queue_history"] = {"inbox": inbox_count, "outbox": outbox_count}
         if "heartbeats" in selected:
-            statement = delete(WorkerHeartbeat).where(
+            heartbeat_filters = (
                 WorkerHeartbeat.status.in_(("stopped", "error")),
                 WorkerHeartbeat.updated_at
                 < now - timedelta(days=settings.worker_heartbeat_retention_days),
             )
-            counts["heartbeats"] = db.execute(statement).rowcount or 0 if args.apply else 0
+            counts["heartbeats"] = (
+                db.execute(delete(WorkerHeartbeat).where(*heartbeat_filters)).rowcount or 0
+                if args.apply
+                else db.query(WorkerHeartbeat).filter(*heartbeat_filters).count()
+            )
         if "growth-opportunities" in selected:
             totals = {"created": 0, "updated": 0, "resolved": 0, "expired": 0}
             business_ids = [
@@ -123,6 +137,11 @@ def main(argv: list[str] | None = None) -> int:
                 for key in totals:
                     totals[key] += getattr(result, key)
             counts["social_content_intelligence"] = totals
+        if "storage-reconciliation" in selected:
+            counts["storage_reconciliation"] = reconcile_managed_storage(
+                db,
+                apply=args.apply,
+            )
         if args.apply:
             db.commit()
         else:

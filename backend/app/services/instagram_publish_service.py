@@ -626,6 +626,7 @@ def publication_history_events(
     content_id: int,
     *,
     owner_technical: bool,
+    limit: int = 100,
 ) -> list[dict]:
     publication_actions = (
         "publish_job_created",
@@ -651,6 +652,7 @@ def publication_history_events(
             AuditLog.action.in_(publication_actions),
         )
         .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(max(limit * 10, 100))
         .all()
     )
     events: list[dict] = []
@@ -687,6 +689,8 @@ def publication_history_events(
                 "metadata": safe_metadata,
             }
         )
+        if len(events) >= limit:
+            break
     return events
 
 

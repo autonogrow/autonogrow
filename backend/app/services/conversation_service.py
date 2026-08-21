@@ -3,12 +3,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.models import (
     Business,
+    BusinessChannelControl,
     BusinessChannelIntegration,
     Conversation,
     ConversationAutomationSettings,
@@ -25,6 +26,7 @@ from app.services.channel_provider_service import (
 from app.services.conversation_automation_state_service import (
     serialize_conversation_automation_state,
 )
+from app.services.idempotent_insert_service import insert_rows_ignore_conflicts
 from app.services.incident_service import INSTAGRAM_AUTH_CLIENT_MESSAGE
 from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
 from app.services.message_outbox_service import build_whatsapp_url
@@ -114,6 +116,7 @@ DEFAULT_TEMPLATES = (
         "Gracias por escribirnos. No hemos identificado con seguridad lo que necesitas, así que hemos avisado al equipo para que pueda ayudarte.",
     ),
 )
+WHATSAPP_WINDOW_MESSAGE_SCAN_LIMIT = 100
 
 
 def serialize_message(message: ConversationMessage) -> dict[str, Any]:
@@ -152,13 +155,18 @@ def unread_count(db: Session, conversation: Conversation) -> int:
 
 
 def serialize_conversation(
-    db: Session, conversation: Conversation, *, include_messages: bool = False
+    db: Session,
+    conversation: Conversation,
+    *,
+    include_messages: bool = False,
+    capabilities: ConversationDeliveryCapabilities | None = None,
+    unread_count_value: int | None = None,
 ) -> dict[str, Any]:
     try:
         matched_patterns = json.loads(conversation.matched_patterns_json or "[]")
     except (TypeError, ValueError):
         matched_patterns = []
-    capabilities = conversation_delivery_capabilities(db, conversation=conversation)
+    capabilities = capabilities or conversation_delivery_capabilities(db, conversation=conversation)
     provider = capabilities.provider
     integration = capabilities.integration
     provider_is_configured = capabilities.provider_configured
@@ -211,13 +219,203 @@ def serialize_conversation(
         "instagram_provider_configured": (
             provider_is_configured if conversation.channel == "instagram" else None
         ),
-        "unread_count": unread_count(db, conversation),
+        "unread_count": (
+            unread_count_value
+            if unread_count_value is not None
+            else unread_count(db, conversation)
+        ),
         "created_at": conversation.created_at.isoformat(),
         "updated_at": conversation.updated_at.isoformat(),
     }
     if include_messages:
         result["messages"] = [serialize_message(item) for item in conversation.messages]
     return result
+
+
+def serialize_conversation_list(
+    db: Session,
+    conversations: list[Conversation],
+) -> list[dict[str, Any]]:
+    if not conversations:
+        return []
+    conversation_ids = [conversation.id for conversation in conversations]
+    business_ids = {conversation.business_id for conversation in conversations}
+    channels = {conversation.channel for conversation in conversations}
+    providers = {
+        provider
+        for channel in channels
+        if (provider := delivery_provider_for_channel(channel)) is not None
+    }
+    integrations = {
+        (row.business_id, row.channel, row.provider): row
+        for row in db.query(BusinessChannelIntegration)
+        .filter(
+            BusinessChannelIntegration.business_id.in_(business_ids),
+            BusinessChannelIntegration.channel.in_(channels),
+            BusinessChannelIntegration.provider.in_(providers),
+        )
+        .all()
+    }
+    commercial_settings = {
+        row.business_id: row
+        for row in db.query(ConversationAutomationSettings)
+        .filter(ConversationAutomationSettings.business_id.in_(business_ids))
+        .all()
+    }
+    controls = {
+        (row.business_id, row.channel): row
+        for row in db.query(BusinessChannelControl)
+        .filter(
+            BusinessChannelControl.business_id.in_(business_ids),
+            BusinessChannelControl.channel.in_(channels),
+        )
+        .all()
+    }
+    unread_counts = {
+        conversation_id: count
+        for conversation_id, count in db.query(
+            ConversationMessage.conversation_id,
+            func.count(ConversationMessage.id),
+        )
+        .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+        .filter(
+            ConversationMessage.conversation_id.in_(conversation_ids),
+            ConversationMessage.direction == "inbound",
+            or_(
+                Conversation.last_outbound_at.is_(None),
+                ConversationMessage.created_at > Conversation.last_outbound_at,
+            ),
+        )
+        .group_by(ConversationMessage.conversation_id)
+        .all()
+    }
+    whatsapp_ids = [
+        conversation.id for conversation in conversations if conversation.channel == "whatsapp"
+    ]
+    inbound_window_times: dict[int, datetime | None] = {}
+    if whatsapp_ids:
+        ranked = (
+            db.query(
+                ConversationMessage.conversation_id.label("conversation_id"),
+                ConversationMessage.provider_message_id.label("provider_message_id"),
+                ConversationMessage.raw_payload_json.label("raw_payload_json"),
+                func.row_number()
+                .over(
+                    partition_by=ConversationMessage.conversation_id,
+                    order_by=(
+                        ConversationMessage.created_at.desc(),
+                        ConversationMessage.id.desc(),
+                    ),
+                )
+                .label("position"),
+            )
+            .filter(
+                ConversationMessage.conversation_id.in_(whatsapp_ids),
+                ConversationMessage.direction == "inbound",
+                ConversationMessage.provider_message_id.is_not(None),
+            )
+            .subquery()
+        )
+        ranked_rows = (
+            db.query(ranked)
+            .filter(ranked.c.position <= WHATSAPP_WINDOW_MESSAGE_SCAN_LIMIT)
+            .order_by(ranked.c.conversation_id, ranked.c.position)
+            .all()
+        )
+        by_conversation: dict[int, list[datetime | None]] = {}
+        for row in ranked_rows:
+            by_conversation.setdefault(row.conversation_id, []).append(
+                _inbound_provider_time(row.provider_message_id, row.raw_payload_json)
+            )
+        for conversation_id, provider_times in by_conversation.items():
+            if not provider_times or provider_times[0] is None:
+                inbound_window_times[conversation_id] = None
+                continue
+            inbound_window_times[conversation_id] = max(
+                value for value in provider_times if value is not None
+            )
+
+    configured_settings = get_settings()
+    now = datetime.now(timezone.utc)
+    results = []
+    for conversation in conversations:
+        provider = delivery_provider_for_channel(conversation.channel)
+        integration = (
+            integrations.get((conversation.business_id, conversation.channel, provider))
+            if provider is not None
+            else None
+        )
+        provider_is_configured = is_provider_configured(
+            settings=configured_settings,
+            provider=provider,
+            integration=integration,
+        )
+        integration_is_usable = (
+            _whatsapp_integration_is_usable(
+                settings=configured_settings,
+                integration=integration,
+            )
+            if provider == "whatsapp"
+            else provider_is_configured
+        )
+        plan = commercial_settings.get(conversation.business_id)
+        channel_enabled = (
+            {
+                "instagram": plan.instagram_channel_enabled,
+                "whatsapp": plan.whatsapp_channel_enabled,
+            }.get(conversation.channel, True)
+            if plan is not None
+            else True
+        )
+        control = controls.get((conversation.business_id, conversation.channel))
+        if control is not None:
+            channel_enabled = channel_enabled and (
+                control.status == "approved" and control.integrated_delivery_enabled
+            )
+        if conversation.channel == "whatsapp":
+            window_open = _provider_time_is_in_window(
+                inbound_window_times.get(conversation.id),
+                settings=configured_settings,
+                now=now,
+            )
+        else:
+            window_open = True
+        system_supported = delivery_supported(channel=conversation.channel, provider=provider)
+        integrated_available = bool(
+            system_supported and integration_is_usable and channel_enabled and window_open
+        )
+        if not system_supported:
+            reason = "delivery_not_supported"
+        elif not provider_is_configured:
+            reason = "provider_not_configured"
+        elif not integration_is_usable:
+            reason = "delivery_not_available"
+        elif not channel_enabled:
+            reason = "integrated_delivery_not_in_plan"
+        elif not window_open:
+            reason = "whatsapp_template_required"
+        else:
+            reason = None
+        capabilities = ConversationDeliveryCapabilities(
+            provider=provider,
+            integration=integration,
+            delivery_supported=system_supported,
+            provider_configured=provider_is_configured,
+            channel_enabled=channel_enabled,
+            customer_service_window_open=window_open,
+            integrated_delivery_available=integrated_available,
+            assisted_delivery_available=_assisted_delivery_available(conversation),
+            unavailable_reason=reason,
+        )
+        results.append(
+            serialize_conversation(
+                db,
+                conversation,
+                capabilities=capabilities,
+                unread_count_value=unread_counts.get(conversation.id, 0),
+            )
+        )
+    return results
 
 
 def serialize_template(template: ConversationTemplate, business: Business) -> dict[str, Any]:
@@ -440,16 +638,37 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _whatsapp_inbound_provider_time(message: ConversationMessage) -> datetime | None:
-    if not message.provider_message_id or not message.raw_payload_json:
+def _inbound_provider_time(
+    provider_message_id: str | None,
+    raw_payload_json: str | None,
+) -> datetime | None:
+    if not provider_message_id or not raw_payload_json:
         return None
     try:
-        payload = json.loads(message.raw_payload_json)
+        payload = json.loads(raw_payload_json)
         timestamp = payload.get("timestamp") if isinstance(payload, dict) else None
         numeric = int(timestamp) if isinstance(timestamp, str) and timestamp.isdigit() else None
         return datetime.fromtimestamp(numeric, tz=timezone.utc) if numeric is not None else None
     except (OverflowError, TypeError, ValueError):
         return None
+
+
+def _whatsapp_inbound_provider_time(message: ConversationMessage) -> datetime | None:
+    return _inbound_provider_time(message.provider_message_id, message.raw_payload_json)
+
+
+def _provider_time_is_in_window(
+    provider_time: datetime | None,
+    *,
+    settings: Settings,
+    now: datetime,
+) -> bool:
+    if provider_time is None:
+        return False
+    current = _as_utc(now)
+    if provider_time > current:
+        return False
+    return current - provider_time <= timedelta(hours=settings.whatsapp_customer_service_window_hours)
 
 
 def is_whatsapp_customer_service_window_open(
@@ -469,24 +688,20 @@ def is_whatsapp_customer_service_window_open(
             ConversationMessage.provider_message_id.is_not(None),
         )
         .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
+        .limit(WHATSAPP_WINDOW_MESSAGE_SCAN_LIMIT)
         .all()
     )
-    if not inbound_messages:
-        return False
-    if _whatsapp_inbound_provider_time(inbound_messages[0]) is None:
-        return False
-    provider_times = [
-        provider_time
-        for inbound in inbound_messages
-        if (provider_time := _whatsapp_inbound_provider_time(inbound)) is not None
-    ]
-    provider_time = max(provider_times)
-    current = _as_utc(now or datetime.now(timezone.utc))
-    if provider_time > current:
-        return False
     configured = settings or get_settings()
-    return current - provider_time <= timedelta(
-        hours=configured.whatsapp_customer_service_window_hours
+    provider_times = [_whatsapp_inbound_provider_time(message) for message in inbound_messages]
+    provider_time = (
+        max(value for value in provider_times if value is not None)
+        if provider_times and provider_times[0] is not None
+        else None
+    )
+    return _provider_time_is_in_window(
+        provider_time,
+        settings=configured,
+        now=now or datetime.now(timezone.utc),
     )
 
 
@@ -741,24 +956,21 @@ def list_messages(conversation: Conversation) -> list[ConversationMessage]:
 
 
 def ensure_default_templates(db: Session, business: Business) -> list[ConversationTemplate]:
-    existing = (
-        db.query(ConversationTemplate).filter(ConversationTemplate.business_id == business.id).all()
+    insert_rows_ignore_conflicts(
+        db,
+        ConversationTemplate,
+        [
+            {"business_id": business.id, "name": name, "body": body, "active": True}
+            for name, body in DEFAULT_TEMPLATES
+        ],
+        index_elements=["business_id", "name"],
     )
-    existing_by_name = {item.name: item for item in existing}
-    for name, body in DEFAULT_TEMPLATES:
-        if name in existing_by_name:
-            continue
-        item = ConversationTemplate(
-            business_id=business.id,
-            name=name,
-            body=body,
-            active=True,
-        )
-        db.add(item)
-        existing.append(item)
-        existing_by_name[name] = item
-    db.flush()
-    return sorted(existing, key=lambda item: item.id or 0)
+    return (
+        db.query(ConversationTemplate)
+        .filter(ConversationTemplate.business_id == business.id)
+        .order_by(ConversationTemplate.id)
+        .all()
+    )
 
 
 def render_template(body: str, business: Business) -> str:

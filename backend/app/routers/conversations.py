@@ -1,4 +1,5 @@
 from secrets import compare_digest
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.orm import Session
@@ -66,6 +67,7 @@ from app.services.conversation_service import (
     list_conversations,
     send_outbound_message,
     serialize_conversation,
+    serialize_conversation_list,
     serialize_message,
     serialize_template,
     update_status,
@@ -158,7 +160,7 @@ def admin_list_conversations(
         "total": total,
         "limit": limit,
         "offset": offset,
-        "conversations": [serialize_conversation(db, item) for item in rows],
+        "conversations": serialize_conversation_list(db, rows),
     }
 
 
@@ -778,6 +780,7 @@ def admin_update_conversation_automation_rule(
 def admin_list_conversation_suggestions(
     business_slug: str,
     conversation_id: int,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
     db: Session = Depends(get_db),
 ):
     business = get_business_or_404(db, business_slug)
@@ -792,6 +795,7 @@ def admin_list_conversation_suggestions(
         db.query(ConversationSuggestion)
         .filter(ConversationSuggestion.conversation_id == conversation.id)
         .order_by(ConversationSuggestion.created_at.desc(), ConversationSuggestion.id.desc())
+        .limit(limit)
         .all()
     )
     limit_reached = settings.automation_enabled and total_credits_available(settings) <= 0

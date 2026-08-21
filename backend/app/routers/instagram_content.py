@@ -3,6 +3,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -301,7 +302,14 @@ def _commit_with_staged_files(
             logger.exception("Could not purge a staged Instagram asset")
 
 
-def _list_raw(db: Session, business_id: int, api_prefix: str) -> dict:
+def _list_raw(
+    db: Session,
+    business_id: int,
+    api_prefix: str,
+    *,
+    limit: int,
+    offset: int,
+) -> dict:
     require_service_enabled(db, business_id)
     assets = (
         db.query(InstagramRawAsset)
@@ -312,6 +320,8 @@ def _list_raw(db: Session, business_id: int, api_prefix: str) -> dict:
         )
         .filter(InstagramRawAsset.business_id == business_id)
         .order_by(InstagramRawAsset.created_at.desc(), InstagramRawAsset.id.desc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
     return {"assets": [serialize_raw_asset(asset, api_prefix) for asset in assets]}
@@ -372,6 +382,8 @@ def _list_content(
     from_datetime: datetime | None = None,
     to_datetime: datetime | None = None,
     include_unscheduled: bool = True,
+    limit: int = 200,
+    offset: int = 0,
 ) -> dict:
     require_service_enabled(db, business_id)
     query = (
@@ -410,7 +422,7 @@ def _list_content(
         )
     items = query.order_by(
         InstagramContent.planned_publish_at.asc(), InstagramContent.updated_at.desc()
-    ).all()
+    ).offset(offset).limit(limit).all()
     contents = []
     for item in items:
         setattr(
@@ -575,20 +587,31 @@ def admin_update_validation_delegation(
 
 
 @owner_router.get("/raw-assets")
-def owner_list_raw_assets(business_id: int, db: Session = Depends(get_db)):
+def owner_list_raw_assets(
+    business_id: int,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    db: Session = Depends(get_db),
+):
     _owner_business(db, business_id)
-    return _list_raw(db, business_id, _owner_prefix(business_id))
+    return _list_raw(
+        db, business_id, _owner_prefix(business_id), limit=limit, offset=offset
+    )
 
 
 @admin_router.get("/raw-assets")
 def admin_list_raw_assets(
     business_slug: str,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
     actor: User = Depends(require_instagram_business_admin),
     db: Session = Depends(get_db),
 ):
     del actor
     business = _admin_business(db, business_slug)
-    return _list_raw(db, business.id, _admin_prefix(business_slug))
+    return _list_raw(
+        db, business.id, _admin_prefix(business_slug), limit=limit, offset=offset
+    )
 
 
 @owner_router.post("/raw-assets", status_code=201)
@@ -1025,6 +1048,8 @@ def owner_list_contents(
     from_datetime: datetime | None = Query(default=None, alias="from"),
     to_datetime: datetime | None = Query(default=None, alias="to"),
     include_unscheduled: bool = True,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
     db: Session = Depends(get_db),
 ):
     _owner_business(db, business_id)
@@ -1037,6 +1062,8 @@ def owner_list_contents(
         from_datetime=from_datetime,
         to_datetime=to_datetime,
         include_unscheduled=include_unscheduled,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -1046,6 +1073,8 @@ def admin_list_contents(
     from_datetime: datetime | None = Query(default=None, alias="from"),
     to_datetime: datetime | None = Query(default=None, alias="to"),
     include_unscheduled: bool = True,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
     actor: User = Depends(require_instagram_business_admin),
     db: Session = Depends(get_db),
 ):
@@ -1061,6 +1090,8 @@ def admin_list_contents(
         from_datetime=from_datetime,
         to_datetime=to_datetime,
         include_unscheduled=include_unscheduled,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -1567,7 +1598,12 @@ def owner_cancel_content(
 
 
 def _publish_job_history(
-    db: Session, business_id: int, content_id: int, *, owner_technical: bool = True
+    db: Session,
+    business_id: int,
+    content_id: int,
+    *,
+    owner_technical: bool = True,
+    limit: int,
 ) -> dict:
     content_or_404(db, business_id, content_id)
     jobs = (
@@ -1577,6 +1613,7 @@ def _publish_job_history(
             InstagramPublishJob.content_item_id == content_id,
         )
         .order_by(InstagramPublishJob.created_at.desc(), InstagramPublishJob.id.desc())
+        .limit(limit)
         .all()
     )
     return {
@@ -1586,26 +1623,35 @@ def _publish_job_history(
             business_id,
             content_id,
             owner_technical=owner_technical,
+            limit=limit,
         ),
     }
 
 
 @owner_router.get("/contents/{content_id}/publish-jobs", response_model=InstagramPublishJobHistory)
-def owner_publish_job_history(business_id: int, content_id: int, db: Session = Depends(get_db)):
+def owner_publish_job_history(
+    business_id: int,
+    content_id: int,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    db: Session = Depends(get_db),
+):
     _owner_business(db, business_id)
-    return _publish_job_history(db, business_id, content_id)
+    return _publish_job_history(db, business_id, content_id, limit=limit)
 
 
 @admin_router.get("/contents/{content_id}/publish-jobs", response_model=InstagramPublishJobHistory)
 def admin_publish_job_history(
     business_slug: str,
     content_id: int,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
     actor: User = Depends(require_instagram_business_admin),
     db: Session = Depends(get_db),
 ):
     del actor
     business = _admin_business(db, business_slug)
-    return _publish_job_history(db, business.id, content_id, owner_technical=False)
+    return _publish_job_history(
+        db, business.id, content_id, owner_technical=False, limit=limit
+    )
 
 
 @owner_router.post("/contents/{content_id}/publish-now", response_model=InstagramPublishJobRead)

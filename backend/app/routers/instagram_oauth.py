@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.exc import IntegrityError
@@ -228,6 +230,7 @@ def instagram_oauth_callback(
 @owner_router.get("/candidates")
 def list_owner_instagram_oauth_candidates(
     business_id: int,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
     actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
@@ -243,6 +246,7 @@ def list_owner_instagram_oauth_candidates(
             InstagramOAuthAttempt.status == "candidate_ready",
         )
         .order_by(InstagramOAuthAttempt.created_at.desc(), InstagramOAuthAttempt.id.desc())
+        .limit(limit)
         .all()
     )
     return [serialize_instagram_oauth_attempt(item) for item in attempts]

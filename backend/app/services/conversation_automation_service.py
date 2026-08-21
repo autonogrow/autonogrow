@@ -39,6 +39,7 @@ from app.services.conversation_service import (
     render_template,
     send_outbound_message,
 )
+from app.services.idempotent_insert_service import insert_rows_ignore_conflicts
 
 logger = logging.getLogger(__name__)
 
@@ -142,58 +143,66 @@ def ensure_automation_configuration(
 ) -> tuple[ConversationAutomationSettings, list[ConversationAutomationRule]]:
     templates = ensure_default_templates(db, business)
     templates_by_name = {template.name: template for template in templates}
+    insert_rows_ignore_conflicts(
+        db,
+        ConversationAutomationSettings,
+        [
+            {
+                "business_id": business.id,
+                "automation_enabled": False,
+                "monthly_auto_limit": DEFAULT_AUTOMATION_MESSAGES_PER_PERIOD,
+                "auto_used_current_period": 0,
+                "included_credits_per_period": DEFAULT_AUTOMATION_MESSAGES_PER_PERIOD,
+                "included_credits_used": 0,
+                "additional_credits_balance": 0,
+                "period_yyyymm": current_period(),
+                "period_started_at": None,
+                "period_ends_at": None,
+                "payment_confirmed_at": None,
+                "period_status": "pending_renewal",
+                "on_limit_reached": "semi_automatic",
+                "auto_threshold": 80,
+                "human_reply_pause_minutes": 60,
+                "automation_feature_enabled": True,
+                "instagram_channel_enabled": True,
+                "whatsapp_channel_enabled": True,
+                "allowed_limit_behaviors_json": json.dumps(LIMIT_BEHAVIORS),
+            }
+        ],
+        index_elements=["business_id"],
+    )
     settings = (
         db.query(ConversationAutomationSettings)
         .filter(ConversationAutomationSettings.business_id == business.id)
-        .first()
+        .one()
     )
-    if settings is None:
-        settings = ConversationAutomationSettings(
-            business_id=business.id,
-            automation_enabled=False,
-            monthly_auto_limit=DEFAULT_AUTOMATION_MESSAGES_PER_PERIOD,
-            auto_used_current_period=0,
-            included_credits_per_period=DEFAULT_AUTOMATION_MESSAGES_PER_PERIOD,
-            included_credits_used=0,
-            additional_credits_balance=0,
-            period_yyyymm=current_period(),
-            period_started_at=None,
-            period_ends_at=None,
-            payment_confirmed_at=None,
-            period_status="pending_renewal",
-            on_limit_reached="semi_automatic",
-            auto_threshold=80,
-            human_reply_pause_minutes=60,
-            automation_feature_enabled=True,
-            instagram_channel_enabled=True,
-            whatsapp_channel_enabled=True,
-            allowed_limit_behaviors_json=json.dumps(LIMIT_BEHAVIORS),
-        )
-        db.add(settings)
-        db.flush()
     sync_automation_period_status(settings, db=db)
 
+    insert_rows_ignore_conflicts(
+        db,
+        ConversationAutomationRule,
+        [
+            {
+                "business_id": business.id,
+                "intent": intent,
+                "mode": DEFAULT_RULE_MODES[intent],
+                "template_id": (
+                    templates_by_name[template_name].id
+                    if (template_name := INTENT_TEMPLATE_NAMES.get(intent)) in templates_by_name
+                    else None
+                ),
+                "active": True,
+            }
+            for intent in AVAILABLE_INTENTS
+        ],
+        index_elements=["business_id", "intent"],
+    )
     existing_rules = {
         rule.intent: rule
         for rule in db.query(ConversationAutomationRule)
         .filter(ConversationAutomationRule.business_id == business.id)
         .all()
     }
-    for intent in AVAILABLE_INTENTS:
-        if intent in existing_rules:
-            continue
-        template_name = INTENT_TEMPLATE_NAMES.get(intent)
-        template = templates_by_name.get(template_name) if template_name else None
-        rule = ConversationAutomationRule(
-            business_id=business.id,
-            intent=intent,
-            mode=DEFAULT_RULE_MODES[intent],
-            template_id=template.id if template else None,
-            active=True,
-        )
-        db.add(rule)
-        existing_rules[intent] = rule
-    db.flush()
     rules = sorted(
         existing_rules.values(),
         key=lambda rule: AVAILABLE_INTENTS.index(rule.intent),

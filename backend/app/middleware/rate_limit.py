@@ -13,6 +13,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     buckets: dict[tuple[str, str], deque[float]] = defaultdict(deque)
     lock = Lock()
+    bucket_ttl_seconds = 60
+    cleanup_interval_seconds = 60
+    max_buckets = 10_000
+    last_cleanup_at = 0.0
+
+    @classmethod
+    def prune_buckets(cls, now: float) -> None:
+        cutoff = now - cls.bucket_ttl_seconds
+        for key, bucket in list(cls.buckets.items()):
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+            if not bucket:
+                cls.buckets.pop(key, None)
+        if len(cls.buckets) >= cls.max_buckets:
+            overflow = len(cls.buckets) - cls.max_buckets + 1
+            oldest = sorted(cls.buckets, key=lambda key: cls.buckets[key][-1])[:overflow]
+            for key in oldest:
+                cls.buckets.pop(key, None)
+        cls.last_cleanup_at = now
 
     @staticmethod
     def policy(path: str, method: str) -> tuple[str, int, int] | None:
@@ -47,6 +66,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         key = (client_ip, bucket_name)
         now = monotonic()
         with self.lock:
+            if (
+                now - self.last_cleanup_at >= self.cleanup_interval_seconds
+                or len(self.buckets) >= self.max_buckets
+            ):
+                self.prune_buckets(now)
             bucket = self.buckets[key]
             while bucket and bucket[0] <= now - window:
                 bucket.popleft()

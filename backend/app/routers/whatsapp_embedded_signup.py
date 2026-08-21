@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -206,6 +208,7 @@ def start_owner_whatsapp_embedded_signup(
 @owner_router.get("/candidates")
 def list_owner_whatsapp_candidates(
     business_id: int,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
     actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
@@ -224,6 +227,7 @@ def list_owner_whatsapp_candidates(
             WhatsAppEmbeddedSignupAttempt.created_at.desc(),
             WhatsAppEmbeddedSignupAttempt.id.desc(),
         )
+        .limit(limit)
         .all()
     )
     return [serialize_whatsapp_signup_attempt(item) for item in attempts]
