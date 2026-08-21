@@ -6,10 +6,23 @@ from typing import Any
 from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
-from app.models import Booking, Business, BusinessService, Customer, SyncJob, User
+from app.models import (
+    Booking,
+    Business,
+    BusinessService,
+    Customer,
+    CustomerAccountLink,
+    SyncJob,
+    User,
+)
 from app.schemas.booking import BookingRequestCreate
 from app.services.availability_service import get_available_slots, get_public_bookable_staff
 from app.services.booking_attribution_service import attribute_new_booking
+from app.services.customer_identity_service import (
+    link_customer_account,
+    linked_customer_for_business,
+    normalize_phone,
+)
 from app.services.growth_opportunity_service import (
     GrowthOpportunityService,
 )
@@ -76,33 +89,128 @@ def get_or_create_customer(
     name: str,
     phone: str | None,
     notes: str | None,
+    region: str = "ES",
+    current_user: User | None = None,
 ) -> Customer:
     clean_phone = phone.strip() if phone else None
+    normalized_phone = normalize_phone(clean_phone, region=region)
 
-    if clean_phone:
-        existing = (
-            db.query(Customer)
-            .filter(Customer.business_id == business_id, Customer.phone == clean_phone)
-            .first()
+    if clean_phone and normalized_phone is None:
+        raise ValueError("invalid_phone")
+
+    if current_user is not None:
+        linked = linked_customer_for_business(
+            db, user_id=current_user.id, business_id=business_id
         )
+        if linked is not None:
+            linked.name = name
+            if clean_phone:
+                raw_collision = (
+                    db.query(Customer.id)
+                    .filter(
+                        Customer.business_id == business_id,
+                        Customer.id != linked.id,
+                        Customer.phone == clean_phone,
+                    )
+                    .first()
+                )
+                linked.phone = None if raw_collision else clean_phone
+                linked.phone_normalized = normalized_phone
+                current_user.phone = clean_phone
+                current_user.phone_normalized = normalized_phone
+            linked.email = current_user.email
+            if notes:
+                linked.notes = notes
+            linked.updated_at = datetime.utcnow()
+            db.flush()
+            return linked
 
-        if existing:
+    existing = None
+    if normalized_phone:
+        matches = (
+            db.query(Customer)
+            .filter(
+                Customer.business_id == business_id,
+                Customer.phone_normalized == normalized_phone,
+            )
+            .all()
+        )
+        legacy_customers = (
+            db.query(Customer)
+            .filter(
+                Customer.business_id == business_id,
+                Customer.phone_normalized.is_(None),
+                Customer.phone.is_not(None),
+            )
+            .all()
+        )
+        for legacy_customer in legacy_customers:
+            legacy_normalized = normalize_phone(legacy_customer.phone, region=region)
+            if legacy_normalized:
+                legacy_customer.phone_normalized = legacy_normalized
+            if legacy_normalized == normalized_phone:
+                matches.append(legacy_customer)
+        if len(matches) == 1:
+            candidate = matches[0]
+            candidate_link = (
+                db.query(CustomerAccountLink)
+                .filter(CustomerAccountLink.customer_id == candidate.id)
+                .first()
+            )
+            if candidate_link is None or (
+                current_user is not None and candidate_link.user_id == current_user.id
+            ):
+                existing = candidate
+
+        if existing is not None:
             existing.name = name
+            existing.phone = clean_phone
+            existing.phone_normalized = normalized_phone
+            if current_user is not None:
+                existing.email = current_user.email
+                current_user.phone = clean_phone
+                current_user.phone_normalized = normalized_phone
             if notes:
                 existing.notes = notes
             existing.updated_at = datetime.utcnow()
+            if current_user is not None:
+                link_customer_account(
+                    db,
+                    user=current_user,
+                    customer=existing,
+                    method="authenticated_booking_phone",
+                )
             db.flush()
             return existing
+
+    stored_phone = clean_phone
+    if normalized_phone and existing is None:
+        exact_phone_exists = any(item.phone == clean_phone for item in matches)
+        if exact_phone_exists:
+            stored_phone = None
 
     customer = Customer(
         business_id=business_id,
         name=name,
-        phone=clean_phone,
+        phone=stored_phone,
+        phone_normalized=normalized_phone,
+        email=current_user.email if current_user is not None else None,
         notes=notes,
     )
 
     db.add(customer)
     db.flush()
+
+    if current_user is not None:
+        if clean_phone:
+            current_user.phone = clean_phone
+            current_user.phone_normalized = normalized_phone
+        link_customer_account(
+            db,
+            user=current_user,
+            customer=customer,
+            method="authenticated_booking",
+        )
 
     return customer
 
@@ -309,6 +417,8 @@ def create_booking_request(
         name=payload.customer_name,
         phone=payload.customer_phone,
         notes=payload.notes,
+        region=business.country_code,
+        current_user=current_user if current_user and current_user.is_active else None,
     )
 
     booking = Booking(

@@ -80,7 +80,7 @@
       identity.renderButton(container, { theme: "outline", size: "large", text: "signin_with", shape: "pill" });
     } catch (error) {
       console.error("Google Identity setup failed", { status: error.status || 0 });
-      container.textContent = error.message;
+      container.textContent = "No se pudo cargar el acceso con Google. Vuelve a intentarlo más tarde.";
       container.classList.add("auth-error");
       onError?.(error);
     }

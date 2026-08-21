@@ -3,109 +3,99 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Acceso privado para consultar tus citas vinculadas a AutonoGrow." />
+  <meta name="description" content="Tus citas y servicios, sin volver a rellenar los mismos datos." />
   <meta name="robots" content="noindex, nofollow" />
-  <title>Mis citas | AutonoGrow</title>
+  <title>Tus citas | AutonoGrow</title>
   <link rel="stylesheet" href="../autonogrow-shared/auth.css" />
-  <link rel="stylesheet" href="styles.css?v=5f1" />
+  <link rel="stylesheet" href="styles.css?v=10b5" />
 </head>
 <body>
   <a class="skip-link" href="#customer-main">Saltar al contenido</a>
 
   <section id="customer-auth-gate" class="auth-gate" hidden aria-labelledby="customer-login-title">
-    <p class="eyebrow">Portal privado</p>
-    <h1 id="customer-login-title">Accede para ver tus citas</h1>
-    <p id="customer-login-copy">Consulta únicamente las reservas vinculadas a tu cuenta.</p>
-    <div id="customer-google-button" class="auth-google-button"></div>
+    <p class="eyebrow">Tus reservas, más fáciles</p>
+    <h1 id="customer-login-title">Vuelve sin empezar de cero</h1>
+    <p id="customer-login-copy">Guarda tus citas, repite servicios y reserva más rápido la próxima vez.</p>
+    <div id="customer-google-button" class="auth-google-button" aria-label="Continuar con Google"></div>
+    <p class="guest-path">Reservar como invitado siempre está disponible desde la página de cada negocio.</p>
     <p id="customer-login-status" class="status-message" role="alert"></p>
   </section>
 
   <div id="customer-loading" class="loading-state" role="status" aria-live="polite">
-    <span aria-hidden="true"></span>
-    <p>Cargando tu espacio privado…</p>
+    <span aria-hidden="true"></span><p>Preparando tus citas…</p>
   </div>
 
   <main id="customer-main" class="customer-page" tabindex="-1">
     <div id="customer-app" hidden>
       <header class="customer-header">
-        <div>
-          <p class="eyebrow">Portal del cliente</p>
-          <h1>Mis citas</h1>
-          <p id="customer-identity"></p>
-        </div>
+        <div><p class="eyebrow">Tu espacio</p><h1 id="customer-greeting">Hola</h1><p id="customer-identity"></p></div>
         <div class="header-actions">
-          <button id="refresh-customer" class="button-secondary" type="button">Actualizar</button>
-          <button id="customer-logout" class="button-secondary" type="button">Salir</button>
+          <button id="refresh-customer" class="icon-button" type="button" aria-label="Actualizar citas" title="Actualizar">↻</button>
+          <button id="customer-logout" class="button-secondary" type="button">Cerrar sesión</button>
         </div>
       </header>
 
       <div id="customer-page-status" class="page-status" role="status" aria-live="polite" tabindex="-1" hidden></div>
 
-      <details class="profile-card">
-        <summary>Mi perfil de contacto</summary>
-        <p>Estos datos ayudan a completar futuras solicitudes vinculadas a tu cuenta.</p>
-        <div class="profile-grid">
-          <label for="customer-preferred-name">Nombre preferido
-            <input id="customer-preferred-name" maxlength="200" autocomplete="name" />
-          </label>
-          <label for="customer-phone">Teléfono
-            <input id="customer-phone" maxlength="40" autocomplete="tel" inputmode="tel" />
-          </label>
+      <section class="next-section" aria-labelledby="next-title">
+        <div class="section-heading"><div><p class="eyebrow">Lo siguiente</p><h2 id="next-title">Tu próxima cita</h2></div><p id="today-summary" class="today-summary"></p></div>
+        <div id="next-booking"></div>
+      </section>
+
+      <section class="recent-section" aria-labelledby="recent-title">
+        <div class="section-heading"><div><p class="eyebrow">En un par de toques</p><h2 id="recent-title">Repetir una visita</h2></div></div>
+        <div id="recent-services" class="recent-list"></div>
+      </section>
+
+      <section class="calendar-section" aria-labelledby="calendar-title">
+        <div class="calendar-heading">
+          <div><p class="eyebrow">Tus fechas</p><h2 id="calendar-title">Calendario</h2></div>
+          <div class="calendar-view-switch" role="tablist" aria-label="Vista del calendario">
+            <button type="button" role="tab" data-calendar-view="today" aria-selected="false">Hoy</button>
+            <button type="button" role="tab" data-calendar-view="month" aria-selected="true">Mes</button>
+          </div>
         </div>
-        <button id="save-customer-profile" class="button-primary" type="button">Guardar perfil</button>
+        <div id="calendar-navigation" class="calendar-navigation">
+          <button type="button" data-calendar-nav="-1" aria-label="Mes anterior">←</button>
+          <h3 id="calendar-period"></h3>
+          <button type="button" data-calendar-nav="1" aria-label="Mes siguiente">→</button>
+        </div>
+        <div id="customer-calendar" class="customer-calendar" aria-live="polite"></div>
+        <section id="customer-day-agenda" class="day-agenda" aria-labelledby="day-agenda-title">
+          <h3 id="day-agenda-title">Citas del día</h3><div id="day-bookings"></div>
+        </section>
+      </section>
+
+      <div class="reserve-band"><div><h2>¿Necesitas otra cita?</h2><p>Elige el negocio y reserva como siempre.</p></div><a class="button-primary" href="../autonogrow-landing/index.html">Reservar un servicio</a></div>
+
+      <details class="profile-section">
+        <summary>Perfil y canales de contacto</summary>
+        <p>Edita aquí tus datos. No volveremos a pedírtelos en cada reserva.</p>
+        <div class="profile-grid">
+          <label for="customer-preferred-name">Nombre<input id="customer-preferred-name" maxlength="200" autocomplete="name" /></label>
+          <label for="customer-phone">Teléfono<input id="customer-phone" maxlength="40" autocomplete="tel" inputmode="tel" /></label>
+          <label for="customer-email">Email<input id="customer-email" type="email" readonly aria-readonly="true" /></label>
+          <label for="customer-instagram">Instagram <span>opcional</span><input id="customer-instagram" maxlength="200" autocomplete="off" placeholder="@usuario" /></label>
+        </div>
+        <button id="save-customer-profile" class="button-primary" type="button">Guardar</button>
         <p id="customer-profile-status" class="status-message" role="status" aria-live="polite"></p>
       </details>
-
-      <section class="booking-section" aria-labelledby="upcoming-title">
-        <div class="section-heading">
-          <div><p class="eyebrow">Pendientes</p><h2 id="upcoming-title">Próximas citas</h2></div>
-          <span id="upcoming-count" class="count-badge"></span>
-        </div>
-        <div id="upcoming-bookings" class="booking-grid" aria-busy="false"></div>
-      </section>
-
-      <section class="booking-section" aria-labelledby="past-title">
-        <div class="section-heading">
-          <div><p class="eyebrow">Historial</p><h2 id="past-title">Citas anteriores</h2></div>
-          <span id="past-count" class="count-badge"></span>
-        </div>
-        <div id="past-bookings" class="booking-grid" aria-busy="false"></div>
-      </section>
-
-      <aside class="anonymous-note">
-        <h2>Reservas anónimas</h2>
-        <p>Este portal solo muestra citas vinculadas a tu cuenta en el momento de reservar. No permite buscar reservas mediante identificadores ni añadir después una reserva anónima.</p>
-      </aside>
     </div>
   </main>
 
-  <footer class="customer-footer">
-    <nav aria-label="Información legal">
-      <a href="../privacy/">Privacidad</a>
-      <a href="../data-deletion/">Eliminación de datos</a>
-    </nav>
-    <p>AutonoGrow</p>
-  </footer>
+  <footer class="customer-footer"><nav aria-label="Información legal"><a href="../privacy/">Privacidad</a><a href="../data-deletion/">Eliminación de datos</a></nav><p>Powered by AutonoGrow</p></footer>
 
   <div id="booking-detail-dialog" class="detail-dialog" hidden aria-hidden="true">
     <div class="detail-backdrop" data-detail-close></div>
     <section class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="booking-detail-title" aria-describedby="booking-detail-description" tabindex="-1">
-      <header>
-        <div>
-          <p class="eyebrow">Detalle de la cita</p>
-          <h2 id="booking-detail-title">Tu cita</h2>
-        </div>
-        <button id="booking-detail-close" class="icon-button" type="button" aria-label="Cerrar detalle">×</button>
-      </header>
-      <p id="booking-detail-description">Información devuelta para tu sesión autenticada.</p>
-      <div id="booking-detail-content"></div>
-      <div id="booking-management" class="management-note"></div>
-      <div id="booking-detail-actions" class="detail-actions"></div>
+      <header><div><p class="eyebrow">Detalle de la cita</p><h2 id="booking-detail-title">Tu cita</h2></div><button id="booking-detail-close" class="icon-button" type="button" aria-label="Cerrar detalle">×</button></header>
+      <p id="booking-detail-description">Información de tu reserva.</p>
+      <div id="booking-detail-content"></div><div id="booking-management" class="management-note"></div><div id="booking-detail-actions" class="detail-actions"></div>
     </section>
   </div>
 
   <script src="https://accounts.google.com/gsi/client" async></script>
-  <script src="../autonogrow-shared/auth.js?v=5f1"></script>
-  <script src="customer.js?v=5e1"></script>
+  <script src="../autonogrow-shared/auth.js?v=10b5"></script>
+  <script src="customer.js?v=10b5"></script>
 </body>
 </html>

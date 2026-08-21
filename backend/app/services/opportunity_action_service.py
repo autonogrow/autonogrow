@@ -18,6 +18,7 @@ from app.services.conversation_service import (
     ConversationDeliveryCapabilities,
     conversation_delivery_capabilities,
 )
+from app.services.customer_identity_service import normalize_phone
 from app.services.message_outbox_service import build_whatsapp_url
 from app.services.opportunity_template_service import (
     OpportunityMessageTemplateService,
@@ -32,7 +33,7 @@ def utc_now() -> datetime:
 
 
 def _normalized_phone(value: str | None) -> str:
-    return "".join(character for character in (value or "") if character.isdigit())
+    return normalize_phone(value, region="ES") or ""
 
 
 @dataclass(frozen=True)

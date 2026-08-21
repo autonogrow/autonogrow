@@ -93,10 +93,10 @@ def test_all_real_frontend_surfaces_and_local_assets_are_present() -> None:
 
 def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
     expected = {
-        "autonogrow-admin": ("styles.css?v=10a", "responsive.css?v=5f1", "auth.js?v=5f1", "admin.js?v=5f1"),
-        "autonogrow-owner": ("styles.css?v=20260816-1", "responsive.css?v=5f1", "auth.js?v=5f1", "owner.js?v=10a3", "owner-onboarding.js?v=5f1"),
-        "autonogrow-landing": ("styles.css?v=5f1", "auth.js?v=5f1", "script.js?v=5e1"),
-        "autonogrow-customer": ("styles.css?v=5f1", "auth.js?v=5f1", "customer.js?v=5e1"),
+        "autonogrow-admin": ("styles.css?v=10a", "responsive.css?v=5f1", "auth.js?v=10b5", "admin.js?v=5f1"),
+        "autonogrow-owner": ("styles.css?v=20260816-1", "responsive.css?v=5f1", "auth.js?v=10b5", "owner.js?v=10a3", "owner-onboarding.js?v=5f1"),
+        "autonogrow-landing": ("styles.css?v=10b5", "auth.js?v=10b5", "script.js?v=10b5"),
+        "autonogrow-customer": ("styles.css?v=10b5", "auth.js?v=10b5", "customer.js?v=10b5"),
     }
     for directory, fragments in expected.items():
         source = text(ROOT / directory / "index.html")
@@ -235,7 +235,7 @@ def test_loading_empty_error_and_http_failure_states_remain_distinct() -> None:
         assert message in landing_js
     assert "Tu sesión ha caducado" in customer_js
     assert "No tienes próximas citas" in customer_js
-    assert "Todavía no hay historial" in customer_js
+    assert "Aún no tienes servicios anteriores" in customer_js
     for status in (401, 403, 404, 409, 422, 429, 500):
         assert str(status) in landing_js or str(status) in customer_js
 
@@ -369,7 +369,7 @@ def test_no_backend_contract_was_copied_into_frontend_as_a_new_route() -> None:
     assert "/api/admin/businesses/" in admin
     assert "/api/owner/" in owner
     assert "/api/businesses/" in landing
-    assert "/api/customer/bookings" in customer
+    assert "/api/customer/home" in customer
     assert 'params.get("b")' in admin
     assert '.get("b")' in landing
     assert '|| "demo-manicura"' not in landing

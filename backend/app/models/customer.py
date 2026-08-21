@@ -18,6 +18,7 @@ class Customer(Base):
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(40), index=True)
+    phone_normalized: Mapped[str | None] = mapped_column(String(20), index=True)
     email: Mapped[str | None] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(40), default="new_lead", nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
@@ -40,4 +41,7 @@ class Customer(Base):
     )
     scheduled_followups = relationship(
         "ScheduledCustomerFollowUp", back_populates="customer", cascade="all, delete-orphan"
+    )
+    account_link = relationship(
+        "CustomerAccountLink", back_populates="customer", cascade="all, delete-orphan", uselist=False
     )

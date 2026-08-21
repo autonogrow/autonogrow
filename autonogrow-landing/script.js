@@ -27,10 +27,12 @@ const bookingState = {
   date: null,
   slot: null,
   customer: { name: "", phone: "", notes: "", files: [] },
-  booking: null
+  booking: null,
+  manageToken: ""
 };
 const landingState = {
   settings: null,
+  customerProfile: null,
   staff: [],
   compatibleStaff: [],
   gallery: [],
@@ -87,6 +89,10 @@ function getOpportunityAttributionToken() {
 function getLinkedServiceId() {
   const value = Number(new URLSearchParams(window.location.search).get("service_id"));
   return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function isRepeatBooking() {
+  return new URLSearchParams(window.location.search).get("repeat") === "1";
 }
 
 function safeExternalUrl(value) {
@@ -688,6 +694,11 @@ async function selectBookingService(service, fromLanding) {
   if (fromLanding) focusBooking();
   showBookingStep("staff");
   await loadStaffForService(service.id, previousStaff);
+  if (isRepeatBooking() && landingState.compatibleStaff.length) {
+    bookingState.staff = null;
+    renderBookingStaffOptions();
+    showBookingStep("datetime");
+  }
 }
 
 function syncServiceSelection() {
@@ -1107,7 +1118,19 @@ function nextBookingStep() {
   }
   if (landingState.step === "customer" && !collectCustomerData()) return;
   const index = BOOKING_STEPS.indexOf(landingState.step);
-  const next = BOOKING_STEPS[index + 1];
+  let next = BOOKING_STEPS[index + 1];
+  if (landingState.step === "datetime" && landingState.customerProfile) {
+    const profile = landingState.customerProfile;
+    const knownName = String(profile.preferred_name || profile.name || "").trim();
+    if (knownName) {
+      bookingState.customer = {
+        ...bookingState.customer,
+        name: knownName,
+        phone: profile.phone || ""
+      };
+      next = "review";
+    }
+  }
   if (next === "review") renderBookingReview();
   showBookingStep(next);
   byId(`booking-step-${next}`)?.querySelector("legend")?.focus?.();
@@ -1160,6 +1183,7 @@ async function submitBooking(event) {
       attachmentMessage = await uploadBookingPhotos(result.booking.id, result.booking_manage_token, bookingState.customer.files);
     }
     bookingState.booking = result.booking;
+    bookingState.manageToken = result.booking_manage_token || "";
     renderBookingResult(result.booking, Boolean(result.linked_to_account), attachmentMessage);
     clearPersonalBookingData();
     showBookingStep("result");
@@ -1213,6 +1237,35 @@ function clearPersonalBookingData() {
   byId("booking-photos").value = "";
 }
 
+function applyKnownCustomerProfile(profile) {
+  landingState.customerProfile = profile;
+  const name = String(profile?.preferred_name || profile?.name || "").trim();
+  const phone = String(profile?.phone || "").trim();
+  byId("client-name").value = name;
+  byId("client-phone").value = phone;
+  bookingState.customer = { ...bookingState.customer, name, phone };
+}
+
+async function claimPendingBooking() {
+  if (!bookingState.booking?.id || !bookingState.manageToken) return;
+  const status = byId("post-booking-login-status");
+  if (status) status.textContent = "Guardando esta cita en tu cuenta…";
+  try {
+    await requestJson("/api/customer/claim-booking", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        booking_id: bookingState.booking.id,
+        manage_token: bookingState.manageToken
+      })
+    }, "booking");
+    bookingState.manageToken = "";
+    if (status) status.textContent = "Cita guardada. La encontrarás en tu espacio.";
+  } catch (error) {
+    if (status) status.textContent = error.message;
+  }
+}
+
 function renderBookingResult(booking, linkedToAccount, attachmentMessage) {
   const container = byId("booking-result");
   container.replaceChildren();
@@ -1238,6 +1291,23 @@ function renderBookingResult(booking, linkedToAccount, attachmentMessage) {
   backLink.href = "#main-content";
   actions.append(customerLink, contactLink, backLink);
   container.append(actions);
+  if (!linkedToAccount) {
+    const login = element("section", { className: "post-booking-login" });
+    login.append(
+      element("h3", { text: "La próxima vez, aún más rápido" }),
+      element("p", { text: "Guarda tus citas y reserva sin volver a rellenar tus datos. Además, podremos ofrecerte una atención más personalizada." })
+    );
+    const google = element("div", { className: "auth-google-button" });
+    google.id = "post-booking-google-button";
+    const loginStatus = element("p", { className: "inline-status" });
+    loginStatus.id = "post-booking-login-status";
+    loginStatus.setAttribute("aria-live", "polite");
+    login.append(google, loginStatus);
+    container.append(login);
+    AutonoGrowAuth.renderGoogleButton(google, setupLandingAuth, () => {
+      loginStatus.textContent = "No se pudo completar el acceso. Tu reserva sigue guardada.";
+    });
+  }
 }
 
 function openGallery(index, returnFocus) {
@@ -1374,6 +1444,9 @@ async function setupLandingAuth() {
       userLabel.textContent = user.preferred_name || user.name || user.email;
       googleContainer.replaceChildren();
       logoutButton.hidden = false;
+      const profile = await requestJson("/api/customer/profile", {}, "booking");
+      applyKnownCustomerProfile(profile);
+      await claimPendingBooking();
     } else {
       userLabel.textContent = "";
       logoutButton.hidden = true;

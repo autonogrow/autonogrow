@@ -16,6 +16,7 @@ from app.models import (
     CustomerOpportunity,
     ScheduledCustomerFollowUp,
 )
+from app.services.customer_identity_service import normalize_phone
 
 ACTIVE_BOOKING_STATUSES = {"requested", "pending", "confirmed"}
 OPEN_OPPORTUNITY_STATUSES = {"pending", "actioned"}
@@ -352,7 +353,7 @@ class GrowthOpportunityService:
 
     @staticmethod
     def _normalized_phone(value: str | None) -> str:
-        return "".join(character for character in (value or "") if character.isdigit())
+        return normalize_phone(value, region="ES") or ""
 
     def _conversation_customer(self, conversation: Conversation) -> Customer | None:
         phone = self._normalized_phone(conversation.customer_phone)

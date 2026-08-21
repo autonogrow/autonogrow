@@ -345,16 +345,18 @@ def test_creation_blocks_double_submit_waits_and_clears_personal_data_only_after
 def test_customer_portal_lists_only_server_scoped_bookings_and_safe_detail() -> None:
     html, _, _, customer_html, customer_js, _ = sources()
     assert html  # keep source tuple order explicit
-    assert 'id="upcoming-bookings"' in customer_html
-    assert 'id="past-bookings"' in customer_html
+    assert 'id="next-booking"' in customer_html
+    assert 'id="recent-services"' in customer_html
+    assert 'id="customer-calendar"' in customer_html
     assert 'id="booking-detail-dialog"' in customer_html
     assert 'role="dialog" aria-modal="true"' in customer_html
-    assert 'jsonRequest("/api/customer/bookings")' in customer_js
-    assert "data-booking-index" in customer_js
+    assert "/api/customer/home?from=" in customer_js
+    assert "openBookingDetail(item" in customer_js
     assert "data-booking-id" not in customer_js
     router = CUSTOMER_ROUTER.read_text(encoding="utf-8")
     assert "Booking.customer_user_id == user.id" in router
     assert "Booking.customer_email == user.email" in router
+    assert "Booking.customer_id.in_(linked_customer_ids)" in router
     assert "get_current_user" in router
 
 
@@ -372,8 +374,8 @@ def test_customer_states_expiry_empty_content_and_detail_are_friendly() -> None:
         assert f'{internal}: {{ label: "{label}"' in customer_js
     assert "Tu sesión ha caducado" in customer_js
     assert "No tienes próximas citas" in customer_js
-    assert "Todavía no hay historial" in customer_js
-    assert "Información devuelta para tu sesión autenticada" in CUSTOMER_HTML.read_text(encoding="utf-8")
+    assert "Aún no tienes servicios anteriores" in customer_js
+    assert "Información de tu reserva" in CUSTOMER_HTML.read_text(encoding="utf-8")
 
 
 def test_customer_reschedule_and_cancellation_are_not_faked() -> None:
@@ -382,7 +384,7 @@ def test_customer_reschedule_and_cancellation_are_not_faked() -> None:
     assert '"can_manage": False' in router
     assert "/reschedule" not in customer_js
     assert "/cancel" not in customer_js
-    assert "no tiene autorización backend para reagendar o cancelar" in customer_js
+    assert "Solo mostramos acciones que realmente están disponibles" in customer_js
     booking_router = BOOKING_ROUTER.read_text(encoding="utf-8")
     assert "require_booking_business_access" in booking_router
 
@@ -394,8 +396,7 @@ def test_contextual_navigation_and_noindex_are_preserved() -> None:
     assert 'customerLink.href = "../autonogrow-customer/index.html"' in js
     assert 'href="../privacy/"' in html
     assert '<meta name="robots" content="noindex, nofollow"' in customer_html
-    assert "encodeURIComponent(item.business_slug)" in customer_js
-    assert "encodeURIComponent(booking.business_slug)" in customer_js
+    assert "new URLSearchParams({ b: item.business_slug" in customer_js
 
 
 def test_responsive_and_accessible_structure_covers_required_controls() -> None:
@@ -458,7 +459,8 @@ def test_frontends_use_only_existing_endpoints_and_expose_no_secrets() -> None:
         "/bookings",
         "/attachments",
         "/api/customer/profile",
-        "/api/customer/bookings",
+        "/api/customer/home",
+        "/api/customer/claim-booking",
     )
     assert all(value in f"{js}\n{customer_js}" for value in expected)
     for forbidden in ("/api/customer/bookings/", "/api/customer/reschedule", "/api/customer/cancel"):

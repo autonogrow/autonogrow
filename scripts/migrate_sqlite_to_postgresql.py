@@ -46,6 +46,7 @@ COPY_ORDER = (
     "business_user_availability",
     "business_user_availability_exceptions",
     "customers",
+    "customer_account_links",
     "customer_memory_items",
     "bookings",
     "booking_attachments",
@@ -122,6 +123,7 @@ OPTIONAL_SOURCE_TABLES = (
     "business_calendar_events",
     "business_growth_signals",
     "customer_memory_items",
+    "customer_account_links",
     "business_reviews",
     "social_content_proposals",
     "social_content_proposal_signals",
@@ -139,6 +141,19 @@ DESTINATION_ONLY_TABLES = ("alembic_version",)
 # Values are safe expected values after PostgreSQL applies its explicit default,
 # or None when omission is intentionally represented as SQL NULL.
 ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
+    "users": {
+        "phone_normalized": {"action": "omit_as_null", "expected_value": None},
+        "phone_verified": {"action": "use_destination_default", "expected_value": False},
+        "instagram_username": {"action": "omit_as_null", "expected_value": None},
+        "instagram_provider_user_id": {"action": "omit_as_null", "expected_value": None},
+        "instagram_verified": {
+            "action": "use_destination_default",
+            "expected_value": False,
+        },
+    },
+    "customers": {
+        "phone_normalized": {"action": "omit_as_null", "expected_value": None},
+    },
     "business_gallery_images": {
         "service_id": {"action": "omit_as_null", "expected_value": None},
     },

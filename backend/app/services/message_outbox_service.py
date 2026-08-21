@@ -1,4 +1,3 @@
-import re
 from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
@@ -7,6 +6,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.models import Booking, Business, MessageOutbox, ReviewRequest
+from app.services.customer_identity_service import normalize_phone
 
 MADRID_TIMEZONE = ZoneInfo("Europe/Madrid")
 SPANISH_WEEKDAYS = (
@@ -34,20 +34,15 @@ SPANISH_MONTHS = (
 )
 
 
-def normalize_whatsapp_phone(phone: str | None) -> str:
-    digits = re.sub(r"\D", "", phone or "")
-
-    if digits.startswith("00"):
-        digits = digits[2:]
-
-    if not 8 <= len(digits) <= 15 or digits.startswith("0"):
+def normalize_whatsapp_phone(phone: str | None, *, region: str = "ES") -> str:
+    normalized = normalize_phone(phone, region=region)
+    if normalized is None:
         raise ValueError("invalid_whatsapp_phone")
+    return normalized.removeprefix("+")
 
-    return digits
 
-
-def build_whatsapp_url(phone: str | None, message: str) -> str:
-    normalized_phone = normalize_whatsapp_phone(phone)
+def build_whatsapp_url(phone: str | None, message: str, *, region: str = "ES") -> str:
+    normalized_phone = normalize_whatsapp_phone(phone, region=region)
     return f"https://wa.me/{normalized_phone}?text={quote(message, safe='')}"
 
 
@@ -119,7 +114,9 @@ def create_message_if_not_exists(
         return existing
 
     try:
-        whatsapp_url = build_whatsapp_url(booking.customer.phone, message)
+        whatsapp_url = build_whatsapp_url(
+            booking.customer.phone, message, region=business.country_code
+        )
     except ValueError:
         whatsapp_url = None
 
@@ -128,7 +125,10 @@ def create_message_if_not_exists(
         booking_id=booking.id,
         review_request_id=review_request.id if review_request else None,
         customer_name=booking.customer.name,
-        customer_phone=booking.customer.phone,
+        customer_phone=(
+            booking.customer.phone_normalized
+            or normalize_phone(booking.customer.phone, region=business.country_code)
+        ),
         channel="whatsapp",
         message_type=message_type,
         message=message,

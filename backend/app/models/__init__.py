@@ -33,6 +33,7 @@ from app.models.conversation import (
     ConversationTemplate,
 )
 from app.models.customer import Customer
+from app.models.customer_account_link import CustomerAccountLink
 from app.models.customer_memory import CustomerMemoryItem
 from app.models.customer_opportunity import CustomerOpportunity, ScheduledCustomerFollowUp
 from app.models.google_integration import GoogleIntegration
@@ -71,6 +72,7 @@ __all__ = [
     "BusinessCalendarEvent",
     "BusinessService",
     "Customer",
+    "CustomerAccountLink",
     "CustomerMemoryItem",
     "CustomerOpportunity",
     "OpportunityAction",

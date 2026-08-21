@@ -109,7 +109,8 @@ def google_login(
 
     user.email = email
     user.google_sub = google_sub
-    user.name = claims.get("name") or user.name
+    if not user.preferred_name:
+        user.name = claims.get("name") or user.name
     user.picture_url = claims.get("picture") or user.picture_url
     user.email_verified = True
     user.is_owner = email in get_owner_allowed_emails()

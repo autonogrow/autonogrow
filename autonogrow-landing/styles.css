@@ -387,6 +387,8 @@ input[type="file"] { padding: 10px; }
 .result-grid div { padding: 13px; border-radius: 10px; background: rgba(255,255,255,.75); }
 .result-grid strong { display: block; color: var(--muted); font-size: .76rem; text-transform: uppercase; }
 .result-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.post-booking-login { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.post-booking-login h3, .post-booking-login p { margin: 0 0 10px; }
 
 .contact-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .contact-card { min-height: 110px; padding: 20px; display: grid; align-content: center; gap: 5px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); text-decoration: none; }

@@ -42,6 +42,8 @@ def map_booking_error(exc: ValueError) -> HTTPException:
         "slot_unavailable": (409, "Ese hueco ya no está disponible"),
         "booking_closed": (400, "Cannot reschedule closed booking"),
         "booking_without_service": (400, "Booking does not have a service"),
+        "invalid_phone": (422, "El teléfono no es válido para el país del negocio"),
+        "identity_conflict": (409, "No se pudo vincular la identidad de forma segura"),
     }
     status_code, detail = errors.get(str(exc), (400, str(exc)))
     return HTTPException(status_code=status_code, detail=detail)

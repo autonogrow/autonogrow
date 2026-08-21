@@ -52,6 +52,8 @@ markupsafe==3.0.3
     # via mako
 pillow==11.3.0
     # via -r backend/requirements.in
+phonenumbers==9.0.37
+    # via -r backend/requirements.in
 psycopg[binary]==3.3.4
     # via -r backend/requirements.in
 psycopg-binary==3.3.4
