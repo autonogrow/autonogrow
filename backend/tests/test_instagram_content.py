@@ -151,6 +151,10 @@ def enable_publish_integration(ctx) -> None:
     ctx["db"].commit()
 
 
+def future_planned_at(days: int = 3) -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=days)).replace(microsecond=0).isoformat()
+
+
 def create_content_with_asset(ctx) -> tuple[int, int, int]:
     enable_service(ctx)
     response = ctx["client"].post(
@@ -159,7 +163,7 @@ def create_content_with_asset(ctx) -> tuple[int, int, int]:
             "title": "Campaña de agosto",
             "caption": "Primera propuesta",
             "format": "single_image",
-            "planned_publish_at": "2026-08-20T10:00:00+02:00",
+            "planned_publish_at": future_planned_at(),
         },
     )
     assert response.status_code == 201
@@ -363,7 +367,7 @@ def test_business_roles_cannot_run_owner_final_operations(editorial_context, rol
         ctx["client"]
         .patch(
             f"{admin_base(ctx)}/contents/{content_id}/planned-date",
-            json={"planned_publish_at": "2026-08-22T10:00:00+02:00"},
+            json={"planned_publish_at": future_planned_at()},
         )
         .status_code
         == 403
@@ -414,7 +418,7 @@ def test_material_change_versions_and_invalidates_but_date_change_does_not(edito
     set_actor(ctx, ctx["owner"])
     response = ctx["client"].patch(
         f"{owner_base(ctx)}/contents/{content_id}/planned-date",
-        json={"planned_publish_at": "2026-08-21T11:30:00+02:00"},
+        json={"planned_publish_at": future_planned_at()},
     )
     assert response.status_code == 200
     assert response.json()["status"] == "validated"
@@ -913,6 +917,78 @@ def upload_raw_asset(ctx, filename: str = "foto-cliente.png") -> dict:
     )
     assert response.status_code == 201
     return response.json()
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "media_type", "code", "message"),
+    (
+        (
+            "material.gif",
+            b"GIF89a",
+            "image/gif",
+            "unsupported_file_type",
+            "Este tipo de archivo no está permitido",
+        ),
+        ("vacio.png", b"", "image/png", "empty_file", "El archivo está vacío"),
+        (
+            "falso.png",
+            b"not-a-png",
+            "image/png",
+            "invalid_image_content",
+            "no corresponde a una imagen válida",
+        ),
+    ),
+)
+def test_raw_upload_returns_safe_specific_errors(
+    editorial_context,
+    filename,
+    content,
+    media_type,
+    code,
+    message,
+):
+    ctx = editorial_context
+    enable_service(ctx)
+
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={"file": (filename, content, media_type)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == code
+    assert message in response.json()["detail"]["message"]
+    assert ctx["db"].query(InstagramRawAsset).count() == 0
+
+
+def test_raw_upload_reports_dynamic_size_limit(editorial_context, monkeypatch):
+    ctx = editorial_context
+    enable_service(ctx)
+    monkeypatch.setattr("app.routers.instagram_content.MAX_ASSET_BYTES", 8)
+
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={"file": ("grande.png", b"123456789", "image/png")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == {
+        "code": "upload_too_large",
+        "message": "El archivo supera el tamaño máximo permitido de 5 MB.",
+    }
+
+
+def test_final_upload_uses_the_same_safe_validation_contract(editorial_context):
+    ctx = editorial_context
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/contents/{content_id}/final-assets",
+        files={"file": ("falso.webp", b"not-a-webp", "image/webp")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_image_content"
 
 
 def test_owner_previews_and_downloads_raw_asset_with_safe_original_name(editorial_context):

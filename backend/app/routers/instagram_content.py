@@ -88,7 +88,8 @@ ALLOWED_MEDIA = {
     "image/png": ".png",
     "image/webp": ".webp",
 }
-MAX_ASSET_BYTES = get_settings().upload_max_size_mb * 1024 * 1024
+MAX_ASSET_MB = get_settings().upload_max_size_mb
+MAX_ASSET_BYTES = MAX_ASSET_MB * 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
@@ -163,12 +164,29 @@ async def _read_image(file: UploadFile) -> tuple[bytes, str, str]:
     content_type = (file.content_type or "").lower()
     extension = ALLOWED_MEDIA.get(content_type)
     if extension is None:
-        raise HTTPException(status_code=400, detail="Only JPG, PNG or WEBP images are allowed")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "unsupported_file_type",
+                "message": "Este tipo de archivo no está permitido. Usa JPG, PNG o WEBP.",
+            },
+        )
     content = await file.read(MAX_ASSET_BYTES + 1)
     if not content:
-        raise HTTPException(status_code=400, detail="The file is empty")
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "empty_file", "message": "El archivo está vacío."},
+        )
     if len(content) > MAX_ASSET_BYTES:
-        raise HTTPException(status_code=400, detail="The file exceeds the upload limit")
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "code": "upload_too_large",
+                "message": (
+                    f"El archivo supera el tamaño máximo permitido de {MAX_ASSET_MB} MB."
+                ),
+            },
+        )
     _validate_image_content(content, content_type)
     return content, content_type, extension
 
@@ -182,7 +200,13 @@ def _validate_image_content(content: bytes, media_type: str) -> None:
         and content[8:12] == b"WEBP",
     }
     if media_type not in signatures or not signatures[media_type]:
-        raise HTTPException(status_code=400, detail="File content does not match its image type")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_image_content",
+                "message": "El contenido del archivo no corresponde a una imagen válida.",
+            },
+        )
 
 
 def _safe_download_filename(value: str, asset_id: int, media_type: str) -> str:

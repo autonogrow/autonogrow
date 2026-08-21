@@ -71,6 +71,31 @@ def test_owner_instagram_retry_after_creates_a_safe_client_cooldown() -> None:
     assert "window.setTimeout" in js
 
 
+def test_owner_instagram_upload_errors_are_specific_safe_and_restore_controls() -> None:
+    js = OWNER_JS.read_text(encoding="utf-8")
+    request = source_block(
+        js,
+        "async function ownerInstagramJson",
+        "async function ownerInstagramFileResponse",
+    )
+    uploads = source_block(
+        js,
+        "async function uploadOwnerInstagramRaw",
+        "async function deleteOwnerInstagramRaw",
+    ) + source_block(
+        js,
+        "async function uploadOwnerInstagramFinal",
+        "let onboardingReadiness",
+    )
+
+    assert 'typeof detail === "string" ? detail : detail?.message' in request
+    assert '"No se pudo completar la operación editorial."' in request
+    assert "showOwnerInstagramError(error)" in uploads
+    assert uploads.count("setOwnerInstagramFormBusy(form, false)") == 2
+    assert 'form.dataset.ownerInstagramSubmitting === "true"' in uploads
+    assert "ownerInstagramRateLimitError(retryAfter)" in js
+
+
 def test_owner_instagram_mutations_reject_duplicate_submissions_and_avoid_full_reload() -> None:
     js = OWNER_JS.read_text(encoding="utf-8")
     mutations = source_block(

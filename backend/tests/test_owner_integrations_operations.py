@@ -323,7 +323,12 @@ def test_integration_jobs_are_translated_and_have_no_manual_retry() -> None:
 
 
 def test_maintenance_is_contextual_confirmed_and_non_optimistic() -> None:
-    _, _, _, _, operations = sources()
+    _, css, _, _, operations = sources()
+    render = function(operations, "renderOwnerMaintenance", "renderOwnerOperationalOverview")
+    assert '<dl class="owner-maintenance-details">' in render
+    assert all(f"<dt>{label}</dt><dd>" in render for label in ("Estado actual", "Motivo", "Último cambio"))
+    assert "repeat(3, minmax(0, 1fr))" in css
+    assert ".owner-maintenance-details { grid-template-columns: minmax(0, 1fr); }" in css
     mutation = operations.split("toggleMaintenance = async function", 1)[1].split(
         "/* Auditoría", 1
     )[0]
@@ -332,6 +337,11 @@ def test_maintenance_is_contextual_confirmed_and_non_optimistic() -> None:
     assert "/api/owner/system/maintenance/" in mutation
     assert "loadOwnerOperationsHub(true)" in mutation
     assert "No se vacían colas ni se eliminan datos" in mutation
+
+
+def test_owner_operations_has_no_misspelled_actions_copy() -> None:
+    html, _, owner, businesses, operations = sources()
+    assert "acciónes" not in (html + owner + businesses + operations).casefold()
 
 
 def test_audit_is_explicitly_derived_because_no_read_endpoint_exists() -> None:

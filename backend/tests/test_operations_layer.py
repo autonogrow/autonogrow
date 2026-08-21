@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
 from app.core.database import Base
-from app.core.observability import OperationalFormatter, redact_sensitive
+from app.core.observability import OperationalFormatter, configure_logging, redact_sensitive
 from app.middleware.request_context import RequestContextMiddleware, safe_request_id
 from app.models import BackupRecord
 from app.models.registry import register_models
@@ -89,6 +89,78 @@ def test_json_formatter_includes_release_and_hides_secret() -> None:
     payload = json.loads(formatter.format(record))
     assert payload["release_id"] == "r1"
     assert "secret-value" not in json.dumps(payload)
+
+
+def test_uvicorn_access_log_redacts_sensitive_query_and_keeps_diagnostics() -> None:
+    settings = Settings(_env_file=None, app_env="test", log_format="json")
+    formatter = OperationalFormatter(settings)
+    path = (
+        "/api/webhooks/whatsapp?hub.verify_token=SUPER_SECRET_SENTINEL_123"
+        "&hub.challenge=CHALLENGE_SENTINEL_456&mode=subscribe"
+        "&access_token=ACCESS_TOKEN_SENTINEL_789"
+    )
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:4321", "GET", path, "1.1", 200),
+        None,
+    )
+
+    rendered = formatter.format(record)
+
+    for sentinel in (
+        "SUPER_SECRET_SENTINEL_123",
+        "CHALLENGE_SENTINEL_456",
+        "ACCESS_TOKEN_SENTINEL_789",
+    ):
+        assert sentinel not in rendered
+    for diagnostic in (
+        "GET",
+        "/api/webhooks/whatsapp",
+        "200",
+        "mode=subscribe",
+        "hub.verify_token=[REDACTED]",
+        "hub.challenge=[REDACTED]",
+        "access_token=[REDACTED]",
+    ):
+        assert diagnostic in rendered
+
+
+def test_access_logger_uses_operational_formatter_and_authorization_is_redacted() -> None:
+    root = logging.getLogger()
+    access = logging.getLogger("uvicorn.access")
+    previous_root_handlers = root.handlers[:]
+    previous_access_handlers = access.handlers[:]
+    previous_propagate = access.propagate
+    try:
+        configure_logging(Settings(_env_file=None, app_env="test", log_format="json"))
+        assert len(access.handlers) == 1
+        assert isinstance(access.handlers[0].formatter, OperationalFormatter)
+        safe = redact_sensitive(
+            {
+                "Authorization": "Bearer AUTHORIZATION_SENTINEL_123",
+                "X-Hub-Signature-256": "sha256=SIGNATURE_SENTINEL_456",
+                "request_id": "safe-request-id",
+            }
+        )
+        rendered = json.dumps(safe)
+        assert "AUTHORIZATION_SENTINEL_123" not in rendered
+        assert "SIGNATURE_SENTINEL_456" not in rendered
+        assert "safe-request-id" in rendered
+        oauth_log = redact_sensitive(
+            "/api/instagram/oauth/callback?code=OAUTH_CODE_SENTINEL_789"
+            "&state=OAUTH_STATE_SENTINEL_012&result=callback"
+        )
+        assert "OAUTH_CODE_SENTINEL_789" not in oauth_log
+        assert "OAUTH_STATE_SENTINEL_012" not in oauth_log
+        assert "result=callback" in oauth_log
+    finally:
+        root.handlers[:] = previous_root_handlers
+        access.handlers[:] = previous_access_handlers
+        access.propagate = previous_propagate
 
 
 def test_log_format_auto_follows_environment() -> None:

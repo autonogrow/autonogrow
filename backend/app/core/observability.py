@@ -15,12 +15,21 @@ request_id_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 _SENSITIVE_KEY = re.compile(
     r"(?:token|authorization|cookie|password|secret|api[_-]?key|encryption|ciphertext|"
-    r"session|csrf|smtp|database[_-]?url)",
+    r"session|csrf|smtp|signature|challenge|database[_-]?url)",
     re.IGNORECASE,
+)
+_SENSITIVE_QUERY_PARAMETER = re.compile(
+    r"(?i)(?P<prefix>[?&])"
+    r"(?P<key>hub\.(?:verify_token|challenge)|verify_token|access_token|token|authorization|"
+    r"api[_-]?key|client_secret|app_secret|signature|code|state)"
+    r"(?P<separator>=)(?P<value>[^&#\s\"']*)"
+)
+_AUTHORIZATION_TEXT = re.compile(
+    r"(?i)(authorization)\s*[:=]\s*(?:(?:bearer|basic)\s+)?[^\s,;&\"']+"
 )
 _SENSITIVE_TEXT = re.compile(
     r"(?i)(authorization|cookie|password|secret|api[_-]?key|token|csrf|smtp_password)"
-    r"\s*[:=]\s*([^\s,;]+)"
+    r"\s*[:=]\s*([^\s,;&\"']+)"
 )
 _URL_CREDENTIALS = re.compile(r"(?P<scheme>[a-z][a-z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@", re.I)
 
@@ -37,7 +46,17 @@ def redact_sensitive(value: Any, *, max_length: int | None = None) -> Any:
     if isinstance(value, (list, tuple, set)):
         return [redact_sensitive(item, max_length=limit) for item in value]
     if isinstance(value, str):
-        cleaned = _SENSITIVE_TEXT.sub(lambda match: f"{match.group(1)}=[REDACTED]", value)
+        cleaned = _SENSITIVE_QUERY_PARAMETER.sub(
+            lambda match: (
+                f"{match.group('prefix')}{match.group('key')}"
+                f"{match.group('separator')}[REDACTED]"
+            ),
+            value,
+        )
+        cleaned = _AUTHORIZATION_TEXT.sub(
+            lambda match: f"{match.group(1)}=[REDACTED]", cleaned
+        )
+        cleaned = _SENSITIVE_TEXT.sub(lambda match: f"{match.group(1)}=[REDACTED]", cleaned)
         cleaned = _URL_CREDENTIALS.sub(lambda match: f"{match.group('scheme')}[REDACTED]@", cleaned)
         return cleaned if len(cleaned) <= limit else f"{cleaned[:limit]}…"
     if isinstance(value, (str, int, float, bool)) or value is None:
@@ -86,3 +105,6 @@ def configure_logging(settings: Settings | None = None) -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(OperationalFormatter(active))
     root.handlers[:] = [handler]
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.handlers[:] = [handler]
+    access_logger.propagate = False
