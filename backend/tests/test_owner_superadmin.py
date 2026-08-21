@@ -89,6 +89,7 @@ class OwnerSuperadminTest(unittest.TestCase):
             staff_business_user=self.staff,
             service=self.service,
             service_name=self.service.name,
+            duration_minutes=30,
             start_datetime=datetime.now() - timedelta(days=1),
             end_datetime=datetime.now() - timedelta(days=1, minutes=-30),
             preferred_date=(datetime.now() - timedelta(days=1)).date().isoformat(),
@@ -245,6 +246,61 @@ class OwnerSuperadminTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as anonymous_denied:
             get_current_user(None)
         self.assertEqual(anonymous_denied.exception.status_code, 401)
+
+    def test_booking_calendar_range_returns_duration_and_staff_without_cross_business_data(self):
+        today = datetime.now().date()
+        outside_start = datetime.combine(today + timedelta(days=90), datetime.min.time())
+        outside = Booking(
+            business=self.business,
+            customer=self.customer,
+            staff_business_user=self.staff,
+            service=self.service,
+            service_name=self.service.name,
+            duration_minutes=30,
+            start_datetime=outside_start,
+            end_datetime=outside_start + timedelta(minutes=30),
+            preferred_date=outside_start.date().isoformat(),
+            preferred_time="10:00",
+            status="confirmed",
+        )
+        other_customer = Customer(business=self.other_business, name="Other", phone="611111111")
+        other_booking = Booking(
+            business=self.other_business,
+            customer=other_customer,
+            service_name="Other service",
+            duration_minutes=60,
+            start_datetime=datetime.now(),
+            end_datetime=datetime.now() + timedelta(hours=1),
+            preferred_date=today.isoformat(),
+            preferred_time="12:00",
+            status="confirmed",
+        )
+        self.db.add_all([outside, other_customer, other_booking])
+        self.db.commit()
+
+        result = admin_list_bookings(
+            self.business.slug,
+            from_date=today - timedelta(days=2),
+            to_date=today + timedelta(days=2),
+            actor=self.owner,
+            db=self.db,
+        )
+
+        self.assertEqual([item["id"] for item in result["bookings"]], [self.booking.id])
+        self.assertEqual(result["business_timezone"], self.business.timezone)
+        self.assertEqual(result["bookings"][0]["staff_display_name"], "Staff")
+        self.assertEqual(result["bookings"][0]["duration_minutes"], 30)
+        self.assertEqual(result["bookings"][0]["status"], "completed")
+
+        with self.assertRaises(HTTPException) as invalid_range:
+            admin_list_bookings(
+                self.business.slug,
+                from_date=today,
+                to_date=today + timedelta(days=63),
+                actor=self.owner,
+                db=self.db,
+            )
+        self.assertEqual(invalid_range.exception.status_code, 422)
 
     def test_owner_cannot_remove_the_only_active_business_admin(self):
         response = remove_staff(

@@ -1,11 +1,13 @@
 import hashlib
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.audit import record_audit
@@ -16,6 +18,8 @@ from app.models import (
     Business,
     InstagramContent,
     InstagramContentRawAsset,
+    InstagramContentVersion,
+    InstagramContentVersionAsset,
     InstagramFinalAsset,
     InstagramPublishJob,
     InstagramRawAsset,
@@ -182,9 +186,7 @@ async def _read_image(file: UploadFile) -> tuple[bytes, str, str]:
             status_code=413,
             detail={
                 "code": "upload_too_large",
-                "message": (
-                    f"El archivo supera el tamaño máximo permitido de {MAX_ASSET_MB} MB."
-                ),
+                "message": (f"El archivo supera el tamaño máximo permitido de {MAX_ASSET_MB} MB."),
             },
         )
     _validate_image_content(content, content_type)
@@ -367,34 +369,84 @@ def _list_content(
     *,
     detailed: bool = False,
     owner_technical: bool = True,
+    from_datetime: datetime | None = None,
+    to_datetime: datetime | None = None,
+    include_unscheduled: bool = True,
 ) -> dict:
     require_service_enabled(db, business_id)
-    items = (
+    query = (
         db.query(InstagramContent)
         .options(
             selectinload(InstagramContent.source_asset_links).selectinload(
                 InstagramContentRawAsset.raw_asset
-            )
+            ),
+            selectinload(InstagramContent.business),
+            selectinload(InstagramContent.publish_jobs),
+            selectinload(InstagramContent.versions).selectinload(
+                InstagramContentVersion.validation
+            ),
+            selectinload(InstagramContent.versions)
+            .selectinload(InstagramContentVersion.asset_links)
+            .selectinload(InstagramContentVersionAsset.asset),
         )
         .filter(
             InstagramContent.business_id == business_id,
             InstagramContent.archived_at.is_(None),
         )
-        .order_by(InstagramContent.updated_at.desc(), InstagramContent.id.desc())
-        .all()
     )
-    return {
-        "contents": [
-            serialize_content(
-                db,
-                item,
-                api_prefix,
-                detailed=detailed,
-                owner_technical=owner_technical,
+    range_filters = []
+    if from_datetime is not None:
+        range_filters.append(InstagramContent.planned_publish_at >= from_datetime)
+    if to_datetime is not None:
+        range_filters.append(InstagramContent.planned_publish_at < to_datetime)
+    if range_filters:
+        planned_in_range = range_filters[0]
+        for condition in range_filters[1:]:
+            planned_in_range = planned_in_range & condition
+        query = query.filter(
+            or_(InstagramContent.planned_publish_at.is_(None), planned_in_range)
+            if include_unscheduled
+            else planned_in_range
+        )
+    items = query.order_by(
+        InstagramContent.planned_publish_at.asc(), InstagramContent.updated_at.desc()
+    ).all()
+    contents = []
+    for item in items:
+        setattr(
+            item,
+            "_prefetched_current_version",
+            max(item.versions, key=lambda version: version.version_number, default=None),
+        )
+        payload = serialize_content(
+            db,
+            item,
+            api_prefix,
+            detailed=detailed,
+            owner_technical=owner_technical,
+        )
+        delattr(item, "_prefetched_current_version")
+        if not detailed:
+            latest_job = max(item.publish_jobs, key=lambda job: job.created_at, default=None)
+            payload["publish_jobs"] = (
+                [serialize_publish_job(latest_job, owner_technical=owner_technical)]
+                if latest_job
+                else []
             )
-            for item in items
-        ]
-    }
+        contents.append(payload)
+    return {"contents": contents}
+
+
+def _validate_content_range(from_datetime: datetime | None, to_datetime: datetime | None) -> None:
+    if from_datetime is None or to_datetime is None:
+        return
+    if (from_datetime.tzinfo is None) != (to_datetime.tzinfo is None):
+        raise HTTPException(status_code=422, detail="Content range offsets must match")
+    if to_datetime <= from_datetime or (to_datetime - from_datetime).days > 62:
+        raise HTTPException(
+            status_code=422,
+            detail="Content range must span between 1 and 62 days",
+        )
 
 
 def _raw_content_payload(
@@ -968,24 +1020,47 @@ def admin_disassociate_raw_asset_forbidden(
 
 
 @owner_router.get("/contents")
-def owner_list_contents(business_id: int, db: Session = Depends(get_db)):
+def owner_list_contents(
+    business_id: int,
+    from_datetime: datetime | None = Query(default=None, alias="from"),
+    to_datetime: datetime | None = Query(default=None, alias="to"),
+    include_unscheduled: bool = True,
+    db: Session = Depends(get_db),
+):
     _owner_business(db, business_id)
-    return _list_content(db, business_id, _owner_prefix(business_id), detailed=True)
+    _validate_content_range(from_datetime, to_datetime)
+    return _list_content(
+        db,
+        business_id,
+        _owner_prefix(business_id),
+        detailed=False,
+        from_datetime=from_datetime,
+        to_datetime=to_datetime,
+        include_unscheduled=include_unscheduled,
+    )
 
 
 @admin_router.get("/contents")
 def admin_list_contents(
     business_slug: str,
+    from_datetime: datetime | None = Query(default=None, alias="from"),
+    to_datetime: datetime | None = Query(default=None, alias="to"),
+    include_unscheduled: bool = True,
     actor: User = Depends(require_instagram_business_admin),
     db: Session = Depends(get_db),
 ):
     del actor
     business = _admin_business(db, business_slug)
+    _validate_content_range(from_datetime, to_datetime)
     return _list_content(
         db,
         business.id,
         _admin_prefix(business_slug),
+        detailed=False,
         owner_technical=False,
+        from_datetime=from_datetime,
+        to_datetime=to_datetime,
+        include_unscheduled=include_unscheduled,
     )
 
 

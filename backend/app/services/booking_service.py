@@ -1,9 +1,9 @@
 import json
 import secrets
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from app.models import Booking, Business, BusinessService, Customer, SyncJob, User
@@ -458,7 +458,12 @@ def reschedule_existing_booking(
 
 
 def list_bookings_for_business(
-    db: Session, *, business_slug: str, staff_business_user_id: int | None = None
+    db: Session,
+    *,
+    business_slug: str,
+    staff_business_user_id: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
 ) -> list[dict[str, Any]]:
     business = get_business_by_slug(db, business_slug)
 
@@ -468,6 +473,28 @@ def list_bookings_for_business(
     query = db.query(Booking).filter(Booking.business_id == business.id)
     if staff_business_user_id is not None:
         query = query.filter(Booking.staff_business_user_id == staff_business_user_id)
-    bookings = query.order_by(Booking.created_at.desc()).all()
+    if from_date is not None:
+        start = datetime.combine(from_date, time.min)
+        query = query.filter(
+            or_(
+                Booking.start_datetime >= start,
+                and_(
+                    Booking.start_datetime.is_(None),
+                    Booking.preferred_date >= from_date.isoformat(),
+                ),
+            )
+        )
+    if to_date is not None:
+        end = datetime.combine(to_date, time.min)
+        query = query.filter(
+            or_(
+                Booking.start_datetime < end,
+                and_(
+                    Booking.start_datetime.is_(None),
+                    Booking.preferred_date < to_date.isoformat(),
+                ),
+            )
+        )
+    bookings = query.order_by(Booking.start_datetime.asc(), Booking.created_at.desc()).all()
 
     return [serialize_booking(booking) for booking in bookings]

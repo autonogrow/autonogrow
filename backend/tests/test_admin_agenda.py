@@ -32,14 +32,14 @@ def function_block(js: str, start: str, end: str) -> str:
     return js.split(start, 1)[1].split(end, 1)[0]
 
 
-def test_agenda_has_three_accessible_views_and_today_is_default() -> None:
+def test_agenda_has_three_accessible_calendar_views_and_day_is_default() -> None:
     html, _, js = read_sources()
     assert 'role="tablist"' in html
-    for view in ("today", "pending", "week"):
+    for view in ("day", "week", "month"):
         assert html.count(f'data-booking-view="{view}"') == 1
-    assert 'data-booking-view="today">Hoy</button>' in html
-    assert 'aria-selected="true" data-booking-view="today"' in html
-    assert 'let currentBookingView = "today";' in js
+    assert 'data-booking-view="day">Día</button>' in html
+    assert 'aria-selected="true" data-booking-view="day"' in html
+    assert 'let currentBookingView = "day";' in js
     assert 'let agendaSelectedDate = "";' in js
 
 
@@ -77,7 +77,9 @@ def test_agenda_translates_all_existing_booking_states() -> None:
 
 def test_agenda_orders_chronologically_and_filters_locally() -> None:
     _, _, js = read_sources()
-    ordering = function_block(js, "function getBookingSortValue", "function syncAgendaServiceFilter")
+    ordering = function_block(
+        js, "function getBookingSortValue", "function syncAgendaServiceFilter"
+    )
     assert "getBookingSortValue(first).localeCompare(getBookingSortValue(second))" in ordering
     assert "staff_business_user_id" in ordering
     assert "selectedBookingStatusFilter" in ordering
@@ -87,7 +89,7 @@ def test_agenda_orders_chronologically_and_filters_locally() -> None:
     assert "function resetAgendaFilters" in js
 
 
-def test_agenda_supports_day_and_week_navigation_and_empty_states() -> None:
+def test_agenda_supports_day_week_month_navigation_and_empty_states() -> None:
     _, _, js = read_sources()
     assert "function getAgendaWeekDates" in js
     assert "addDaysToDateKey(agendaSelectedDate" in js
@@ -97,11 +99,37 @@ def test_agenda_supports_day_and_week_navigation_and_empty_states() -> None:
     for message in (
         "No tienes citas para este día.",
         "Todo está revisado",
-        "No hay solicitudes esperando confirmación.",
+        "No tienes citas esta semana.",
+        "No tienes citas este mes.",
         "No hay citas con estos filtros.",
         "No pudimos cargar la agenda.",
     ):
         assert message in js
+
+
+def test_visual_calendar_maps_duration_staff_and_month_occupancy() -> None:
+    html, css, js = read_sources()
+    assert 'id="agenda-attention"' in html
+    assert "function renderAgendaDayCalendar" in js
+    assert "function renderAgendaWeekCalendar" in js
+    assert "function renderAgendaMonthCalendar" in js
+    assert "duration / 60 * range.rowHeight" in js
+    assert 'style="--booking-top:${top}px;--booking-height:${height}px"' in js
+    assert "staff_business_user_id" in function_block(
+        js, "function renderAgendaDayCalendar", "function renderAgendaWeekCalendar"
+    )
+    assert "agenda-occupancy" in js
+    assert "data-agenda-month-day" in js
+    assert ".agenda-time-block { position: absolute" in css
+    assert ".agenda-mobile-week .agenda-time-block { position: relative" in css
+
+
+def test_agenda_loads_bounded_calendar_ranges() -> None:
+    _, _, js = read_sources()
+    load = function_block(js, "async function loadBookings", "async function loadReviewRequests")
+    assert "from: addDaysToDateKey(center, -31)" in load
+    assert "to: addDaysToDateKey(center, 31)" in load
+    assert "/bookings?${range.toString()}" in load
 
 
 def test_booking_actions_follow_real_state_matrix_and_block_double_submit() -> None:
@@ -133,7 +161,7 @@ def test_reschedule_reuses_real_slots_and_handles_conflict() -> None:
     _, _, js = read_sources()
     block = function_block(js, "function openRescheduleModal", "async function updateBookingStatus")
     assert "/available-slots?${params.toString()}" in block
-    assert 'exclude_booking_id: booking.id' in block
+    assert "exclude_booking_id: booking.id" in block
     assert 'params.set("staff_business_user_id"' in block
     assert 'method: "PATCH"' in block
     assert "/api/bookings/${booking.id}/reschedule" in block

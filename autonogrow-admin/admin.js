@@ -32,8 +32,9 @@ const growthSignalMutationIds = new Set();
 let availabilitySettings = null;
 let availabilityExceptions = [];
 let exceptionDraftWindows = [];
-let currentBookingView = "today";
+let currentBookingView = "day";
 let agendaSelectedDate = "";
+let agendaSelectedBookingId = null;
 let selectedBookingStatusFilter = "";
 let selectedBookingServiceFilter = "";
 let bookingCustomerSearch = "";
@@ -51,6 +52,11 @@ let businessChannelHealth = [];
 let adminInstagramSettings = null;
 let adminInstagramContents = [];
 let adminInstagramMetrics = null;
+let adminInstagramCalendarView = "week";
+let adminInstagramCalendarDate = "";
+let adminInstagramSelectedContentId = null;
+let adminInstagramStateFilter = "";
+let adminInstagramFormatFilter = "";
 let socialContentProposals = [];
 const socialContentProposalMutationIds = new Set();
 let conversationSuggestions = [];
@@ -582,22 +588,60 @@ function setupBookingViews() {
   document.querySelectorAll("[data-agenda-nav]").forEach((button) => {
     button.addEventListener("click", () => {
       const step = Number(button.dataset.agendaNav);
-      agendaSelectedDate = addDaysToDateKey(agendaSelectedDate, step * (currentBookingView === "week" ? 7 : 1));
+      if (currentBookingView === "month") {
+        const value = new Date(`${agendaSelectedDate.slice(0, 7)}-01T12:00:00Z`);
+        value.setUTCMonth(value.getUTCMonth() + step);
+        agendaSelectedDate = value.toISOString().slice(0, 10);
+      } else {
+        agendaSelectedDate = addDaysToDateKey(agendaSelectedDate, step * (currentBookingView === "week" ? 7 : 1));
+      }
+      agendaSelectedBookingId = null;
       const url = new URL(window.location.href);
       url.searchParams.delete("booking");
       window.history.replaceState(null, "", `${url.pathname}${url.search}#bookings`);
-      renderBookings();
+      loadBookings();
     });
   });
   document.getElementById("agenda-today-button")?.addEventListener("click", () => {
     agendaSelectedDate = getMadridDateKey();
-    renderBookings();
+    agendaSelectedBookingId = null;
+    loadBookings();
   });
   document.getElementById("agenda-week-days")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-agenda-date]");
     if (!button) return;
     agendaSelectedDate = button.dataset.agendaDate;
+    currentBookingView = "day";
+    agendaSelectedBookingId = null;
     renderBookings();
+  });
+  document.getElementById("agenda-attention")?.addEventListener("click", () => {
+    currentBookingView = "day";
+    selectedBookingStatusFilter = "attention";
+    const status = document.getElementById("agenda-status-filter");
+    if (status) status.value = "attention";
+    const firstPending = sortBookingsChronologically(allBookings.filter((booking) => ["requested", "pending"].includes(booking.status)))[0];
+    if (firstPending) {
+      agendaSelectedDate = getBookingDateKey(firstPending) || getMadridDateKey();
+      agendaSelectedBookingId = Number(firstPending.id);
+    }
+    renderBookings();
+  });
+  document.getElementById("bookings-list")?.addEventListener("click", (event) => {
+    const day = event.target.closest("[data-agenda-month-day]");
+    if (day) {
+      agendaSelectedDate = day.dataset.agendaMonthDay;
+      currentBookingView = "day";
+      agendaSelectedBookingId = null;
+      loadBookings();
+      return;
+    }
+    const block = event.target.closest("[data-agenda-booking-open]");
+    if (block) {
+      agendaSelectedBookingId = Number(block.dataset.agendaBookingOpen);
+      renderBookings();
+      window.setTimeout(() => document.getElementById(`booking-${agendaSelectedBookingId}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 0);
+    }
   });
   document.getElementById("agenda-status-filter")?.addEventListener("change", (event) => {
     selectedBookingStatusFilter = event.target.value;
@@ -622,11 +666,12 @@ function setupBookingViews() {
 }
 
 function setBookingView(view, { clearDeepLink = true } = {}) {
-  const normalizedView = ["today", "pending", "week"].includes(view) ? view : "today";
+  const normalizedView = ["day", "week", "month"].includes(view) ? view : "day";
   if (view === "tomorrow") agendaSelectedDate = addDaysToDateKey(getMadridDateKey(), 1);
   if (view === "upcoming") agendaSelectedDate = addDaysToDateKey(getMadridDateKey(), 2);
   if (view === "history") agendaSelectedDate = getMadridDateKey();
   currentBookingView = normalizedView;
+  agendaSelectedBookingId = null;
   if (clearDeepLink) {
     const url = new URL(window.location.href);
     url.searchParams.delete("booking");
@@ -3788,19 +3833,29 @@ async function loadBookings({ background = false } = {}) {
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/bookings`);
+    const center = agendaSelectedDate || getMadridDateKey();
+    const range = new URLSearchParams({
+      from: addDaysToDateKey(center, -31),
+      to: addDaysToDateKey(center, 31)
+    });
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/bookings?${range.toString()}`);
 
     if (!response.ok) throw new Error("No se pudieron cargar las reservas.");
 
     const data = await response.json();
     if (loadVersion !== bookingsLoadVersion) return;
     const previousBookings = new Map(allBookings.map((booking) => [booking.id, booking]));
-    allBookings = (data.bookings || []).map((booking) => ({
+    const loadedBookings = (data.bookings || []).map((booking) => ({
       ...booking,
       attachments: background
         ? (previousBookings.get(booking.id)?.attachments || [])
         : (booking.attachments || [])
     }));
+    const loadedIds = new Set(loadedBookings.map((booking) => booking.id));
+    allBookings = [
+      ...loadedBookings,
+      ...allBookings.filter((booking) => !loadedIds.has(booking.id))
+    ];
     setDashboardDataState("bookings", "ready");
 
     if (!background && isBusinessStaff()) {
@@ -5775,7 +5830,8 @@ function sortBookingsChronologically(bookings) {
 function filterAgendaBookings(bookings) {
   return bookings.filter((booking) => {
     if (selectedStaffFilter && String(booking.staff_business_user_id || "") !== selectedStaffFilter) return false;
-    if (selectedBookingStatusFilter && booking.status !== selectedBookingStatusFilter) return false;
+    if (selectedBookingStatusFilter === "attention" && !["requested", "pending"].includes(booking.status)) return false;
+    if (selectedBookingStatusFilter && selectedBookingStatusFilter !== "attention" && booking.status !== selectedBookingStatusFilter) return false;
     if (selectedBookingServiceFilter && String(booking.service_id || "") !== selectedBookingServiceFilter) return false;
     if (bookingCustomerSearch && !String(booking.customer_name || "").toLocaleLowerCase("es").includes(bookingCustomerSearch)) return false;
     return true;
@@ -5784,12 +5840,12 @@ function filterAgendaBookings(bookings) {
 
 function getAgendaPeriodBookings(view = currentBookingView, { selectedDayOnly = true } = {}) {
   let bookings;
-  if (view === "pending") {
-    bookings = allBookings.filter((booking) => ["requested", "pending"].includes(booking.status));
-  } else if (view === "week") {
+  if (view === "week") {
     const weekDates = getAgendaWeekDates();
     bookings = allBookings.filter((booking) => weekDates.includes(getBookingDateKey(booking)));
     if (selectedDayOnly) bookings = bookings.filter((booking) => getBookingDateKey(booking) === agendaSelectedDate);
+  } else if (view === "month") {
+    bookings = allBookings.filter((booking) => getBookingDateKey(booking)?.startsWith(agendaSelectedDate.slice(0, 7)));
   } else {
     bookings = allBookings.filter((booking) => getBookingDateKey(booking) === agendaSelectedDate);
   }
@@ -5820,17 +5876,24 @@ function renderAgendaHeaderAndSummary() {
   const context = document.getElementById("agenda-context-summary");
   const navigation = document.querySelector(".agenda-date-navigation");
   const weekDays = document.getElementById("agenda-week-days");
-  const periodBookings = getAgendaPeriodBookings(currentBookingView, { selectedDayOnly: currentBookingView !== "week" });
+  const periodBookings = getAgendaPeriodBookings(currentBookingView, { selectedDayOnly: false });
   const pendingCount = periodBookings.filter((booking) => ["requested", "pending"].includes(booking.status)).length;
-  const label = currentBookingView === "pending"
-    ? "Solicitudes por revisar"
-    : currentBookingView === "week"
+  const label = currentBookingView === "week"
       ? `${formatAgendaDate(getAgendaWeekDates()[0], { day: "numeric", month: "short" })} – ${formatAgendaDate(getAgendaWeekDates()[6], { day: "numeric", month: "short", year: "numeric" })}`
+      : currentBookingView === "month"
+        ? formatAgendaDate(`${agendaSelectedDate.slice(0, 7)}-01`, { month: "long", year: "numeric" })
       : formatAgendaDate(agendaSelectedDate, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   dateLabel.textContent = label;
   context.textContent = `${periodBookings.length} cita${periodBookings.length === 1 ? "" : "s"} · ${pendingCount} por confirmar`;
-  navigation.hidden = currentBookingView === "pending";
-  weekDays.hidden = currentBookingView !== "week";
+  navigation.hidden = false;
+  weekDays.hidden = true;
+
+  const totalPending = allBookings.filter((booking) => ["requested", "pending"].includes(booking.status)).length;
+  const attention = document.getElementById("agenda-attention");
+  attention.textContent = totalPending
+    ? `${totalPending} solicitud${totalPending === 1 ? " espera" : "es esperan"} confirmación`
+    : "Todo está revisado";
+  attention.classList.toggle("agenda-attention--active", totalPending > 0);
 
   const metrics = {
     "agenda-stat-total": periodBookings.length,
@@ -5936,12 +5999,9 @@ function renderAgendaEmptyState() {
   if (hasFilters) {
     return `<div class="agenda-state"><strong>No hay citas con estos filtros.</strong><p>Prueba otra combinación o restablece los filtros.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="reset-agenda-filters">Restablecer filtros</button></div>`;
   }
-  if (currentBookingView === "pending") {
-    return `<div class="agenda-state"><strong>Todo está revisado</strong><p>No hay solicitudes esperando confirmación.</p></div>`;
-  }
   const changeDay = `<button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="navigate-agenda-date" data-direction="1">Ver día siguiente</button>`;
   const settings = isBusinessStaff() ? "" : `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="navigate-section" data-section="schedule">Revisar disponibilidad</button>`;
-  return `<div class="agenda-state"><strong>No tienes citas para este día.</strong><p>${currentBookingView === "week" ? "Selecciona otro día de la semana o cambia de semana." : "La agenda está libre en la fecha seleccionada."}</p><div class="agenda-state__actions">${changeDay}${settings}</div></div>`;
+  return `<div class="agenda-state"><strong>${currentBookingView === "month" ? "No tienes citas este mes." : currentBookingView === "week" ? "No tienes citas esta semana." : "No tienes citas para este día."}</strong><p>La agenda está libre en el periodo seleccionado.</p><div class="agenda-state__actions">${changeDay}${settings}</div></div>`;
 }
 
 function navigateAgendaDate(days) {
@@ -5996,6 +6056,81 @@ function renderBookingCard(booking, nextBookingId) {
     </article>`;
 }
 
+function bookingStartMinutes(booking) {
+  const value = booking.start_datetime?.slice(11, 16) || booking.preferred_time || "";
+  const match = value.match(/^(\d{2}):(\d{2})/);
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+
+function bookingVisualIcon(status) {
+  if (["requested", "pending"].includes(status)) return "!";
+  if (["confirmed", "completed"].includes(status)) return "✓";
+  if (["cancelled", "rejected", "no_show"].includes(status)) return "×";
+  return "○";
+}
+
+function agendaTimeRange(bookings) {
+  const starts = bookings.map(bookingStartMinutes).filter(Number.isFinite);
+  const ends = bookings.map((booking) => {
+    const start = bookingStartMinutes(booking);
+    return Number.isFinite(start) ? start + Number(booking.duration_minutes || 30) : null;
+  }).filter(Number.isFinite);
+  const startHour = starts.length ? Math.max(6, Math.min(9, Math.floor(Math.min(...starts) / 60))) : 8;
+  const endHour = ends.length ? Math.min(24, Math.max(19, Math.ceil(Math.max(...ends) / 60))) : 20;
+  return { startHour, endHour, rowHeight: 72 };
+}
+
+function renderAgendaTimeAxis(range) {
+  return `<div class="agenda-time-axis" aria-hidden="true">${Array.from({ length: range.endHour - range.startHour + 1 }, (_item, index) => `<span style="top:${index * range.rowHeight}px">${String(range.startHour + index).padStart(2, "0")}:00</span>`).join("")}</div>`;
+}
+
+function renderAgendaBookingBlock(booking, range) {
+  const start = bookingStartMinutes(booking);
+  if (!Number.isFinite(start)) return "";
+  const duration = Math.max(15, Number(booking.duration_minutes || 30));
+  const top = Math.max(0, (start - range.startHour * 60) / 60 * range.rowHeight);
+  const height = Math.max(38, duration / 60 * range.rowHeight - 3);
+  const status = getStatusLabel(booking.status);
+  return `<button class="agenda-time-block agenda-time-block--${escapeHtml(booking.status)}" type="button" data-agenda-booking-open="${Number(booking.id)}" style="--booking-top:${top}px;--booking-height:${height}px" aria-label="${escapeHtml(`${getBookingTimeRange(booking)}, ${booking.customer_name}, ${booking.service_name}, ${status}`)}"><span class="agenda-time-block__icon" aria-hidden="true">${bookingVisualIcon(booking.status)}</span><span class="agenda-time-block__content"><strong>${escapeHtml(booking.customer_name || "Cliente")}</strong><small>${escapeHtml(booking.service_name || "Servicio")} · ${escapeHtml(getBookingTimeRange(booking))}</small><small>${escapeHtml(booking.staff_display_name || "Sin asignar")} · ${escapeHtml(status)}</small></span></button>`;
+}
+
+function renderAgendaDayCalendar(bookings) {
+  if (!bookings.length) return renderAgendaEmptyState();
+  const range = agendaTimeRange(bookings);
+  const laneHeight = (range.endHour - range.startHour) * range.rowHeight;
+  const staff = new Map();
+  bookings.forEach((booking) => {
+    const key = String(booking.staff_business_user_id || "unassigned");
+    if (!staff.has(key)) staff.set(key, booking.staff_display_name || "Sin asignar");
+  });
+  const lanes = Array.from(staff.entries());
+  if (window.matchMedia("(max-width: 639px)").matches && lanes.length > 1) {
+    return `<div class="agenda-mobile-staff-stack">${lanes.map(([staffId, name]) => `<section><h3>${escapeHtml(name)}</h3><div class="agenda-timeline agenda-timeline--mobile" style="--agenda-lane-height:${laneHeight}px"><div class="agenda-timeline-body">${renderAgendaTimeAxis(range)}<div class="agenda-staff-lanes"><section class="agenda-staff-lane">${Array.from({ length: range.endHour - range.startHour }, () => `<span class="agenda-hour-line"></span>`).join("")}${bookings.filter((booking) => String(booking.staff_business_user_id || "unassigned") === staffId).map((booking) => renderAgendaBookingBlock(booking, range)).join("")}</section></div></div></div></section>`).join("")}</div>`;
+  }
+  return `<div class="agenda-timeline agenda-timeline--day" style="--agenda-lane-height:${laneHeight}px"><div class="agenda-staff-headings" style="--agenda-staff-count:${lanes.length}">${lanes.map(([_id, name]) => `<strong>${escapeHtml(name)}</strong>`).join("")}</div><div class="agenda-timeline-body">${renderAgendaTimeAxis(range)}<div class="agenda-staff-lanes" style="--agenda-staff-count:${lanes.length}">${lanes.map(([staffId, name]) => `<section class="agenda-staff-lane" aria-label="Agenda de ${escapeHtml(name)}">${Array.from({ length: range.endHour - range.startHour }, () => `<span class="agenda-hour-line"></span>`).join("")}${bookings.filter((booking) => String(booking.staff_business_user_id || "unassigned") === staffId).map((booking) => renderAgendaBookingBlock(booking, range)).join("")}</section>`).join("")}</div></div></div>`;
+}
+
+function renderAgendaWeekCalendar(bookings) {
+  if (!bookings.length) return renderAgendaEmptyState();
+  const range = agendaTimeRange(bookings);
+  const laneHeight = (range.endHour - range.startHour) * range.rowHeight;
+  const days = getAgendaWeekDates();
+  if (window.matchMedia("(max-width: 639px)").matches) {
+    return `<div class="agenda-mobile-week">${days.map((dateKey) => { const items = bookings.filter((booking) => getBookingDateKey(booking) === dateKey); return `<section><button type="button" data-agenda-month-day="${dateKey}"><strong>${escapeHtml(formatAgendaDate(dateKey, { weekday: "long", day: "numeric", month: "short" }))}</strong><span>${items.length} cita${items.length === 1 ? "" : "s"}</span></button><div>${items.length ? items.map((booking) => renderAgendaBookingBlock(booking, range)).join("") : `<span class="agenda-calendar-gap">Sin citas</span>`}</div></section>`; }).join("")}</div>`;
+  }
+  return `<div class="agenda-timeline agenda-timeline--week" style="--agenda-lane-height:${laneHeight}px"><div class="agenda-week-headings">${days.map((dateKey) => `<button type="button" data-agenda-month-day="${dateKey}"><span>${escapeHtml(formatAgendaDate(dateKey, { weekday: "short" }))}</span><strong>${escapeHtml(formatAgendaDate(dateKey, { day: "numeric" }))}</strong></button>`).join("")}</div><div class="agenda-timeline-body">${renderAgendaTimeAxis(range)}<div class="agenda-week-lanes">${days.map((dateKey) => `<section class="agenda-week-lane" aria-label="${escapeHtml(formatAgendaDate(dateKey, { weekday: "long", day: "numeric", month: "long" }))}">${Array.from({ length: range.endHour - range.startHour }, () => `<span class="agenda-hour-line"></span>`).join("")}${bookings.filter((booking) => getBookingDateKey(booking) === dateKey).map((booking) => renderAgendaBookingBlock(booking, range)).join("")}</section>`).join("")}</div></div></div>`;
+}
+
+function renderAgendaMonthCalendar(bookings) {
+  const month = agendaSelectedDate.slice(0, 7);
+  const days = adminInstagramMonthGrid(agendaSelectedDate);
+  const today = getMadridDateKey();
+  const byDate = new Map(days.map((key) => [key, []]));
+  bookings.forEach((booking) => { const key = getBookingDateKey(booking); if (byDate.has(key)) byDate.get(key).push(booking); });
+  if (!bookings.length) return renderAgendaEmptyState();
+  return `<div class="agenda-month-calendar"><div class="agenda-month-weekdays" aria-hidden="true">${["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map((day) => `<span>${day}</span>`).join("")}</div>${days.map((dateKey) => { const items = byDate.get(dateKey); const minutes = items.reduce((total, booking) => total + Number(booking.duration_minutes || 30), 0); const occupancy = Math.min(100, Math.round(minutes / 480 * 100)); const pending = items.filter((booking) => ["requested", "pending"].includes(booking.status)).length; return `<button class="agenda-month-day${dateKey.startsWith(month) ? "" : " agenda-month-day--outside"}${dateKey === today ? " agenda-month-day--today" : ""}" type="button" data-agenda-month-day="${dateKey}" aria-label="${escapeHtml(`${formatAgendaDate(dateKey, { day: "numeric", month: "long" })}: ${items.length} citas, ${occupancy}% de carga estimada${pending ? `, ${pending} pendientes` : ""}`)}"><span class="agenda-month-day__number">${escapeHtml(formatAgendaDate(dateKey, { day: "numeric" }))}</span><strong>${items.length}</strong><small>${items.length === 1 ? "cita" : "citas"}</small><span class="agenda-occupancy" aria-hidden="true"><i style="width:${occupancy}%"></i></span>${pending ? `<span class="agenda-month-attention">! ${pending}</span>` : ""}</button>`; }).join("")}</div>`;
+}
+
 function renderBookings() {
   const list = document.getElementById("bookings-list");
   if (!list) return;
@@ -6003,21 +6138,24 @@ function renderBookings() {
   renderAgendaHeaderAndSummary();
   renderAgendaFiltersSummary();
   renderAgendaWeekDays();
-  const bookings = getBookingsForView(currentBookingView);
+  const bookings = getAgendaPeriodBookings(currentBookingView, { selectedDayOnly: false });
   const businessNow = getBusinessNowCivilTime();
   const nextBooking = bookings.find((booking) => {
     if (!booking.start_datetime || ["completed", "rejected", "cancelled", "no_show"].includes(booking.status)) return false;
     return parseBusinessCivilDateTime(booking.start_datetime) > businessNow;
   });
   list.setAttribute("aria-busy", "false");
-  list.innerHTML = bookings.length
-    ? bookings.map((booking) => renderBookingCard(booking, Number(nextBooking?.id))).join("")
-    : renderAgendaEmptyState();
+  const calendar = currentBookingView === "month"
+    ? renderAgendaMonthCalendar(bookings)
+    : currentBookingView === "week"
+      ? renderAgendaWeekCalendar(bookings)
+      : renderAgendaDayCalendar(bookings);
+  const selected = allBookings.find((booking) => Number(booking.id) === agendaSelectedBookingId);
+  list.innerHTML = `${calendar}${selected ? `<section class="agenda-quick-detail" aria-label="Detalle de la cita">${renderBookingCard(selected, Number(nextBooking?.id))}</section>` : ""}`;
 }
 
 function getViewForBooking(booking) {
-  if (["requested", "pending"].includes(booking.status)) return "pending";
-  return "today";
+  return "day";
 }
 
 function goToBooking(bookingId, updateUrl = true) {
@@ -6033,6 +6171,7 @@ function goToBooking(bookingId, updateUrl = true) {
   resetAgendaFilters({ render: false });
   agendaSelectedDate = getBookingDateKey(booking) || getMadridDateKey();
   currentBookingView = getViewForBooking(booking);
+  agendaSelectedBookingId = bookingId;
   updateBookingViewTabs();
   if (updateUrl) {
     const url = new URL(window.location.href);
@@ -7014,7 +7153,7 @@ async function mutateSocialContentProposal(button) {
   const action = button.dataset.socialProposalAction;
   if (!Number.isInteger(proposalId) || !["accept", "dismiss", "open"].includes(action) || socialContentProposalMutationIds.has(proposalId)) return;
   if (action === "open") {
-    document.querySelector(`[data-admin-instagram-content="${button.dataset.contentId}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    openAdminInstagramContent(Number(button.dataset.contentId));
     return;
   }
   socialContentProposalMutationIds.add(proposalId);
@@ -7042,12 +7181,96 @@ function adminInstagramJobPanel(item) {
   return `<section class="instagram-publish-job"><p><strong>${escapeHtml(labels[job.status] || job.status)}</strong> · ${escapeHtml(when)}</p><p>Intentos: ${job.attempt_count}/${job.max_attempts}</p>${job.provider_permalink ? `<p><a href="${escapeHtml(job.provider_permalink)}" target="_blank" rel="noopener noreferrer">Ver publicación en Instagram</a></p>` : ""}<details><summary>Resultado</summary><dl><dt>Versión aprobada</dt><dd>${job.content_version_id}</dd>${job.provider_media_id ? `<dt>Media ID</dt><dd>${escapeHtml(job.provider_media_id)}</dd>` : ""}${job.provider_error_code ? `<dt>Código</dt><dd>${escapeHtml(job.provider_error_code)}</dd>` : ""}${job.safe_error_message ? `<dt>Estado seguro</dt><dd>${escapeHtml(job.safe_error_message)}</dd>` : ""}</dl></details></section>`;
 }
 
+function adminInstagramDateKey(item) {
+  if (!item.planned_publish_at) return "";
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: item.business_timezone, year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(new Date(item.planned_publish_at)).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function adminInstagramMonthGrid(dateKey) {
+  const first = `${dateKey.slice(0, 7)}-01`;
+  const start = getAgendaWeekStart(first);
+  return Array.from({ length: 42 }, (_item, index) => addDaysToDateKey(start, index));
+}
+
+function adminInstagramNeedsAttention(item) {
+  return item.status === "ready_for_review" || ["failed", "action_required"].includes(item.publish_jobs?.[0]?.status);
+}
+
+function adminInstagramFilteredContents() {
+  return adminInstagramContents.filter((item) => {
+    if (adminInstagramStateFilter === "attention" && !adminInstagramNeedsAttention(item)) return false;
+    if (adminInstagramStateFilter && adminInstagramStateFilter !== "attention" && item.status !== adminInstagramStateFilter) return false;
+    if (adminInstagramFormatFilter && item.current_version?.format !== adminInstagramFormatFilter) return false;
+    return true;
+  });
+}
+
+function adminInstagramPeriodKeys() {
+  const cursor = adminInstagramCalendarDate || getMadridDateKey();
+  if (adminInstagramCalendarView === "today") return [cursor];
+  if (adminInstagramCalendarView === "week") {
+    const start = getAgendaWeekStart(cursor);
+    return Array.from({ length: 7 }, (_item, index) => addDaysToDateKey(start, index));
+  }
+  return adminInstagramMonthGrid(cursor);
+}
+
+function adminInstagramCalendarBlock(item) {
+  const time = item.planned_publish_at
+    ? new Intl.DateTimeFormat("es-ES", { timeStyle: "short", timeZone: item.business_timezone }).format(new Date(item.planned_publish_at))
+    : "Sin hora";
+  const format = item.current_version?.format === "carousel" ? "Carrusel" : "Imagen";
+  const icon = adminInstagramNeedsAttention(item) ? "!" : item.status === "published" ? "✓" : ["validated", "scheduled"].includes(item.status) ? "●" : "○";
+  const action = item.status === "ready_for_review" ? "Revisar" : item.status === "changes_requested" ? "Ver cambios" : "Ver";
+  const tone = adminInstagramNeedsAttention(item) ? "attention" : item.status;
+  return `<button class="instagram-calendar-item instagram-calendar-item--${escapeHtml(tone)}" type="button" data-admin-instagram-open="${item.id}" aria-label="${escapeHtml(`${item.title}, ${adminInstagramStateLabel(item.status)}, ${time}`)}"><span class="instagram-calendar-item__state" aria-hidden="true">${icon}</span><span class="instagram-calendar-item__body"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(time)} · ${escapeHtml(format)} · ${escapeHtml(adminInstagramStateLabel(item.status))}</small></span><span class="instagram-calendar-item__action">${action}</span></button>`;
+}
+
+function renderAdminInstagramCalendar() {
+  const calendar = document.getElementById("admin-instagram-calendar");
+  if (!calendar) return;
+  adminInstagramCalendarDate ||= getMadridDateKey();
+  const keys = adminInstagramPeriodKeys();
+  const filtered = adminInstagramFilteredContents();
+  const byDate = new Map(keys.map((key) => [key, []]));
+  filtered.forEach((item) => { const key = adminInstagramDateKey(item); if (byDate.has(key)) byDate.get(key).push(item); });
+  byDate.forEach((items) => items.sort((left, right) => String(left.planned_publish_at).localeCompare(String(right.planned_publish_at))));
+  const dateLabel = (key, options) => new Intl.DateTimeFormat("es-ES", { timeZone: "UTC", ...options }).format(new Date(`${key}T12:00:00Z`));
+  const today = getMadridDateKey();
+  if (adminInstagramCalendarView === "today") {
+    document.getElementById("admin-instagram-period-label").textContent = dateLabel(keys[0], { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    calendar.className = "instagram-calendar instagram-calendar--today";
+    calendar.innerHTML = byDate.get(keys[0]).length ? byDate.get(keys[0]).map(adminInstagramCalendarBlock).join("") : `<div class="instagram-calendar-empty"><strong>No tienes publicaciones planificadas para hoy.</strong><p>Las nuevas ideas y el material siguen disponibles bajo el calendario.</p></div>`;
+  } else if (adminInstagramCalendarView === "week") {
+    document.getElementById("admin-instagram-period-label").textContent = `${dateLabel(keys[0], { day: "numeric", month: "short" })} – ${dateLabel(keys[6], { day: "numeric", month: "short", year: "numeric" })}`;
+    calendar.className = "instagram-calendar instagram-calendar--week";
+    const hasPlanned = keys.some((key) => byDate.get(key).length);
+    calendar.innerHTML = `${hasPlanned ? "" : `<div class="instagram-calendar-empty"><strong>No tienes publicaciones planificadas esta semana.</strong><p>Puedes revisar ideas o subir material de origen.</p></div>`}${keys.map((key) => `<section class="instagram-calendar-day${key === today ? " instagram-calendar-day--today" : ""}" aria-label="${escapeHtml(dateLabel(key, { weekday: "long", day: "numeric", month: "long" }))}"><header><span>${escapeHtml(dateLabel(key, { weekday: "short" }))}</span><strong>${escapeHtml(dateLabel(key, { day: "numeric" }))}</strong></header><div>${byDate.get(key).length ? byDate.get(key).map(adminInstagramCalendarBlock).join("") : `<span class="instagram-calendar-gap">Hueco libre</span>`}</div></section>`).join("")}`;
+  } else {
+    const activeMonth = adminInstagramCalendarDate.slice(0, 7);
+    document.getElementById("admin-instagram-period-label").textContent = dateLabel(`${activeMonth}-01`, { month: "long", year: "numeric" });
+    calendar.className = "instagram-calendar instagram-calendar--month";
+    calendar.innerHTML = `<div class="instagram-calendar-weekdays" aria-hidden="true">${["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map((day) => `<span>${day}</span>`).join("")}</div>${keys.map((key) => { const items = byDate.get(key); const shown = items.slice(0, 3); return `<section class="instagram-month-day${key.startsWith(activeMonth) ? "" : " instagram-month-day--outside"}${key === today ? " instagram-calendar-day--today" : ""}"><header><span>${escapeHtml(dateLabel(key, { day: "numeric" }))}</span><small>${items.length ? `${items.length} pub.` : ""}</small></header>${shown.map(adminInstagramCalendarBlock).join("")}${items.length > shown.length ? `<button type="button" class="instagram-calendar-more" data-admin-instagram-day="${key}">+${items.length - shown.length} más</button>` : ""}</section>`; }).join("")}`;
+  }
+  const unscheduled = filtered.filter((item) => !item.planned_publish_at && item.status !== "cancelled");
+  document.getElementById("admin-instagram-unscheduled").innerHTML = unscheduled.length ? `<div><strong>Sin fecha</strong><span>${unscheduled.length} contenido${unscheduled.length === 1 ? "" : "s"} por colocar</span></div><div>${unscheduled.map(adminInstagramCalendarBlock).join("")}</div>` : "";
+  document.querySelectorAll("[data-admin-instagram-view]").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.adminInstagramView === adminInstagramCalendarView)));
+}
+
 function renderAdminInstagramPlanning() {
   const container = document.getElementById("admin-instagram-planning-summary");
-  if (!container || !adminInstagramMetrics) return;
-  const next = adminInstagramContents.filter((item) => item.status === "scheduled" && item.planned_publish_at).sort((left, right) => new Date(left.planned_publish_at) - new Date(right.planned_publish_at)).slice(0, 5);
-  const ratio = Math.round((adminInstagramMetrics.publish_success_rate || 0) * 100);
-  container.innerHTML = `<dl><dt>Borradores</dt><dd>${adminInstagramMetrics.drafts}</dd><dt>Aprobados</dt><dd>${adminInstagramMetrics.approved}</dd><dt>Programados</dt><dd>${adminInstagramMetrics.scheduled}</dd><dt>Publicados</dt><dd>${adminInstagramMetrics.published}</dd><dt>Fallidos</dt><dd>${adminInstagramMetrics.failed}</dd><dt>Éxito</dt><dd>${ratio}%</dd></dl><h4>Próximas</h4>${next.length ? `<ol>${next.map((item) => `<li><strong>${escapeHtml(item.title)}</strong> · ${escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(item.planned_publish_at)))}</li>`).join("")}</ol>` : `<p class="helper">No hay publicaciones programadas.</p>`}`;
+  if (!container) return;
+  const attention = adminInstagramContents.filter(adminInstagramNeedsAttention).length;
+  const week = Array.from({ length: 7 }, (_item, index) => addDaysToDateKey(getAgendaWeekStart(getMadridDateKey()), index));
+  const scheduled = adminInstagramContents.filter((item) => item.status === "scheduled" && week.includes(adminInstagramDateKey(item))).length;
+  container.innerHTML = attention
+    ? `<strong>${attention} publicación${attention === 1 ? "" : "es"} necesita${attention === 1 ? "" : "n"} tu atención</strong><span>${scheduled} programada${scheduled === 1 ? "" : "s"} esta semana</span>`
+    : `<strong>Todo preparado para esta semana</strong><span>${scheduled} programada${scheduled === 1 ? "" : "s"}</span>`;
+  container.classList.toggle("instagram-attention-summary--active", attention > 0);
+  renderAdminInstagramCalendar();
 }
 
 async function adminInstagramJson(url, options = {}) {
@@ -7075,15 +7298,17 @@ function generatedEditorialPreview(item) {
 
 function renderAdminInstagramContents() {
   const container = document.getElementById("admin-instagram-content-list");
-  if (!adminInstagramContents.length) {
-    container.innerHTML = `<p class="helper">El Owner todavía no ha preparado contenido final.</p>`;
+  renderAdminInstagramPlanning();
+  const selected = adminInstagramContents.find((item) => item.id === adminInstagramSelectedContentId);
+  document.getElementById("admin-instagram-detail-close").hidden = !selected;
+  document.getElementById("admin-instagram-detail-title").textContent = selected ? selected.title : "Selecciona una publicación";
+  if (!selected) {
+    container.innerHTML = adminInstagramContents.length
+      ? `<p class="helper">Pulsa una publicación del calendario para revisar sus datos y acciones.</p>`
+      : `<p class="helper">El Owner todavía no ha preparado contenido final.</p>`;
     return;
   }
-  const ordered = [...adminInstagramContents].sort((left, right) => {
-    if (left.planned_publish_at && right.planned_publish_at) return new Date(left.planned_publish_at) - new Date(right.planned_publish_at);
-    return left.planned_publish_at ? -1 : right.planned_publish_at ? 1 : right.id - left.id;
-  });
-  container.innerHTML = ordered.map((item) => {
+  container.innerHTML = [selected].map((item) => {
     const version = item.current_version;
     const assets = version.assets.map((asset) => `<a class="instagram-final-preview" href="${API_BASE_URL}${escapeHtml(asset.file_url)}" target="_blank" rel="noopener"><span>${asset.is_cover ? "Portada · " : ""}${escapeHtml(asset.original_filename)}</span></a>`).join("");
     const history = item.versions.map((candidate) => `<li>v${candidate.version_number} · ${escapeHtml(candidate.format)}${candidate.validation ? candidate.validation.invalidated_at ? " · aprobación invalidada" : ` · aprobada con assets ${candidate.validation.approved_asset_ids.join(", ")}` : ""}</li>`).join("");
@@ -7092,6 +7317,67 @@ function renderAdminInstagramContents() {
     const review = item.status === "ready_for_review" ? `<form data-admin-instagram-review><input type="hidden" name="version_id" value="${version.id}"><label>Nota editorial<textarea name="note" maxlength="4000" rows="3" placeholder="Opcional al aprobar; obligatoria al solicitar cambios"></textarea></label><div class="growth-action-card-actions"><button class="btn btn-primary" type="submit" name="decision" value="approve">Aprobar editorialmente</button><button class="btn btn-secondary" type="submit" name="decision" value="reject">Rechazar y solicitar cambios</button></div><p class="helper">AutonoGrow realizará después la validación técnica y decidirá la programación.</p></form>` : "";
     return `<article class="instagram-content-card" data-admin-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(adminInstagramStateLabel(item.status))} · versión ${version.version_number}</p></div><span class="ag-badge ag-badge--neutral">${item.planned_publish_at ? escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(item.planned_publish_at))) : "Sin fecha"}</span></header><p class="instagram-caption">${escapeHtml(version.caption) || "Sin caption"}</p>${unsupported}${generatedEditorialPreview(item)}<div class="instagram-final-assets">${assets || "<p class='helper'>Sin assets finales.</p>"}</div>${adminInstagramJobPanel(item)}<details><summary>Historial de versiones y validación técnica</summary><ul>${history}</ul></details>${events ? `<details><summary>Historial de publicación</summary><ul>${events}</ul></details>` : ""}${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong><p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}<form data-admin-instagram-comment><input type="hidden" name="version_id" value="${version.id}"><label>Tipo<select name="kind"><option value="comment">Comentario</option><option value="proposal">Propuesta</option></select></label><label>Mensaje<textarea name="body" maxlength="4000" required rows="3"></textarea></label><button class="btn btn-secondary" type="submit">Enviar propuesta</button></form>${review}</article>`;
   }).join("");
+}
+
+function adminInstagramCalendarQuery() {
+  adminInstagramCalendarDate ||= getMadridDateKey();
+  const keys = adminInstagramPeriodKeys();
+  return new URLSearchParams({
+    from: `${addDaysToDateKey(keys[0], -1)}T00:00:00Z`,
+    to: `${addDaysToDateKey(keys[keys.length - 1], 2)}T00:00:00Z`,
+    include_unscheduled: "true"
+  });
+}
+
+async function openAdminInstagramContent(contentId) {
+  let content = adminInstagramContents.find((item) => item.id === contentId);
+  if (!content) {
+    try {
+      content = await adminInstagramJson(`${adminInstagramApi()}/contents/${contentId}`);
+      adminInstagramContents.unshift(content);
+    } catch (error) {
+      document.getElementById("admin-instagram-status").textContent = error.message;
+      return;
+    }
+  } else if (!Array.isArray(content.versions)) {
+    try {
+      const detail = await adminInstagramJson(`${adminInstagramApi()}/contents/${contentId}`);
+      adminInstagramContents[adminInstagramContents.indexOf(content)] = detail;
+      content = detail;
+    } catch (error) {
+      document.getElementById("admin-instagram-status").textContent = error.message;
+      return;
+    }
+  }
+  adminInstagramSelectedContentId = contentId;
+  renderAdminInstagramContents();
+  const panel = document.getElementById("admin-instagram-detail");
+  panel.tabIndex = -1;
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  panel.focus({ preventScroll: true });
+}
+
+async function loadAdminInstagramCalendarPeriod() {
+  if (isBusinessStaff()) return;
+  try {
+    const payload = await adminInstagramJson(`${adminInstagramApi()}/contents?${adminInstagramCalendarQuery().toString()}`);
+    adminInstagramContents = payload.contents || [];
+    if (!adminInstagramContents.some((item) => item.id === adminInstagramSelectedContentId)) adminInstagramSelectedContentId = null;
+    renderAdminInstagramContents();
+  } catch (error) {
+    document.getElementById("admin-instagram-status").textContent = error.message;
+  }
+}
+
+function shiftAdminInstagramCalendar(direction) {
+  if (adminInstagramCalendarView === "month") {
+    const value = new Date(`${adminInstagramCalendarDate.slice(0, 7)}-01T12:00:00Z`);
+    value.setUTCMonth(value.getUTCMonth() + direction);
+    adminInstagramCalendarDate = value.toISOString().slice(0, 10);
+  } else {
+    adminInstagramCalendarDate = addDaysToDateKey(adminInstagramCalendarDate, direction * (adminInstagramCalendarView === "week" ? 7 : 1));
+  }
+  loadAdminInstagramCalendarPeriod();
 }
 
 async function loadAdminInstagramPanel() {
@@ -7115,11 +7401,11 @@ async function loadAdminInstagramPanel() {
     if (!enabled) { status.textContent = "Servicio pendiente de activación por Owner."; await proposalsPromise; return; }
     const [raw, contentList, metrics] = await Promise.all([
       adminInstagramJson(`${api}/raw-assets`),
-      adminInstagramJson(`${api}/contents`),
+      adminInstagramJson(`${api}/contents?${adminInstagramCalendarQuery().toString()}`),
       adminInstagramJson(`${api}/publication-metrics`)
     ]);
     adminInstagramMetrics = metrics;
-    adminInstagramContents = await Promise.all(contentList.contents.map((item) => adminInstagramJson(`${api}/contents/${item.id}`)));
+    adminInstagramContents = contentList.contents || [];
     renderAdminInstagramRaw(raw.assets);
     renderAdminInstagramPlanning();
     renderAdminInstagramContents();
@@ -7179,6 +7465,25 @@ document.addEventListener("DOMContentLoaded", () => {
     if (event.target.matches("[data-admin-instagram-comment]")) submitAdminInstagramComment(event);
     if (event.target.matches("[data-admin-instagram-review]")) submitAdminInstagramReview(event);
   });
+  document.getElementById("admin-instagram-workspace").addEventListener("click", (event) => {
+    const open = event.target.closest("[data-admin-instagram-open]");
+    if (open) { openAdminInstagramContent(Number(open.dataset.adminInstagramOpen)); return; }
+    const day = event.target.closest("[data-admin-instagram-day]");
+    if (day) {
+      adminInstagramCalendarDate = day.dataset.adminInstagramDay;
+      adminInstagramCalendarView = "today";
+      loadAdminInstagramCalendarPeriod();
+    }
+  });
+  document.querySelectorAll("[data-admin-instagram-view]").forEach((button) => button.addEventListener("click", () => {
+    adminInstagramCalendarView = button.dataset.adminInstagramView;
+    loadAdminInstagramCalendarPeriod();
+  }));
+  document.querySelectorAll("[data-admin-instagram-nav]").forEach((button) => button.addEventListener("click", () => shiftAdminInstagramCalendar(Number(button.dataset.adminInstagramNav))));
+  document.getElementById("admin-instagram-today").addEventListener("click", () => { adminInstagramCalendarDate = getMadridDateKey(); loadAdminInstagramCalendarPeriod(); });
+  document.getElementById("admin-instagram-state-filter").addEventListener("change", (event) => { adminInstagramStateFilter = event.target.value; renderAdminInstagramContents(); });
+  document.getElementById("admin-instagram-format-filter").addEventListener("change", (event) => { adminInstagramFormatFilter = event.target.value; renderAdminInstagramContents(); });
+  document.getElementById("admin-instagram-detail-close").addEventListener("click", () => { adminInstagramSelectedContentId = null; renderAdminInstagramContents(); });
   document.getElementById("social-content-ideas-list").addEventListener("click", (event) => {
     const button = event.target.closest("[data-social-proposal-action]");
     if (button) mutateSocialContentProposal(button);

@@ -678,10 +678,12 @@
       </header>
 
       <nav class="booking-view-tabs" role="tablist" aria-label="Vistas de Agenda">
-        <button id="agenda-tab-today" class="booking-view-tab booking-view-tab-active" type="button" role="tab" aria-controls="bookings-list" aria-selected="true" data-booking-view="today">Hoy</button>
-        <button id="agenda-tab-pending" class="booking-view-tab" type="button" role="tab" aria-controls="bookings-list" aria-selected="false" data-booking-view="pending">Pendientes</button>
+        <button id="agenda-tab-day" class="booking-view-tab booking-view-tab-active" type="button" role="tab" aria-controls="bookings-list" aria-selected="true" data-booking-view="day">Día</button>
         <button id="agenda-tab-week" class="booking-view-tab" type="button" role="tab" aria-controls="bookings-list" aria-selected="false" data-booking-view="week">Semana</button>
+        <button id="agenda-tab-month" class="booking-view-tab" type="button" role="tab" aria-controls="bookings-list" aria-selected="false" data-booking-view="month">Mes</button>
       </nav>
+
+      <button id="agenda-attention" class="agenda-attention" type="button">Comprobando solicitudes pendientes...</button>
 
       <div id="agenda-summary" class="agenda-summary" aria-label="Resumen del periodo">
         <div class="agenda-summary-item"><span>Total</span><strong id="agenda-stat-total">0</strong></div>
@@ -699,6 +701,7 @@
           <label class="ag-field ag-label">Estado
             <select id="agenda-status-filter" class="ag-select">
               <option value="">Todos</option>
+              <option value="attention">Necesita atención</option>
               <option value="requested">Solicitud nueva</option>
               <option value="pending">Por confirmar</option>
               <option value="confirmed">Confirmada</option>
@@ -721,7 +724,7 @@
 
       <div id="agenda-week-days" class="agenda-week-days" aria-label="Días de la semana" hidden></div>
       <p id="agenda-live-region" class="ag-visually-hidden" aria-live="polite"></p>
-      <div id="bookings-list" class="bookings-list" role="tabpanel" aria-labelledby="agenda-tab-today" aria-busy="true">
+      <div id="bookings-list" class="bookings-list" role="tabpanel" aria-labelledby="agenda-tab-day" aria-busy="true">
         <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div>
         <span class="ag-visually-hidden">Cargando reservas.</span>
       </div>
@@ -779,17 +782,21 @@
     <section class="section admin-section instagram-editorial" data-admin-section="instagram-content" aria-labelledby="admin-instagram-content-title">
       <div class="section-heading"><div><p class="eyebrow">Participación editorial</p><h2 id="admin-instagram-content-title">Contenido de Instagram</h2><p>AutonoGrow prepara, valida, programa y publica. Tú aportas ideas y material, y revisas los borradores de tu negocio.</p></div><button id="admin-instagram-refresh" class="btn btn-secondary" type="button">Actualizar</button></div>
       <p id="admin-instagram-status" class="status-text" aria-live="polite"></p>
+      <div id="admin-instagram-disabled" class="instagram-editorial-card" hidden><h3>Servicio no activo</h3><p>El Owner debe activar la gestión adicional para este negocio.</p></div>
+      <div id="admin-instagram-workspace" hidden>
+        <section class="instagram-calendar-shell" aria-labelledby="admin-instagram-planning-title">
+          <header class="instagram-calendar-header"><div><p class="eyebrow">Plan editorial</p><h3 id="admin-instagram-planning-title">Calendario de publicaciones</h3><p id="admin-instagram-period-label" class="instagram-period-label"></p></div><div class="instagram-calendar-navigation" aria-label="Navegar por el calendario"><button class="btn btn-ghost" type="button" data-admin-instagram-nav="-1" aria-label="Periodo anterior">&larr;</button><button id="admin-instagram-today" class="btn btn-secondary" type="button">Hoy</button><button class="btn btn-ghost" type="button" data-admin-instagram-nav="1" aria-label="Periodo siguiente">&rarr;</button></div></header>
+          <div class="instagram-calendar-toolbar"><div class="instagram-view-switch" role="tablist" aria-label="Vista del calendario"><button type="button" role="tab" data-admin-instagram-view="today" aria-selected="false">Hoy</button><button type="button" role="tab" data-admin-instagram-view="week" aria-selected="true">Semana</button><button type="button" role="tab" data-admin-instagram-view="month" aria-selected="false">Mes</button></div><div class="instagram-calendar-filters"><label>Estado<select id="admin-instagram-state-filter"><option value="">Todos</option><option value="attention">Necesita atención</option><option value="draft">Borrador</option><option value="ready_for_review">Para revisar</option><option value="changes_requested">Necesita cambios</option><option value="validated">Aprobado</option><option value="scheduled">Programado</option><option value="published">Publicado</option></select></label><label>Formato<select id="admin-instagram-format-filter"><option value="">Todos</option><option value="single_image">Imagen</option><option value="carousel">Carrusel</option></select></label></div></div>
+          <div id="admin-instagram-planning-summary" class="instagram-attention-summary" aria-live="polite"></div><div id="admin-instagram-calendar" class="instagram-calendar" aria-live="polite"></div><div id="admin-instagram-unscheduled" class="instagram-unscheduled"></div>
+        </section>
+        <details class="instagram-advanced-tools"><summary>Ideas y material de origen</summary><section class="instagram-editorial-card"><h3>Material bruto</h3><form id="admin-instagram-raw-form" class="instagram-inline-form"><label>Etiqueta<input name="label" maxlength="240"></label><label>Imagen<input name="file" type="file" accept="image/jpeg,image/png,image/webp" required></label><button class="btn btn-secondary" type="submit">Subir</button></form><div id="admin-instagram-raw-list" class="instagram-asset-list"></div></section></details>
+        <section id="admin-instagram-detail" class="instagram-content-detail" aria-labelledby="admin-instagram-detail-title"><div class="instagram-detail-heading"><div><p class="eyebrow">Detalle rápido</p><h3 id="admin-instagram-detail-title">Selecciona una publicación</h3></div><button id="admin-instagram-detail-close" class="btn btn-ghost" type="button" hidden>Cerrar</button></div><p class="helper">Tu aprobación es editorial. La validación técnica, la programación y la publicación corresponden a AutonoGrow.</p><div id="admin-instagram-content-list" class="instagram-content-list"><p class="helper">Pulsa una publicación del calendario para revisar sus datos y acciones.</p></div></section>
+      </div>
       <section class="instagram-editorial-card" aria-labelledby="social-content-ideas-title">
         <div><p class="eyebrow">Inteligencia comercial</p><h3 id="social-content-ideas-title">Ideas recomendadas</h3><p>Propuestas explicables a partir de señales agregadas del negocio. Usar una idea todavía no crea ni publica contenido.</p></div>
         <p id="social-content-ideas-status" class="status-text" aria-live="polite"></p>
         <div id="social-content-ideas-list" class="instagram-content-list"></div>
       </section>
-      <div id="admin-instagram-disabled" class="instagram-editorial-card" hidden><h3>Servicio no activo</h3><p>El Owner debe activar la gestión adicional para este negocio.</p></div>
-      <div id="admin-instagram-workspace" hidden>
-        <section class="instagram-editorial-card" aria-labelledby="admin-instagram-planning-title"><div><h3 id="admin-instagram-planning-title">Seguimiento de publicación</h3><p>Consulta el trabajo que AutonoGrow ha validado, programado o publicado para tu negocio.</p></div><div id="admin-instagram-planning-summary" aria-live="polite"></div></section>
-        <section class="instagram-editorial-card"><h3>Material bruto</h3><form id="admin-instagram-raw-form" class="instagram-inline-form"><label>Etiqueta<input name="label" maxlength="240"></label><label>Imagen<input name="file" type="file" accept="image/jpeg,image/png,image/webp" required></label><button class="btn btn-secondary" type="submit">Subir</button></form><div id="admin-instagram-raw-list" class="instagram-asset-list"></div></section>
-        <section class="instagram-editorial-card"><h3>Borradores preparados por AutonoGrow</h3><p class="helper">Tu aprobación es editorial. La validación técnica, la programación y la publicación corresponden a AutonoGrow.</p><div id="admin-instagram-content-list" class="instagram-content-list"></div></section>
-      </div>
     </section>
     </div>
     </div>

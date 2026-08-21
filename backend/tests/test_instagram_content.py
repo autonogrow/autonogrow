@@ -193,6 +193,67 @@ def create_content_with_asset(ctx) -> tuple[int, int, int]:
     return content_id, asset.id, version_id
 
 
+def test_calendar_content_range_includes_unscheduled_and_returns_details(editorial_context):
+    ctx = editorial_context
+    enable_service(ctx)
+    created_ids = {}
+    for title, planned_at in (
+        ("Dentro del periodo", "2030-05-12T10:00:00+00:00"),
+        ("Fuera del periodo", "2030-07-12T10:00:00+00:00"),
+        ("Sin fecha", None),
+    ):
+        response = ctx["client"].post(
+            f"{owner_base(ctx)}/contents",
+            json={
+                "title": title,
+                "caption": title,
+                "format": "single_image",
+                "planned_publish_at": planned_at,
+            },
+        )
+        assert response.status_code == 201
+        created_ids[title] = response.json()["id"]
+
+    query = "from=2030-05-01T00:00:00Z&to=2030-06-01T00:00:00Z"
+    owner_response = ctx["client"].get(f"{owner_base(ctx)}/contents?{query}")
+    assert owner_response.status_code == 200
+    assert {item["id"] for item in owner_response.json()["contents"]} == {
+        created_ids["Dentro del periodo"],
+        created_ids["Sin fecha"],
+    }
+
+    set_actor(ctx, ctx["admin"])
+    admin_response = ctx["client"].get(f"{admin_base(ctx)}/contents?{query}")
+    assert admin_response.status_code == 200
+    admin_items = admin_response.json()["contents"]
+    assert {item["id"] for item in admin_items} == {
+        created_ids["Dentro del periodo"],
+        created_ids["Sin fecha"],
+    }
+    assert all("current_version" in item and "publish_jobs" in item for item in admin_items)
+    assert all("versions" not in item and "publication_events" not in item for item in admin_items)
+    detail = ctx["client"].get(f"{admin_base(ctx)}/contents/{created_ids['Dentro del periodo']}")
+    assert detail.status_code == 200
+    assert "versions" in detail.json() and "publication_events" in detail.json()
+
+    planned_only = ctx["client"].get(
+        f"{admin_base(ctx)}/contents?{query}&include_unscheduled=false"
+    )
+    assert [item["id"] for item in planned_only.json()["contents"]] == [
+        created_ids["Dentro del periodo"]
+    ]
+
+
+def test_calendar_content_range_rejects_unbounded_period(editorial_context):
+    ctx = editorial_context
+    enable_service(ctx)
+    response = ctx["client"].get(
+        f"{owner_base(ctx)}/contents?from=2030-01-01T00:00:00Z&to=2030-04-01T00:00:00Z"
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Content range must span between 1 and 62 days"
+
+
 def test_owner_controls_service_and_validation_without_admin_delegation(editorial_context):
     ctx = editorial_context
     set_actor(ctx, ctx["admin"])
@@ -226,7 +287,7 @@ def test_staff_and_customer_have_no_access(editorial_context, role):
     assert ctx["client"].get(f"{owner_base(ctx)}/contents").status_code == 403
 
 
-def test_owner_content_collection_contains_complete_workspace_items(editorial_context):
+def test_owner_content_collection_is_lightweight_and_detail_is_complete(editorial_context):
     ctx = editorial_context
     content_id, asset_id, _version_id = create_content_with_asset(ctx)
 
@@ -235,16 +296,19 @@ def test_owner_content_collection_contains_complete_workspace_items(editorial_co
     assert response.status_code == 200
     items = response.json()["contents"]
     assert [item["id"] for item in items] == [content_id]
+    assert {"current_version", "publish_jobs"} <= set(items[0])
+    assert {"versions", "comments", "final_assets", "publication_events"}.isdisjoint(items[0])
+    assert items[0]["current_version"]["assets"][0]["id"] == asset_id
+    detail = ctx["client"].get(f"{owner_base(ctx)}/contents/{content_id}")
+    assert detail.status_code == 200
     assert {
-        "current_version",
         "versions",
         "comments",
         "final_assets",
         "publish_jobs",
         "publication_events",
-    } <= set(items[0])
-    assert items[0]["current_version"]["assets"][0]["id"] == asset_id
-    assert items[0]["final_assets"][0]["id"] == asset_id
+    } <= set(detail.json())
+    assert detail.json()["final_assets"][0]["id"] == asset_id
 
 
 def test_admin_is_isolated_to_own_business_and_cannot_create_final_content(editorial_context):
@@ -343,7 +407,9 @@ def test_admin_editorial_review_is_separate_from_owner_technical_validation(
     assert response.status_code == 201
     assert response.json()["content_status"] == "ready_for_review"
     assert ctx["db"].query(InstagramContentValidation).count() == 0
-    audit = ctx["db"].query(AuditLog).filter_by(action="instagram_content_editorially_approved").one()
+    audit = (
+        ctx["db"].query(AuditLog).filter_by(action="instagram_content_editorially_approved").one()
+    )
     assert json.loads(audit.metadata_json)["version_id"] == version_id
 
 
@@ -665,9 +731,7 @@ def test_owner_schedule_reschedule_publish_now_and_cancel_endpoints(editorial_co
     "status",
     ["draft", "changes_requested", "cancelled", "ready_for_review", "validated"],
 )
-def test_owner_physically_deletes_unpublished_content_and_orphan_files(
-    editorial_context, status
-):
+def test_owner_physically_deletes_unpublished_content_and_orphan_files(editorial_context, status):
     ctx = editorial_context
     content_id, asset_id, _version_id = create_content_with_asset(ctx)
     content = ctx["db"].get(InstagramContent, content_id)
@@ -720,7 +784,9 @@ def test_owner_archives_historical_content_and_preserves_publish_identity(
         idempotency_key=f"archive-{status}-{content_id}",
         provider_container_id="provider-container-preserved",
         provider_media_id="provider-media-preserved" if status == "published" else None,
-        provider_permalink="https://instagram.example/p/preserved" if status == "published" else None,
+        provider_permalink="https://instagram.example/p/preserved"
+        if status == "published"
+        else None,
     )
     ctx["db"].add(job)
     ctx["db"].commit()
@@ -797,9 +863,7 @@ def test_owner_deletes_unused_raw_asset_but_blocks_referenced_material(editorial
     unused_path = ctx["uploads_dir"] / unused_asset.storage_key
     assert unused_path.exists()
 
-    empty_manager = ctx["client"].get(
-        f"{owner_base(ctx)}/raw-assets/{unused_id}/associations"
-    )
+    empty_manager = ctx["client"].get(f"{owner_base(ctx)}/raw-assets/{unused_id}/associations")
     assert empty_manager.status_code == 200
     assert empty_manager.json()["association_count"] == 0
     assert empty_manager.json()["associations"] == []
@@ -824,11 +888,7 @@ def test_owner_deletes_unused_raw_asset_but_blocks_referenced_material(editorial
         .first()
     )
     version.editorial_package_json = json.dumps(
-        {
-            "asset_plan": {
-                "recommended": [{"source": "instagram_raw_asset", "id": referenced_id}]
-            }
-        }
+        {"asset_plan": {"recommended": [{"source": "instagram_raw_asset", "id": referenced_id}]}}
     )
     ctx["db"].commit()
 
@@ -846,10 +906,14 @@ def test_shared_final_asset_forces_archive_and_preserves_shared_link(editorial_c
     asset_path = ctx["uploads_dir"] / asset.storage_key
     asset_path.parent.mkdir(parents=True, exist_ok=True)
     asset_path.write_bytes(b"shared-final")
-    second = ctx["client"].post(
-        f"{owner_base(ctx)}/contents",
-        json={"title": "Segundo", "caption": "Usa asset compartido", "format": "single_image"},
-    ).json()
+    second = (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/contents",
+            json={"title": "Segundo", "caption": "Usa asset compartido", "format": "single_image"},
+        )
+        .json()
+    )
     second_version_id = second["current_version"]["id"]
     ctx["db"].add(
         InstagramContentVersionAsset(
@@ -890,17 +954,17 @@ def test_admin_and_staff_cannot_remove_instagram_material(editorial_context, rol
 def test_owner_removal_is_isolated_by_business(editorial_context):
     ctx = editorial_context
     content_id, _asset_id, _version_id = create_content_with_asset(ctx)
-    raw = ctx["client"].post(
-        f"{owner_base(ctx)}/raw-assets",
-        files={"file": ("isolated.png", b"\x89PNG\r\n\x1a\nisolated", "image/png")},
-    ).json()
-    ctx["db"].add(
-        InstagramContentSettings(business_id=ctx["other_business"].id, enabled=True)
+    raw = (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/raw-assets",
+            files={"file": ("isolated.png", b"\x89PNG\r\n\x1a\nisolated", "image/png")},
+        )
+        .json()
     )
+    ctx["db"].add(InstagramContentSettings(business_id=ctx["other_business"].id, enabled=True))
     ctx["db"].commit()
-    other_base = (
-        f"/api/owner/businesses/{ctx['other_business'].id}/instagram-content"
-    )
+    other_base = f"/api/owner/businesses/{ctx['other_business'].id}/instagram-content"
 
     assert ctx["client"].delete(f"{other_base}/contents/{content_id}").status_code == 404
     assert ctx["client"].delete(f"{other_base}/raw-assets/{raw['id']}").status_code == 404
@@ -1036,9 +1100,7 @@ def test_owner_associates_disassociates_and_creates_content_from_raw(editorial_c
     assert ctx["db"].query(InstagramContentRawAsset).count() == 0
     assert ctx["db"].query(AuditLog).filter_by(action="raw_asset_disassociated").count() == 1
 
-    created = ctx["client"].post(
-        f"{owner_base(ctx)}/raw-assets/{raw['id']}/create-content"
-    )
+    created = ctx["client"].post(f"{owner_base(ctx)}/raw-assets/{raw['id']}/create-content")
     assert created.status_code == 201
     assert created.json()["content"]["status"] == "draft"
     assert created.json()["content"]["final_assets"] == []
@@ -1086,9 +1148,7 @@ def test_raw_asset_association_manager_describes_and_batches_only_safe_links(
     ctx["db"].add(final)
     ctx["db"].commit()
 
-    manager_response = ctx["client"].get(
-        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations"
-    )
+    manager_response = ctx["client"].get(f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations")
     assert manager_response.status_code == 200
     manager = manager_response.json()
     assert manager["association_count"] == 3
@@ -1112,9 +1172,7 @@ def test_raw_asset_association_manager_describes_and_batches_only_safe_links(
     assert blocked.status_code == 409
     assert blocked.json()["detail"]["associations"] == manager["associations"]
 
-    batch = ctx["client"].delete(
-        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations"
-    )
+    batch = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations")
     assert batch.status_code == 200
     assert {item["id"] for item in batch.json()["contents"]} == set(draft_ids)
     assert batch.json()["association_manager"]["association_count"] == 1
@@ -1125,10 +1183,7 @@ def test_raw_asset_association_manager_describes_and_batches_only_safe_links(
     }
     assert remaining_ids == {protected_id}
     assert (
-        ctx["db"]
-        .query(AuditLog)
-        .filter_by(action="raw_asset_associations_disassociated")
-        .count()
+        ctx["db"].query(AuditLog).filter_by(action="raw_asset_associations_disassociated").count()
         == 1
     )
     assert (
@@ -1147,7 +1202,9 @@ def test_raw_asset_association_manager_is_owner_only_and_business_isolated(edito
     other_base = f"/api/owner/businesses/{ctx['other_business'].id}/instagram-content"
 
     assert ctx["client"].get(f"{other_base}/raw-assets/{raw['id']}/associations").status_code == 404
-    assert ctx["client"].delete(f"{other_base}/raw-assets/{raw['id']}/associations").status_code == 404
+    assert (
+        ctx["client"].delete(f"{other_base}/raw-assets/{raw['id']}/associations").status_code == 404
+    )
 
     set_actor(ctx, ctx["admin"])
     assert (
@@ -1164,10 +1221,14 @@ def test_raw_asset_association_manager_uses_constant_queries(editorial_context):
     ctx = editorial_context
     raw = upload_raw_asset(ctx)
     for index in range(4):
-        content = ctx["client"].post(
-            f"{owner_base(ctx)}/contents",
-            json={"title": f"Contenido {index}", "caption": "", "format": "single_image"},
-        ).json()
+        content = (
+            ctx["client"]
+            .post(
+                f"{owner_base(ctx)}/contents",
+                json={"title": f"Contenido {index}", "caption": "", "format": "single_image"},
+            )
+            .json()
+        )
         assert (
             ctx["client"]
             .post(
@@ -1300,9 +1361,7 @@ def test_use_as_final_rejects_invalid_stored_media(editorial_context):
 
     assert response.status_code == 400
     assert ctx["db"].query(InstagramContentRawAsset).filter_by(raw_asset_id=raw.id).count() == 0
-    assert (
-        ctx["db"].query(InstagramFinalAsset).filter_by(source_raw_asset_id=raw.id).count() == 0
-    )
+    assert ctx["db"].query(InstagramFinalAsset).filter_by(source_raw_asset_id=raw.id).count() == 0
 
 
 def test_raw_library_operations_block_cross_business_idor(editorial_context):
@@ -1311,15 +1370,17 @@ def test_raw_library_operations_block_cross_business_idor(editorial_context):
     ctx["db"].add(InstagramContentSettings(business_id=ctx["other_business"].id, enabled=True))
     ctx["db"].commit()
     other_base = f"/api/owner/businesses/{ctx['other_business'].id}/instagram-content"
-    other_content = ctx["client"].post(
-        f"{other_base}/contents",
-        json={"title": "Otro negocio", "caption": "", "format": "single_image"},
-    ).json()
+    other_content = (
+        ctx["client"]
+        .post(
+            f"{other_base}/contents",
+            json={"title": "Otro negocio", "caption": "", "format": "single_image"},
+        )
+        .json()
+    )
 
     assert ctx["client"].get(f"{other_base}/raw-assets/{raw['id']}/file").status_code == 404
-    assert (
-        ctx["client"].get(f"{other_base}/raw-assets/{raw['id']}/download").status_code == 404
-    )
+    assert ctx["client"].get(f"{other_base}/raw-assets/{raw['id']}/download").status_code == 404
     assert (
         ctx["client"]
         .post(

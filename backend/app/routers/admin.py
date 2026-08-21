@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -296,9 +296,7 @@ def admin_update_service(
     effective_follow_up_interval = updates.get(
         "follow_up_interval_days", service.follow_up_interval_days
     )
-    effective_follow_up_window = updates.get(
-        "follow_up_window_days", service.follow_up_window_days
-    )
+    effective_follow_up_window = updates.get("follow_up_window_days", service.follow_up_window_days)
     if effective_follow_up_enabled and effective_follow_up_interval is None:
         raise HTTPException(
             status_code=422,
@@ -320,9 +318,15 @@ def admin_update_service(
 @router.get("/bookings")
 def admin_list_bookings(
     business_slug: str,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
     actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
 ):
+    from_date = from_date if isinstance(from_date, date) else None
+    to_date = to_date if isinstance(to_date, date) else None
+    if from_date and to_date and (to_date <= from_date or (to_date - from_date).days > 62):
+        raise HTTPException(status_code=422, detail="Booking range must span between 1 and 62 days")
     membership = (
         None
         if actor.is_owner
@@ -331,15 +335,21 @@ def admin_list_bookings(
     staff_id = membership.id if membership and membership.role == "business_staff" else None
     try:
         bookings = list_bookings_for_business(
-            db, business_slug=business_slug, staff_business_user_id=staff_id
+            db,
+            business_slug=business_slug,
+            staff_business_user_id=staff_id,
+            from_date=from_date,
+            to_date=to_date,
         )
     except ValueError as exc:
         if str(exc) == "business_not_found":
             raise HTTPException(status_code=404, detail="Business not found") from exc
         raise
+    business = db.query(Business).filter(Business.slug == business_slug).first()
 
     return {
         "business_slug": business_slug,
+        "business_timezone": business.timezone if business else None,
         "bookings": bookings,
     }
 

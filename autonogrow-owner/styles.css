@@ -196,7 +196,76 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .instagram-association-protection { padding: var(--ag-space-3); border-left: 3px solid var(--ag-color-warning); background: var(--ag-color-warning-bg); }
 .instagram-associations-empty { padding: var(--ag-space-5); border: 1px dashed var(--ag-color-border); text-align: center; color: var(--ag-color-text-muted); }
 .instagram-content-card--located { outline: 3px solid var(--ag-color-blue-600); outline-offset: 3px; }
-@media (max-width: 760px) { .instagram-editorial-grid { grid-template-columns: 1fr; } }
+.instagram-calendar-shell { display: grid; gap: var(--ag-space-4); }
+.instagram-calendar-header, .instagram-calendar-toolbar, .instagram-detail-heading, .instagram-unscheduled, .instagram-attention-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--ag-space-3); }
+.instagram-calendar-header h3, .instagram-calendar-header p, .instagram-detail-heading h3, .instagram-detail-heading p { margin: 0; }
+.instagram-period-label { margin-top: var(--ag-space-1) !important; color: var(--ag-color-text-muted); text-transform: capitalize; }
+.instagram-calendar-navigation, .instagram-view-switch, .instagram-calendar-filters { display: flex; align-items: center; gap: var(--ag-space-2); }
+.instagram-view-switch { padding: 3px; border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
+.instagram-view-switch button { min-height: 38px; padding: 6px 12px; border: 0; border-radius: calc(var(--ag-radius-md) - 2px); background: transparent; color: var(--ag-color-text-muted); cursor: pointer; font-weight: 800; }
+.instagram-view-switch button[aria-selected="true"] { background: var(--ag-color-surface); color: var(--ag-color-blue-700); box-shadow: var(--ag-shadow-sm); }
+.instagram-calendar-filters label { display: grid; gap: var(--ag-space-1); color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); font-weight: 800; }
+.instagram-calendar-filters select { min-width: 9rem; }
+.instagram-attention-summary { align-items: flex-start; padding: var(--ag-space-3) var(--ag-space-4); border-left: 4px solid var(--ag-color-green-500); background: var(--ag-color-success-bg); }
+.instagram-attention-summary--active { border-left-color: var(--ag-color-warning); background: var(--ag-color-warning-bg); }
+.instagram-attention-summary span { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
+.instagram-calendar { min-width: 0; border-block: 1px solid var(--ag-color-border); background: var(--ag-color-surface); }
+.instagram-calendar--today { display: grid; gap: var(--ag-space-2); padding: var(--ag-space-4) 0; }
+.instagram-calendar--week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.instagram-calendar-day { min-width: 0; min-height: 16rem; padding: var(--ag-space-2); border-right: 1px solid var(--ag-color-border); }
+.instagram-calendar-day:last-child { border-right: 0; }
+.instagram-calendar-day > header, .instagram-month-day > header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--ag-space-1); margin-bottom: var(--ag-space-2); text-transform: capitalize; }
+.instagram-calendar-day > header span { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); }
+.instagram-calendar-day > header strong { font-size: var(--ag-font-size-lg); }
+.instagram-calendar-day--today { background: var(--ag-color-info-bg); box-shadow: inset 0 3px 0 var(--ag-color-blue-500); }
+.instagram-calendar-day > div { display: grid; gap: var(--ag-space-2); }
+.instagram-calendar-item { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr); gap: var(--ag-space-1); width: 100%; min-width: 0; padding: var(--ag-space-2); border: 1px solid var(--ag-color-border); border-left: 4px solid var(--ag-color-blue-500); border-radius: var(--ag-radius-md); background: var(--ag-color-surface); color: var(--ag-color-text); cursor: pointer; text-align: left; }
+.instagram-calendar-item:hover, .instagram-calendar-item:focus-visible { border-color: var(--ag-color-blue-600); outline: 3px solid var(--ag-color-info-bg); }
+.instagram-calendar-item--attention, .instagram-calendar-item--changes_requested { border-left-color: var(--ag-color-warning); background: var(--ag-color-warning-bg); }
+.instagram-calendar-item--published { border-left-color: var(--ag-color-green-500); background: var(--ag-color-success-bg); }
+.instagram-calendar-item--cancelled { border-left-color: var(--ag-color-border-strong); opacity: .72; }
+.instagram-calendar-item__state { display: grid; place-items: center; width: 1.15rem; height: 1.15rem; border: 1px solid currentColor; border-radius: 50%; font-size: .7rem; font-weight: 900; }
+.instagram-calendar-item__body { display: grid; min-width: 0; gap: 2px; }
+.instagram-calendar-item__body strong, .instagram-calendar-item__body small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.instagram-calendar-item__body small { color: var(--ag-color-text-muted); font-size: .72rem; }
+.instagram-calendar-item__action { grid-column: 2; color: var(--ag-color-blue-700); font-size: .7rem; font-weight: 800; }
+.instagram-calendar-gap { display: block; padding: var(--ag-space-2); border: 1px dashed var(--ag-color-border); color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); text-align: center; }
+.instagram-calendar-weekdays { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(7, minmax(0, 1fr)); border-bottom: 1px solid var(--ag-color-border); }
+.instagram-calendar-weekdays span { padding: var(--ag-space-2); color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); font-weight: 800; text-align: center; }
+.instagram-calendar--month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.instagram-month-day { min-width: 0; min-height: 8.5rem; padding: var(--ag-space-2); border-right: 1px solid var(--ag-color-border); border-bottom: 1px solid var(--ag-color-border); }
+.instagram-month-day:nth-of-type(7n) { border-right: 0; }
+.instagram-month-day--outside { background: var(--ag-color-surface-subtle); opacity: .58; }
+.instagram-month-day .instagram-calendar-item { margin-bottom: 4px; padding: 5px; }
+.instagram-month-day .instagram-calendar-item__action, .instagram-month-day .instagram-calendar-item__body small { display: none; }
+.instagram-calendar-more { width: 100%; border: 0; background: transparent; color: var(--ag-color-blue-700); cursor: pointer; font-size: var(--ag-font-size-xs); font-weight: 800; text-align: left; }
+.instagram-calendar-empty { display: grid; gap: var(--ag-space-1); justify-items: start; padding: var(--ag-space-5); border: 1px dashed var(--ag-color-border); }
+.instagram-calendar--week > .instagram-calendar-empty { grid-column: 1 / -1; }
+.instagram-calendar-empty p { margin: 0; color: var(--ag-color-text-muted); }
+.instagram-unscheduled { align-items: flex-start; padding: var(--ag-space-3); background: var(--ag-color-surface-subtle); }
+.instagram-unscheduled > div:first-child { display: grid; min-width: 8rem; }
+.instagram-unscheduled > div:last-child { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); flex: 1; gap: var(--ag-space-2); }
+.instagram-advanced-tools { border-top: 1px solid var(--ag-color-border); }
+.instagram-advanced-tools > summary { min-height: 44px; padding: var(--ag-space-3) 0; color: var(--ag-color-blue-700); cursor: pointer; font-weight: 800; }
+.instagram-content-detail { display: grid; gap: var(--ag-space-3); padding-top: var(--ag-space-4); border-top: 1px solid var(--ag-color-border); }
+@media (max-width: 760px) {
+  .instagram-editorial-grid { grid-template-columns: 1fr; }
+  .instagram-calendar-header, .instagram-calendar-toolbar, .instagram-attention-summary, .instagram-unscheduled { align-items: stretch; flex-direction: column; }
+  .instagram-calendar-navigation { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; }
+  .instagram-view-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .instagram-calendar-filters { display: grid; grid-template-columns: 1fr 1fr; }
+  .instagram-calendar-filters select { min-width: 0; width: 100%; }
+  .instagram-calendar--week { grid-template-columns: 1fr; }
+  .instagram-calendar-day { min-height: 0; border-right: 0; border-bottom: 1px solid var(--ag-color-border); }
+  .instagram-calendar-day > header { justify-content: flex-start; }
+  .instagram-calendar-day > header strong { order: -1; }
+  .instagram-month-day { min-height: 4.75rem; padding: 4px; }
+  .instagram-month-day > header small { display: none; }
+  .instagram-month-day .instagram-calendar-item { grid-template-columns: 1fr; min-height: 22px; padding: 2px; border-left-width: 3px; }
+  .instagram-month-day .instagram-calendar-item__state { width: .9rem; height: .9rem; font-size: .55rem; }
+  .instagram-month-day .instagram-calendar-item__body { display: none; }
+  .instagram-unscheduled > div:last-child { grid-template-columns: 1fr; }
+}
 .owner-channel-control-editor { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
 .owner-channel-control-editor summary { cursor: pointer; font-weight: 800; }
 .owner-channel-control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }

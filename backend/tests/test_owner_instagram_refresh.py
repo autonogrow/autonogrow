@@ -25,14 +25,21 @@ def test_owner_instagram_load_has_constant_request_count_and_is_single_flight() 
     workspace = source_block(
         js,
         "async function loadOwnerInstagramWorkspace",
-        "async function refreshOwnerInstagramContent",
+        "async function loadOwnerInstagramCalendarPeriod",
+    )
+    period = source_block(
+        js,
+        "async function loadOwnerInstagramCalendarPeriod",
+        "function shiftOwnerInstagramCalendar",
     )
 
     assert 'ownerInstagramJson(`${api}/settings`)' in load
     assert "await loadOwnerInstagramWorkspace(api)" in load
     assert workspace.count("ownerInstagramJson(") == 2
     assert 'ownerInstagramJson(`${api}/raw-assets`)' in workspace
-    assert 'ownerInstagramJson(`${api}/contents`)' in workspace
+    assert 'ownerInstagramJson(`${api}/contents?${range.toString()}`)' in workspace
+    assert period.count("ownerInstagramJson(") == 1
+    assert 'ownerInstagramJson(`${api}/contents?${range.toString()}`)' in period
     assert "contentList.contents.map" not in load + workspace
     assert 'ownerInstagramJson(`${api}/contents/${item.id}`)' not in load + workspace
 

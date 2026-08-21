@@ -57,15 +57,17 @@ def content_or_404(
 
 
 def current_version(db: Session, content: InstagramContent) -> InstagramContentVersion:
-    version = (
-        db.query(InstagramContentVersion)
-        .filter(
-            InstagramContentVersion.content_id == content.id,
-            InstagramContentVersion.business_id == content.business_id,
+    version = getattr(content, "_prefetched_current_version", None)
+    if version is None:
+        version = (
+            db.query(InstagramContentVersion)
+            .filter(
+                InstagramContentVersion.content_id == content.id,
+                InstagramContentVersion.business_id == content.business_id,
+            )
+            .order_by(InstagramContentVersion.version_number.desc())
+            .first()
         )
-        .order_by(InstagramContentVersion.version_number.desc())
-        .first()
-    )
     if version is None:
         raise HTTPException(status_code=409, detail="Instagram content has no version")
     return version
@@ -566,7 +568,8 @@ def raw_asset_association_manager(
         association["protected_reason"] = (
             None
             if association["modifiable"]
-            else protected_reason or "Esta dependencia debe conservarse para mantener la trazabilidad."
+            else protected_reason
+            or "Esta dependencia debe conservarse para mantener la trazabilidad."
         )
         serialized.append(association)
     serialized.sort(key=lambda item: (item["content_title"].casefold(), item["content_id"]))
@@ -823,9 +826,7 @@ def prepare_content_removal(
     )
     has_cross_references = content_has_cross_content_asset_references(db, content)
     must_archive = (
-        previous_status in {"scheduled", "published"}
-        or has_publish_history
-        or has_cross_references
+        previous_status in {"scheduled", "published"} or has_publish_history or has_cross_references
     )
 
     storage_keys: list[str] = []
