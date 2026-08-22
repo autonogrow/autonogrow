@@ -19,6 +19,7 @@ MODEL_MODULES = (
     "app.models.business_channel_control",
     "app.models.business_channel_integration",
     "app.models.business_media",
+    "app.models.business_module",
     "app.models.business_onboarding",
     "app.models.business_user",
     "app.models.business_user_service",

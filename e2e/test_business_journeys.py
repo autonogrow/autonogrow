@@ -44,6 +44,28 @@ def test_admin_controlled_login_navigation_and_owner_separation(journey) -> None
     assert page.locator("[data-tab='operations']").count() == 0
 
 
+def test_growth_disabled_hides_its_surface_and_api_fails_closed(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import Business
+    from app.services.capability_service import configure_business_modules
+
+    with SessionLocal() as db:
+        business = db.query(Business).filter(Business.slug == "salon-e2e").one()
+        configure_business_modules(
+            db,
+            business_id=business.id,
+            enabled_modules=["essential", "social"],
+            actor_user_id=None,
+        )
+        db.commit()
+
+    _session, page = _open_admin(journey)
+    expect(page.locator('.admin-tab[data-section="growth"]')).to_be_hidden()
+    expect(page.locator('.admin-tab[data-section="instagram-content"]')).to_be_visible()
+    expect(page.locator('.admin-tab[data-section="reviews"]:visible').first).to_be_visible()
+    assert page.request.get("/api/admin/businesses/salon-e2e/opportunities").status == 403
+
+
 def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> None:
     _session, page = _open_admin(journey)
     expect(page.get_by_role("tab", name="Día")).to_have_attribute("aria-selected", "true")

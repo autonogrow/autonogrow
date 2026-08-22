@@ -1253,7 +1253,8 @@ def test_raw_asset_association_manager_uses_constant_queries(editorial_context):
         event.remove(ctx["db"].bind, "before_cursor_execute", count_statement)
 
     assert manager["association_count"] == 4
-    assert len(statements) <= 7
+    # One constant capability lookup precedes the association queries.
+    assert len(statements) <= 8
 
 
 def test_owner_cannot_disassociate_historical_or_final_source(editorial_context):

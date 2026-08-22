@@ -10,6 +10,7 @@ from app.schemas.social_content_generation import (
     SocialContentGenerateRequest,
     SocialContentRegenerateRequest,
 )
+from app.services.capability_service import require_social_access
 from app.services.instagram_content_service import content_or_404, serialize_content
 from app.services.social_content_generation_service import (
     generate_from_proposal,
@@ -20,7 +21,7 @@ from app.services.social_content_generation_service import (
 router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}",
     tags=["social-content-generation"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_owner), Depends(require_social_access)],
 )
 
 

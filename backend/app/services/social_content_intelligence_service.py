@@ -18,6 +18,7 @@ from app.models import (
     SocialContentProposal,
     SocialContentProposalSignal,
 )
+from app.services.capability_service import module_is_available
 
 # Centralized, explainable V1 product policy.
 MAX_ACTIVE_PROPOSALS_PER_BUSINESS = 8
@@ -159,6 +160,8 @@ class SocialContentIntelligenceService:
         business = self.db.get(Business, business_id)
         if business is None:
             raise ValueError("business_not_found")
+        if not module_is_available(self.db, business_id, "social"):
+            return self.result
         self._expire(business_id)
         signals = (
             self.db.query(BusinessGrowthSignal)

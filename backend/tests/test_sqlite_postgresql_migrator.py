@@ -294,6 +294,8 @@ def test_source_table_classifications_are_explicit_and_complete() -> None:
         "social_content_proposal_signals",
         "operational_states",
         "backup_records",
+        "business_module_access",
+        "pilot_baselines",
     )
     assert DESTINATION_ONLY_TABLES == ("alembic_version",)
     assert set(REQUIRED_SOURCE_TABLES).isdisjoint(OPTIONAL_SOURCE_TABLES)
@@ -537,4 +539,4 @@ def test_partial_destination_schema_is_rejected(tmp_path: Path) -> None:
 
 
 def test_alembic_has_expected_single_head() -> None:
-    assert head_revisions() == ("20260821_22",)
+    assert head_revisions() == ("20260822_23",)

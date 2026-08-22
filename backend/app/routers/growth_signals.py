@@ -29,11 +29,12 @@ from app.services.business_growth_signal_service import (
     serialize_growth_signal,
     utc_now,
 )
+from app.services.capability_service import require_growth_access
 
 router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}",
     tags=["growth-signals"],
-    dependencies=[Depends(require_business_access)],
+    dependencies=[Depends(require_growth_access)],
 )
 
 

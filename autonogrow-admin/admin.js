@@ -14,6 +14,11 @@ const fetch = async (input, options = {}) => {
 };
 
 let currentBusiness = null;
+let businessCapabilities = {
+  essential: { available: true }, growth: { available: true }, social: { available: true }
+};
+let pilotReadiness = null;
+let pilotValueSummary = null;
 let adminAuthUser = null;
 let allBookings = [];
 let reviewRequestsByBooking = new Map();
@@ -171,6 +176,10 @@ function isBusinessStaff() {
 
 function canManageConversationTemplates() {
   return Boolean(adminAuthUser?.is_owner || adminMembership?.role === "business_admin");
+}
+
+function moduleAvailable(moduleKey) {
+  return businessCapabilities?.[moduleKey]?.available !== false;
 }
 
 function configurationCategoryForKey(key) {
@@ -487,11 +496,20 @@ function applyRoleVisibility() {
   const staffOnly = isBusinessStaff();
   const allowed = new Set(["summary", "growth", "growth-opportunities", "instagram-content", "bookings", "conversations"]);
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
-    tab.hidden = tab.classList.contains("admin-tab--legacy") || (staffOnly && !allowed.has(tab.dataset.section));
+    const growthDisabled = !moduleAvailable("growth");
+    const socialDisabled = !moduleAvailable("social");
+    const reviewsFallback = tab.dataset.section === "reviews" && growthDisabled && !staffOnly;
+    if (tab.dataset.section === "reviews") tab.classList.toggle("admin-tab--legacy", !reviewsFallback);
+    tab.hidden = (!reviewsFallback && tab.classList.contains("admin-tab--legacy")) ||
+      (staffOnly && !allowed.has(tab.dataset.section)) ||
+      (tab.dataset.section === "growth" && growthDisabled) ||
+      (tab.dataset.section === "instagram-content" && socialDisabled);
     if (tab.dataset.section === "instagram-content" && adminAuthUser?.is_owner) tab.hidden = true;
   });
   document.querySelectorAll("[data-admin-section]").forEach((section) => {
     if (staffOnly && !allowed.has(section.dataset.adminSection)) section.hidden = true;
+    if (["growth", "growth-opportunities"].includes(section.dataset.adminSection)) section.hidden = !moduleAvailable("growth");
+    if (["instagram-content", "channel-instagram"].includes(section.dataset.adminSection)) section.hidden = !moduleAvailable("social");
     if (section.dataset.adminSection === "instagram-content" && adminAuthUser?.is_owner) section.hidden = true;
   });
   document.getElementById("booking-staff-filter-field").hidden = staffOnly;
@@ -499,10 +517,12 @@ function applyRoleVisibility() {
     element.hidden = !canManageConversationTemplates() ||
       element.id === "conversation-create-panel";
   });
-  document.querySelector(".growth-summary-card").hidden = staffOnly;
+  document.querySelector(".growth-summary-card").hidden = staffOnly || !moduleAvailable("growth");
   ["stat-reviews-pending", "stat-reviews-copied", "stat-reviews-sent", "stat-messages-pending", "stat-messages-opened", "stat-messages-sent", "stat-services-active"]
     .forEach((id) => { document.getElementById(id)?.closest(".stat-card")?.toggleAttribute("hidden", staffOnly); });
   if (staffOnly && !allowed.has(window.location.hash.slice(1))) showAdminSection("bookings");
+  if (!moduleAvailable("growth") && ["growth", "growth-opportunities"].includes(window.location.hash.slice(1))) showAdminSection("summary");
+  if (!moduleAvailable("social") && ["instagram-content", "channel-instagram"].includes(window.location.hash.slice(1))) showAdminSection("summary");
 }
 
 function resolveMediaUrl(url, cacheBust = false) {
@@ -526,6 +546,8 @@ function resolveSafeAdminMediaUrl(url, cacheBust = false) {
 }
 
 function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = false } = {}) {
+  if (!moduleAvailable("growth") && ["growth", "growth-opportunities"].includes(sectionName)) sectionName = "summary";
+  if (!moduleAvailable("social") && ["instagram-content", "channel-instagram"].includes(sectionName)) sectionName = "summary";
   const availableSections = Array.from(document.querySelectorAll("[data-admin-section]"));
   const sectionExists = availableSections.some((section) => section.dataset.adminSection === sectionName);
   const targetSection = sectionExists ? sectionName : "summary";
@@ -540,7 +562,8 @@ function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = fal
 
   const primarySection = CONFIGURATION_SECTIONS.has(targetSection) ? "configuration"
     : CHANNEL_HUB_SECTIONS.has(targetSection) ? "channels"
-      : GROWTH_HUB_SECTIONS.has(targetSection) ? "growth" : targetSection;
+      : targetSection === "reviews" && !moduleAvailable("growth") ? "reviews"
+        : GROWTH_HUB_SECTIONS.has(targetSection) ? "growth" : targetSection;
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
     const isActive = tab.dataset.section === primarySection;
     tab.classList.toggle("admin-tab-active", isActive);
@@ -1899,25 +1922,33 @@ async function loadAdminPanel() {
       dashboardDataState.services = "not_applicable";
       dashboardDataState.availability = "not_applicable";
       dashboardDataState.channels = "not_applicable";
-      const panelResponse = await fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/panel`);
+      const [panelResponse, capabilityResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/panel`),
+        fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/capabilities`)
+      ]);
       if (!panelResponse.ok) throw new Error("No se pudo cargar tu agenda.");
+      if (!capabilityResponse.ok) throw new Error("No se pudieron comprobar los módulos del negocio.");
       const panel = await panelResponse.json();
+      businessCapabilities = (await capabilityResponse.json()).modules;
       currentBusiness = { ...panel.business, active: panel.business.status === "active" };
       dashboardDataState.business = "ready";
       applyBusinessData(currentBusiness);
       document.getElementById("business-subtitle").textContent = "Mi agenda y reservas asignadas";
-      await Promise.all([
+      applyRoleVisibility();
+      const staffLoads = [
         loadBookings(),
         loadMyStaffAvailability(),
         loadConversationTemplates(),
-        loadConversations(),
-        loadCustomerOpportunities(),
-        loadGrowthActionMetrics(),
-        loadBusinessGrowthSignals()
-      ]);
+        loadConversations()
+      ];
+      if (moduleAvailable("growth")) staffLoads.push(loadCustomerOpportunities(), loadGrowthActionMetrics(), loadBusinessGrowthSignals());
+      await Promise.all(staffLoads);
       return;
     }
-    const businessResponse = await fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/settings`);
+    const [businessResponse, capabilityResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/settings`),
+      fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/capabilities`)
+    ]);
 
     if (!businessResponse.ok) {
       if (businessResponse.status === 401) return showAdminLogin();
@@ -1927,11 +1958,23 @@ async function loadAdminPanel() {
     }
 
     currentBusiness = await businessResponse.json();
+    if (!capabilityResponse.ok) throw new Error("No se pudieron comprobar los módulos del negocio.");
+    businessCapabilities = (await capabilityResponse.json()).modules;
+    applyRoleVisibility();
     dashboardDataState.business = "ready";
     applyBusinessData(currentBusiness);
     renderBusinessSettings();
     // Automation rules reference the default templates, so initialize templates first.
     await loadConversationTemplates();
+    const growthLoads = [];
+    if (moduleAvailable("growth")) growthLoads.push(loadCustomerOpportunities(), loadGrowthActionMetrics(), loadBusinessGrowthSignals());
+    else {
+      customerOpportunities = [];
+      businessGrowthSignals = [];
+      growthActionMetrics = null;
+      growthLoadState.opportunities = "ready";
+      growthLoadState.signals = "ready";
+    }
     await Promise.all([
       loadAdminServices(),
       loadStaffMembers(),
@@ -1939,13 +1982,12 @@ async function loadAdminPanel() {
       loadAvailabilityExceptions(),
       loadBookings(),
       loadMessageOutbox(),
-      loadCustomerOpportunities(),
-      loadGrowthActionMetrics(),
-      loadBusinessGrowthSignals(),
       loadAdminGallery(),
       loadConversationAutomation(),
       loadBusinessChannelOnboarding(),
-      loadConversations()
+      loadConversations(),
+      loadPilotOperations(),
+      ...growthLoads
     ]);
     restoreAdminMediaStatus();
   } catch (error) {
@@ -1956,6 +1998,46 @@ async function loadAdminPanel() {
 
 function channelOnboardingStatusLabel(status) {
   return ({ not_allowed: "No disponible", available: "Disponible", pending_approval: "Pendiente de revisión", approved: "Aprobado", suspended: "Suspendido", revoked: "Revocado" })[status] || "Estado no disponible";
+}
+
+async function loadPilotOperations() {
+  const slug = getBusinessSlug();
+  const [readinessResponse, valueResponse] = await Promise.all([
+    fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/pilot-readiness`),
+    fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/value-summary?period=30d`)
+  ]);
+  pilotReadiness = readinessResponse.ok ? await readinessResponse.json() : null;
+  pilotValueSummary = valueResponse.ok ? await valueResponse.json() : null;
+  renderPilotReadiness();
+  renderPilotValue();
+}
+
+function renderPilotReadiness() {
+  const container = document.getElementById("pilot-readiness-summary");
+  if (!container) return;
+  if (!pilotReadiness) {
+    container.innerHTML = '<div class="empty-state"><strong>No se pudo comprobar la preparación.</strong><p>Reintenta más tarde; no se interpreta como listo.</p></div>';
+    return;
+  }
+  const blockers = pilotReadiness.blocking || [];
+  const warnings = pilotReadiness.warnings || [];
+  const checklist = (pilotReadiness.checks || []).filter((item) => ["identity", "contact", "services", "staff", "schedules", "branding", "landing", "integrations"].includes(item.key));
+  container.innerHTML = `<div class="configuration-summary-card"><div><h3>${pilotReadiness.booking_ready ? "Listo para recibir reservas" : "Completa la configuración inicial"}</h3><p>${blockers.length ? `${blockers.length} requisitos obligatorios pendientes.` : "Los requisitos obligatorios de reservas están completos."}</p></div><span class="ag-badge ag-badge--${pilotReadiness.booking_ready ? "success" : "warning"}">${pilotReadiness.booking_ready ? "Booking ready" : "Acción necesaria"}</span></div><div class="configuration-overview-list">${checklist.map((item) => `<article class="configuration-overview-item configuration-overview-item--${item.status === "passed" ? "complete" : item.blocking ? "missing" : "review"}"><div><h3>${escapeHtml(item.label)}</h3><p>${escapeHtml(item.message)}</p></div><span class="configuration-status">${item.status === "passed" ? "Completo" : item.blocking ? "Obligatorio" : "Opcional"}</span></article>`).join("")}</div>${warnings.length ? `<p class="helper">Avisos no bloqueantes: ${warnings.length}.</p>` : ""}`;
+}
+
+function renderPilotValue() {
+  const container = document.getElementById("pilot-value-summary");
+  if (!container || !pilotValueSummary) return;
+  const modules = pilotValueSummary.modules || {};
+  const growth = modules.growth;
+  const social = modules.social;
+  const essential = modules.essential;
+  const rows = [
+    `<article><span>Reservas gestionadas</span><strong>${essential?.metrics?.bookings_managed ?? "—"}</strong><small>Volumen gestionado, no ingreso incremental</small></article>`,
+    growth?.state === "active" ? `<article><span>Growth · reservas atribuidas</span><strong>${growth.metrics?.bookings_attributed ?? 0}</strong><small>${growth.directly_attributable_revenue ? `${escapeHtml(growth.directly_attributable_revenue.amount)} ${escapeHtml(growth.directly_attributable_revenue.currency)} directamente atribuibles` : "Valor monetario aún incompleto"}</small></article>` : "",
+    social?.state === "active" ? `<article><span>Social · publicaciones</span><strong>${social.metrics?.publications_recorded ?? 0}</strong><small>Valor operativo; sin atribución de ventas suficiente</small></article>` : ""
+  ].join("");
+  container.innerHTML = rows;
 }
 
 function channelHealthStatus(status) {
@@ -1972,7 +2054,8 @@ function channelHealthStatus(status) {
 }
 
 function channelHubNavigationMarkup(activeSection) {
-  return `<nav class="channel-hub-navigation" aria-label="Canales y automatizaciones"><p>Canales</p>${CHANNEL_HUB_CATEGORIES.map((category) => `<button type="button" data-channel-hub-target="${category.id}" ${category.id === activeSection ? 'aria-current="page"' : ""}><span><strong>${category.label}</strong><small>${category.description}</small></span></button>`).join("")}</nav>`;
+  const categories = CHANNEL_HUB_CATEGORIES.filter((category) => category.id !== "channel-instagram" || moduleAvailable("social"));
+  return `<nav class="channel-hub-navigation" aria-label="Canales y automatizaciones"><p>Canales</p>${categories.map((category) => `<button type="button" data-channel-hub-target="${category.id}" ${category.id === activeSection ? 'aria-current="page"' : ""}><span><strong>${category.label}</strong><small>${category.description}</small></span></button>`).join("")}</nav>`;
 }
 
 function renderChannelHubNavigation() {

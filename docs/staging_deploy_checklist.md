@@ -8,7 +8,7 @@
 - [ ] `/etc/autonogrow/backend.env` parte de la plantilla staging: sin placeholders,
   `APP_ENV=staging`, dominio/origen/rutas exclusivos, metadata del build y modo publishing explícito.
 - [ ] `/opt/autonogrow/backend/.venv-next/bin/python -m alembic current` y `... heads` revisados;
-  una head `20260814_19`. No downgrade.
+  una head `20260822_23`. No downgrade rutinario.
 
 ## Deploy
 
@@ -45,9 +45,10 @@
    `/opt/autonogrow/backend/.venv-next` y almacenamiento `/var/lib/agw-staging`. Las demás unidades
    de `deploy/` son referencias genéricas y requieren adaptación antes de instalarlas en otro host.
 7. Validar Caddy antes de reload: `sudo caddy validate --config /etc/caddy/Caddyfile`.
-8. Reiniciar backend y channel worker. Revisar primero los tres flags de publishing; después iniciar
-   Instagram publisher, cuyo `ExecStartPre=... --check` valida configuración/DB sin reclamar jobs.
-   Habilitar el timer de mantenimiento existente. No crear otro scheduler.
+8. Reiniciar backend y únicamente el channel worker que ya estuviera autorizado/activo. Confirmar
+   los flags de publishing, pero mantener Instagram publisher stopped/disabled y
+   `INSTAGRAM_PUBLISHING_WORKER_ENABLED=false`. Habilitar el timer de mantenimiento existente. No
+   crear otro scheduler ni activar providers como parte de 10C.
 9. `sudo systemctl reload caddy` solo tras una validación correcta.
 
 ## After deploy
@@ -60,12 +61,13 @@ curl --fail --silent https://staging.autonogrow.es/ready
 /opt/autonogrow/backend/.venv-next/bin/python scripts/certify_staging.py \
   --base-url https://staging.autonogrow.es \
   --expected-git-commit SHA --local-system --json-output /tmp/staging-certification.json
+/opt/autonogrow/backend/.venv-next/bin/python scripts/check_pilot_configuration.py --json
 ```
 
 - [ ] `/api/config/build` devuelve `app_env=staging` y el SHA desplegado.
-- [ ] `systemctl is-active/is-enabled` correcto para backend/workers/timer; `NRestarts` sin bucle.
-- [ ] El `ExecStartPre=... --check` del publisher pasa sin reclamar jobs y reporta
-  `worker_enabled=false` mientras el flag siga desactivado.
+- [ ] `systemctl is-active/is-enabled` coincide con el estado previamente autorizado; `NRestarts`
+  sin bucle y publisher stopped/disabled.
+- [ ] Capability sanity sin filas ausentes/inconsistentes y readiness revisado para el piloto QA.
 - [ ] `/opt/autonogrow/backend/.venv-next/bin/python scripts/run_maintenance.py --json` termina
   como dry-run/rollback.
 - [ ] Revisar logs recientes y completar `staging_manual_certification.md`.

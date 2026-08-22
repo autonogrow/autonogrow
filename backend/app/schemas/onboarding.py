@@ -29,11 +29,23 @@ class OnboardingStartRequest(StrictOnboardingModel):
     slug: str | None = Field(default=None, max_length=120)
     template_key: str | None = Field(default=None, max_length=80)
     template_version: int | None = Field(default=None, ge=1)
+    modules: list[Literal["essential", "growth", "social"]] = Field(
+        default_factory=lambda: ["essential", "growth", "social"], min_length=1, max_length=3
+    )
 
     @field_validator("name")
     @classmethod
     def strip_name(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("modules")
+    @classmethod
+    def unique_modules(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("Los módulos no pueden repetirse")
+        if "essential" not in value:
+            raise ValueError("Essential es obligatorio en V1")
+        return value
 
 
 class TemplateApplyRequest(StrictOnboardingModel):

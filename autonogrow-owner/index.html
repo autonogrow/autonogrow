@@ -282,6 +282,7 @@
           <label>Nombre comercial <span aria-hidden="true">*</span><input id="onboarding-name" maxlength="200" required autocomplete="organization" /></label>
           <label>Slug opcional<input id="onboarding-slug" maxlength="120" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" aria-describedby="onboarding-slug-help" autocomplete="off" /><small id="onboarding-slug-help">Identifica la URL pública. Usa minúsculas, números y guiones; no implica un dominio propio.</small></label>
           <label>Plantilla<select id="onboarding-template" aria-describedby="onboarding-template-help"><option value="">Cargando plantillas…</option></select><small id="onboarding-template-help">Puedes elegirla ahora o completar el primer paso después.</small></label>
+          <fieldset><legend>Módulos del piloto</legend><label><input type="checkbox" data-onboarding-module="essential" checked disabled> Essential (obligatorio)</label><label><input type="checkbox" data-onboarding-module="growth" checked> Growth</label><label><input type="checkbox" data-onboarding-module="social" checked> Social</label><small>Podrás cambiarlos después desde Owner. Desactivar conserva los datos.</small></fieldset>
           <div class="onboarding-start__actions"><button id="onboarding-create" class="button button-primary" type="submit">Crear y configurar</button><p id="owner-onboarding-create-status" class="status-text" role="status" aria-live="polite"></p></div>
         </form>
         <div id="onboarding-workspace" class="onboarding-workspace" hidden>

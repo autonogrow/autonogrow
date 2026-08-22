@@ -30,6 +30,7 @@ from app.services.availability_service import (
     parse_weekly_schedule,
     parse_windows_from_json,
 )
+from app.services.capability_service import module_is_available
 from app.services.growth_opportunity_service import as_utc
 
 # Centralized V1 policy. These are product rules, not opaque scores.
@@ -170,6 +171,8 @@ class BusinessGrowthSignalService:
         business = self.db.get(Business, business_id)
         if business is None:
             raise ValueError("business_not_found")
+        if not module_is_available(self.db, business_id, "growth"):
+            return self.result
         self._expire(business.id)
         self._evaluate_low_future_occupancy(business)
         self._evaluate_high_due_customer_pool(business)

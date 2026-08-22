@@ -96,6 +96,11 @@ files = [
   "backend/app/services/worker_heartbeat_service.py",
   "backend/app/services/instagram_inbox_processor.py",
   "backend/app/workers/channel_worker.py",
+  "backend/app/models/business_module.py",
+  "backend/app/schemas/pilot.py",
+  "backend/app/services/capability_service.py",
+  "backend/app/services/pilot_value_service.py",
+  "backend/app/routers/pilot_operations.py",
 ]
 mypy_path = "backend"
 ignore_missing_imports = true

@@ -21,6 +21,7 @@ const ownerBusinessHubState = {
   accessVersion: 0,
   onboarding: new Map(),
   onboardingVersion: 0,
+  modules: new Map(),
   hubView: "onboarding",
   currentCandidate: null,
 };
@@ -227,6 +228,49 @@ function ownerActivationPanel(business) {
   return `<section class="owner-detail-block" data-owner-detail-panel="activation" hidden><header><div><h3>Activación y estado</h3><p>Onboarding, readiness, publicación y estado comercial se comprueban por separado.</p></div><button class="button button-secondary button-small" type="button" data-owner-readiness-refresh="${escapeHtml(business.id)}">Comprobar readiness</button></header><div class="owner-activation-layers"><p><strong>Onboarding</strong>${escapeHtml(OWNER_ONBOARDING_STATUSES.has(status) ? ownerBusinessStatusLabel(status) : status === "active" ? "Completado" : "No activo")}</p><p><strong>Estado comercial</strong>${escapeHtml(ownerBusinessStatusLabel(status))}</p><p><strong>Página pública</strong>${status === "active" ? "Publicada según la configuración vigente" : "No publicada como negocio activo"}</p><p><strong>Readiness</strong><span data-owner-readiness-summary>Sin comprobar en esta vista</span></p></div><div data-owner-readiness-content class="readiness-list"><p class="owner-empty-inline">Comprueba readiness para ver bloqueos y recomendaciones actuales.</p></div><div data-owner-preview-content></div><div class="owner-detail-actions"><button class="button button-secondary" type="button" data-owner-business-onboarding="${escapeHtml(business.id)}">Volver al onboarding</button><button class="button button-secondary" type="button" data-owner-preview="${escapeHtml(business.id)}">Abrir vista previa</button>${status === "active" ? `<button class="button button-danger" type="button" data-business-state-id="${escapeHtml(business.id)}" data-business-status="active">Suspender negocio</button>` : status === "suspended" ? `<button class="button button-primary" type="button" data-business-state-id="${escapeHtml(business.id)}" data-business-status="suspended">Reactivar negocio</button>` : `<button class="button button-primary" type="button" data-owner-activate="${escapeHtml(business.id)}" disabled>Activar negocio</button>`}</div><p data-owner-activation-feedback class="status-text" role="status"></p></section>`;
 }
 
+function ownerModulesPanel(business) {
+  return `<section class="owner-detail-block" data-owner-detail-panel="modules" hidden><header><div><h3>Módulos del piloto</h3><p>Inclusión comercial, activación operativa y salud de integraciones son estados distintos.</p></div><button class="button button-secondary button-small" type="button" data-owner-modules-refresh="${escapeHtml(business.id)}">Actualizar</button></header><div data-owner-modules-content><p>Cargando módulos…</p></div><p data-owner-modules-feedback class="status-text" role="status" aria-live="polite"></p></section>`;
+}
+
+function renderOwnerModules(businessId) {
+  const panel = byId("business-detail")?.querySelector('[data-owner-detail-panel="modules"]');
+  const entry = ownerBusinessHubState.modules.get(String(businessId));
+  if (!panel || !entry) return;
+  const labels = { essential: "Essential", growth: "Growth", social: "Social" };
+  panel.querySelector("[data-owner-modules-content]").innerHTML = Object.entries(entry.modules).map(([key, module]) => `<form class="owner-brand-editor" data-owner-module-form="${escapeHtml(key)}" data-owner-module-business="${escapeHtml(businessId)}"><h4>${labels[key]}</h4><label><input type="checkbox" data-owner-module-entitled ${module.entitled ? "checked" : ""} ${key === "essential" ? "disabled" : ""}> Incluido para el negocio</label><label><input type="checkbox" data-owner-module-active ${module.active ? "checked" : ""} ${key === "essential" ? "disabled" : ""}> Activo</label><div class="owner-brand-grid"><label>Coste mensual opcional<input data-owner-module-cost type="number" min="0" step="0.01" value="${escapeHtml(module.module_cost?.amount || "")}" placeholder="Sin coste configurado"></label><label>Moneda<select data-owner-module-currency><option value="EUR" ${module.module_cost?.currency === "EUR" || !module.module_cost ? "selected" : ""}>EUR</option></select></label></div><label>Motivo del cambio<input data-owner-module-reason minlength="3" maxlength="500" placeholder="Decisión del piloto" required></label><button class="button button-primary button-small" type="submit">Guardar módulo</button><small>${module.available ? "Disponible en el producto" : "No activo; los datos existentes se conservan"}</small></form>`).join("");
+}
+
+async function loadOwnerModules(businessId) {
+  const panel = byId("business-detail")?.querySelector('[data-owner-detail-panel="modules"]');
+  if (!panel) return;
+  panel.setAttribute("aria-busy", "true");
+  try {
+    const body = await ownerHubRequest(`/api/owner/businesses/${encodeURIComponent(businessId)}/modules`, {}, "No se pudieron cargar los módulos.");
+    ownerBusinessHubState.modules.set(String(businessId), body);
+    renderOwnerModules(businessId);
+  } finally { panel.removeAttribute("aria-busy"); }
+}
+
+async function saveOwnerModule(form) {
+  const businessId = form.dataset.ownerModuleBusiness;
+  const moduleKey = form.dataset.ownerModuleForm;
+  const feedback = form.closest('[data-owner-detail-panel="modules"]').querySelector("[data-owner-modules-feedback]");
+  const costText = form.querySelector("[data-owner-module-cost]").value.trim();
+  const reason = form.querySelector("[data-owner-module-reason]").value.trim();
+  if (reason.length < 3) { feedback.textContent = "Indica un motivo breve para dejar trazabilidad."; return; }
+  const payload = {
+    entitled: form.querySelector("[data-owner-module-entitled]").checked,
+    active: form.querySelector("[data-owner-module-active]").checked,
+    module_cost_amount: costText || null,
+    module_cost_currency: costText ? form.querySelector("[data-owner-module-currency]").value : null,
+    reason
+  };
+  feedback.textContent = "Guardando…";
+  await ownerHubRequest(`/api/owner/businesses/${encodeURIComponent(businessId)}/modules/${encodeURIComponent(moduleKey)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }, "No se pudo guardar el módulo.");
+  feedback.textContent = "Módulo actualizado. Los datos históricos se han conservado.";
+  await loadOwnerModules(businessId);
+}
+
 function ownerChannelsPanel(business) {
   return `<section class="owner-detail-block" data-owner-detail-panel="channels" hidden><header><div><h3>Canales</h3><p>Se conservan por separado candidatura, integración activa, control comercial, capacidades y salud.</p></div><button class="button button-secondary button-small" type="button" data-owner-business-integration="${escapeHtml(business.id)}">Abrir Integraciones</button></header><details class="owner-channel-control-editor" data-owner-channel-control-id="${escapeHtml(business.id)}" open><summary>Control y salud de canales</summary><div data-owner-channel-control-content><p>Cargando permisos…</p></div></details><details class="owner-integration-editor" data-owner-integration-id="${escapeHtml(business.id)}" data-owner-integration-name="${escapeHtml(business.name)}"><summary>Instagram conectado</summary><div data-owner-integration-content><p>Cargando Instagram…</p></div></details><details class="owner-automation-editor" data-owner-automation-id="${escapeHtml(business.id)}" data-owner-automation-name="${escapeHtml(business.name)}"><summary>Plan, automatización y cuota</summary><div data-owner-automation-content><p>Cargando configuración…</p></div></details></section>`;
 }
@@ -254,14 +298,14 @@ function renderOwnerBusinessDetail() {
   const business = businesses.find((item) => String(item.id) === String(ownerBusinessHubState.selectedBusinessId));
   if (!detail || !business) { if (detail) detail.hidden = true; return; }
   detail.hidden = false;
-  detail.innerHTML = `<header class="owner-business-detail__header"><div><p class="eyebrow">Detalle del negocio</p><h2 id="business-detail-title">${escapeHtml(business.name)}</h2></div><button class="button button-secondary button-small" type="button" data-owner-detail-close>Volver a la lista</button></header><nav class="owner-secondary-nav" aria-label="Detalle de ${escapeHtml(business.name)}">${[["summary", "Resumen"], ["brand", "Datos y marca"], ["users", "Usuarios y acceso"], ["activation", "Activación"], ["channels", "Canales"], ["activity", "Actividad"]].map(([key, label]) => `<button type="button" data-owner-detail-tab="${key}"${ownerBusinessHubState.detailSection === key ? ' class="active" aria-current="page"' : ""}>${label}</button>`).join("")}</nav><div class="owner-business-detail__content">${ownerBusinessSummary(business)}${ownerBrandEditor(business)}${ownerUsersEditor(business)}${ownerActivationPanel(business)}${ownerChannelsPanel(business)}${ownerBusinessActivity(business)}</div>`;
+  detail.innerHTML = `<header class="owner-business-detail__header"><div><p class="eyebrow">Detalle del negocio</p><h2 id="business-detail-title">${escapeHtml(business.name)}</h2></div><button class="button button-secondary button-small" type="button" data-owner-detail-close>Volver a la lista</button></header><nav class="owner-secondary-nav" aria-label="Detalle de ${escapeHtml(business.name)}">${[["summary", "Resumen"], ["modules", "Módulos"], ["brand", "Datos y marca"], ["users", "Usuarios y acceso"], ["activation", "Activación"], ["channels", "Canales"], ["activity", "Actividad"]].map(([key, label]) => `<button type="button" data-owner-detail-tab="${key}"${ownerBusinessHubState.detailSection === key ? ' class="active" aria-current="page"' : ""}>${label}</button>`).join("")}</nav><div class="owner-business-detail__content">${ownerBusinessSummary(business)}${ownerModulesPanel(business)}${ownerBrandEditor(business)}${ownerUsersEditor(business)}${ownerActivationPanel(business)}${ownerChannelsPanel(business)}${ownerBusinessActivity(business)}</div>`;
   activateOwnerBusinessDetailSection(ownerBusinessHubState.detailSection, false);
 }
 
 function activateOwnerBusinessDetailSection(section, focus = true) {
   const detail = byId("business-detail");
   if (!detail) return;
-  const allowed = new Set(["summary", "brand", "users", "activation", "channels", "activity"]);
+  const allowed = new Set(["summary", "modules", "brand", "users", "activation", "channels", "activity"]);
   ownerBusinessHubState.detailSection = allowed.has(section) ? section : "summary";
   detail.querySelectorAll("[data-owner-detail-panel]").forEach((panel) => { panel.hidden = panel.dataset.ownerDetailPanel !== ownerBusinessHubState.detailSection; });
   detail.querySelectorAll("[data-owner-detail-tab]").forEach((button) => {
@@ -272,6 +316,7 @@ function activateOwnerBusinessDetailSection(section, focus = true) {
   const panel = detail.querySelector(`[data-owner-detail-panel="${ownerBusinessHubState.detailSection}"]`);
   if (ownerBusinessHubState.detailSection === "brand") panel.querySelectorAll("[data-owner-editor]").forEach(loadOwnerGallery);
   if (ownerBusinessHubState.detailSection === "users") panel.querySelectorAll("[data-owner-users]").forEach(loadOwnerUsers);
+  if (ownerBusinessHubState.detailSection === "modules") loadOwnerModules(ownerBusinessHubState.selectedBusinessId).catch((error) => { panel.querySelector("[data-owner-modules-feedback]").textContent = error.message; });
   if (ownerBusinessHubState.detailSection === "activation") loadOwnerBusinessReadiness(ownerBusinessHubState.selectedBusinessId).catch((error) => { panel.querySelector("[data-owner-activation-feedback]").textContent = error.message; });
   if (ownerBusinessHubState.detailSection === "channels") {
     panel.querySelectorAll("[data-owner-channel-control-id]").forEach(loadOwnerChannelControls);
@@ -727,7 +772,16 @@ byId("businesses-section").addEventListener("click", (event) => {
   const preview = event.target.closest("[data-owner-preview]");
   if (preview) { showOwnerBusinessPreview(preview.dataset.ownerPreview); return; }
   const activate = event.target.closest("[data-owner-activate]");
-  if (activate) activateOwnerBusiness(activate.dataset.ownerActivate);
+  if (activate) { activateOwnerBusiness(activate.dataset.ownerActivate); return; }
+  const refreshModules = event.target.closest("[data-owner-modules-refresh]");
+  if (refreshModules) loadOwnerModules(refreshModules.dataset.ownerModulesRefresh).catch((error) => { byId("business-detail").querySelector("[data-owner-modules-feedback]").textContent = error.message; });
+});
+
+byId("businesses-section").addEventListener("submit", (event) => {
+  const form = event.target.closest("[data-owner-module-form]");
+  if (!form) return;
+  event.preventDefault();
+  saveOwnerModule(form).catch((error) => { form.closest('[data-owner-detail-panel="modules"]').querySelector("[data-owner-modules-feedback]").textContent = error.message; });
 });
 
 document.querySelector('[data-panel="new-business"]').addEventListener("click", (event) => {

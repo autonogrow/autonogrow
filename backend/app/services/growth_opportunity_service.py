@@ -16,6 +16,7 @@ from app.models import (
     CustomerOpportunity,
     ScheduledCustomerFollowUp,
 )
+from app.services.capability_service import module_is_available
 from app.services.customer_identity_service import normalize_phone
 
 ACTIVE_BOOKING_STATUSES = {"requested", "pending", "confirmed"}
@@ -89,6 +90,8 @@ class GrowthOpportunityService:
         business = self.db.get(Business, business_id)
         if business is None:
             raise ValueError("business_not_found")
+        if not module_is_available(self.db, business_id, "growth"):
+            return self.result
         self._resolve_existing(business_id)
         self._detect_booking_recovery(business_id)
         self._detect_service_due(business_id)
@@ -102,6 +105,8 @@ class GrowthOpportunityService:
 
     def resolve_for_rebooking(self, booking: Booking) -> int:
         """Resolve open opportunities in the same transaction as a new active booking."""
+        if not module_is_available(self.db, booking.business_id, "growth"):
+            return 0
         if booking.status not in ACTIVE_BOOKING_STATUSES:
             return 0
         rows = (

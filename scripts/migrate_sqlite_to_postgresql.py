@@ -30,6 +30,8 @@ COPY_ORDER = (
     "users",
     "operational_states",
     "businesses",
+    "business_module_access",
+    "pilot_baselines",
     "business_onboarding_templates",
     "business_users",
     "services",
@@ -129,6 +131,8 @@ OPTIONAL_SOURCE_TABLES = (
     "social_content_proposal_signals",
     "operational_states",
     "backup_records",
+    "business_module_access",
+    "pilot_baselines",
 )
 REQUIRED_SOURCE_TABLES = tuple(
     table_name for table_name in COPY_ORDER if table_name not in OPTIONAL_SOURCE_TABLES

@@ -58,6 +58,7 @@ from app.services.business_onboarding_service import (
     validate_placeholders,
 )
 from app.services.business_readiness_service import evaluate_business_readiness
+from app.services.capability_service import configure_business_modules, module_capabilities
 from app.services.conversation_automation_service import ensure_automation_configuration
 from app.services.incident_service import report_incident
 
@@ -262,6 +263,12 @@ def start_business_onboarding(
     db.add(business)
     try:
         db.flush()
+        configure_business_modules(
+            db,
+            business_id=business.id,
+            enabled_modules=payload.modules,
+            actor_user_id=actor.id,
+        )
         session = BusinessOnboardingSession(
             business_id=business.id,
             status="in_progress",
@@ -288,7 +295,7 @@ def start_business_onboarding(
             request=request,
             actor=actor,
             business=business,
-            metadata={"steps_version": session.steps_version},
+            metadata={"steps_version": session.steps_version, "modules": payload.modules},
         )
         db.commit()
     except HTTPException:
@@ -311,6 +318,7 @@ def start_business_onboarding(
     return {
         "ok": True,
         "business": _serialize_business_for_onboarding(business),
+        "modules": module_capabilities(db, business.id),
         "onboarding": serialize_onboarding_session(session),
     }
 
@@ -361,6 +369,7 @@ def get_business_onboarding(business_id: int, db: Session = Depends(get_db)):
     )
     return {
         "business": _serialize_business_for_onboarding(business),
+        "modules": module_capabilities(db, business.id),
         "onboarding": serialize_onboarding_session(session),
         "services": [
             {

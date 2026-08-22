@@ -1,6 +1,6 @@
 # Migraciones de base de datos
 
-La head vigente de Sprint 9B es `20260814_19`, sucesora única de `20260814_18`. Añade la relación propuesta/contenido, el paquete editorial versionado, formatos story/reel y asociación opcional de assets a servicio. Sprint 9A permanece en `20260814_18` con reseñas recibidas, propuestas y su relación N:M con Growth Signals. Las revisiones usan constraints compatibles con SQLite/PostgreSQL.
+La head vigente es `20260822_23`, sucesora única de `20260821_22`. Añade acceso modular por negocio y baseline opcional de piloto; hace backfill de Essential, Growth y Social activos para conservar el comportamiento de negocios existentes. Las revisiones históricas no se editan y usan constraints compatibles con SQLite/PostgreSQL.
 
 La head vigente es `20260730_06`. Añade estado operativo, metadatos de backup y `request_id` nullable en inbox/outbox; baja a `20260730_05` solo con servicio detenido, backup verificado y código compatible.
 

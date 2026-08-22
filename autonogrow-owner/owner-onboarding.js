@@ -237,7 +237,8 @@
     form.setAttribute("aria-busy", "true");
     status.textContent = "Creando el negocio…";
     const template = state.templates.find((item) => item.key === q("onboarding-template").value);
-    const payload = { name: name.value.trim(), slug: slug.value.trim() || null, template_key: template?.key || null, template_version: template?.version || null };
+    const modules = [...document.querySelectorAll("[data-onboarding-module]")].filter((input) => input.checked).map((input) => input.dataset.onboardingModule);
+    const payload = { name: name.value.trim(), slug: slug.value.trim() || null, template_key: template?.key || null, template_version: template?.version || null, modules };
     try {
       const data = await request("/businesses/onboarding", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       onboardingData = data;

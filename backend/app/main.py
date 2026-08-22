@@ -50,6 +50,8 @@ from app.routers.meta_integration_health import admin_router as meta_health_admi
 from app.routers.meta_integration_health import owner_router as meta_health_owner_router
 from app.routers.owner import router as owner_router
 from app.routers.owner_onboarding import router as owner_onboarding_router
+from app.routers.pilot_operations import admin_router as pilot_operations_admin_router
+from app.routers.pilot_operations import owner_router as pilot_operations_owner_router
 from app.routers.services import router as services_router
 from app.routers.social_content import router as social_content_router
 from app.routers.social_content_generation import router as social_content_generation_router
@@ -153,6 +155,8 @@ app.include_router(owner_channel_controls_router)
 app.include_router(meta_health_owner_router)
 app.include_router(meta_health_admin_router)
 app.include_router(owner_onboarding_router)
+app.include_router(pilot_operations_admin_router)
+app.include_router(pilot_operations_owner_router)
 app.include_router(media_router)
 app.include_router(customer_router)
 app.include_router(public_staff_router)

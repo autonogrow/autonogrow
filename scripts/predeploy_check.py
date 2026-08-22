@@ -198,6 +198,15 @@ def check_required_files(reporter: Reporter) -> None:
         "scripts/instagram_publication_preflight.py",
         "docs/staging_certification.md",
         "docs/staging_manual_certification.md",
+        "docs/pilot_onboarding_runbook.md",
+        "docs/pilot_support_runbook.md",
+        "docs/pilot_checklist.md",
+        "docs/pilot_issue_template.md",
+        "docs/pilot_module_capabilities.md",
+        "docs/pilot_value_attribution.md",
+        "docs/staging_pilot_deployment_runbook.md",
+        "scripts/check_pilot_configuration.py",
+        "alembic/versions/20260822_23_add_pilot_modules_and_baseline.py",
     ]
     for relative in required:
         if (ROOT / relative).is_file():
@@ -455,8 +464,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260814_19":
-            reporter.fail("La head operativa esperada es 20260814_19")
+        if heads[0] != "20260822_23":
+            reporter.fail("La head operativa esperada es 20260822_23")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 

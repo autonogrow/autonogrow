@@ -6,7 +6,8 @@
 Sprint 10A confirmó `/health`, autenticación anónima, páginas legales y headers básicos (12 PASS),
 pero el despliegue se declaraba `APP_ENV=production`, no publicaba SHA y exponía `Server: uvicorn`.
 Esos tres puntos impiden certificar la release actual. Hay que desplegar este sprint con
-`APP_ENV=staging`, metadata real y la plantilla Caddy actualizada.
+`APP_ENV=staging`, metadata real y la plantilla Caddy actualizada. 10C no vuelve a comprobar el host:
+esa evidencia sigue pendiente hasta el deploy explícito.
 
 Topología versionada:
 
@@ -21,9 +22,10 @@ Topología versionada:
 | Uploads | backend/Caddy | `/var/lib/agw-staging/uploads` |
 | Dependencias externas | Google/Meta/SMTP | configuración y secretos solo en environment del host |
 
-Head Alembic esperado: `20260814_19`, una sola head. El frontend anterior se copiaba directorio a
+Head Alembic esperado: `20260822_23`, una sola head. El frontend anterior se copiaba directorio a
 directorio y podía quedar a medias. `publish_frontend.sh` ahora prepara una release completa y
 cambia un symlink atómicamente; la migración inicial del directorio legacy se hace una sola vez.
+Durante QA 10C el publisher debe permanecer stopped/disabled aunque su unidad esté instalada.
 
 ## Gate automatizado
 

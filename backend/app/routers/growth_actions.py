@@ -25,6 +25,7 @@ from app.services.booking_attribution_service import (
     create_booking_attribution,
     serialize_attribution,
 )
+from app.services.capability_service import require_growth_access
 from app.services.conversation_automation_service import ensure_automation_configuration
 from app.services.conversation_automation_state_service import apply_human_reply_pause
 from app.services.conversation_service import (
@@ -45,7 +46,7 @@ from app.services.opportunity_action_service import (
 router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}",
     tags=["growth-actions"],
-    dependencies=[Depends(require_business_access)],
+    dependencies=[Depends(require_growth_access)],
 )
 
 

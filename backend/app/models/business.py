@@ -185,3 +185,9 @@ class Business(Base):
     onboarding_sessions = relationship(
         "BusinessOnboardingSession", back_populates="business", cascade="all, delete-orphan"
     )
+    module_access = relationship(
+        "BusinessModuleAccess", back_populates="business", cascade="all, delete-orphan"
+    )
+    pilot_baseline = relationship(
+        "PilotBaseline", back_populates="business", cascade="all, delete-orphan", uselist=False
+    )

@@ -10,16 +10,19 @@ from sqlalchemy.orm import Session
 from app.core.migration_state import head_revisions
 from app.models import (
     AvailabilitySettings,
+    BackupRecord,
     Business,
     BusinessChannelIntegration,
     BusinessService,
     BusinessStaffProfile,
     BusinessUser,
     ConversationAutomationSettings,
+    InstagramContentSettings,
 )
 from app.services.business_onboarding_service import readiness_version
+from app.services.capability_service import module_capabilities
 
-READINESS_SCHEMA_VERSION = 1
+READINESS_SCHEMA_VERSION = 2
 
 
 def _check(
@@ -320,7 +323,10 @@ def evaluate_business_readiness(db: Session, business: Business) -> dict[str, An
         )
     )
 
-    blocking_count = sum(1 for item in checks if item["blocking"] and item["status"] == "failed")
+    blocking = [
+        item["key"] for item in checks if item["blocking"] and item["status"] == "failed"
+    ]
+    blocking_count = len(blocking)
     warning_count = sum(1 for item in checks if item["status"] == "warning")
     points = sum(
         1
@@ -331,13 +337,106 @@ def evaluate_business_readiness(db: Session, business: Business) -> dict[str, An
         for item in checks
     )
     score = round(points * 100 / len(checks))
+    capabilities = module_capabilities(db, business.id)
+    integrations = {
+        row.channel: row
+        for row in db.query(BusinessChannelIntegration)
+        .filter(BusinessChannelIntegration.business_id == business.id)
+        .all()
+    }
+    instagram = integrations.get("instagram")
+    instagram_healthy = bool(
+        instagram
+        and instagram.integration_status == "connected"
+        and instagram.health_status in {"healthy", "unknown"}
+    )
+    content_settings = db.get(InstagramContentSettings, business.id)
+    module_readiness = {
+        "essential": {
+            **capabilities["essential"],
+            "ready": blocking_count == 0,
+            "status": "ready" if blocking_count == 0 else "action_required",
+            "blocking": blocking,
+            "warnings": [
+                item["key"] for item in checks if item["status"] == "warning"
+            ],
+        },
+        "growth": {
+            **capabilities["growth"],
+            "ready": bool(capabilities["growth"]["available"]),
+            "status": (
+                "ready" if capabilities["growth"]["available"] else "disabled"
+            ),
+            "blocking": [],
+            "warnings": [],
+        },
+        "social": {
+            **capabilities["social"],
+            "ready": bool(
+                capabilities["social"]["available"]
+                and content_settings
+                and content_settings.enabled
+                and instagram_healthy
+            ),
+            "status": (
+                "disabled"
+                if not capabilities["social"]["available"]
+                else "ready"
+                if content_settings and content_settings.enabled and instagram_healthy
+                else "action_required"
+            ),
+            "blocking": [],
+            "warnings": (
+                []
+                if not capabilities["social"]["available"] or instagram_healthy
+                else ["instagram_needs_connection_or_attention"]
+            ),
+        },
+    }
+    has_admin = (
+        db.query(BusinessUser)
+        .filter(
+            BusinessUser.business_id == business.id,
+            BusinessUser.active.is_(True),
+            BusinessUser.role == "business_admin",
+        )
+        .count()
+        > 0
+    )
+    pilot_blocking = list(blocking)
+    if not has_admin:
+        pilot_blocking.append("no_business_admin")
+    if not contact_ok:
+        pilot_blocking.append("no_public_contact")
+    if business.status != "active":
+        pilot_blocking.append("public_page_not_active")
+    verified_backup = (
+        db.query(BackupRecord)
+        .filter(
+            BackupRecord.status == "valid",
+            BackupRecord.verification_status == "verified",
+        )
+        .first()
+    )
+    warnings = [item["key"] for item in checks if item["status"] == "warning"]
+    if verified_backup is None:
+        warnings.append("no_verified_environment_backup")
+    if module_readiness["social"]["status"] == "action_required":
+        warnings.append("social_action_required")
     return {
         "schema_version": READINESS_SCHEMA_VERSION,
         "business_id": business.id,
         "ready": blocking_count == 0,
+        "booking_ready": blocking_count == 0,
+        "pilot_ready": not pilot_blocking,
         "score": score,
         "blocking_count": blocking_count,
         "warning_count": warning_count,
+        "blocking": blocking,
+        "pilot_blocking": pilot_blocking,
+        "warnings": list(dict.fromkeys(warnings)),
+        "optional": ["instagram", "whatsapp_cloud", "extended_branding"],
+        "modules": module_readiness,
         "checks": checks,
         "version": readiness_version(business, checks),
     }

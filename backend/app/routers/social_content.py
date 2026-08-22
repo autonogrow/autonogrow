@@ -17,6 +17,7 @@ from app.models.social_content_proposal import (
     SOCIAL_PROPOSAL_STATUSES,
     SOCIAL_PROPOSAL_TYPES,
 )
+from app.services.capability_service import require_social_access
 from app.services.social_content_intelligence_service import (
     acceptance_snapshot,
     serialize_social_content_proposal,
@@ -25,7 +26,7 @@ from app.services.social_content_intelligence_service import (
 router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}",
     tags=["social-content-intelligence"],
-    dependencies=[Depends(require_business_access)],
+    dependencies=[Depends(require_social_access)],
 )
 
 

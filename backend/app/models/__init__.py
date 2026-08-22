@@ -15,6 +15,7 @@ from app.models.business_channel_control import BusinessChannelControl
 from app.models.business_channel_integration import BusinessChannelIntegration
 from app.models.business_growth_signal import BusinessCalendarEvent, BusinessGrowthSignal
 from app.models.business_media import BusinessGalleryImage
+from app.models.business_module import BusinessModuleAccess, PilotBaseline
 from app.models.business_onboarding import (
     BusinessOnboardingSession,
     BusinessOnboardingTemplate,
@@ -109,6 +110,8 @@ __all__ = [
     "BackupRecord",
     "OperationalState",
     "BusinessGalleryImage",
+    "BusinessModuleAccess",
+    "PilotBaseline",
     "BusinessOnboardingSession",
     "BusinessOnboardingTemplate",
     "BusinessStaffProfile",

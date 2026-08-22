@@ -18,6 +18,7 @@ from app.models import (
     InstagramRawAsset,
     User,
 )
+from app.services.capability_service import require_module_available
 
 
 def utc_now() -> datetime:
@@ -34,6 +35,7 @@ def get_or_create_settings(db: Session, business_id: int) -> InstagramContentSet
 
 
 def require_service_enabled(db: Session, business_id: int) -> InstagramContentSettings:
+    require_module_available(db, business_id, "social")
     settings = db.get(InstagramContentSettings, business_id)
     if settings is None or not settings.enabled:
         raise HTTPException(status_code=409, detail="Instagram content management is not enabled")

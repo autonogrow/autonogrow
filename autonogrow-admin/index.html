@@ -206,6 +206,11 @@
         <button class="btn btn-primary" type="button" data-admin-action="navigate-section" data-section="growth">Ver resumen</button>
       </article>
 
+      <section class="dashboard-panel ag-card" aria-labelledby="pilot-value-title">
+        <div class="dashboard-panel__header"><div><span class="dashboard-panel__eyebrow">Este mes</span><h3 id="pilot-value-title">Valor observado</h3></div></div>
+        <div id="pilot-value-summary" class="growth-results-metrics" aria-live="polite"><p>Calculando métricas disponibles…</p></div>
+      </section>
+
       <div hidden aria-hidden="true">
         <span id="stat-total">0</span><span id="stat-requested">0</span><span id="stat-confirmed">0</span><span id="stat-completed">0</span>
         <span id="stat-reviews-pending">0</span><span id="stat-reviews-copied">0</span><span id="stat-reviews-sent">0</span>
@@ -265,6 +270,7 @@
             <div><h3 id="configuration-summary-title">Estado general</h3><p id="configuration-business-name">Cargando negocio…</p></div>
             <strong id="configuration-ready-summary">Comprobando apartados…</strong>
           </section>
+          <section id="pilot-readiness-summary" aria-label="Checklist de configuración" aria-live="polite"><p>Comprobando qué falta…</p></section>
           <div id="configuration-overview-list" class="configuration-overview-list" aria-live="polite">
             <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Comprobando configuración.</span>
           </div>

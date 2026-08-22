@@ -19,6 +19,7 @@ from app.models import (
     User,
 )
 from app.schemas.customer_opportunity import OpportunityStatusUpdate, ScheduledFollowUpCreate
+from app.services.capability_service import require_growth_access
 from app.services.customer_memory_service import (
     CustomerMemoryService,
     group_active_memories_by_customer,
@@ -40,7 +41,7 @@ from app.services.opportunity_action_service import (
 router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}",
     tags=["growth-opportunities"],
-    dependencies=[Depends(require_business_access)],
+    dependencies=[Depends(require_growth_access)],
 )
 
 

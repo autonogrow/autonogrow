@@ -19,6 +19,7 @@ from app.core.security import (
 from app.models import Business, InstagramOAuthAttempt, User
 from app.schemas.channel_onboarding import ChannelDecisionRequest
 from app.schemas.instagram_oauth import InstagramOAuthStartRequest
+from app.services.capability_service import require_module_available
 from app.services.channel_control_service import get_channel_control
 from app.services.instagram_oauth_service import (
     complete_instagram_oauth_callback,
@@ -46,6 +47,7 @@ def _business_by_slug(db: Session, business_slug: str) -> Business:
     business = db.query(Business).filter(Business.slug == business_slug).first()
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
+    require_module_available(db, business.id, "social")
     return business
 
 
@@ -53,6 +55,7 @@ def _business_by_id(db: Session, business_id: int) -> Business:
     business = db.query(Business).filter(Business.id == business_id).first()
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
+    require_module_available(db, business.id, "social")
     return business
 
 

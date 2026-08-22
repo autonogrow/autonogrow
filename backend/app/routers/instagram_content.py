@@ -40,6 +40,7 @@ from app.schemas.instagram_content import (
     InstagramValidationCreate,
     InstagramValidationDelegationUpdate,
 )
+from app.services.capability_service import require_module_available
 from app.services.instagram_content_service import (
     add_admin_comment,
     associate_raw_asset,
@@ -102,6 +103,7 @@ def _owner_business(db: Session, business_id: int) -> Business:
     business = db.get(Business, business_id)
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
+    require_module_available(db, business.id, "social")
     return business
 
 
@@ -109,6 +111,7 @@ def _admin_business(db: Session, business_slug: str) -> Business:
     business = db.query(Business).filter(Business.slug == business_slug).first()
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
+    require_module_available(db, business.id, "social")
     return business
 
 
@@ -117,6 +120,7 @@ def require_instagram_business_admin(
     actor: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
+    _admin_business(db, business_slug)
     if actor.is_owner:
         raise HTTPException(status_code=403, detail="Business administrator access required")
     membership = get_business_membership(
