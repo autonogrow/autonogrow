@@ -47,6 +47,7 @@ from app.services.instagram_meta_client import InstagramMetaClient, MetaHTTPErro
 from app.services.instagram_publishing_adapter import (
     InstagramPublishRequest,
     MetaInstagramPublishingAdapter,
+    PublishingActionRequired,
     PublishingAuthenticationError,
     PublishingResultUnknown,
     PublishingValidationError,
@@ -91,7 +92,9 @@ def request(**overrides) -> InstagramPublishRequest:
         "asset_storage_keys": ("final.jpg",),
         "professional_account_id": "178900000001",
         "access_token": "secret-token",
-        "asset_url": "https://assets.example.test/signed?signature=secret",
+        "asset_urls": (
+            "https://assets.example.test/signed?signature=secret",
+        ),
     }
     values.update(overrides)
     return InstagramPublishRequest(**values)
@@ -314,7 +317,14 @@ def test_image_validation_rejects_corrupt_and_caption_rejects_invalid_unicode(tm
 
 class Progress:
     def __init__(self):
-        self.events: list[tuple[str, str]] = []
+        self.events: list[tuple] = []
+
+    def carousel_child_created(
+        self,
+        position: int,
+        container_id: str,
+    ) -> None:
+        self.events.append(("carousel_child", position, container_id))
 
     def container_created(self, container_id: str) -> None:
         self.events.append(("container", container_id))
@@ -333,12 +343,55 @@ class FakeMetaClient:
         self.publish_error = None
         self.permalink_error = None
         self.inspect_status = None
+        self.reel_status = "FINISHED"
+        self.reel_status_error = None
+        self.carousel_child_error_at = None
+        self.carousel_child_counter = 0
 
     def create_image_container(self, **kwargs):
         self.calls.append(("create", kwargs))
         if self.create_error:
             raise self.create_error
         return "container-1"
+
+    def create_carousel_image_container(self, **kwargs):
+        self.carousel_child_counter += 1
+        self.calls.append(
+            ("create_carousel_child", self.carousel_child_counter, kwargs)
+        )
+
+        if self.carousel_child_error_at == self.carousel_child_counter:
+            raise requests.ConnectTimeout("carousel child timeout")
+
+        return f"carousel-child-{self.carousel_child_counter}"
+
+    def create_carousel_container(self, **kwargs):
+        self.calls.append(("create_carousel", kwargs))
+        return "carousel-container-1"
+
+    def create_reel_container(self, **kwargs):
+        self.calls.append(("create_reel", kwargs))
+        if self.create_error:
+            raise self.create_error
+        return "reel-container-1"
+
+    def create_story_image_container(self, **kwargs):
+        self.calls.append(("create_story_image", kwargs))
+        if self.create_error:
+            raise self.create_error
+        return "story-image-container-1"
+
+    def create_story_video_container(self, **kwargs):
+        self.calls.append(("create_story_video", kwargs))
+        if self.create_error:
+            raise self.create_error
+        return "story-video-container-1"
+
+    def get_container_status(self, container_id, access_token):
+        self.calls.append(("status", container_id, access_token))
+        if self.reel_status_error:
+            raise self.reel_status_error
+        return self.reel_status
 
     def publish_container(self, **kwargs):
         self.calls.append(("publish", kwargs))
@@ -446,6 +499,484 @@ class FakeResponse:
     def json(self):
         return self.payload
 
+def test_carousel_creates_children_in_order_parent_and_publish():
+    client = FakeMetaClient()
+    progress = Progress()
+
+    result = MetaInstagramPublishingAdapter(client).publish(
+        request(
+            format="carousel",
+            asset_storage_keys=("one.jpg", "two.jpg", "three.jpg"),
+            asset_urls=(
+                "https://assets.example.test/one.jpg",
+                "https://assets.example.test/two.jpg",
+                "https://assets.example.test/three.jpg",
+            ),
+            progress=progress,
+        )
+    )
+
+    assert [call[0] for call in client.calls] == [
+        "create_carousel_child",
+        "create_carousel_child",
+        "create_carousel_child",
+        "create_carousel",
+        "publish",
+        "permalink",
+    ]
+
+    assert progress.events == [
+        ("carousel_child", 0, "carousel-child-1"),
+        ("carousel_child", 1, "carousel-child-2"),
+        ("carousel_child", 2, "carousel-child-3"),
+        ("container", "carousel-container-1"),
+        ("publishing", "started"),
+        ("media", "media-1"),
+    ]
+
+    assert client.calls[3][1]["children"] == (
+        "carousel-child-1",
+        "carousel-child-2",
+        "carousel-child-3",
+    )
+    assert result.container_id == "carousel-container-1"
+    assert result.media_id == "media-1"
+    assert result.metadata["format"] == "carousel"
+    assert result.metadata["carousel_asset_count"] == "3"
+
+
+def test_carousel_restart_reuses_persisted_children_and_creates_only_missing_child():
+    client = FakeMetaClient()
+    progress = Progress()
+
+    result = MetaInstagramPublishingAdapter(client).publish(
+        request(
+            format="carousel",
+            asset_storage_keys=("one.jpg", "two.jpg", "three.jpg"),
+            asset_urls=(
+                "https://assets.example.test/one.jpg",
+                "https://assets.example.test/two.jpg",
+                "https://assets.example.test/three.jpg",
+            ),
+            existing_child_container_ids=(
+                "persisted-child-1",
+                None,
+                "persisted-child-3",
+            ),
+            progress=progress,
+        )
+    )
+
+    assert [call[0] for call in client.calls] == [
+        "create_carousel_child",
+        "create_carousel",
+        "publish",
+        "permalink",
+    ]
+
+    assert client.calls[1][1]["children"] == (
+        "persisted-child-1",
+        "carousel-child-1",
+        "persisted-child-3",
+    )
+
+    assert progress.events[0] == (
+        "carousel_child",
+        1,
+        "carousel-child-1",
+    )
+    assert result.container_id == "carousel-container-1"
+
+
+def test_carousel_restart_with_persisted_parent_skips_children_and_parent_creation():
+    client = FakeMetaClient()
+
+    result = MetaInstagramPublishingAdapter(client).publish(
+        request(
+            format="carousel",
+            asset_storage_keys=("one.jpg", "two.jpg"),
+            asset_urls=(
+                "https://assets.example.test/one.jpg",
+                "https://assets.example.test/two.jpg",
+            ),
+            existing_child_container_ids=(
+                "persisted-child-1",
+                "persisted-child-2",
+            ),
+            existing_container_id="persisted-carousel-parent",
+        )
+    )
+
+    assert [call[0] for call in client.calls] == [
+        "publish",
+        "permalink",
+    ]
+    assert result.container_id == "persisted-carousel-parent"
+
+
+def test_carousel_restart_with_persisted_media_only_fetches_permalink():
+    client = FakeMetaClient()
+
+    result = MetaInstagramPublishingAdapter(client).publish(
+        request(
+            format="carousel",
+            asset_storage_keys=("one.jpg", "two.jpg"),
+            asset_urls=(
+                "https://assets.example.test/one.jpg",
+                "https://assets.example.test/two.jpg",
+            ),
+            existing_child_container_ids=(
+                "persisted-child-1",
+                "persisted-child-2",
+            ),
+            existing_container_id="persisted-carousel-parent",
+            existing_media_id="persisted-media",
+        )
+    )
+
+    assert [call[0] for call in client.calls] == ["permalink"]
+    assert result.container_id == "persisted-carousel-parent"
+    assert result.media_id == "persisted-media"
+
+
+def test_carousel_child_timeout_preserves_progress_before_failed_child():
+    client = FakeMetaClient()
+    client.carousel_child_error_at = 2
+    progress = Progress()
+
+    with pytest.raises(TemporaryPublishingError) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="carousel",
+                asset_storage_keys=("one.jpg", "two.jpg", "three.jpg"),
+                asset_urls=(
+                    "https://assets.example.test/one.jpg",
+                    "https://assets.example.test/two.jpg",
+                    "https://assets.example.test/three.jpg",
+                ),
+                progress=progress,
+            )
+        )
+
+    assert raised.value.code == "instagram_container_timeout"
+
+    assert progress.events == [
+        ("carousel_child", 0, "carousel-child-1"),
+    ]
+
+    assert [call[0] for call in client.calls] == [
+        "create_carousel_child",
+        "create_carousel_child",
+    ]
+
+
+def test_reel_requires_exactly_one_final_video():
+    client = FakeMetaClient()
+
+    with pytest.raises(PublishingValidationError) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="reel",
+                asset_storage_keys=("one.mp4", "two.mp4"),
+                asset_urls=(
+                    "https://assets.example.test/one.mp4",
+                    "https://assets.example.test/two.mp4",
+                ),
+            )
+        )
+
+    assert raised.value.code == "instagram_reel_assets_invalid"
+    assert client.calls == []
+
+
+def test_reel_creates_container_checks_finished_then_publishes():
+    client = FakeMetaClient()
+    progress = Progress()
+
+    result = MetaInstagramPublishingAdapter(client).publish(
+        request(
+            format="reel",
+            asset_storage_keys=("video.mp4",),
+            asset_urls=("https://assets.example.test/video.mp4",),
+            progress=progress,
+        )
+    )
+
+    assert [call[0] for call in client.calls] == [
+        "create_reel",
+        "status",
+        "publish",
+        "permalink",
+    ]
+    assert client.calls[0][1]["video_url"] == "https://assets.example.test/video.mp4"
+    assert client.calls[0][1]["caption"] == request().caption
+    assert progress.events == [
+        ("container", "reel-container-1"),
+        ("publishing", "started"),
+        ("media", "media-1"),
+    ]
+    assert result.container_id == "reel-container-1"
+    assert result.media_id == "media-1"
+    assert result.metadata["format"] == "reel"
+
+
+def test_reel_in_progress_is_temporary_and_persists_container_before_retry():
+    client = FakeMetaClient()
+    client.reel_status = "IN_PROGRESS"
+    progress = Progress()
+
+    with pytest.raises(TemporaryPublishingError) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="reel",
+                asset_storage_keys=("video.mp4",),
+                asset_urls=("https://assets.example.test/video.mp4",),
+                progress=progress,
+            )
+        )
+
+    assert raised.value.code == "instagram_reel_processing"
+    assert [call[0] for call in client.calls] == ["create_reel", "status"]
+    assert progress.events == [("container", "reel-container-1")]
+
+
+def test_reel_retry_reuses_existing_container_and_publishes_when_finished():
+    client = FakeMetaClient()
+    progress = Progress()
+
+    result = MetaInstagramPublishingAdapter(client).publish(
+        request(
+            format="reel",
+            asset_storage_keys=("video.mp4",),
+            asset_urls=("https://assets.example.test/video.mp4",),
+            existing_container_id="persisted-reel-container",
+            progress=progress,
+        )
+    )
+
+    assert [call[0] for call in client.calls] == [
+        "status",
+        "publish",
+        "permalink",
+    ]
+    assert progress.events == [
+        ("publishing", "started"),
+        ("media", "media-1"),
+    ]
+    assert result.container_id == "persisted-reel-container"
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        ("ERROR", "instagram_reel_processing_failed"),
+        ("EXPIRED", "instagram_reel_container_expired"),
+    ],
+)
+def test_reel_terminal_processing_status_requires_attention(status, code):
+    client = FakeMetaClient()
+    client.reel_status = status
+
+    with pytest.raises(PublishingActionRequired) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="reel",
+                asset_storage_keys=("video.mp4",),
+                asset_urls=("https://assets.example.test/video.mp4",),
+                existing_container_id="persisted-reel-container",
+            )
+        )
+
+    assert raised.value.code == code
+    assert [call[0] for call in client.calls] == ["status"]
+
+
+def test_reel_status_timeout_is_safe_temporary_retry():
+    client = FakeMetaClient()
+    client.reel_status_error = requests.ReadTimeout("status timed out")
+
+    with pytest.raises(TemporaryPublishingError) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="reel",
+                asset_storage_keys=("video.mp4",),
+                asset_urls=("https://assets.example.test/video.mp4",),
+                existing_container_id="persisted-reel-container",
+            )
+        )
+
+    assert raised.value.code == "instagram_reel_status_timeout"
+    assert [call[0] for call in client.calls] == ["status"]
+
+
+def test_reel_status_network_error_is_safe_temporary_retry():
+    client = FakeMetaClient()
+    client.reel_status_error = requests.ConnectionError("status network error")
+
+    with pytest.raises(TemporaryPublishingError) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="reel",
+                asset_storage_keys=("video.mp4",),
+                asset_urls=("https://assets.example.test/video.mp4",),
+                existing_container_id="persisted-reel-container",
+            )
+        )
+
+    assert raised.value.code == "instagram_reel_status_network"
+    assert [call[0] for call in client.calls] == ["status"]
+
+
+def test_reel_published_without_persisted_media_is_unknown_not_republished():
+    client = FakeMetaClient()
+    client.reel_status = "PUBLISHED"
+
+    with pytest.raises(PublishingResultUnknown) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="reel",
+                asset_storage_keys=("video.mp4",),
+                asset_urls=("https://assets.example.test/video.mp4",),
+                existing_container_id="persisted-reel-container",
+            )
+        )
+
+    assert raised.value.code == "instagram_reel_already_published_unknown"
+    assert [call[0] for call in client.calls] == ["status"]
+
+
+def test_reel_with_persisted_media_skips_status_and_publish():
+    client = FakeMetaClient()
+
+    result = MetaInstagramPublishingAdapter(client).publish(
+        request(
+            format="reel",
+            asset_storage_keys=("video.mp4",),
+            asset_urls=("https://assets.example.test/video.mp4",),
+            existing_container_id="persisted-reel-container",
+            existing_media_id="persisted-reel-media",
+        )
+    )
+
+    assert [call[0] for call in client.calls] == ["permalink"]
+    assert result.container_id == "persisted-reel-container"
+    assert result.media_id == "persisted-reel-media"
+
+
+
+def test_story_requires_exactly_one_supported_final_asset():
+    client = FakeMetaClient()
+
+    with pytest.raises(PublishingValidationError) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="story",
+                asset_storage_keys=("one.jpg", "two.jpg"),
+                asset_media_types=("image/jpeg", "image/jpeg"),
+                asset_urls=(
+                    "https://assets.example.test/one.jpg",
+                    "https://assets.example.test/two.jpg",
+                ),
+            )
+        )
+
+    assert raised.value.code == "instagram_story_assets_invalid"
+    assert client.calls == []
+
+    with pytest.raises(PublishingValidationError) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="story",
+                asset_storage_keys=("one.png",),
+                asset_media_types=("image/png",),
+                asset_urls=("https://assets.example.test/one.png",),
+            )
+        )
+
+    assert raised.value.code == "instagram_story_type_unsupported"
+    assert client.calls == []
+
+
+def test_story_image_creates_container_and_publishes_without_status_poll():
+    client = FakeMetaClient()
+    progress = Progress()
+
+    result = MetaInstagramPublishingAdapter(client).publish(
+        request(
+            format="story",
+            asset_storage_keys=("story.jpg",),
+            asset_media_types=("image/jpeg",),
+            asset_urls=("https://assets.example.test/story.jpg",),
+            progress=progress,
+        )
+    )
+
+    assert [call[0] for call in client.calls] == [
+        "create_story_image",
+        "publish",
+        "permalink",
+    ]
+    assert client.calls[0][1]["image_url"] == "https://assets.example.test/story.jpg"
+    assert progress.events == [
+        ("container", "story-image-container-1"),
+        ("publishing", "started"),
+        ("media", "media-1"),
+    ]
+    assert result.container_id == "story-image-container-1"
+    assert result.media_id == "media-1"
+    assert result.metadata["format"] == "story"
+    assert result.metadata["story_media_type"] == "image/jpeg"
+
+
+def test_story_video_checks_processing_and_reuses_persisted_container():
+    client = FakeMetaClient()
+    client.reel_status = "IN_PROGRESS"
+    progress = Progress()
+
+    with pytest.raises(TemporaryPublishingError) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="story",
+                asset_storage_keys=("story.mp4",),
+                asset_media_types=("video/mp4",),
+                asset_urls=("https://assets.example.test/story.mp4",),
+                progress=progress,
+            )
+        )
+
+    assert raised.value.code == "instagram_story_video_processing"
+    assert [call[0] for call in client.calls] == [
+        "create_story_video",
+        "status",
+    ]
+    assert progress.events == [("container", "story-video-container-1")]
+
+    client = FakeMetaClient()
+    progress = Progress()
+
+    result = MetaInstagramPublishingAdapter(client).publish(
+        request(
+            format="story",
+            asset_storage_keys=("story.mp4",),
+            asset_media_types=("video/mp4",),
+            asset_urls=("https://assets.example.test/story.mp4",),
+            existing_container_id="persisted-story-video-container",
+            progress=progress,
+        )
+    )
+
+    assert [call[0] for call in client.calls] == [
+        "status",
+        "publish",
+        "permalink",
+    ]
+    assert progress.events == [
+        ("publishing", "started"),
+        ("media", "media-1"),
+    ]
+    assert result.container_id == "persisted-story-video-container"
+    assert result.metadata["story_media_type"] == "video/mp4"
+
 
 class RecordingSession:
     def __init__(self):
@@ -472,6 +1003,94 @@ def test_http_client_uses_bearer_header_and_never_puts_token_in_url():
     assert kwargs["headers"]["Authorization"] == "Bearer very-secret-token"
     assert kwargs["data"]["caption"] == caption
     assert kwargs["timeout"] == (5.0, 20.0)
+
+
+def test_http_client_creates_reel_with_video_url_and_media_type():
+    session = RecordingSession()
+    client = InstagramMetaClient(settings(), session=session)
+
+    client.create_reel_container(
+        account_id="17890001",
+        video_url="https://assets.example.test/video.mp4?signature=signed",
+        caption="Reel exacto",
+        access_token="very-secret-token",
+    )
+
+    method, url, kwargs = session.calls[0]
+    assert method == "POST"
+    assert "very-secret-token" not in url
+    assert kwargs["headers"]["Authorization"] == "Bearer very-secret-token"
+    assert kwargs["data"] == {
+        "media_type": "REELS",
+        "video_url": "https://assets.example.test/video.mp4?signature=signed",
+        "caption": "Reel exacto",
+    }
+
+
+
+def test_http_client_creates_story_image_and_video_containers():
+    image_session = RecordingSession()
+    image_client = InstagramMetaClient(settings(), session=image_session)
+
+    image_client.create_story_image_container(
+        account_id="17890001",
+        image_url="https://assets.example.test/story.jpg?signature=signed",
+        access_token="very-secret-token",
+    )
+
+    method, url, kwargs = image_session.calls[0]
+    assert method == "POST"
+    assert "very-secret-token" not in url
+    assert kwargs["headers"]["Authorization"] == "Bearer very-secret-token"
+    assert kwargs["data"] == {
+        "media_type": "STORIES",
+        "image_url": "https://assets.example.test/story.jpg?signature=signed",
+    }
+
+    video_session = RecordingSession()
+    video_client = InstagramMetaClient(settings(), session=video_session)
+
+    video_client.create_story_video_container(
+        account_id="17890001",
+        video_url="https://assets.example.test/story.mp4?signature=signed",
+        access_token="very-secret-token",
+    )
+
+    method, url, kwargs = video_session.calls[0]
+    assert method == "POST"
+    assert "very-secret-token" not in url
+    assert kwargs["headers"]["Authorization"] == "Bearer very-secret-token"
+    assert kwargs["data"] == {
+        "media_type": "STORIES",
+        "video_url": "https://assets.example.test/story.mp4?signature=signed",
+    }
+
+
+class StatusRecordingSession:
+    def __init__(self, status: str):
+        self.calls = []
+        self.status = status
+
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        return FakeResponse({"status_code": self.status})
+
+
+def test_http_client_get_container_status_is_strict():
+    session = StatusRecordingSession("FINISHED")
+    client = InstagramMetaClient(settings(), session=session)
+
+    status = client.get_container_status(
+        "container-xyz",
+        "very-secret-token",
+    )
+
+    assert status == "FINISHED"
+    method, url, kwargs = session.calls[0]
+    assert method == "GET"
+    assert "very-secret-token" not in url
+    assert kwargs["headers"]["Authorization"] == "Bearer very-secret-token"
+    assert kwargs["params"] == {"fields": "status_code"}
 
 
 def test_migration_13_upgrade_downgrade_and_reupgrade(tmp_path):

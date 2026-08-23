@@ -93,9 +93,20 @@ ALLOWED_MEDIA = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
+    "video/mp4": ".mp4",
 }
-MAX_ASSET_MB = get_settings().upload_max_size_mb
-MAX_ASSET_BYTES = MAX_ASSET_MB * 1024 * 1024
+SETTINGS = get_settings()
+
+MAX_IMAGE_ASSET_MB = SETTINGS.upload_max_size_mb
+MAX_IMAGE_ASSET_BYTES = MAX_IMAGE_ASSET_MB * 1024 * 1024
+
+# Backwards-compatible aliases used by existing tests and image upload behavior.
+MAX_ASSET_MB = MAX_IMAGE_ASSET_MB
+MAX_ASSET_BYTES = MAX_IMAGE_ASSET_BYTES
+
+MAX_VIDEO_ASSET_MB = SETTINGS.instagram_video_upload_max_size_mb
+MAX_VIDEO_ASSET_BYTES = MAX_VIDEO_ASSET_MB * 1024 * 1024
+
 logger = logging.getLogger(__name__)
 
 
@@ -169,7 +180,7 @@ def _audit(
     )
 
 
-async def _read_image(file: UploadFile) -> tuple[bytes, str, str]:
+async def _read_media(file: UploadFile) -> tuple[bytes, str, str]:
     content_type = (file.content_type or "").lower()
     extension = ALLOWED_MEDIA.get(content_type)
     if extension is None:
@@ -177,25 +188,40 @@ async def _read_image(file: UploadFile) -> tuple[bytes, str, str]:
             status_code=400,
             detail={
                 "code": "unsupported_file_type",
-                "message": "Este tipo de archivo no está permitido. Usa JPG, PNG o WEBP.",
+                "message": "Este tipo de archivo no está permitido. Usa JPG, PNG, WEBP o MP4.",
             },
         )
-    content = await file.read(MAX_ASSET_BYTES + 1)
+
+    if content_type == "video/mp4":
+        max_mb = MAX_VIDEO_ASSET_MB
+        max_bytes = MAX_VIDEO_ASSET_BYTES
+    else:
+        max_mb = MAX_ASSET_MB
+        max_bytes = MAX_ASSET_BYTES
+
+    content = await file.read(max_bytes + 1)
     if not content:
         raise HTTPException(
             status_code=400,
             detail={"code": "empty_file", "message": "El archivo está vacío."},
         )
-    if len(content) > MAX_ASSET_BYTES:
+    if len(content) > max_bytes:
         raise HTTPException(
             status_code=413,
             detail={
                 "code": "upload_too_large",
-                "message": (f"El archivo supera el tamaño máximo permitido de {MAX_ASSET_MB} MB."),
+                "message": (f"El archivo supera el tamaño máximo permitido de {max_mb} MB."),
             },
         )
-    _validate_image_content(content, content_type)
+    _validate_media_content(content, content_type)
     return content, content_type, extension
+
+
+def _validate_media_content(content: bytes, media_type: str) -> None:
+    if media_type == "video/mp4":
+        _validate_mp4_content(content)
+        return
+    _validate_image_content(content, media_type)
 
 
 def _validate_image_content(content: bytes, media_type: str) -> None:
@@ -212,6 +238,17 @@ def _validate_image_content(content: bytes, media_type: str) -> None:
             detail={
                 "code": "invalid_image_content",
                 "message": "El contenido del archivo no corresponde a una imagen válida.",
+            },
+        )
+
+
+def _validate_mp4_content(content: bytes) -> None:
+    if len(content) < 12 or content[4:8] != b"ftyp":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_video_content",
+                "message": "El contenido del archivo no corresponde a un vídeo MP4 válido.",
             },
         )
 
@@ -340,7 +377,7 @@ async def _upload_raw(
     label: str | None,
 ) -> InstagramRawAsset:
     require_service_enabled(db, business_id)
-    content, media_type, extension = await _read_image(file)
+    content, media_type, extension = await _read_media(file)
     storage_key = _write_private_asset(
         content,
         business_id=business_id,
@@ -871,7 +908,7 @@ def owner_create_content_from_raw_asset(
         actor=actor,
         title=title,
         caption="",
-        format="single_image",
+        format="reel" if asset.media_type == "video/mp4" else "single_image",
         planned_publish_at=None,
     )
     _content, _asset, link, _created = associate_raw_asset(
@@ -937,12 +974,17 @@ def owner_use_raw_asset_as_final(
                     detail="El tipo de material no es válido como asset final.",
                 )
             raw_content = _private_file(raw_asset.storage_key).read_bytes()
-            if not raw_content or len(raw_content) > MAX_ASSET_BYTES:
+            max_bytes = (
+                MAX_VIDEO_ASSET_BYTES
+                if raw_asset.media_type == "video/mp4"
+                else MAX_ASSET_BYTES
+            )
+            if not raw_content or len(raw_content) > max_bytes:
                 raise HTTPException(
                     status_code=400,
                     detail="El material no cumple el tamaño permitido para un asset final.",
                 )
-            _validate_image_content(raw_content, raw_asset.media_type)
+            _validate_media_content(raw_content, raw_asset.media_type)
             storage_key = _write_private_asset(
                 raw_content,
                 business_id=business_id,
@@ -1255,7 +1297,7 @@ async def owner_upload_final_asset(
     _owner_business(db, business_id)
     require_service_enabled(db, business_id)
     content_or_404(db, business_id, content_id)
-    file_content, media_type, extension = await _read_image(file)
+    file_content, media_type, extension = await _read_media(file)
     storage_key = _write_private_asset(
         file_content,
         business_id=business_id,

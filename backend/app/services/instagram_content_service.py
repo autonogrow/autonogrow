@@ -283,8 +283,21 @@ def submit_for_review(db: Session, business_id: int, content_id: int) -> Instagr
         raise HTTPException(status_code=409, detail="At least one final asset is required")
     if version.format == "single_image" and asset_count != 1:
         raise HTTPException(status_code=409, detail="single_image requires one final asset")
-    if version.format == "carousel" and asset_count < 2:
-        raise HTTPException(status_code=409, detail="carousel requires at least two final assets")
+    if version.format == "carousel" and not 2 <= asset_count <= 10:
+        raise HTTPException(
+            status_code=409,
+            detail="carousel requires between two and ten final assets",
+        )
+    if version.format == "reel" and asset_count != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="reel requires one final video asset",
+        )
+    if version.format == "story" and asset_count != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="story requires one final image or video asset",
+        )
     content.status = "ready_for_review"
     db.flush()
     return content

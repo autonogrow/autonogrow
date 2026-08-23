@@ -372,7 +372,7 @@ async function loadPublicBusiness() {
     const servicesPromise = loadVerifiedReservableServices(slug, businessLoadVersion);
     byId("landing-loading").hidden = true;
     byId("landing-app").hidden = false;
-    document.querySelector('meta[name="robots"]').content = "index, follow";
+    document.querySelector('meta[name="robots"]').content = business.seo_noindex ? "noindex, nofollow" : "index, follow";
     await loadSecondarySources(slug, businessLoadVersion);
     await servicesPromise;
     const linkedServiceId = getLinkedServiceId();

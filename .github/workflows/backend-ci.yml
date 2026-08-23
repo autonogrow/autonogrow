@@ -45,7 +45,7 @@ jobs:
     env:
       APP_ENV: test
       PYTHONPATH: backend
-      DATABASE_URL: sqlite:///${{ runner.temp }}/autonogrow-ci.db
+      DATABASE_URL: sqlite:///./autonogrow-ci.db
       DATABASE_MIGRATION_CHECK: "true"
       ENABLE_LEGACY_STARTUP_MIGRATIONS: "false"
       SQLITE_BUSY_TIMEOUT_MS: "5000"

@@ -28,9 +28,13 @@ from app.services.instagram_asset_url_service import resolve_private_asset_path
 from app.services.instagram_image_validation import (
     validate_instagram_caption,
     validate_instagram_image,
+    validate_instagram_story_image,
 )
 from app.services.instagram_login_provider import INSTAGRAM_CONTENT_PUBLISH_SCOPE
-from app.services.instagram_publishing_adapter import InstagramPublishingError
+from app.services.instagram_publishing_adapter import (
+    InstagramPublishingError,
+    PublishingValidationError,
+)
 
 ACTIVE_JOB_STATUSES = {
     "queued",
@@ -62,6 +66,80 @@ def _granted_scopes(raw: str | None) -> set[str]:
     except (TypeError, ValueError):
         return set()
     return {value for value in values if isinstance(value, str)} if isinstance(values, list) else set()
+
+
+def _validate_instagram_reel_asset(
+    asset,
+    path: Path,
+    config: Settings,
+) -> None:
+    if asset.media_type != "video/mp4":
+        raise PublishingValidationError(
+            "instagram_reel_type_unsupported",
+            "Instagram Reel publication requires an MP4 video",
+        )
+
+    if not path.is_file():
+        raise PublishingValidationError(
+            "instagram_reel_file_missing",
+            "Instagram Reel video file is unavailable",
+        )
+
+    try:
+        size_bytes = path.stat().st_size
+    except OSError as exc:
+        raise PublishingValidationError(
+            "instagram_reel_file_unavailable",
+            "Instagram Reel video file is unavailable",
+        ) from exc
+
+    max_bytes = config.instagram_video_upload_max_size_mb * 1024 * 1024
+
+    if size_bytes <= 0 or size_bytes > max_bytes:
+        raise PublishingValidationError(
+            "instagram_reel_size_invalid",
+            "Instagram Reel video does not meet the configured size limit",
+        )
+
+    if asset.size_bytes != size_bytes:
+        raise PublishingValidationError(
+            "instagram_reel_size_mismatch",
+            "Instagram Reel video integrity check failed",
+        )
+
+    digest = hashlib.sha256()
+
+    try:
+        with path.open("rb") as stream:
+            header = stream.read(12)
+
+            if len(header) < 12 or header[4:8] != b"ftyp":
+                raise PublishingValidationError(
+                    "instagram_reel_content_invalid",
+                    "Instagram Reel asset is not a valid MP4 container",
+                )
+
+            digest.update(header)
+
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+
+    except PublishingValidationError:
+        raise
+    except OSError as exc:
+        raise PublishingValidationError(
+            "instagram_reel_file_unavailable",
+            "Instagram Reel video file is unavailable",
+        ) from exc
+
+    if not asset.sha256 or asset.sha256 != digest.hexdigest():
+        raise PublishingValidationError(
+            "instagram_reel_hash_mismatch",
+            "Instagram Reel video integrity check failed",
+        )
 
 
 def publication_preflight(
@@ -97,9 +175,49 @@ def publication_preflight(
         return InstagramPublicationPreflight(False, "publish_assets_do_not_match_format", "single_image requires one final asset", integration)
     if current.format == "carousel" and len(links) < 2:
         return InstagramPublicationPreflight(False, "publish_assets_do_not_match_format", "carousel requires at least two final assets", integration)
+    if current.format == "carousel" and len(links) > 10:
+        return InstagramPublicationPreflight(
+            False,
+            "publish_assets_do_not_match_format",
+            "carousel supports at most ten final assets",
+            integration,
+        )
+    if current.format == "reel" and len(links) != 1:
+        return InstagramPublicationPreflight(
+            False,
+            "publish_assets_do_not_match_format",
+            "reel requires one final video asset",
+            integration,
+        )
+    if current.format == "story" and len(links) != 1:
+        return InstagramPublicationPreflight(
+            False,
+            "publish_assets_do_not_match_format",
+            "story requires one final image or video asset",
+            integration,
+        )
     if config.instagram_publishing_mode == "meta":
-        if current.format != "single_image" or len(links) != 1:
-            return InstagramPublicationPreflight(False, "publishing_not_supported_yet", "Real publishing currently supports one static JPEG only", integration)
+        supported_format = (
+            current.format == "single_image"
+            and len(links) == 1
+        ) or (
+            current.format == "carousel"
+            and 2 <= len(links) <= 10
+        ) or (
+            current.format == "reel"
+            and len(links) == 1
+        ) or (
+            current.format == "story"
+            and len(links) == 1
+            and links[0].asset.media_type in {"image/jpeg", "video/mp4"}
+        )
+        if not supported_format:
+            return InstagramPublicationPreflight(
+                False,
+                "publishing_not_supported_yet",
+                "Real publishing currently supports one JPEG image, a carousel of 2 to 10 JPEG images, one MP4 Reel, or one JPEG/MP4 Story",
+                integration,
+            )
         if not integration.encrypted_access_token or not integration.encryption_key_version:
             return InstagramPublicationPreflight(False, "instagram_credentials_missing", "Instagram needs to be reconnected", integration)
         token_expires_at = as_utc(integration.token_expires_at)
@@ -122,8 +240,27 @@ def publication_preflight(
 
                 root = Path(root_setting) if root_setting else get_backend_dir() / "uploads"
                 root = (root if root.is_absolute() else get_backend_dir() / root).resolve()
-                path = resolve_private_asset_path(links[0].asset.storage_key, root=root)
-                validate_instagram_image(links[0].asset, path)
+                for link in links:
+                    path = resolve_private_asset_path(
+                        link.asset.storage_key,
+                        root=root,
+                    )
+                    if current.format == "reel":
+                        _validate_instagram_reel_asset(
+                            link.asset,
+                            path,
+                            config,
+                        )
+                    elif current.format == "story" and link.asset.media_type == "video/mp4":
+                        _validate_instagram_reel_asset(
+                            link.asset,
+                            path,
+                            config,
+                        )
+                    elif current.format == "story":
+                        validate_instagram_story_image(link.asset, path)
+                    else:
+                        validate_instagram_image(link.asset, path)
             except InstagramPublishingError as exc:
                 return InstagramPublicationPreflight(False, exc.code, exc.safe_message, integration)
     return InstagramPublicationPreflight(True, None, None, integration)
@@ -635,6 +772,7 @@ def publication_history_events(
         "publish_now_requested",
         "publish_retry_requested",
         "publish_attempt_started",
+        "publish_carousel_child_created",
         "publish_container_created",
         "publish_provider_call_started",
         "publish_media_id_persisted",

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+import requests
 from fastapi import HTTPException
 from PIL import Image
 from sqlalchemy import create_engine
@@ -221,11 +222,21 @@ def test_scheduler_does_not_create_job_for_unvalidated_version(publishing_contex
     assert ctx["db"].query(InstagramPublishJob).count() == 0
 
 
-def test_meta_preflight_rejects_future_formats_before_scheduling(publishing_context):
+def test_meta_preflight_accepts_carousel_format_and_continues_prerequisite_checks(
+    publishing_context,
+):
     ctx = publishing_context
     content = make_validated_content(ctx)
-    version = ctx["db"].query(InstagramContentVersion).filter_by(content_id=content.id).one()
+
+    version = (
+        ctx["db"]
+        .query(InstagramContentVersion)
+        .filter_by(content_id=content.id)
+        .one()
+    )
+
     version.format = "carousel"
+
     second = InstagramFinalAsset(
         business_id=content.business_id,
         content_id=content.id,
@@ -234,8 +245,10 @@ def test_meta_preflight_rejects_future_formats_before_scheduling(publishing_cont
         media_type="image/jpeg",
         size_bytes=10,
     )
+
     ctx["db"].add(second)
     ctx["db"].flush()
+
     ctx["db"].add(
         InstagramContentVersionAsset(
             version_id=version.id,
@@ -244,7 +257,9 @@ def test_meta_preflight_rejects_future_formats_before_scheduling(publishing_cont
             is_cover=False,
         )
     )
+
     ctx["db"].commit()
+
     result = publication_preflight(
         ctx["db"],
         content,
@@ -254,11 +269,14 @@ def test_meta_preflight_rejects_future_formats_before_scheduling(publishing_cont
             instagram_real_publishing_acknowledged=True,
             instagram_publishing_claim_ttl_seconds=120,
             instagram_asset_url_base="https://assets.example.test",
-            instagram_asset_url_secret="signed-asset-secret-with-32-bytes-minimum",
+            instagram_asset_url_secret=(
+                "signed-asset-secret-with-32-bytes-minimum"
+            ),
         ),
     )
+
     assert result.ok is False
-    assert result.code == "publishing_not_supported_yet"
+    assert result.code == "instagram_credentials_missing"
 
 
 def test_meta_preflight_blocks_expired_token_before_scheduling(publishing_context):
@@ -659,6 +677,717 @@ class SuccessfulMetaClient:
 
     def inspect_container_best_effort(self, container_id, access_token):
         raise AssertionError("Inspection is not expected on success")
+
+class RetryableCarouselMetaClient:
+    def __init__(self):
+        self.calls: list[tuple] = []
+        self.child_attempt = 0
+        self.fail_second_child_once = True
+
+    def create_carousel_image_container(self, **kwargs):
+        self.child_attempt += 1
+        self.calls.append(
+            (
+                "create_carousel_child",
+                self.child_attempt,
+                kwargs["image_url"],
+            )
+        )
+
+        if self.fail_second_child_once and self.child_attempt == 2:
+            self.fail_second_child_once = False
+            raise requests.ConnectTimeout("temporary child timeout")
+
+        return f"real-child-{self.child_attempt}"
+
+    def create_carousel_container(self, **kwargs):
+        self.calls.append(
+            (
+                "create_carousel",
+                kwargs["children"],
+            )
+        )
+        return "real-carousel-parent"
+
+    def publish_container(self, **kwargs):
+        self.calls.append(
+            (
+                "publish",
+                kwargs["container_id"],
+            )
+        )
+        return "real-carousel-media"
+
+    def get_permalink(self, media_id, access_token):
+        assert media_id == "real-carousel-media"
+        assert access_token == "access-token-only-in-memory"
+        self.calls.append(("permalink", media_id))
+        return "https://www.instagram.com/p/real-carousel/"
+
+    def inspect_container_best_effort(self, container_id, access_token):
+        raise AssertionError(
+            "Container inspection is not expected in this test"
+        )
+
+def test_meta_carousel_worker_persists_children_and_resumes_after_retry(
+    publishing_context,
+    tmp_path,
+):
+    ctx = publishing_context
+    content = make_validated_content(ctx)
+
+    version = (
+        ctx["db"]
+        .query(InstagramContentVersion)
+        .filter_by(content_id=content.id)
+        .one()
+    )
+    version.format = "carousel"
+
+    second_asset = InstagramFinalAsset(
+        business_id=content.business_id,
+        content_id=content.id,
+        uploaded_by_user_id=ctx["owner"].id,
+        original_filename="second.jpg",
+        storage_key=f"_instagram_content/{content.business_id}/final/second.jpg",
+        media_type="image/jpeg",
+        size_bytes=10,
+    )
+    third_asset = InstagramFinalAsset(
+        business_id=content.business_id,
+        content_id=content.id,
+        uploaded_by_user_id=ctx["owner"].id,
+        original_filename="third.jpg",
+        storage_key=f"_instagram_content/{content.business_id}/final/third.jpg",
+        media_type="image/jpeg",
+        size_bytes=10,
+    )
+
+    ctx["db"].add_all([second_asset, third_asset])
+    ctx["db"].flush()
+
+    ctx["db"].add_all(
+        [
+            InstagramContentVersionAsset(
+                version_id=version.id,
+                asset_id=second_asset.id,
+                position=1,
+                is_cover=False,
+            ),
+            InstagramContentVersionAsset(
+                version_id=version.id,
+                asset_id=third_asset.id,
+                position=2,
+                is_cover=False,
+            ),
+        ]
+    )
+
+    active_settings = meta_worker_settings(tmp_path)
+    configure_meta_integration(
+        ctx,
+        active_settings,
+        include_scope=True,
+    )
+
+    assets = (
+        ctx["db"]
+        .query(InstagramFinalAsset)
+        .filter_by(content_id=content.id)
+        .order_by(InstagramFinalAsset.id)
+        .all()
+    )
+
+    for index, asset in enumerate(assets):
+        asset.original_filename = f"carousel-{index}.jpg"
+        asset.media_type = "image/jpeg"
+        asset.storage_key = (
+            f"_instagram_content/{asset.business_id}/final/{asset.id}.jpg"
+        )
+
+        path = tmp_path / asset.storage_key
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        Image.new(
+            "RGB",
+            (1080, 1080),
+            (10 + index, 20 + index, 30 + index),
+        ).save(path, format="JPEG")
+
+        asset.size_bytes = path.stat().st_size
+        asset.sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    ctx["db"].commit()
+
+    job = sync_publish_job(
+        ctx["db"],
+        content,
+        actor=ctx["owner"],
+        now=utc_now(),
+        force_now=True,
+        settings=active_settings,
+    )
+    ctx["db"].commit()
+
+    client = RetryableCarouselMetaClient()
+
+    worker = InstagramPublishWorker(
+        settings=active_settings,
+        session_factory=ctx["factory"],
+        adapter=MetaInstagramPublishingAdapter(client),
+        worker_id="carousel-retry-worker",
+    )
+
+    assert worker.run_once() == 1
+
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+
+    assert stored.status == "retry_wait"
+    assert stored.attempt_count == 1
+    assert stored.provider_container_id is None
+    assert stored.provider_media_id is None
+
+    first_metadata = json.loads(stored.provider_metadata_json or "{}")
+
+    assert first_metadata["carousel_child_container_ids"] == [
+        "real-child-1"
+    ]
+
+    assert "access-token-only-in-memory" not in (
+        stored.provider_metadata_json or ""
+    )
+    assert "https://assets.example.test" not in (
+        stored.provider_metadata_json or ""
+    )
+
+    stored.next_attempt_at = utc_now() - timedelta(seconds=1)
+    ctx["db"].commit()
+
+    assert worker.run_once() == 1
+
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+
+    assert stored.status == "published"
+    assert stored.attempt_count == 2
+    assert stored.provider_container_id == "real-carousel-parent"
+    assert stored.provider_media_id == "real-carousel-media"
+    assert stored.provider_permalink == "https://www.instagram.com/p/real-carousel/"
+
+    final_metadata = json.loads(stored.provider_metadata_json or "{}")
+
+    assert final_metadata["carousel_child_container_ids"] == [
+        "real-child-1",
+        "real-child-3",
+        "real-child-4",
+    ]
+
+    assert "access-token-only-in-memory" not in (
+        stored.provider_metadata_json or ""
+    )
+    assert "https://assets.example.test" not in (
+        stored.provider_metadata_json or ""
+    )
+
+    parent_call = next(
+        call
+        for call in client.calls
+        if call[0] == "create_carousel"
+    )
+
+    assert parent_call[1] == (
+        "real-child-1",
+        "real-child-3",
+        "real-child-4",
+    )
+
+    actions = {
+        row.action
+        for row in ctx["db"]
+        .query(AuditLog)
+        .filter_by(resource_id=job.id)
+        .all()
+    }
+
+    assert {
+        "publish_carousel_child_created",
+        "publish_retry_scheduled",
+        "publish_container_created",
+        "publish_provider_call_started",
+        "publish_media_id_persisted",
+        "publish_succeeded",
+    } <= actions
+
+    history_actions = {
+        event["action"]
+        for event in publication_history_events(
+            ctx["db"],
+            job.business_id,
+            job.content_item_id,
+            owner_technical=False,
+        )
+    }
+    assert "publish_carousel_child_created" in history_actions
+
+    assert (
+        ctx["db"]
+        .query(InstagramPublishJob)
+        .filter_by(
+            business_id=job.business_id,
+            content_item_id=job.content_item_id,
+            content_version_id=job.content_version_id,
+        )
+        .count()
+        == 1
+    )
+
+
+
+class SuccessfulStoryImageMetaClient:
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def create_story_image_container(self, **kwargs):
+        assert kwargs["access_token"] == "access-token-only-in-memory"
+        assert kwargs["image_url"].startswith("https://assets.example.test/")
+        self.calls.append(("create_story_image", kwargs["image_url"]))
+        return "real-story-image-container"
+
+    def publish_container(self, **kwargs):
+        assert kwargs["container_id"] == "real-story-image-container"
+        self.calls.append(("publish", kwargs["container_id"]))
+        return "real-story-image-media"
+
+    def get_permalink(self, media_id, access_token):
+        assert media_id == "real-story-image-media"
+        assert access_token == "access-token-only-in-memory"
+        self.calls.append(("permalink", media_id))
+        return "https://www.instagram.com/stories/example/123/"
+
+    def inspect_container_best_effort(self, container_id, access_token):
+        raise AssertionError("Inspection is not expected on Story image success")
+
+
+class ProcessingStoryVideoMetaClient:
+    def __init__(self):
+        self.calls: list[tuple] = []
+        self.status_calls = 0
+
+    def create_story_video_container(self, **kwargs):
+        assert kwargs["access_token"] == "access-token-only-in-memory"
+        assert kwargs["video_url"].startswith("https://assets.example.test/")
+        self.calls.append(("create_story_video", kwargs["video_url"]))
+        return "real-story-video-container"
+
+    def get_container_status(self, container_id, access_token):
+        assert container_id == "real-story-video-container"
+        assert access_token == "access-token-only-in-memory"
+        self.status_calls += 1
+        status = "IN_PROGRESS" if self.status_calls == 1 else "FINISHED"
+        self.calls.append(("status", status))
+        return status
+
+    def publish_container(self, **kwargs):
+        assert kwargs["container_id"] == "real-story-video-container"
+        self.calls.append(("publish", kwargs["container_id"]))
+        return "real-story-video-media"
+
+    def get_permalink(self, media_id, access_token):
+        assert media_id == "real-story-video-media"
+        assert access_token == "access-token-only-in-memory"
+        self.calls.append(("permalink", media_id))
+        return "https://www.instagram.com/stories/example/456/"
+
+    def inspect_container_best_effort(self, container_id, access_token):
+        raise AssertionError(
+            "Best-effort inspection is not expected in the normal Story video flow"
+        )
+
+
+
+def test_meta_story_image_worker_publishes_single_jpeg(
+    publishing_context,
+    tmp_path,
+):
+    ctx = publishing_context
+    content = make_validated_content(ctx)
+
+    version = (
+        ctx["db"]
+        .query(InstagramContentVersion)
+        .filter_by(content_id=content.id)
+        .one()
+    )
+    version.format = "story"
+
+    asset = (
+        ctx["db"]
+        .query(InstagramFinalAsset)
+        .filter_by(content_id=content.id)
+        .one()
+    )
+    asset.original_filename = "story.jpg"
+    asset.media_type = "image/jpeg"
+    asset.storage_key = (
+        f"_instagram_content/{asset.business_id}/final/{asset.id}.jpg"
+    )
+
+    path = tmp_path / asset.storage_key
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (1080, 1920), (20, 40, 60)).save(path, format="JPEG")
+    asset.size_bytes = path.stat().st_size
+    asset.sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    active_settings = meta_worker_settings(tmp_path)
+    configure_meta_integration(ctx, active_settings, include_scope=True)
+    ctx["db"].commit()
+
+    job = sync_publish_job(
+        ctx["db"],
+        content,
+        actor=ctx["owner"],
+        now=utc_now(),
+        force_now=True,
+        settings=active_settings,
+    )
+    ctx["db"].commit()
+
+    client = SuccessfulStoryImageMetaClient()
+    worker = InstagramPublishWorker(
+        settings=active_settings,
+        session_factory=ctx["factory"],
+        adapter=MetaInstagramPublishingAdapter(client),
+        worker_id="story-image-worker",
+    )
+
+    assert worker.run_once() == 1
+
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+
+    assert stored.status == "published"
+    assert stored.provider_container_id == "real-story-image-container"
+    assert stored.provider_media_id == "real-story-image-media"
+    assert [call[0] for call in client.calls] == [
+        "create_story_image",
+        "publish",
+        "permalink",
+    ]
+
+    metadata = json.loads(stored.provider_metadata_json or "{}")
+    assert metadata["story_media_type"] == "image/jpeg"
+    assert metadata["asset_sha256"] == asset.sha256
+    assert "access-token-only-in-memory" not in (stored.provider_metadata_json or "")
+    assert "https://assets.example.test" not in (stored.provider_metadata_json or "")
+
+
+def test_meta_story_video_worker_reuses_container_until_processing_finishes(
+    publishing_context,
+    tmp_path,
+):
+    ctx = publishing_context
+    content = make_validated_content(ctx)
+
+    version = (
+        ctx["db"]
+        .query(InstagramContentVersion)
+        .filter_by(content_id=content.id)
+        .one()
+    )
+    version.format = "story"
+
+    asset = (
+        ctx["db"]
+        .query(InstagramFinalAsset)
+        .filter_by(content_id=content.id)
+        .one()
+    )
+    asset.original_filename = "story.mp4"
+    asset.media_type = "video/mp4"
+    asset.storage_key = (
+        f"_instagram_content/{asset.business_id}/final/{asset.id}.mp4"
+    )
+
+    path = tmp_path / asset.storage_key
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (
+        b"\x00\x00\x00\x18ftypmp42"
+        b"\x00\x00\x00\x00mp42isom"
+        b"autonogrow-story-video-test-payload"
+    )
+    path.write_bytes(payload)
+    asset.size_bytes = path.stat().st_size
+    asset.sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    active_settings = meta_worker_settings(tmp_path)
+    configure_meta_integration(ctx, active_settings, include_scope=True)
+    ctx["db"].commit()
+
+    job = sync_publish_job(
+        ctx["db"],
+        content,
+        actor=ctx["owner"],
+        now=utc_now(),
+        force_now=True,
+        settings=active_settings,
+    )
+    ctx["db"].commit()
+
+    client = ProcessingStoryVideoMetaClient()
+    worker = InstagramPublishWorker(
+        settings=active_settings,
+        session_factory=ctx["factory"],
+        adapter=MetaInstagramPublishingAdapter(client),
+        worker_id="story-video-worker",
+    )
+
+    assert worker.run_once() == 1
+
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+
+    assert stored.status == "retry_wait"
+    assert stored.attempt_count == 1
+    assert stored.provider_container_id == "real-story-video-container"
+    assert stored.provider_media_id is None
+    assert stored.provider_error_code == "instagram_story_video_processing"
+
+    first_metadata = json.loads(stored.provider_metadata_json or "{}")
+    assert first_metadata["story_media_type"] == "video/mp4"
+    assert first_metadata["asset_sha256"] == asset.sha256
+    assert first_metadata["video_size_bytes"] == str(path.stat().st_size)
+    assert "access-token-only-in-memory" not in (stored.provider_metadata_json or "")
+    assert "https://assets.example.test" not in (stored.provider_metadata_json or "")
+
+    stored.next_attempt_at = utc_now() - timedelta(seconds=1)
+    ctx["db"].commit()
+
+    assert worker.run_once() == 1
+
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+
+    assert stored.status == "published"
+    assert stored.attempt_count == 2
+    assert stored.provider_container_id == "real-story-video-container"
+    assert stored.provider_media_id == "real-story-video-media"
+    assert [call[0] for call in client.calls] == [
+        "create_story_video",
+        "status",
+        "status",
+        "publish",
+        "permalink",
+    ]
+    assert sum(1 for call in client.calls if call[0] == "create_story_video") == 1
+
+    final_metadata = json.loads(stored.provider_metadata_json or "{}")
+    assert final_metadata["story_media_type"] == "video/mp4"
+    assert final_metadata["format"] == "story"
+    assert "access-token-only-in-memory" not in (stored.provider_metadata_json or "")
+    assert "https://assets.example.test" not in (stored.provider_metadata_json or "")
+
+
+class ProcessingReelMetaClient:
+    def __init__(self):
+        self.calls: list[tuple] = []
+        self.status_calls = 0
+
+    def create_reel_container(self, **kwargs):
+        assert kwargs["access_token"] == "access-token-only-in-memory"
+        assert kwargs["caption"] == "Caption final"
+        assert kwargs["video_url"].startswith("https://assets.example.test/")
+        self.calls.append(("create_reel", kwargs["video_url"]))
+        return "real-reel-container"
+
+    def get_container_status(self, container_id, access_token):
+        assert container_id == "real-reel-container"
+        assert access_token == "access-token-only-in-memory"
+        self.status_calls += 1
+        status = "IN_PROGRESS" if self.status_calls == 1 else "FINISHED"
+        self.calls.append(("status", status))
+        return status
+
+    def publish_container(self, **kwargs):
+        assert kwargs["container_id"] == "real-reel-container"
+        assert kwargs["access_token"] == "access-token-only-in-memory"
+        self.calls.append(("publish", kwargs["container_id"]))
+        return "real-reel-media"
+
+    def get_permalink(self, media_id, access_token):
+        assert media_id == "real-reel-media"
+        assert access_token == "access-token-only-in-memory"
+        self.calls.append(("permalink", media_id))
+        return "https://www.instagram.com/reel/real-example/"
+
+    def inspect_container_best_effort(self, container_id, access_token):
+        raise AssertionError(
+            "Best-effort inspection is not expected in the normal Reel processing flow"
+        )
+
+
+def test_meta_reel_worker_reuses_container_until_processing_finishes(
+    publishing_context,
+    tmp_path,
+):
+    ctx = publishing_context
+    content = make_validated_content(ctx)
+
+    version = (
+        ctx["db"]
+        .query(InstagramContentVersion)
+        .filter_by(content_id=content.id)
+        .one()
+    )
+    version.format = "reel"
+
+    asset = (
+        ctx["db"]
+        .query(InstagramFinalAsset)
+        .filter_by(content_id=content.id)
+        .one()
+    )
+    asset.original_filename = "reel.mp4"
+    asset.media_type = "video/mp4"
+    asset.storage_key = (
+        f"_instagram_content/{asset.business_id}/final/{asset.id}.mp4"
+    )
+
+    path = tmp_path / asset.storage_key
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Minimal MP4-like payload sufficient for the worker's V1 container signature check.
+    payload = (
+        b"\x00\x00\x00\x18ftypmp42"
+        b"\x00\x00\x00\x00mp42isom"
+        b"autonogrow-reel-test-payload"
+    )
+    path.write_bytes(payload)
+
+    asset.size_bytes = path.stat().st_size
+    asset.sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    active_settings = meta_worker_settings(tmp_path)
+    configure_meta_integration(
+        ctx,
+        active_settings,
+        include_scope=True,
+    )
+    ctx["db"].commit()
+
+    job = sync_publish_job(
+        ctx["db"],
+        content,
+        actor=ctx["owner"],
+        now=utc_now(),
+        force_now=True,
+        settings=active_settings,
+    )
+    ctx["db"].commit()
+
+    client = ProcessingReelMetaClient()
+
+    worker = InstagramPublishWorker(
+        settings=active_settings,
+        session_factory=ctx["factory"],
+        adapter=MetaInstagramPublishingAdapter(client),
+        worker_id="reel-processing-worker",
+    )
+
+    assert worker.run_once() == 1
+
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+
+    assert stored.status == "retry_wait"
+    assert stored.attempt_count == 1
+    assert stored.provider_container_id == "real-reel-container"
+    assert stored.provider_media_id is None
+    assert stored.provider_status == "temporary_failure"
+
+    first_metadata = json.loads(stored.provider_metadata_json or "{}")
+
+    assert first_metadata["asset_sha256"] == asset.sha256
+    assert first_metadata["video_size_bytes"] == str(path.stat().st_size)
+    assert first_metadata["video_media_type"] == "video/mp4"
+
+    assert "access-token-only-in-memory" not in (
+        stored.provider_metadata_json or ""
+    )
+    assert "https://assets.example.test" not in (
+        stored.provider_metadata_json or ""
+    )
+
+    assert client.calls == [
+        ("create_reel", client.calls[0][1]),
+        ("status", "IN_PROGRESS"),
+    ]
+
+    stored.next_attempt_at = utc_now() - timedelta(seconds=1)
+    ctx["db"].commit()
+
+    assert worker.run_once() == 1
+
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+
+    assert stored.status == "published"
+    assert stored.attempt_count == 2
+    assert stored.provider_container_id == "real-reel-container"
+    assert stored.provider_media_id == "real-reel-media"
+    assert stored.provider_permalink == "https://www.instagram.com/reel/real-example/"
+
+    assert [call[0] for call in client.calls] == [
+        "create_reel",
+        "status",
+        "status",
+        "publish",
+        "permalink",
+    ]
+    assert sum(1 for call in client.calls if call[0] == "create_reel") == 1
+
+    final_metadata = json.loads(stored.provider_metadata_json or "{}")
+
+    assert final_metadata["asset_sha256"] == asset.sha256
+    assert final_metadata["video_size_bytes"] == str(path.stat().st_size)
+    assert final_metadata["video_media_type"] == "video/mp4"
+    assert final_metadata["format"] == "reel"
+
+    assert "access-token-only-in-memory" not in (
+        stored.provider_metadata_json or ""
+    )
+    assert "https://assets.example.test" not in (
+        stored.provider_metadata_json or ""
+    )
+
+    actions = {
+        row.action
+        for row in ctx["db"]
+        .query(AuditLog)
+        .filter_by(resource_id=job.id)
+        .all()
+    }
+
+    assert {
+        "publish_container_created",
+        "publish_retry_scheduled",
+        "publish_provider_call_started",
+        "publish_media_id_persisted",
+        "publish_succeeded",
+    } <= actions
+
+    assert (
+        ctx["db"]
+        .query(InstagramPublishJob)
+        .filter_by(
+            business_id=job.business_id,
+            content_item_id=job.content_item_id,
+            content_version_id=job.content_version_id,
+        )
+        .count()
+        == 1
+    )
+
 
 
 def test_meta_worker_preflight_persists_provider_steps_and_audits(publishing_context, tmp_path):

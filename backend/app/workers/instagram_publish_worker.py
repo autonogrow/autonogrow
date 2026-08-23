@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import signal
@@ -33,6 +34,7 @@ from app.services.instagram_asset_url_service import (
 from app.services.instagram_image_validation import (
     validate_instagram_caption,
     validate_instagram_image,
+    validate_instagram_story_image,
 )
 from app.services.instagram_login_provider import INSTAGRAM_CONTENT_PUBLISH_SCOPE
 from app.services.instagram_publish_service import (
@@ -71,6 +73,17 @@ class _PublishProgress:
     def __init__(self, worker: InstagramPublishWorker, job_id: int) -> None:
         self.worker = worker
         self.job_id = job_id
+
+    def carousel_child_created(
+        self,
+        position: int,
+        container_id: str,
+    ) -> None:
+        self.worker._persist_carousel_child(
+            self.job_id,
+            position,
+            container_id,
+        )
 
     def container_created(self, container_id: str) -> None:
         self.worker._persist_container(self.job_id, container_id)
@@ -166,26 +179,164 @@ class InstagramPublishWorker:
             commit=False,
         )
 
-    def _meta_request_fields(self, job, version, integration, links):
-        if version.format != "single_image" or len(links) != 1:
+    def _validate_mp4_asset(
+        self,
+        asset,
+        path: Path,
+        *,
+        code_prefix: str,
+        media_label: str,
+    ) -> dict[str, str]:
+        if asset.media_type != "video/mp4":
             raise PublishingValidationError(
-                "unsupported_instagram_format", "Real publishing supports one image only"
+                f"{code_prefix}_type_unsupported",
+                f"Instagram {media_label} publication requires an MP4 video",
             )
+
+        if not path.is_file():
+            raise PublishingValidationError(
+                f"{code_prefix}_file_missing",
+                f"Instagram {media_label} video file is unavailable",
+            )
+
+        try:
+            size_bytes = path.stat().st_size
+        except OSError as exc:
+            raise PublishingValidationError(
+                f"{code_prefix}_file_unavailable",
+                f"Instagram {media_label} video file is unavailable",
+            ) from exc
+
+        max_bytes = self.settings.instagram_video_upload_max_size_mb * 1024 * 1024
+
+        if size_bytes <= 0 or size_bytes > max_bytes:
+            raise PublishingValidationError(
+                f"{code_prefix}_size_invalid",
+                f"Instagram {media_label} video does not meet the configured size limit",
+            )
+
+        if asset.size_bytes != size_bytes:
+            raise PublishingValidationError(
+                f"{code_prefix}_size_mismatch",
+                f"Instagram {media_label} video integrity check failed",
+            )
+
+        digest = hashlib.sha256()
+
+        try:
+            with path.open("rb") as stream:
+                header = stream.read(12)
+
+                if len(header) < 12 or header[4:8] != b"ftyp":
+                    raise PublishingValidationError(
+                        f"{code_prefix}_content_invalid",
+                        f"Instagram {media_label} asset is not a valid MP4 container",
+                    )
+
+                digest.update(header)
+
+                while True:
+                    chunk = stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+
+        except PublishingValidationError:
+            raise
+        except OSError as exc:
+            raise PublishingValidationError(
+                f"{code_prefix}_file_unavailable",
+                f"Instagram {media_label} video file is unavailable",
+            ) from exc
+
+        sha256 = digest.hexdigest()
+
+        if not asset.sha256 or asset.sha256 != sha256:
+            raise PublishingValidationError(
+                f"{code_prefix}_hash_mismatch",
+                f"Instagram {media_label} video integrity check failed",
+            )
+
+        return {
+            "asset_sha256": sha256,
+            "video_size_bytes": str(size_bytes),
+            "video_media_type": asset.media_type,
+        }
+
+    def _validate_reel_asset(self, asset, path: Path) -> dict[str, str]:
+        return self._validate_mp4_asset(
+            asset,
+            path,
+            code_prefix="instagram_reel",
+            media_label="Reel",
+        )
+
+    def _validate_story_video_asset(self, asset, path: Path) -> dict[str, str]:
+        return self._validate_mp4_asset(
+            asset,
+            path,
+            code_prefix="instagram_story_video",
+            media_label="Story",
+        )
+
+    def _meta_request_fields(self, job, version, integration, links):
+        if version.format == "single_image":
+            if len(links) != 1:
+                raise PublishingValidationError(
+                    "instagram_single_image_assets_invalid",
+                    "Single-image publication requires exactly one final image",
+                )
+        elif version.format == "carousel":
+            if len(links) < 2 or len(links) > 10:
+                raise PublishingValidationError(
+                    "instagram_carousel_assets_invalid",
+                    "Instagram carousel requires between 2 and 10 final images",
+                )
+        elif version.format == "reel":
+            if len(links) != 1:
+                raise PublishingValidationError(
+                    "instagram_reel_assets_invalid",
+                    "Instagram Reel publication requires exactly one final video",
+                )
+        elif version.format == "story":
+            if len(links) != 1:
+                raise PublishingValidationError(
+                    "instagram_story_assets_invalid",
+                    "Instagram Story publication requires exactly one final asset",
+                )
+            if links[0].asset.media_type not in {"image/jpeg", "video/mp4"}:
+                raise PublishingValidationError(
+                    "instagram_story_type_unsupported",
+                    "Instagram Story publication requires a JPEG image or MP4 video",
+                )
+        else:
+            raise PublishingValidationError(
+                "unsupported_instagram_format",
+                "Instagram format is not supported for real publishing",
+            )
+
         if not integration.encrypted_access_token or not integration.encryption_key_version:
             raise PublishingAuthenticationError(
-                "instagram_credentials_missing", "Instagram needs to be reconnected"
+                "instagram_credentials_missing",
+                "Instagram needs to be reconnected",
             )
-        if INSTAGRAM_CONTENT_PUBLISH_SCOPE not in self._scopes(integration.granted_scopes_json):
+
+        if INSTAGRAM_CONTENT_PUBLISH_SCOPE not in self._scopes(
+            integration.granted_scopes_json
+        ):
             raise PublishingActionRequired(
                 "instagram_publish_scope_missing",
                 "Instagram publishing permission is missing; reconnect the account",
             )
+
         account_id = integration.external_account_id.strip()
+
         if not account_id:
             raise PublishingActionRequired(
                 "instagram_professional_account_missing",
                 "Instagram professional account identifier is missing",
             )
+
         try:
             access_token = decrypt_secret(
                 integration.encrypted_access_token,
@@ -194,30 +345,85 @@ class InstagramPublishWorker:
             )
         except IntegrationCryptoError as exc:
             raise PublishingAuthenticationError(
-                "instagram_credentials_unavailable", "Instagram needs to be reconnected"
+                "instagram_credentials_unavailable",
+                "Instagram needs to be reconnected",
             ) from exc
+
         validate_instagram_caption(version.caption)
-        asset = links[0].asset
-        path = resolve_private_asset_path(asset.storage_key, root=self._uploads_root())
-        image = validate_instagram_image(asset, path)
-        try:
-            asset_url = build_signed_asset_url(
-                self.settings,
-                business_id=job.business_id,
-                version_id=job.content_version_id,
-                asset_id=asset.id,
+
+        asset_urls: list[str] = []
+        images = []
+        video_metadata: dict[str, str] | None = None
+
+        for link in links:
+            asset = link.asset
+            path = resolve_private_asset_path(
+                asset.storage_key,
+                root=self._uploads_root(),
             )
-        except SignedAssetURLInvalid as exc:
-            raise PublishingActionRequired(
-                "instagram_asset_delivery_unavailable",
-                "Secure Instagram asset delivery is not configured",
-            ) from exc
-        metadata = {
-            "asset_sha256": image.sha256,
-            "image_width": str(image.width),
-            "image_height": str(image.height),
-        }
-        return account_id, access_token, asset_url, metadata
+
+            if version.format == "reel":
+                video_metadata = self._validate_reel_asset(asset, path)
+            elif version.format == "story" and asset.media_type == "video/mp4":
+                video_metadata = self._validate_story_video_asset(asset, path)
+            elif version.format == "story":
+                image = validate_instagram_story_image(asset, path)
+                images.append(image)
+            else:
+                image = validate_instagram_image(asset, path)
+                images.append(image)
+
+            try:
+                asset_url = build_signed_asset_url(
+                    self.settings,
+                    business_id=job.business_id,
+                    version_id=job.content_version_id,
+                    asset_id=asset.id,
+                )
+            except SignedAssetURLInvalid as exc:
+                raise PublishingActionRequired(
+                    "instagram_asset_delivery_unavailable",
+                    "Secure Instagram asset delivery is not configured",
+                ) from exc
+
+            asset_urls.append(asset_url)
+
+        if version.format == "single_image":
+            image = images[0]
+            metadata = {
+                "asset_sha256": image.sha256,
+                "image_width": str(image.width),
+                "image_height": str(image.height),
+            }
+        elif version.format == "carousel":
+            metadata = {
+                "carousel_asset_count": str(len(images)),
+                "carousel_asset_sha256s": json.dumps(
+                    [image.sha256 for image in images],
+                    separators=(",", ":"),
+                ),
+                "carousel_image_dimensions": json.dumps(
+                    [
+                        [image.width, image.height]
+                        for image in images
+                    ],
+                    separators=(",", ":"),
+                ),
+            }
+        elif version.format == "story" and links[0].asset.media_type == "image/jpeg":
+            image = images[0]
+            metadata = {
+                "asset_sha256": image.sha256,
+                "image_width": str(image.width),
+                "image_height": str(image.height),
+                "story_media_type": "image/jpeg",
+            }
+        else:
+            metadata = video_metadata or {}
+            if version.format == "story":
+                metadata["story_media_type"] = links[0].asset.media_type
+
+        return account_id, access_token, tuple(asset_urls), metadata
 
     def _prepare(self, job_id: int) -> PreparedPublish | None:
         with self.session_factory() as db:
@@ -281,17 +487,59 @@ class InstagramPublishWorker:
             version = cast(InstagramContentVersion, version)
             integration = cast(BusinessChannelIntegration, integration)
             links = sorted(version.asset_links, key=lambda item: item.position)
-            account_id = access_token = asset_url = None
+            account_id = access_token = None
+            asset_urls: tuple[str, ...] = ()
             metadata: dict[str, str] = {}
+
             if self.settings.instagram_publishing_mode == "meta":
                 try:
-                    account_id, access_token, asset_url, metadata = self._meta_request_fields(
-                        job, version, integration, links
+                    (
+                        account_id,
+                        access_token,
+                        asset_urls,
+                        metadata,
+                    ) = self._meta_request_fields(
+                        job,
+                        version,
+                        integration,
+                        links,
                     )
+
                 except InstagramPublishingError as exc:
                     self._block_job(db, job, exc)
                     db.commit()
                     return None
+
+            existing_child_container_ids: tuple[str | None, ...] = ()
+
+            if version.format == "carousel":
+                try:
+                    previous_metadata = json.loads(
+                        job.provider_metadata_json or "{}"
+                    )
+                except (TypeError, ValueError):
+                    previous_metadata = {}
+
+                if not isinstance(previous_metadata, dict):
+                    previous_metadata = {}
+
+                raw_children = previous_metadata.get(
+                    "carousel_child_container_ids"
+                )
+
+                if isinstance(raw_children, list):
+                    normalized_children = [
+                        value if isinstance(value, str) and value else None
+                        for value in raw_children[: len(links)]
+                    ]
+
+                    while len(normalized_children) < len(links):
+                        normalized_children.append(None)
+
+                    existing_child_container_ids = tuple(
+                        normalized_children
+                    )
+
             request = InstagramPublishRequest(
                 idempotency_key=job.idempotency_key,
                 business_id=job.business_id,
@@ -300,9 +548,11 @@ class InstagramPublishWorker:
                 caption=version.caption,
                 format=version.format,
                 asset_storage_keys=tuple(link.asset.storage_key for link in links),
+                asset_media_types=tuple(link.asset.media_type for link in links),
                 professional_account_id=account_id,
                 access_token=access_token,
-                asset_url=asset_url,
+                asset_urls=asset_urls,
+                existing_child_container_ids=existing_child_container_ids,
                 existing_container_id=job.provider_container_id,
                 existing_media_id=job.provider_media_id,
                 progress=_PublishProgress(self, job.id),
@@ -310,7 +560,23 @@ class InstagramPublishWorker:
             if self.settings.instagram_publishing_mode == "meta":
                 job.status = "publishing" if job.provider_container_id else "creating_container"
                 job.provider_status = job.status
-                job.provider_metadata_json = json.dumps(metadata, sort_keys=True)
+                try:
+                    previous_metadata = json.loads(
+                        job.provider_metadata_json or "{}"
+                    )
+                except (TypeError, ValueError):
+                    previous_metadata = {}
+
+                if not isinstance(previous_metadata, dict):
+                    previous_metadata = {}
+
+                job.provider_metadata_json = json.dumps(
+                    {
+                        **previous_metadata,
+                        **metadata,
+                    },
+                    sort_keys=True,
+                )
             else:
                 job.status = "simulating_publish"
                 job.provider_status = "simulating_publish"
@@ -331,6 +597,102 @@ class InstagramPublishWorker:
             )
             db.commit()
             return PreparedPublish(request, job.business_id, job.content_item_id)
+
+    def _persist_carousel_child(
+        self,
+        job_id: int,
+        position: int,
+        container_id: str,
+    ) -> None:
+        if position < 0 or position > 9:
+            raise PublishingActionRequired(
+                "instagram_carousel_position_invalid",
+                "Instagram carousel state requires attention",
+            )
+
+        if not container_id or len(container_id) > 255:
+            raise PublishingActionRequired(
+                "instagram_carousel_child_invalid",
+                "Instagram carousel state requires attention",
+            )
+
+        with self.session_factory() as db:
+            job = (
+                db.query(InstagramPublishJob)
+                .filter_by(id=job_id)
+                .with_for_update()
+                .first()
+            )
+
+            if (
+                job is None
+                or job.status != "creating_container"
+                or job.claimed_by != self.worker_id
+            ):
+                raise PublishingActionRequired(
+                    "publish_job_changed_during_carousel_creation",
+                    "Publishing job changed while creating the carousel",
+                )
+
+            try:
+                metadata = json.loads(
+                    job.provider_metadata_json or "{}"
+                )
+            except (TypeError, ValueError):
+                metadata = {}
+
+            if not isinstance(metadata, dict):
+                metadata = {}
+
+            raw_children = metadata.get(
+                "carousel_child_container_ids"
+            )
+
+            if isinstance(raw_children, list):
+                children = list(raw_children)
+            else:
+                children = []
+
+            while len(children) <= position:
+                children.append(None)
+
+            existing = children[position]
+
+            if (
+                existing is not None
+                and existing != container_id
+            ):
+                raise PublishingActionRequired(
+                    "instagram_carousel_child_conflict",
+                    "Instagram carousel state requires attention",
+                )
+
+            children[position] = container_id
+
+            metadata["carousel_child_container_ids"] = children
+
+            job.provider_metadata_json = json.dumps(
+                metadata,
+                sort_keys=True,
+            )
+            job.provider_status = "carousel_child_created"
+
+            record_audit(
+                db,
+                action="publish_carousel_child_created",
+                business_id=job.business_id,
+                resource_type="instagram_publish_job",
+                resource_id=job.id,
+                metadata={
+                    "content_id": job.content_item_id,
+                    "version_id": job.content_version_id,
+                    "position": position,
+                    "provider_container_id": container_id,
+                },
+                commit=False,
+            )
+
+            db.commit()
 
     def _persist_container(self, job_id: int, container_id: str) -> None:
         with self.session_factory() as db:
@@ -428,11 +790,21 @@ class InstagramPublishWorker:
             job.provider_error_code = None
             job.safe_error_message = None
             try:
-                previous = json.loads(job.provider_metadata_json or "{}")
+                previous = json.loads(
+                    job.provider_metadata_json or "{}"
+                )
             except (TypeError, ValueError):
                 previous = {}
+
+            if not isinstance(previous, dict):
+                previous = {}
+
             job.provider_metadata_json = json.dumps(
-                {**previous, **(result.metadata or {})}, sort_keys=True
+                {
+                    **previous,
+                    **(result.metadata or {}),
+                },
+                sort_keys=True,
             )
             job.published_at = utc_now()
             _clear_claim(job)

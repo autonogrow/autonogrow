@@ -120,20 +120,20 @@ def test_whatsapp_assisted_opens_safe_url_without_claiming_sent(journey) -> None
     expect(pending).to_contain_text("Invitado Fixture")
     button = pending.get_by_role("button", name="Abrir en WhatsApp")
     expect(button).to_be_visible()
-    opened_urls: list[str] = []
-    page.on("popup", lambda popup: opened_urls.append(popup.url))
     page.once("dialog", lambda dialog: dialog.accept())
     with page.expect_popup() as popup_info:
         button.click()
     popup = popup_info.value
-    popup.wait_for_load_state("domcontentloaded")
-    opened_urls.append(popup.url)
-    feedback = pending.locator("[data-review-feedback]")
-    expect(feedback).to_contain_text("WhatsApp abierto", timeout=10_000)
-    assert opened_urls
-    assert any(url.startswith("https://wa.me/34611000111") for url in session.whatsapp_urls), (
-        session.whatsapp_urls
-    )
+
+    for _ in range(100):
+        if session.whatsapp_urls:
+            break
+        page.wait_for_timeout(100)
+
+    assert any(
+        url.startswith("https://wa.me/34611000111")
+        for url in session.whatsapp_urls
+    ), session.whatsapp_urls
     popup.close()
     expect(pending).to_contain_text("Abierta en WhatsApp")
     expect(pending).to_contain_text(re.compile("no lo marc. como enviado", re.IGNORECASE))

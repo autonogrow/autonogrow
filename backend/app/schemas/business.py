@@ -43,6 +43,7 @@ class BusinessCreate(BaseModel):
 class BusinessOut(BusinessCreate):
     id: int
     status: str
+    seo_noindex: bool
 
     model_config = ConfigDict(from_attributes=True)
 

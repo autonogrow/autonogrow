@@ -15,6 +15,8 @@ MIN_WIDTH = 320
 MAX_WIDTH = 1440
 MIN_ASPECT_RATIO = 0.8
 MAX_ASPECT_RATIO = 1.91
+STORY_ASPECT_RATIO = 9 / 16
+STORY_ASPECT_RATIO_TOLERANCE = 0.01
 
 
 @dataclass(frozen=True)
@@ -43,7 +45,10 @@ def validate_instagram_caption(caption: str) -> None:
         ) from exc
 
 
-def validate_instagram_image(asset: InstagramFinalAsset, path: Path) -> ValidatedInstagramImage:
+def _validate_instagram_jpeg(
+    asset: InstagramFinalAsset,
+    path: Path,
+) -> ValidatedInstagramImage:
     if asset.media_type != "image/jpeg" or path.suffix.lower() not in {".jpg", ".jpeg"}:
         raise PublishingValidationError(
             "instagram_image_type_unsupported", "Real publishing requires one JPEG image"
@@ -83,9 +88,31 @@ def validate_instagram_image(asset: InstagramFinalAsset, path: Path) -> Validate
         raise PublishingValidationError(
             "instagram_image_dimensions_invalid", "Final image dimensions are not supported"
         )
-    aspect_ratio = width / height
+    return ValidatedInstagramImage(path, checksum, width, height, size)
+
+
+def validate_instagram_image(
+    asset: InstagramFinalAsset,
+    path: Path,
+) -> ValidatedInstagramImage:
+    validated = _validate_instagram_jpeg(asset, path)
+    aspect_ratio = validated.width / validated.height
     if not MIN_ASPECT_RATIO <= aspect_ratio <= MAX_ASPECT_RATIO:
         raise PublishingValidationError(
             "instagram_image_aspect_ratio_invalid", "Final image aspect ratio is not supported"
         )
-    return ValidatedInstagramImage(path, checksum, width, height, size)
+    return validated
+
+
+def validate_instagram_story_image(
+    asset: InstagramFinalAsset,
+    path: Path,
+) -> ValidatedInstagramImage:
+    validated = _validate_instagram_jpeg(asset, path)
+    aspect_ratio = validated.width / validated.height
+    if abs(aspect_ratio - STORY_ASPECT_RATIO) > STORY_ASPECT_RATIO_TOLERANCE:
+        raise PublishingValidationError(
+            "instagram_story_image_aspect_ratio_invalid",
+            "Instagram Story image must use a 9:16 aspect ratio",
+        )
+    return validated

@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = False
     security_headers_enabled: bool = True
     upload_max_size_mb: int = 5
+    instagram_video_upload_max_size_mb: int = 100
     uploads_dir: str = ""
     webhook_test_secret: str = ""
     meta_app_id: str = ""
@@ -636,6 +637,13 @@ class Settings(BaseSettings):
                 raise ValueError("Configuración de alertas incompleta: " + ", ".join(alert_errors))
         if self.upload_max_size_mb < 1 or self.upload_max_size_mb > 25:
             raise ValueError("UPLOAD_MAX_SIZE_MB debe estar entre 1 y 25")
+        if (
+            self.instagram_video_upload_max_size_mb < 10
+            or self.instagram_video_upload_max_size_mb > 250
+        ):
+            raise ValueError(
+                "INSTAGRAM_VIDEO_UPLOAD_MAX_SIZE_MB debe estar entre 10 y 250"
+            )
         if self.app_env not in {"staging", "production"}:
             return self
 

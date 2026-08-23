@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
@@ -155,6 +156,14 @@ def future_planned_at(days: int = 3) -> str:
     return (datetime.now(timezone.utc) + timedelta(days=days)).replace(microsecond=0).isoformat()
 
 
+def minimal_mp4_bytes(payload: bytes = b"autonogrow-video") -> bytes:
+    return (
+        b"\x00\x00\x00\x18ftypmp42"
+        b"\x00\x00\x00\x00mp42isom"
+        + payload
+    )
+
+
 def create_content_with_asset(ctx) -> tuple[int, int, int]:
     enable_service(ctx)
     response = ctx["client"].post(
@@ -191,6 +200,74 @@ def create_content_with_asset(ctx) -> tuple[int, int, int]:
     assert response.status_code == 200
     version_id = response.json()["current_version"]["id"]
     return content_id, asset.id, version_id
+
+
+@pytest.mark.parametrize(
+    ("content_format", "extra_asset_count", "expected_detail"),
+    [
+        (
+            "carousel",
+            10,
+            "carousel requires between two and ten final assets",
+        ),
+        (
+            "reel",
+            1,
+            "reel requires one final video asset",
+        ),
+        (
+            "story",
+            1,
+            "story requires one final image or video asset",
+        ),
+    ],
+)
+def test_submit_for_review_rejects_invalid_asset_cardinality(
+    editorial_context,
+    content_format,
+    extra_asset_count,
+    expected_detail,
+):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+
+    version = ctx["db"].get(InstagramContentVersion, version_id)
+    version.format = content_format
+
+    for index in range(extra_asset_count):
+        asset = InstagramFinalAsset(
+            business_id=ctx["business"].id,
+            content_id=content_id,
+            uploaded_by_user_id=ctx["owner"].id,
+            original_filename=f"extra-{index}.jpg",
+            storage_key=(
+                f"_instagram_content/{ctx['business'].id}/final/"
+                f"extra-{content_id}-{index}.jpg"
+            ),
+            media_type="image/jpeg",
+            size_bytes=12,
+        )
+        ctx["db"].add(asset)
+        ctx["db"].flush()
+        ctx["db"].add(
+            InstagramContentVersionAsset(
+                version_id=version_id,
+                asset_id=asset.id,
+                position=index + 1,
+                is_cover=False,
+            )
+        )
+
+    ctx["db"].commit()
+
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/contents/{content_id}/submit-for-review"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == expected_detail
+    ctx["db"].expire_all()
+    assert ctx["db"].get(InstagramContent, content_id).status != "ready_for_review"
 
 
 def test_calendar_content_range_includes_unscheduled_and_returns_details(editorial_context):
@@ -1040,6 +1117,172 @@ def test_raw_upload_reports_dynamic_size_limit(editorial_context, monkeypatch):
         "code": "upload_too_large",
         "message": "El archivo supera el tamaño máximo permitido de 5 MB.",
     }
+
+
+
+def test_raw_upload_accepts_valid_mp4_and_persists_video_media_type(editorial_context):
+    ctx = editorial_context
+    enable_service(ctx)
+    payload = minimal_mp4_bytes()
+
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={"file": ("reel.mp4", payload, "video/mp4")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["media_type"] == "video/mp4"
+
+    stored = ctx["db"].get(InstagramRawAsset, body["id"])
+    assert stored is not None
+    assert stored.media_type == "video/mp4"
+    assert stored.size_bytes == len(payload)
+
+    path = ctx["uploads_dir"] / stored.storage_key
+    assert path.exists()
+    assert path.read_bytes() == payload
+
+
+def test_raw_upload_rejects_invalid_mp4_content(editorial_context):
+    ctx = editorial_context
+    enable_service(ctx)
+
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={"file": ("fake.mp4", b"not-an-mp4-video", "video/mp4")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "code": "invalid_video_content",
+        "message": "El contenido del archivo no corresponde a un vídeo MP4 válido.",
+    }
+    assert ctx["db"].query(InstagramRawAsset).count() == 0
+
+
+def test_raw_video_upload_uses_independent_video_size_limit(
+    editorial_context,
+    monkeypatch,
+):
+    ctx = editorial_context
+    enable_service(ctx)
+
+    monkeypatch.setattr(
+        "app.routers.instagram_content.MAX_VIDEO_ASSET_MB",
+        1,
+    )
+    monkeypatch.setattr(
+        "app.routers.instagram_content.MAX_VIDEO_ASSET_BYTES",
+        32,
+    )
+
+    payload = minimal_mp4_bytes(b"x" * 64)
+
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={"file": ("too-large.mp4", payload, "video/mp4")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == {
+        "code": "upload_too_large",
+        "message": "El archivo supera el tamaño máximo permitido de 1 MB.",
+    }
+    assert ctx["db"].query(InstagramRawAsset).count() == 0
+
+
+def test_create_content_from_mp4_raw_asset_uses_reel_format(editorial_context):
+    ctx = editorial_context
+    enable_service(ctx)
+
+    uploaded = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={
+            "file": (
+                "cliente-reel.mp4",
+                minimal_mp4_bytes(),
+                "video/mp4",
+            )
+        },
+        data={"label": "Vídeo cliente"},
+    )
+    assert uploaded.status_code == 201
+    raw_id = uploaded.json()["id"]
+
+    created = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw_id}/create-content"
+    )
+
+    assert created.status_code == 201
+    body = created.json()
+    assert body["content"]["status"] == "draft"
+    assert body["content"]["current_version"]["format"] == "reel"
+    assert body["content"]["source_assets"][0]["id"] == raw_id
+
+
+def test_owner_uses_mp4_raw_asset_as_final_with_integrity(editorial_context):
+    ctx = editorial_context
+    enable_service(ctx)
+
+    payload = minimal_mp4_bytes(b"final-reel-payload")
+    uploaded = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets",
+        files={"file": ("final-reel.mp4", payload, "video/mp4")},
+    )
+    assert uploaded.status_code == 201
+    raw_id = uploaded.json()["id"]
+
+    created = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw_id}/create-content"
+    )
+    assert created.status_code == 201
+    content_id = created.json()["content"]["id"]
+
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw_id}/use-as-final",
+        json={"content_id": content_id},
+    )
+
+    assert response.status_code == 201
+
+    derived = [
+        item
+        for item in response.json()["content"]["final_assets"]
+        if item["source_raw_asset_id"] == raw_id
+    ]
+    assert len(derived) == 1
+
+    final_row = ctx["db"].get(InstagramFinalAsset, derived[0]["id"])
+    assert final_row is not None
+    assert final_row.media_type == "video/mp4"
+    assert final_row.size_bytes == len(payload)
+    assert final_row.sha256 == hashlib.sha256(payload).hexdigest()
+
+    final_path = ctx["uploads_dir"] / final_row.storage_key
+    assert final_path.exists()
+    assert final_path.read_bytes() == payload
+
+    assert (
+        ctx["db"]
+        .query(InstagramContentRawAsset)
+        .filter_by(
+            content_id=content_id,
+            raw_asset_id=raw_id,
+        )
+        .count()
+        == 1
+    )
+    assert (
+        ctx["db"]
+        .query(AuditLog)
+        .filter_by(
+            action="raw_asset_used_as_final",
+            resource_id=final_row.id,
+        )
+        .count()
+        == 1
+    )
 
 
 def test_final_upload_uses_the_same_safe_validation_contract(editorial_context):

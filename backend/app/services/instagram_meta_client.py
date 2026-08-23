@@ -129,6 +129,21 @@ class InstagramMetaClient:
             raise MetaHTTPError(200, "missing_provider_id", None, None, False, False, False)
         return value
 
+    @staticmethod
+    def _status_code(payload: dict[str, Any]) -> str:
+        value = payload.get("status_code")
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Z_]{1,40}", value):
+            raise MetaHTTPError(
+                200,
+                "invalid_container_status",
+                None,
+                None,
+                False,
+                False,
+                False,
+            )
+        return value
+
     def create_image_container(
         self, *, account_id: str, image_url: str, caption: str, access_token: str
     ) -> str:
@@ -140,6 +155,129 @@ class InstagramMetaClient:
             operation="create_container",
         )
         return self._required_id(payload)
+
+    def create_carousel_image_container(
+        self,
+        *,
+        account_id: str,
+        image_url: str,
+        access_token: str,
+    ) -> str:
+        payload = self._request(
+            "POST",
+            f"{self._identifier(account_id)}/media",
+            access_token=access_token,
+            data={
+                "image_url": image_url,
+                "is_carousel_item": "true",
+            },
+            operation="create_carousel_image_item",
+        )
+        return self._required_id(payload)
+
+    def create_carousel_container(
+        self,
+        *,
+        account_id: str,
+        children: tuple[str, ...],
+        caption: str,
+        access_token: str,
+    ) -> str:
+        if len(children) < 2 or len(children) > 10:
+            raise ValueError(
+                "Instagram carousel requires between 2 and 10 children"
+            )
+
+        validated_children = tuple(
+            self._identifier(child_id)
+            for child_id in children
+        )
+
+        payload = self._request(
+            "POST",
+            f"{self._identifier(account_id)}/media",
+            access_token=access_token,
+            data={
+                "media_type": "CAROUSEL",
+                "children": ",".join(validated_children),
+                "caption": caption,
+            },
+            operation="create_carousel_container",
+        )
+        return self._required_id(payload)
+
+    def create_reel_container(
+        self,
+        *,
+        account_id: str,
+        video_url: str,
+        caption: str,
+        access_token: str,
+    ) -> str:
+        payload = self._request(
+            "POST",
+            f"{self._identifier(account_id)}/media",
+            access_token=access_token,
+            data={
+                "media_type": "REELS",
+                "video_url": video_url,
+                "caption": caption,
+            },
+            operation="create_reel_container",
+        )
+        return self._required_id(payload)
+
+    def create_story_image_container(
+        self,
+        *,
+        account_id: str,
+        image_url: str,
+        access_token: str,
+    ) -> str:
+        payload = self._request(
+            "POST",
+            f"{self._identifier(account_id)}/media",
+            access_token=access_token,
+            data={
+                "media_type": "STORIES",
+                "image_url": image_url,
+            },
+            operation="create_story_image_container",
+        )
+        return self._required_id(payload)
+
+    def create_story_video_container(
+        self,
+        *,
+        account_id: str,
+        video_url: str,
+        access_token: str,
+    ) -> str:
+        payload = self._request(
+            "POST",
+            f"{self._identifier(account_id)}/media",
+            access_token=access_token,
+            data={
+                "media_type": "STORIES",
+                "video_url": video_url,
+            },
+            operation="create_story_video_container",
+        )
+        return self._required_id(payload)
+
+    def get_container_status(
+        self,
+        container_id: str,
+        access_token: str,
+    ) -> str:
+        payload = self._request(
+            "GET",
+            self._identifier(container_id),
+            access_token=access_token,
+            params={"fields": "status_code"},
+            operation="get_container_status",
+        )
+        return self._status_code(payload)
 
     def publish_container(self, *, account_id: str, container_id: str, access_token: str) -> str:
         payload = self._request(
