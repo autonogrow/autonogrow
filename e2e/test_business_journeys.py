@@ -5,6 +5,8 @@ import re
 import pytest
 from playwright.sync_api import expect
 
+from e2e.seed import JPEG_BYTES
+
 pytestmark = pytest.mark.e2e
 
 
@@ -168,13 +170,90 @@ def test_owner_instagram_calendar_views_filter_and_quick_action(journey) -> None
     expect(item).to_be_visible()
     expect(item).to_contain_text("Revisar")
     item.click()
-    expect(page.locator("#owner-instagram-detail-title")).to_have_text("SALON lanzamiento")
-    expect(page.locator("[data-owner-instagram-action='validate']")).to_be_visible()
+    composer = page.locator("#owner-instagram-composer")
+    expect(composer).to_be_visible()
+    expect(page.locator("#owner-instagram-composer-title")).to_have_text("Editar publicación")
+    expect(page.locator("#owner-instagram-composer-caption")).to_have_value(
+        "Caption de revisión SALON"
+    )
+    expect(composer.get_by_text("Versión", exact=True)).to_be_hidden()
+    composer.locator("#owner-instagram-composer-advanced").click()
+    expect(composer.get_by_text("Versión", exact=True)).to_be_visible()
+
+
+def test_owner_instagram_composer_uses_day_without_fixed_hour_and_previews_formats(journey) -> None:
+    _session, page = _open_owner_instagram(journey)
+    day = page.locator("[data-owner-instagram-create-date]").first
+    selected_date = day.get_attribute("data-owner-instagram-create-date")
+    day.click()
+    composer = page.locator("#owner-instagram-composer")
+    expect(composer).to_be_visible()
+    expect(page.locator("#owner-instagram-composer-date")).to_have_value(selected_date)
+    expect(page.locator("#owner-instagram-composer-time")).to_have_value("")
+
+    composer.locator(".instagram-composer__formats").get_by_text("Carrusel", exact=True).click()
+    composer.locator("#owner-instagram-composer-file").set_input_files(
+        [
+            {"name": "uno.jpg", "mimeType": "image/jpeg", "buffer": JPEG_BYTES},
+            {"name": "dos.jpg", "mimeType": "image/jpeg", "buffer": JPEG_BYTES},
+        ]
+    )
+    expect(composer.locator("#owner-instagram-media-count")).to_have_text("2/10")
+    expect(composer.locator("[data-owner-composer-move='1']").first).to_be_enabled()
+    expect(composer.locator("#owner-instagram-preview-carousel")).to_be_visible()
+    composer.locator('[data-owner-composer-preview="next"]').click()
+    expect(composer.locator("#owner-instagram-preview-position")).to_have_text("2/2")
+
+    composer.locator(".instagram-composer__formats").get_by_text("Reel", exact=True).click()
+    composer.locator("#owner-instagram-composer-file").set_input_files(
+        {"name": "reel.mp4", "mimeType": "video/mp4", "buffer": b"\x00\x00\x00\x18ftypisom"}
+    )
+    expect(composer.locator("#owner-instagram-phone")).to_have_class(
+        re.compile("instagram-phone--vertical")
+    )
+    expect(composer.locator("#owner-instagram-preview-stage video")).to_have_count(1)
+
+    composer.locator(".instagram-composer__formats").get_by_text("Historia", exact=True).click()
+    expect(composer.locator("#owner-instagram-composer-reuse")).to_be_visible()
+    expect(composer.locator("#owner-instagram-composer-reuse")).to_be_disabled()
+    expect(composer.locator("#owner-instagram-caption-field")).to_be_hidden()
+
+
+def test_owner_instagram_composer_saves_ordered_carousel_without_exposing_assets(journey) -> None:
+    _session, page = _open_owner_instagram(journey)
+    page.locator("#owner-instagram-create").click()
+    composer = page.locator("#owner-instagram-composer")
+    composer.locator(".instagram-composer__formats").get_by_text("Carrusel", exact=True).click()
+    composer.locator("#owner-instagram-composer-file").set_input_files(
+        [
+            {"name": "primera.jpg", "mimeType": "image/jpeg", "buffer": JPEG_BYTES},
+            {"name": "segunda.jpg", "mimeType": "image/jpeg", "buffer": JPEG_BYTES},
+        ]
+    )
+    composer.locator("#owner-instagram-composer-caption").fill("Carrusel creado desde el Composer")
+    original_order = composer.locator(".instagram-composer-media__meta strong").all_text_contents()
+    composer.locator("[data-owner-composer-move='1']").first.dispatch_event("click")
+    expect(composer.locator(".instagram-composer-media__meta strong").first).to_have_text(
+        original_order[1]
+    )
+    reordered = composer.locator(".instagram-composer-media__meta strong").all_text_contents()
+    assert reordered == list(reversed(original_order))
+    with page.expect_response(
+        lambda response: response.request.method == "PUT" and response.url.endswith("/material")
+    ) as saved:
+        composer.locator("#owner-instagram-composer-save").click()
+    payload = saved.value.json()
+    expect(composer).to_be_hidden()
+    expect(page.locator("#owner-instagram-status")).to_have_text("Borrador guardado.")
+    assert payload["status"] == "draft"
+    assert payload["current_version"]["format"] == "carousel"
+    assert [item["original_filename"] for item in payload["current_version"]["assets"]] == reordered
+    assert page.locator("#owner-instagram-enabled-area").get_by_text("Assets finales").count() == 0
 
 
 def test_owner_raw_association_manager_protects_and_updates_without_reload(journey) -> None:
     session, page = _open_owner_instagram(journey)
-    page.locator("summary", has_text="Crear contenido y gestionar material").click()
+    page.locator("summary", has_text="Herramientas avanzadas de material").click()
     shared = page.locator("[data-owner-instagram-raw]", has_text="Material compartido SALON")
     session.expect_response_error(409, "DELETE", "/instagram-content/raw-assets/")
     page.once("dialog", lambda confirmation: confirmation.accept())
@@ -191,7 +270,12 @@ def test_owner_raw_association_manager_protects_and_updates_without_reload(journ
     modifiable.get_by_role("button", name="Desasociar").click()
     expect(page.locator("#owner-instagram-associations-count")).to_have_text("1")
     protected.get_by_role("button", name="Abrir contenido").click()
-    expect(page.locator("#owner-instagram-detail-title")).to_have_text("SALON histórico protegido")
+    expect(page.locator("#owner-instagram-composer")).to_be_visible()
+    expect(page.locator("#owner-instagram-composer-title")).to_have_text("Editar publicación")
+    expect(page.locator("#owner-instagram-composer-caption")).to_have_value(
+        "Caption publicada SALON"
+    )
+    page.locator("#owner-instagram-composer-close").click()
 
     freeable = page.locator("[data-owner-instagram-raw]", has_text="Material liberable SALON")
     freeable.get_by_role("button", name="Asociaciones").click()
@@ -208,7 +292,9 @@ def test_owner_raw_association_manager_protects_and_updates_without_reload(journ
 def test_owner_sees_technical_controls_admin_cannot_use(journey) -> None:
     _session, owner = _open_owner_instagram(journey)
     owner.get_by_role("button", name=re.compile("SALON lanzamiento")).click()
-    expect(owner.locator("[data-owner-instagram-action='validate']")).to_be_visible()
+    expect(owner.locator("#owner-instagram-composer")).to_be_visible()
+    expect(owner.locator("#owner-instagram-composer-advanced")).to_be_visible()
+    expect(owner.locator("[data-owner-instagram-action='validate']")).to_have_count(0)
     assert owner.request.get("/api/owner/businesses/1/instagram-content/raw-assets").status == 200
 
     _admin_session, admin = _open_admin(journey)

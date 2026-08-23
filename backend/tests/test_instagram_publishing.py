@@ -608,13 +608,21 @@ def test_owner_ui_exposes_publish_actions_and_admin_is_read_only():
         "retry_wait",
         "action_required",
     ):
-        assert state in owner
         assert state in admin
-    assert "publishing_mode" in owner
-    assert "provider_permalink" in owner
+    for owner_contract in (
+        "publishing_mode",
+        "publish_jobs",
+        "job.status",
+        "provider_permalink",
+        "/submit-for-review",
+        "/validate",
+        "/publish-now",
+        "/schedule",
+        "/cancel",
+    ):
+        assert owner_contract in owner
     assert "provider_permalink" in admin
-    for owner_action in ("publish-now", "cancel-publish", "retry-publish"):
-        assert f'data-owner-instagram-action="{owner_action}"' in owner
+    assert 'data-owner-instagram-action="validate"' not in owner
     assert "data-owner-instagram-action" not in admin
     for admin_action in (
         "data-admin-instagram-plan",

@@ -85,21 +85,25 @@ def test_owner_instagram_upload_errors_are_specific_safe_and_restore_controls() 
         "async function ownerInstagramJson",
         "async function ownerInstagramFileResponse",
     )
-    uploads = source_block(
+    raw_upload = source_block(
         js,
         "async function uploadOwnerInstagramRaw",
         "async function deleteOwnerInstagramRaw",
-    ) + source_block(
+    )
+    composer_upload = source_block(
         js,
-        "async function uploadOwnerInstagramFinal",
-        "let onboardingReadiness",
+        "async function ownerInstagramComposerUploadLocalMedia",
+        "async function ownerInstagramComposerPatchDate",
     )
 
     assert 'typeof detail === "string" ? detail : detail?.message' in request
     assert '"No se pudo completar la operación editorial."' in request
-    assert "showOwnerInstagramError(error)" in uploads
-    assert uploads.count("setOwnerInstagramFormBusy(form, false)") == 2
-    assert 'form.dataset.ownerInstagramSubmitting === "true"' in uploads
+    assert "showOwnerInstagramError(error)" in raw_upload
+    assert "setOwnerInstagramFormBusy(form, false)" in raw_upload
+    assert 'form.dataset.ownerInstagramSubmitting === "true"' in raw_upload
+    assert "new FormData()" in composer_upload
+    assert "/final-assets`" in composer_upload
+    assert "media.file = null" in composer_upload
     assert "ownerInstagramRateLimitError(retryAfter)" in js
 
 
@@ -111,28 +115,37 @@ def test_owner_instagram_mutations_reject_duplicate_submissions_and_avoid_full_r
         "let onboardingReadiness",
     )
 
-    for function_name in (
-        "uploadOwnerInstagramRaw",
-        "createOwnerInstagramContent",
-        "uploadOwnerInstagramFinal",
-    ):
-        block = source_block(mutations, f"async function {function_name}", "\n}")
-        assert 'form.dataset.ownerInstagramSubmitting === "true"' in block
-        assert "setOwnerInstagramFormBusy(form, true" in block
-        assert "setOwnerInstagramFormBusy(form, false)" in block
-        assert "beginOwnerInstagramMutation(mutationKey)" in block
-        assert "endOwnerInstagramMutation(mutationKey)" in block
-
-    actions = source_block(
+    raw_upload = source_block(
         mutations,
-        "async function handleOwnerInstagramAction",
-        "async function uploadOwnerInstagramFinal",
+        "async function uploadOwnerInstagramRaw",
+        "async function deleteOwnerInstagramRaw",
     )
-    assert "beginOwnerInstagramMutation(mutationKey)" in actions
-    assert "endOwnerInstagramMutation(mutationKey)" in actions
-    assert 'const mutationKey = `content:${contentId}`' in actions
-    assert "setOwnerInstagramScopeBusy(card, true" in actions
-    assert "await refreshOwnerInstagramContent(api, contentId)" in actions
+    assert 'form.dataset.ownerInstagramSubmitting === "true"' in raw_upload
+    assert "setOwnerInstagramFormBusy(form, true" in raw_upload
+    assert "setOwnerInstagramFormBusy(form, false)" in raw_upload
+    assert "beginOwnerInstagramMutation(mutationKey)" in raw_upload
+    assert "endOwnerInstagramMutation(mutationKey)" in raw_upload
+
+    for start, end in (
+        (
+            "async function saveOwnerInstagramComposerDraft",
+            "async function publishOwnerInstagramComposer",
+        ),
+        (
+            "async function publishOwnerInstagramComposer",
+            "async function cancelOwnerInstagramComposerContent",
+        ),
+        (
+            "async function cancelOwnerInstagramComposerContent",
+            "function ownerInstagramRetryAfterSeconds",
+        ),
+    ):
+        action = source_block(js, start, end)
+        assert "beginOwnerInstagramMutation(mutationKey)" in action
+        assert "endOwnerInstagramMutation(mutationKey)" in action
+        assert "state.busy" in action
+    assert "setOwnerInstagramComposerBusy(true" in js
+    assert "ownerInstagramComposerSave" in js
     assert "await loadOwnerInstagramPanel()" not in mutations
 
     refresh_state = source_block(
@@ -146,10 +159,10 @@ def test_owner_instagram_mutations_reject_duplicate_submissions_and_avoid_full_r
 
 def test_owner_instagram_removal_is_confirmed_reactive_and_conflict_safe() -> None:
     js = OWNER_JS.read_text(encoding="utf-8")
-    actions = source_block(
+    cancel = source_block(
         js,
-        "async function handleOwnerInstagramAction",
-        "async function uploadOwnerInstagramFinal",
+        "async function cancelOwnerInstagramComposerContent",
+        "function ownerInstagramRetryAfterSeconds",
     )
     reconcile = source_block(
         js,
@@ -157,20 +170,15 @@ def test_owner_instagram_removal_is_confirmed_reactive_and_conflict_safe() -> No
         "function setOwnerInstagramFormBusy",
     )
 
-    assert 'data-owner-instagram-action="remove"' in js
-    assert 'item.status === "published" ? "Archivar" : "Eliminar"' in js
     for status in ("ready_for_review", "validated", "scheduled", "published"):
         assert f'item.status === "{status}"' in js
-    assert "window.confirm(ownerInstagramRemovalConfirmation(item))" in actions
-    assert 'options = { method: "DELETE" }' in actions
-    assert "ownerInstagramContents = ownerInstagramContents.filter" in actions
-    assert "renderOwnerInstagramContents()" in actions
-    assert "await loadOwnerInstagramPanel()" not in actions
-    assert "error.status === 409" in actions
-    assert "await reconcileOwnerInstagramContent(api, contentId)" in actions
+    assert "window.confirm(ownerInstagramRemovalConfirmation(state.content))" in cancel
+    assert "/cancel`" in cancel
+    assert "upsertOwnerInstagramContent(content)" in cancel
+    assert "closeOwnerInstagramComposer" in cancel
+    assert "await loadOwnerInstagramPanel()" not in cancel
     assert "error.status !== 404" in reconcile
-    assert '"Eliminando…"' in actions
-    assert '"Archivando…"' in actions
+    assert '"Cancelando publicación…"' in cancel
 
 
 def test_owner_instagram_raw_removal_and_busy_copy_are_guarded() -> None:
@@ -178,7 +186,7 @@ def test_owner_instagram_raw_removal_and_busy_copy_are_guarded() -> None:
     raw_delete = source_block(
         js,
         "async function deleteOwnerInstagramRaw",
-        "async function createOwnerInstagramContent",
+        "async function handleOwnerInstagramRawAction",
     )
 
     assert 'data-owner-instagram-raw-delete="${asset.id}"' in js
@@ -187,14 +195,11 @@ def test_owner_instagram_raw_removal_and_busy_copy_are_guarded() -> None:
     assert "ownerInstagramRawAssets = ownerInstagramRawAssets.filter" in raw_delete
     assert "setOwnerInstagramScopeBusy(scope, true, button, \"Eliminando…\")" in raw_delete
     for label in (
-        "Creando…",
         "Subiendo…",
         "Guardando…",
-        "Reprogramando…",
-        "Cancelando…",
-        "Validando…",
-        "Programando…",
-        "Enviando…",
+        "Cancelando publicación…",
+        "Preparando la programación…",
+        "Preparando la publicación…",
     ):
         assert label in js
 
@@ -218,7 +223,6 @@ def test_owner_raw_library_actions_are_secure_reactive_and_single_flight() -> No
         "Ver",
         "Desasociar",
         "Material de origen",
-        "Assets finales",
     ):
         assert label in js or label in html
     for state in (
@@ -289,7 +293,8 @@ def test_owner_raw_association_manager_is_accessible_reactive_and_server_authori
     assert "payload.association_manager" in js
     assert "renderOwnerInstagramAssociationManager()" in js
     assert "scrollIntoView" in js
-    assert "instagram-content-card--located" in js
+    assert "openOwnerInstagramContentDetail(contentId)" in js
+    assert 'id="owner-instagram-composer"' in html
     assert 'document.querySelector("main").inert = true' in js
     assert 'event.key === "Escape" && !ownerInstagramAssociationBusy' in js
     assert 'event.key === "Tab"' in js
@@ -304,7 +309,7 @@ def test_owner_instagram_copy_tracks_real_or_simulated_publishing_mode() -> None
     copy = source_block(
         js,
         "function renderOwnerInstagramModeCopy",
-        "function ownerInstagramJobPanel",
+        "function ownerInstagramLocalInput",
     )
 
     assert "Sprint 6B · planificación simulada" not in html
@@ -314,6 +319,44 @@ def test_owner_instagram_copy_tracks_real_or_simulated_publishing_mode() -> None
     assert '"Entorno de simulación"' in copy
     assert 'id="owner-instagram-mode-label"' in html
     assert 'id="owner-instagram-mode-copy"' in html
+
+
+def test_owner_instagram_composer_hides_lifecycle_but_preserves_every_transition() -> None:
+    html = OWNER_HTML.read_text(encoding="utf-8")
+    js = OWNER_JS.read_text(encoding="utf-8")
+    ensure = source_block(
+        js,
+        "async function ownerInstagramComposerEnsureValidated",
+        "async function saveOwnerInstagramComposerDraft",
+    )
+    publish = source_block(
+        js,
+        "async function publishOwnerInstagramComposer",
+        "async function cancelOwnerInstagramComposerContent",
+    )
+
+    assert 'id="owner-instagram-composer"' in html
+    assert 'id="owner-instagram-create"' in html
+    assert 'data-owner-instagram-create-date="${key}"' in js
+    assert 'multiple = state.format === "carousel"' in js
+    assert 'single_image: { label: "Publicación", accept: "image/jpeg"' in js
+    assert 'reel: { label: "Reel", accept: "video/mp4"' in js
+    assert 'story: { label: "Historia", accept: "image/jpeg,video/mp4"' in js
+    assert 'data-owner-composer-move="-1"' in js
+    assert 'draggable="true"' in js
+    assert 'data-owner-composer-preview="previous"' in html
+    assert '<video src="${escapeHtml(media.url)}" controls muted playsinline' in js
+
+    assert ensure.index("/submit-for-review`") < ensure.index("/validate`")
+    assert "ownerInstagramComposerClearPlannedDate" in ensure
+    assert "/publish-now`" in publish
+    assert "/schedule`" in publish
+    assert "ownerInstagramComposerPatchDate" in publish
+    assert 'id="owner-instagram-composer-advanced"' in html
+    assert "Versión" in js and "Intentos" in js and "provider_media_id" in js
+    assert 'id="owner-instagram-composer-reuse"' in html
+    assert "Próximamente" in html
+    assert 'id="owner-instagram-detail"' not in html
 
 
 def test_authenticated_rate_limit_is_shared_by_ip_and_documented_as_single_process() -> None:

@@ -9,19 +9,24 @@ ADMIN_JS = (ROOT / "autonogrow-admin" / "admin.js").read_text(encoding="utf-8")
 ADMIN_CSS = (ROOT / "autonogrow-admin" / "styles.css").read_text(encoding="utf-8")
 
 
-def test_owner_editorial_calendar_has_periods_filters_attention_and_detail() -> None:
+def test_owner_editorial_calendar_has_periods_filters_attention_and_composer() -> None:
     for view in ("today", "week", "month"):
         assert f'data-owner-instagram-view="{view}"' in OWNER_HTML
     assert 'id="owner-instagram-state-filter"' in OWNER_HTML
     assert 'id="owner-instagram-format-filter"' in OWNER_HTML
     assert 'id="owner-instagram-attention"' in OWNER_HTML
     assert 'id="owner-instagram-unscheduled"' in OWNER_HTML
-    assert 'id="owner-instagram-detail"' in OWNER_HTML
+    assert 'id="owner-instagram-composer"' in OWNER_HTML
+    assert 'id="owner-instagram-create"' in OWNER_HTML
     assert "function renderOwnerInstagramCalendar" in OWNER_JS
     assert "function openOwnerInstagramContentDetail" in OWNER_JS
-    assert 'data-owner-instagram-action="${dateAction}"' in OWNER_JS
-    assert 'action === "schedule-date"' in OWNER_JS
-    assert "contents/${contentId}/schedule" in OWNER_JS
+    assert "function openOwnerInstagramComposer" in OWNER_JS
+    assert 'data-owner-instagram-create-date="${key}"' in OWNER_JS
+    assert "ownerInstagramComposerPatchDate" in OWNER_JS
+    assert "contents/${content.id}/schedule" in OWNER_JS
+    assert 'multiple = state.format === "carousel"' in OWNER_JS
+    assert 'data-owner-composer-move="-1"' in OWNER_JS
+    assert 'data-owner-composer-preview="previous"' in OWNER_HTML
     assert "Necesita tu atención" not in OWNER_HTML
     assert "Todo preparado para esta semana" in OWNER_JS
 

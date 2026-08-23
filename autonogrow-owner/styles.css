@@ -159,6 +159,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .instagram-editorial { display: none; gap: var(--ag-space-4); }
 .instagram-editorial.active { display: grid; }
 .instagram-business-selector { max-width: 30rem; }
+.instagram-heading-actions { display: flex; align-items: center; gap: var(--ag-space-2); flex-wrap: wrap; }
 .instagram-editorial-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ag-space-4); }
 .instagram-editorial-card, .instagram-content-card { padding: var(--ag-space-4); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-lg); background: var(--ag-color-surface); }
 .instagram-editorial-card + .instagram-editorial-card, .instagram-content-card + .instagram-content-card { margin-top: var(--ag-space-4); }
@@ -229,7 +230,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .instagram-calendar-item__body strong, .instagram-calendar-item__body small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .instagram-calendar-item__body small { color: var(--ag-color-text-muted); font-size: .72rem; }
 .instagram-calendar-item__action { grid-column: 2; color: var(--ag-color-blue-700); font-size: .7rem; font-weight: 800; }
-.instagram-calendar-gap { display: block; padding: var(--ag-space-2); border: 1px dashed var(--ag-color-border); color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); text-align: center; }
+.instagram-calendar-gap { display: block; width: 100%; padding: var(--ag-space-2); border: 1px dashed var(--ag-color-border); border-radius: var(--ag-radius-md); background: transparent; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); text-align: center; cursor: pointer; }
+.instagram-calendar-gap:hover, .instagram-calendar-gap:focus-visible, .instagram-calendar-day-create:hover, .instagram-calendar-day-create:focus-visible { border-color: var(--ag-color-blue-600); color: var(--ag-color-blue-700); outline: 3px solid var(--ag-color-info-bg); }
+.instagram-calendar-day-create { display: inline-grid; place-items: center; width: 28px; min-width: 28px; height: 28px; padding: 0; border: 1px dashed var(--ag-color-border); border-radius: 50%; background: transparent; color: var(--ag-color-text-muted); cursor: pointer; font-weight: 900; }
 .instagram-calendar-weekdays { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(7, minmax(0, 1fr)); border-bottom: 1px solid var(--ag-color-border); }
 .instagram-calendar-weekdays span { padding: var(--ag-space-2); color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); font-weight: 800; text-align: center; }
 .instagram-calendar--month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
@@ -248,6 +251,92 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .instagram-advanced-tools { border-top: 1px solid var(--ag-color-border); }
 .instagram-advanced-tools > summary { min-height: 44px; padding: var(--ag-space-3) 0; color: var(--ag-color-blue-700); cursor: pointer; font-weight: 800; }
 .instagram-content-detail { display: grid; gap: var(--ag-space-3); padding-top: var(--ag-space-4); border-top: 1px solid var(--ag-color-border); }
+
+/* Composer único: la interfaz humana oculta el lifecycle técnico de publicación. */
+.instagram-composer-backdrop { z-index: 1100; }
+.owner-dialog.instagram-composer { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: min(76rem, 100%); height: min(52rem, calc(100dvh - 2 * var(--ag-space-4))); max-height: calc(100dvh - 2 * var(--ag-space-4)); overflow: hidden; padding: 0; }
+.instagram-composer__header { padding: var(--ag-space-4) var(--ag-space-5); border-bottom: 1px solid var(--ag-color-border); }
+.instagram-composer__header h2, .instagram-composer__header p { margin-bottom: 0; }
+.instagram-composer__body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(24rem, .9fr); min-height: 0; overflow: hidden; }
+.instagram-composer__editor { display: grid; align-content: start; gap: var(--ag-space-4); min-width: 0; padding: var(--ag-space-5); overflow-y: auto; }
+.instagram-composer__editor fieldset { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.instagram-composer__editor legend, .instagram-composer__section h3 { margin-bottom: var(--ag-space-2); font-size: var(--ag-font-size-sm); font-weight: var(--ag-font-weight-extrabold); }
+.instagram-composer__formats > div, .instagram-composer__publication-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--ag-space-2); }
+.instagram-composer__formats label, .instagram-composer__publication-options label { display: block; cursor: pointer; }
+.instagram-composer__formats input, .instagram-composer__publication-options input { position: absolute; opacity: 0; pointer-events: none; }
+.instagram-composer__formats span, .instagram-composer__publication-options span { display: grid; place-items: center; min-height: 44px; padding: var(--ag-space-2); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface); color: var(--ag-color-text-muted); text-align: center; }
+.instagram-composer__formats input:checked + span, .instagram-composer__publication-options input:checked + span { border-color: var(--ag-color-blue-600); background: var(--ag-color-info-bg); color: var(--ag-color-blue-700); box-shadow: inset 0 0 0 1px var(--ag-color-blue-600); }
+.instagram-composer__formats input:focus-visible + span, .instagram-composer__publication-options input:focus-visible + span { outline: 3px solid var(--ag-color-info-bg); outline-offset: 2px; }
+.instagram-composer__section { display: grid; gap: var(--ag-space-3); }
+.instagram-composer__section-heading, .instagram-composer__media-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--ag-space-2); flex-wrap: wrap; }
+.instagram-composer__section-heading h3, .instagram-composer__section-heading p { margin: 0; }
+.instagram-composer__media-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: var(--ag-space-3); min-height: 5rem; padding: var(--ag-space-3); border: 1px dashed var(--ag-color-border); border-radius: var(--ag-radius-lg); background: var(--ag-color-surface-subtle); }
+.instagram-composer__media-list:empty::before { content: "El contenido que añadas aparecerá aquí."; grid-column: 1 / -1; place-self: center; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); text-align: center; }
+.instagram-composer-media { position: relative; display: grid; min-width: 0; overflow: hidden; border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface); }
+.instagram-composer-media__drag { cursor: grab !important; }
+.instagram-composer-media--dragging { opacity: .45; }
+.instagram-composer-media__visual { position: relative; aspect-ratio: 1; overflow: hidden; background: #111827; }
+.instagram-composer-media__visual img, .instagram-composer-media__visual video { width: 100%; height: 100%; object-fit: cover; }
+.instagram-composer-media__position { position: absolute; top: 6px; left: 6px; display: grid; place-items: center; min-width: 25px; height: 25px; padding: 0 6px; border-radius: 999px; background: rgba(15, 23, 42, .78); color: white; font-size: .72rem; font-weight: 900; }
+.instagram-composer-media__remove { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: rgba(15, 23, 42, .78); color: white; cursor: pointer; font-size: 1rem; }
+.instagram-composer-media__meta { min-width: 0; padding: var(--ag-space-2); }
+.instagram-composer-media__meta strong { display: block; overflow: hidden; font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
+.instagram-composer-media__controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 0 var(--ag-space-2) var(--ag-space-2); }
+.instagram-composer-media__controls button { min-height: 34px; border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-sm); background: var(--ag-color-surface); color: var(--ag-color-blue-700); cursor: pointer; font-weight: 900; }
+.instagram-composer__caption { position: relative; }
+.instagram-composer__caption small { justify-self: end; color: var(--ag-color-text-muted); }
+.instagram-composer__publication { display: grid; gap: var(--ag-space-3); }
+.instagram-composer__publication-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.instagram-composer__schedule { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ag-space-3); align-items: end; }
+.instagram-composer__schedule p { grid-column: 1 / -1; margin: 0; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); }
+.instagram-composer__advanced { padding-top: var(--ag-space-3); border-top: 1px solid var(--ag-color-border); }
+.instagram-composer__advanced summary { color: var(--ag-color-blue-700); cursor: pointer; font-weight: 800; }
+.instagram-composer__advanced dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--ag-space-1) var(--ag-space-3); font-size: var(--ag-font-size-xs); }
+.instagram-composer__advanced dt { color: var(--ag-color-text-muted); }
+.instagram-composer__advanced dd { margin: 0; overflow-wrap: anywhere; }
+.instagram-composer__preview { display: grid; align-content: center; justify-items: center; min-width: 0; padding: var(--ag-space-5); overflow-y: auto; border-left: 1px solid var(--ag-color-border); background: linear-gradient(145deg, #eef4f0, #f8faf9); }
+.instagram-composer__preview-heading { width: min(22rem, 100%); margin-bottom: var(--ag-space-3); }
+.instagram-composer__preview-heading h3, .instagram-composer__preview-heading p { margin-bottom: 0; }
+.instagram-phone { position: relative; width: min(22rem, 100%); overflow: hidden; border: 1px solid #d4d8d6; border-radius: 20px; background: white; box-shadow: 0 20px 50px rgba(15, 23, 42, .14); }
+.instagram-phone__top { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 12px; font-size: .82rem; }
+.instagram-phone__avatar { display: grid; place-items: center; width: 32px; height: 32px; overflow: hidden; border-radius: 50%; background: var(--ag-color-blue-100); color: var(--ag-color-blue-700); font-size: .7rem; font-weight: 900; }
+.instagram-phone__avatar img { width: 100%; height: 100%; object-fit: cover; }
+.instagram-phone__stage { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 1; overflow: hidden; background: #e8ece9; }
+.instagram-phone__stage img, .instagram-phone__stage video { width: 100%; height: 100%; object-fit: contain; background: #111827; }
+.instagram-phone__empty { display: grid; justify-items: center; gap: var(--ag-space-2); padding: var(--ag-space-5); color: var(--ag-color-text-muted); text-align: center; }
+.instagram-phone__empty span { font-size: 2rem; }
+.instagram-phone__empty p { margin: 0; font-size: .82rem; }
+.instagram-phone__carousel { position: absolute; top: 48%; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 var(--ag-space-2); pointer-events: none; }
+.instagram-phone__carousel button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; background: rgba(15, 23, 42, .7); color: white; cursor: pointer; font-size: 1.5rem; pointer-events: auto; }
+.instagram-phone__carousel span { padding: 3px 7px; border-radius: 999px; background: rgba(15, 23, 42, .72); color: white; font-size: .7rem; }
+.instagram-phone__dots { display: flex; justify-content: center; gap: 4px; min-height: 10px; padding-top: 6px; }
+.instagram-phone__dots span { width: 6px; height: 6px; border-radius: 50%; background: #cbd5e1; }
+.instagram-phone__dots span.active { background: var(--ag-color-blue-600); }
+.instagram-phone__copy { padding: 4px 12px 14px; }
+.instagram-phone__icons { display: grid; grid-template-columns: repeat(3, auto) 1fr; gap: 13px; align-items: center; margin-bottom: 8px; font-size: 1.35rem; }
+.instagram-phone__icons span:last-child { justify-self: end; }
+.instagram-phone__copy p { margin: 0; font-size: .78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.instagram-phone--vertical { width: min(19rem, 100%); border-radius: 28px; background: #111827; color: white; }
+.instagram-phone--vertical .instagram-phone__top, .instagram-phone--vertical .instagram-phone__copy { position: absolute; z-index: 2; left: 0; right: 0; }
+.instagram-phone--vertical .instagram-phone__top { top: 0; background: linear-gradient(rgba(0,0,0,.55), transparent); }
+.instagram-phone--vertical .instagram-phone__stage { aspect-ratio: 9 / 16; background: #111827; }
+.instagram-phone--vertical .instagram-phone__stage img, .instagram-phone--vertical .instagram-phone__stage video { object-fit: contain; }
+.instagram-phone--vertical .instagram-phone__copy { bottom: 0; padding: 4rem 1rem 1rem; background: linear-gradient(transparent, rgba(0,0,0,.7)); }
+.instagram-phone--story .instagram-phone__top, .instagram-phone--story .instagram-phone__copy { display: none; }
+.instagram-phone__story-top { position: absolute; z-index: 3; top: 10px; left: 12px; right: 12px; grid-template-columns: 30px minmax(0, 1fr); gap: 8px; align-items: center; color: white; font-size: .78rem; text-shadow: 0 1px 4px #000; }
+.instagram-phone__story-top::before { content: ""; position: absolute; top: -4px; left: 0; right: 0; height: 2px; border-radius: 2px; background: rgba(255,255,255,.88); }
+.instagram-phone__story-top span { width: 28px; height: 28px; border: 2px solid white; border-radius: 50%; background: rgba(255,255,255,.35); }
+.instagram-composer__approximation { width: min(22rem, 100%); margin: var(--ag-space-3) 0 0; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); text-align: center; }
+.instagram-composer__footer { margin-top: 0 !important; padding: var(--ag-space-3) var(--ag-space-5); border-top: 1px solid var(--ag-color-border); background: var(--ag-color-surface); }
+.instagram-composer__footer > div { display: flex; gap: var(--ag-space-2); }
+.instagram-composer[aria-busy="true"] .instagram-composer__body, .instagram-composer[aria-busy="true"] .instagram-composer__footer { opacity: .72; }
+
+@media (max-width: 960px) {
+  .owner-dialog.instagram-composer { width: min(48rem, 100%); }
+  .instagram-composer__body { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  .instagram-composer__editor, .instagram-composer__preview { overflow: visible; }
+  .instagram-composer__preview { border-top: 1px solid var(--ag-color-border); border-left: 0; }
+}
 @media (max-width: 760px) {
   .instagram-editorial-grid { grid-template-columns: 1fr; }
   .instagram-calendar-header, .instagram-calendar-toolbar, .instagram-attention-summary, .instagram-unscheduled { align-items: stretch; flex-direction: column; }
@@ -265,6 +354,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
   .instagram-month-day .instagram-calendar-item__state { width: .9rem; height: .9rem; font-size: .55rem; }
   .instagram-month-day .instagram-calendar-item__body { display: none; }
   .instagram-unscheduled > div:last-child { grid-template-columns: 1fr; }
+  .instagram-heading-actions, .instagram-heading-actions .button { width: 100%; }
+  .instagram-composer-backdrop { padding: 0; }
+  .owner-dialog.instagram-composer { width: 100%; height: 100dvh; max-height: none; padding: 0; border-radius: 0; }
+  .instagram-composer__header, .instagram-composer__editor, .instagram-composer__preview, .instagram-composer__footer { padding: var(--ag-space-4); }
+  .instagram-composer__formats > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .instagram-composer__footer { align-items: stretch !important; }
+  .instagram-composer__footer > div { display: grid; width: 100%; }
+  .instagram-composer__footer > div:first-child { order: 2; }
 }
 .owner-channel-control-editor { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
 .owner-channel-control-editor summary { cursor: pointer; font-weight: 800; }

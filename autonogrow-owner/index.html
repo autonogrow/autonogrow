@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Panel AutonoGrow</title>
-  <link rel="stylesheet" href="styles.css?v=20260816-1" />
+  <link rel="stylesheet" href="styles.css?v=20260823-social1" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -227,7 +227,7 @@
     </section>
 
     <section id="owner-instagram-content-section" class="panel instagram-editorial" data-panel="instagram-content" aria-labelledby="owner-instagram-content-title">
-      <div class="section-heading"><div><p id="owner-instagram-mode-label" class="eyebrow">Gestión editorial y publicación</p><h2 id="owner-instagram-content-title">Contenido de Instagram</h2><p id="owner-instagram-mode-copy">Prepara versiones, programa y consulta el estado de cada publicación.</p></div><button id="owner-instagram-refresh" class="button button-secondary" type="button">Actualizar</button></div>
+      <div class="section-heading"><div><p id="owner-instagram-mode-label" class="eyebrow">Gestión editorial y publicación</p><h2 id="owner-instagram-content-title">Contenido de Instagram</h2><p id="owner-instagram-mode-copy">Crea, programa y consulta las publicaciones de cada negocio.</p></div><div class="instagram-heading-actions"><button id="owner-instagram-create" class="button button-primary" type="button">+ Crear publicación</button><button id="owner-instagram-refresh" class="button button-secondary" type="button">Actualizar</button></div></div>
       <label class="instagram-business-selector">Negocio<select id="owner-instagram-business"><option value="">Selecciona un negocio</option></select></label>
       <p id="owner-instagram-status" class="status-text" aria-live="polite"></p>
       <div id="owner-instagram-workspace" hidden>
@@ -246,11 +246,7 @@
             <div id="owner-instagram-calendar" class="instagram-calendar" aria-live="polite"></div>
             <div id="owner-instagram-unscheduled" class="instagram-unscheduled"></div>
           </section>
-          <details class="instagram-advanced-tools"><summary>Crear contenido y gestionar material</summary><div class="instagram-editorial-grid">
-            <section class="instagram-editorial-card"><h3>Biblioteca de material bruto</h3><p class="helper">Material de origen para preparar contenido. No se publica hasta convertirlo y guardarlo como asset final.</p><form id="owner-instagram-raw-form"><label>Etiqueta<input name="label" maxlength="240"></label><label>Imagen JPG, PNG, WEBP o vídeo MP4<input name="file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4" required></label><button class="button button-secondary" type="submit">Subir material bruto</button></form><div id="owner-instagram-raw-list" class="instagram-raw-library"></div></section>
-            <section class="instagram-editorial-card"><h3>Nuevo contenido</h3><form id="owner-instagram-create-form"><label>Título<input name="title" maxlength="200" required></label><label>Caption<textarea name="caption" maxlength="2200" rows="4"></textarea></label><label>Formato<select name="format"><option value="single_image">Imagen única</option><option value="carousel">Carrusel</option><option value="reel">Reel</option><option value="story">Historia</option></select></label><label>Fecha prevista<input name="planned_publish_at" type="datetime-local"></label><button class="button button-primary" type="submit">Crear borrador</button></form></section>
-          </div></details>
-          <section id="owner-instagram-detail" class="instagram-content-detail" aria-labelledby="owner-instagram-detail-title"><div class="instagram-detail-heading"><div><p class="eyebrow">Detalle rápido</p><h3 id="owner-instagram-detail-title">Selecciona una publicación</h3></div><button id="owner-instagram-detail-close" class="button button-ghost button-small" type="button" hidden>Cerrar</button></div><div id="owner-instagram-content-list" class="instagram-content-list"><p class="helper">Pulsa una publicación del calendario para revisar sus datos y acciones.</p></div></section>
+          <details class="instagram-advanced-tools"><summary>Herramientas avanzadas de material</summary><section class="instagram-editorial-card"><h3>Biblioteca de material de origen</h3><p class="helper">Área técnica para consultar procedencia y asociaciones. La creación habitual se realiza desde el Composer.</p><form id="owner-instagram-raw-form"><label>Etiqueta<input name="label" maxlength="240"></label><label>Imagen JPG, PNG, WEBP o vídeo MP4<input name="file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4" required></label><button class="button button-secondary" type="submit">Subir material</button></form><div id="owner-instagram-raw-list" class="instagram-raw-library"></div></section></details>
         </div>
       </div>
     </section>
@@ -394,6 +390,37 @@
       <footer><button id="owner-instagram-preview-download" class="button button-secondary" type="button">Descargar</button><button id="owner-instagram-preview-done" class="button button-primary" type="button">Cerrar</button></footer>
     </section>
   </div>
+  <div id="owner-instagram-composer" class="owner-dialog-backdrop instagram-composer-backdrop" hidden>
+    <section class="owner-dialog instagram-composer" role="dialog" aria-modal="true" aria-labelledby="owner-instagram-composer-title" aria-describedby="owner-instagram-composer-description" tabindex="-1">
+      <header class="instagram-composer__header"><div><p id="owner-instagram-composer-kicker" class="eyebrow">Instagram</p><h2 id="owner-instagram-composer-title">Crear publicación</h2><p id="owner-instagram-composer-description">Prepara el contenido y comprueba cómo se verá antes de publicarlo.</p></div><button id="owner-instagram-composer-close" class="ag-button ag-button--icon" type="button" aria-label="Cerrar Composer">×</button></header>
+      <div class="instagram-composer__body">
+        <form id="owner-instagram-composer-form" class="instagram-composer__editor" novalidate>
+          <fieldset class="instagram-composer__formats"><legend>Tipo</legend><div role="radiogroup" aria-label="Tipo de publicación">
+            <label><input type="radio" name="composer_format" value="single_image" checked><span>Publicación</span></label>
+            <label><input type="radio" name="composer_format" value="carousel"><span>Carrusel</span></label>
+            <label><input type="radio" name="composer_format" value="reel"><span>Reel</span></label>
+            <label><input type="radio" name="composer_format" value="story"><span>Historia</span></label>
+          </div></fieldset>
+          <section class="instagram-composer__section" aria-labelledby="owner-instagram-media-title"><div class="instagram-composer__section-heading"><div><h3 id="owner-instagram-media-title">Multimedia</h3><p id="owner-instagram-media-help" class="helper">Añade una imagen JPEG.</p></div><span id="owner-instagram-media-count" class="ag-badge ag-badge--neutral">0</span></div>
+            <input id="owner-instagram-composer-file" type="file" accept="image/jpeg" hidden>
+            <div class="instagram-composer__media-actions"><button id="owner-instagram-composer-add" class="button button-secondary" type="button">+ Añadir foto</button><button id="owner-instagram-composer-reuse" class="button button-ghost" type="button" disabled title="Disponible en la siguiente fase">Reutilizar contenido · Próximamente</button></div>
+            <div id="owner-instagram-composer-media" class="instagram-composer__media-list" aria-live="polite"></div>
+          </section>
+          <label id="owner-instagram-caption-field" class="instagram-composer__caption">Texto<textarea id="owner-instagram-composer-caption" maxlength="2200" rows="5" placeholder="Escribe el texto de la publicación…"></textarea><small><span id="owner-instagram-caption-count">0</span>/2200</small></label>
+          <fieldset class="instagram-composer__publication"><legend>Publicación</legend><div class="instagram-composer__publication-options"><label><input type="radio" name="composer_publication" value="now"><span>Publicar ahora</span></label><label><input type="radio" name="composer_publication" value="schedule" checked><span>Programar</span></label></div>
+            <div id="owner-instagram-schedule-fields" class="instagram-composer__schedule"><label>Fecha<input id="owner-instagram-composer-date" type="date"></label><label>Hora<input id="owner-instagram-composer-time" type="time"></label><p>Zona horaria: <strong id="owner-instagram-composer-timezone">Europe/Madrid</strong></p></div>
+          </fieldset>
+          <details id="owner-instagram-composer-advanced" class="instagram-composer__advanced"><summary>Detalles avanzados</summary><div id="owner-instagram-composer-advanced-content"><p class="helper">Los datos técnicos aparecerán al editar una publicación.</p></div></details>
+          <p id="owner-instagram-composer-error" class="owner-dialog-error" role="alert"></p>
+        </form>
+        <aside class="instagram-composer__preview" aria-labelledby="owner-instagram-preview-heading"><div class="instagram-composer__preview-heading"><p class="eyebrow">Vista previa</p><h3 id="owner-instagram-preview-heading">Publicación</h3></div>
+          <div id="owner-instagram-phone" class="instagram-phone instagram-phone--feed"><div class="instagram-phone__top"><span id="owner-instagram-preview-avatar" class="instagram-phone__avatar">AG</span><strong id="owner-instagram-preview-business">Mi negocio</strong><span aria-hidden="true">•••</span></div><div id="owner-instagram-preview-stage" class="instagram-phone__stage"><div class="instagram-phone__empty"><span aria-hidden="true">▧</span><p>Añade contenido para verlo aquí</p></div></div><div id="owner-instagram-preview-carousel" class="instagram-phone__carousel" hidden><button type="button" data-owner-composer-preview="previous" aria-label="Ver elemento anterior">‹</button><span id="owner-instagram-preview-position">1/1</span><button type="button" data-owner-composer-preview="next" aria-label="Ver elemento siguiente">›</button></div><div id="owner-instagram-preview-dots" class="instagram-phone__dots" aria-hidden="true"></div><div id="owner-instagram-preview-feed-copy" class="instagram-phone__copy"><div class="instagram-phone__icons" aria-hidden="true"><span>♡</span><span>○</span><span>↗</span><span>▱</span></div><p><strong id="owner-instagram-preview-business-copy">Mi negocio</strong> <span id="owner-instagram-preview-caption">Tu texto aparecerá aquí.</span></p></div><div id="owner-instagram-preview-story-top" class="instagram-phone__story-top" hidden><span></span><strong id="owner-instagram-preview-story-business">Mi negocio</strong></div></div>
+          <p class="instagram-composer__approximation">Vista previa aproximada. Instagram puede introducir pequeñas variaciones.</p>
+        </aside>
+      </div>
+      <footer class="instagram-composer__footer"><div><button id="owner-instagram-composer-cancel-content" class="button button-ghost" type="button" hidden>Cancelar publicación</button></div><div><button id="owner-instagram-composer-save" class="button button-secondary" type="button">Guardar borrador</button><button id="owner-instagram-composer-primary" class="button button-primary" type="button">Programar</button></div></footer>
+    </section>
+  </div>
   <div id="owner-instagram-associations-dialog" class="owner-dialog-backdrop" hidden>
     <section class="owner-dialog instagram-associations-dialog" role="dialog" aria-modal="true" aria-labelledby="owner-instagram-associations-title" aria-describedby="owner-instagram-associations-description" tabindex="-1">
       <header><div><p class="eyebrow">Material de origen</p><h2 id="owner-instagram-associations-title">Asociaciones</h2></div><button id="owner-instagram-associations-close" class="ag-button ag-button--icon" type="button" aria-label="Cerrar gestor de asociaciones">×</button></header>
@@ -428,7 +455,7 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js?v=10b5"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="owner.js?v=20260823-1"></script>
+  <script src="owner.js?v=20260823-social1"></script>
   <script src="owner-businesses.js?v=20260805-4"></script>
   <script src="owner-operations.js?v=20260805-2"></script>
   <script src="owner-onboarding.js?v=5f1"></script>
