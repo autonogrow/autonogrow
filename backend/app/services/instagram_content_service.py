@@ -16,9 +16,12 @@ from app.models import (
     InstagramFinalAsset,
     InstagramPublishJob,
     InstagramRawAsset,
+    InstagramRemoteMedia,
     User,
 )
 from app.services.capability_service import require_module_available
+
+_UNSET = object()
 
 
 def utc_now() -> datetime:
@@ -167,6 +170,8 @@ def update_material(
     format: str,
     asset_ids: list[int],
     cover_asset_id: int | None,
+    story_transform_json: str | None | object = _UNSET,
+    story_renderer_version: str | None | object = _UNSET,
 ) -> tuple[InstagramContent, InstagramContentVersion, bool]:
     require_service_enabled(db, business_id)
     content = content_or_404(db, business_id, content_id, for_update=True)
@@ -191,11 +196,23 @@ def update_material(
     normalized_cover = (
         cover_asset_id if cover_asset_id is not None else (asset_ids[0] if asset_ids else None)
     )
+    effective_story_transform = (
+        previous.story_transform_json
+        if story_transform_json is _UNSET
+        else story_transform_json
+    )
+    effective_story_renderer = (
+        previous.story_renderer_version
+        if story_renderer_version is _UNSET
+        else story_renderer_version
+    )
     changed = (
         previous.caption != caption
         or previous.format != format
         or previous_ids != asset_ids
         or previous_cover != normalized_cover
+        or previous.story_transform_json != effective_story_transform
+        or previous.story_renderer_version != effective_story_renderer
     )
     if not changed:
         return content, previous, False
@@ -214,6 +231,8 @@ def update_material(
         ),
         generation_source="manual_edit" if previous.editorial_package_json else None,
         generator_version=previous.generator_version,
+        story_transform_json=effective_story_transform,
+        story_renderer_version=effective_story_renderer,
     )
     db.add(version)
     db.flush()
@@ -614,6 +633,7 @@ def raw_asset_or_404(
     query = db.query(InstagramRawAsset).filter(
         InstagramRawAsset.id == asset_id,
         InstagramRawAsset.business_id == business_id,
+        InstagramRawAsset.source_kind == "business_upload",
     )
     if for_update:
         query = query.with_for_update()
@@ -683,6 +703,7 @@ def disassociate_raw_asset(
             InstagramFinalAsset.business_id == business_id,
             InstagramFinalAsset.content_id == content_id,
             InstagramFinalAsset.source_raw_asset_id == asset_id,
+            InstagramFinalAsset.derivation_fingerprint == "copy",
         )
         .first()
         is not None
@@ -973,6 +994,10 @@ def serialize_version(version: InstagramContentVersion, api_prefix: str) -> dict
         ),
         "generation_source": version.generation_source,
         "generator_version": version.generator_version,
+        "story_transform": (
+            json.loads(version.story_transform_json) if version.story_transform_json else None
+        ),
+        "story_renderer_version": version.story_renderer_version,
         "created_by_user_id": version.created_by_user_id,
         "created_at": version.created_at.isoformat(),
         "assets": [
@@ -1007,6 +1032,25 @@ def serialize_content(
     owner_technical: bool = True,
 ) -> dict:
     version = current_version(db, content)
+    published_remote = (
+        db.query(InstagramRemoteMedia)
+        .filter(
+            InstagramRemoteMedia.business_id == content.business_id,
+            InstagramRemoteMedia.internal_content_id == content.id,
+            InstagramRemoteMedia.parent_id.is_(None),
+        )
+        .order_by(InstagramRemoteMedia.id.desc())
+        .first()
+    )
+    source_remote = next(
+        (
+            link.asset.source_raw_asset.source_remote_media
+            for link in sorted(version.asset_links, key=lambda item: item.position)
+            if link.asset.source_raw_asset is not None
+            and link.asset.source_raw_asset.source_remote_media is not None
+        ),
+        None,
+    )
     payload = {
         "id": content.id,
         "business_id": content.business_id,
@@ -1022,6 +1066,30 @@ def serialize_content(
         "current_version": serialize_version(version, api_prefix),
         "created_at": content.created_at.isoformat(),
         "updated_at": content.updated_at.isoformat(),
+        "instagram_remote": (
+            {
+                "id": published_remote.id,
+                "remote_status": published_remote.remote_status,
+                "last_checked_at": published_remote.last_checked_at.isoformat()
+                if published_remote.last_checked_at
+                else None,
+                "unavailable_at": published_remote.unavailable_at.isoformat()
+                if published_remote.unavailable_at
+                else None,
+            }
+            if published_remote
+            else None
+        ),
+        "source_instagram_media": (
+            {
+                "id": source_remote.id,
+                "origin": source_remote.origin,
+                "remote_status": source_remote.remote_status,
+                "source_internal_content_id": source_remote.internal_content_id,
+            }
+            if source_remote
+            else None
+        ),
     }
     if detailed:
         payload["versions"] = [serialize_version(item, api_prefix) for item in content.versions]
@@ -1039,6 +1107,7 @@ def serialize_content(
                 "association_created_at": link.created_at.isoformat(),
             }
             for link in sorted(content.source_asset_links, key=lambda item: item.created_at)
+            if link.raw_asset.source_kind == "business_upload"
         ]
         from app.services.instagram_publish_service import (
             publication_history_events,

@@ -73,8 +73,10 @@ COPY_ORDER = (
     "business_channel_integrations",
     "business_channel_controls",
     "instagram_content_settings",
-    "instagram_raw_assets",
     "instagram_contents",
+    "instagram_remote_media",
+    "instagram_media_sync_states",
+    "instagram_raw_assets",
     "instagram_content_raw_assets",
     "instagram_final_assets",
     "instagram_content_versions",
@@ -106,6 +108,8 @@ OPTIONAL_SOURCE_TABLES = (
     "business_staff_profile_services",
     "business_channel_controls",
     "instagram_content_settings",
+    "instagram_remote_media",
+    "instagram_media_sync_states",
     "instagram_raw_assets",
     "instagram_contents",
     "instagram_content_raw_assets",
@@ -164,9 +168,16 @@ ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
     "instagram_raw_assets": {
         "service_id": {"action": "omit_as_null", "expected_value": None},
         "active": {"action": "use_destination_default", "expected_value": True},
+        "source_kind": {
+            "action": "use_destination_default",
+            "expected_value": "business_upload",
+        },
+        "source_remote_media_id": {"action": "omit_as_null", "expected_value": None},
+        "sha256": {"action": "omit_as_null", "expected_value": None},
     },
     "instagram_final_assets": {
         "source_raw_asset_id": {"action": "omit_as_null", "expected_value": None},
+        "derivation_fingerprint": {"action": "omit_as_null", "expected_value": None},
     },
     "instagram_contents": {
         "source_proposal_id": {"action": "omit_as_null", "expected_value": None},
@@ -175,6 +186,8 @@ ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
         "editorial_package_json": {"action": "omit_as_null", "expected_value": None},
         "generation_source": {"action": "omit_as_null", "expected_value": None},
         "generator_version": {"action": "omit_as_null", "expected_value": None},
+        "story_transform_json": {"action": "omit_as_null", "expected_value": None},
+        "story_renderer_version": {"action": "omit_as_null", "expected_value": None},
     },
     "business_channel_integrations": {
         "provider_account_id": {"action": "omit_as_null", "expected_value": None},

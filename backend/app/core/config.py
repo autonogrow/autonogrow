@@ -126,6 +126,12 @@ class Settings(BaseSettings):
     instagram_graph_api_version: str = "v23.0"
     instagram_http_connect_timeout_seconds: float = 5.0
     instagram_http_read_timeout_seconds: float = 20.0
+    instagram_media_sync_enabled: bool = True
+    instagram_media_sync_interval_hours: int = 12
+    instagram_media_sync_page_size: int = 25
+    instagram_media_unavailable_probe_limit: int = 20
+    instagram_remote_download_max_size_mb: int = 10
+    instagram_story_render_max_size_mb: int = 8
     instagram_asset_url_base: str = ""
     instagram_asset_url_secret: str = ""
     instagram_asset_url_ttl_seconds: int = 300
@@ -439,6 +445,36 @@ class Settings(BaseSettings):
                 self.instagram_asset_url_ttl_seconds,
                 30,
                 900,
+            ),
+            (
+                "INSTAGRAM_MEDIA_SYNC_INTERVAL_HOURS",
+                self.instagram_media_sync_interval_hours,
+                1,
+                168,
+            ),
+            (
+                "INSTAGRAM_MEDIA_SYNC_PAGE_SIZE",
+                self.instagram_media_sync_page_size,
+                1,
+                100,
+            ),
+            (
+                "INSTAGRAM_MEDIA_UNAVAILABLE_PROBE_LIMIT",
+                self.instagram_media_unavailable_probe_limit,
+                1,
+                100,
+            ),
+            (
+                "INSTAGRAM_REMOTE_DOWNLOAD_MAX_SIZE_MB",
+                self.instagram_remote_download_max_size_mb,
+                1,
+                25,
+            ),
+            (
+                "INSTAGRAM_STORY_RENDER_MAX_SIZE_MB",
+                self.instagram_story_render_max_size_mb,
+                1,
+                25,
             ),
         )
         for (

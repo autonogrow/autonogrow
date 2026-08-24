@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
@@ -8,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -27,13 +29,17 @@ from app.models import (
     InstagramContentVersion,
     InstagramContentVersionAsset,
     InstagramFinalAsset,
+    InstagramMediaSyncState,
     InstagramPublishJob,
     InstagramRawAsset,
+    InstagramRemoteMedia,
     MetaIntegrationJob,
     User,
 )
 from app.routers.instagram_content import admin_router, owner_router
 from app.services.instagram_content_service import raw_asset_association_manager
+from app.services.instagram_meta_client import InstagramRemoteMediaItem
+from app.services.instagram_remote_asset_service import DownloadedImage
 
 
 @pytest.fixture
@@ -1709,4 +1715,212 @@ def test_admin_and_staff_get_no_owner_raw_library_privileges(editorial_context, 
         )
         .status_code
         == 403
+    )
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (width, height), (200, 60, 30)).save(output, format="PNG")
+    return output.getvalue()
+
+
+def _create_story_draft(ctx) -> int:
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/contents",
+        json={
+            "title": "Historia reutilizada",
+            "caption": "",
+            "format": "story",
+            "planned_publish_at": future_planned_at(),
+        },
+    )
+    assert response.status_code == 201
+    return response.json()["id"]
+
+
+def test_owner_renders_horizontal_upload_as_versioned_story(editorial_context, monkeypatch):
+    ctx = editorial_context
+    enable_service(ctx)
+    content_id = _create_story_draft(ctx)
+    monkeypatch.setattr(
+        "app.services.instagram_story_service.get_uploads_dir",
+        lambda: ctx["uploads_dir"],
+    )
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/contents/{content_id}/story-image",
+        data={
+            "transform": json.dumps(
+                {
+                    "mode": "fit",
+                    "zoom": 1.25,
+                    "position_x": 0.25,
+                    "position_y": 0.75,
+                    "background": "light",
+                }
+            )
+        },
+        files={"file": ("horizontal.png", _png_bytes(1200, 600), "image/png")},
+    )
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["asset"]["media_type"] == "image/jpeg"
+    assert payload["asset"]["source_raw_asset_id"] is not None
+    version = payload["content"]["current_version"]
+    assert version["story_transform"]["mode"] == "fit"
+    assert version["story_transform"]["position_x"] == 0.25
+    assert version["story_renderer_version"] == "story-pillow-v1"
+    raw = ctx["db"].get(InstagramRawAsset, payload["asset"]["source_raw_asset_id"])
+    final = ctx["db"].get(InstagramFinalAsset, payload["asset"]["id"])
+    assert raw.source_kind == "business_upload"
+    assert raw.media_type == "image/png"
+    assert final.derivation_fingerprint
+    with Image.open(ctx["uploads_dir"] / final.storage_key) as rendered:
+        assert rendered.format == "JPEG"
+        assert rendered.width * 16 == rendered.height * 9
+
+
+def test_owner_story_upload_rejects_mime_magic_mismatch(editorial_context, monkeypatch):
+    ctx = editorial_context
+    enable_service(ctx)
+    content_id = _create_story_draft(ctx)
+    monkeypatch.setattr(
+        "app.services.instagram_story_service.get_uploads_dir",
+        lambda: ctx["uploads_dir"],
+    )
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/contents/{content_id}/story-image",
+        data={"transform": "{}"},
+        files={"file": ("fake.jpg", _png_bytes(20, 20), "image/jpeg")},
+    )
+    assert response.status_code == 400
+    assert "MIME" in response.text
+    assert ctx["db"].query(InstagramRawAsset).count() == 0
+
+
+def test_owner_reuses_carousel_child_without_exposing_provider_url(
+    editorial_context, monkeypatch
+):
+    ctx = editorial_context
+    enable_service(ctx)
+    content_id = _create_story_draft(ctx)
+    integration = BusinessChannelIntegration(
+        business_id=ctx["business"].id,
+        channel="instagram",
+        provider="instagram",
+        external_account_id="reuse-account",
+        integration_status="connected",
+    )
+    other_integration = BusinessChannelIntegration(
+        business_id=ctx["other_business"].id,
+        channel="instagram",
+        provider="instagram",
+        external_account_id="other-reuse-account",
+        integration_status="connected",
+    )
+    ctx["db"].add_all([integration, other_integration])
+    ctx["db"].flush()
+    parent = InstagramRemoteMedia(
+        business_id=ctx["business"].id,
+        integration_id=integration.id,
+        provider_media_id="carousel-parent",
+        media_type="CAROUSEL_ALBUM",
+        origin="instagram",
+        remote_status="available",
+        provider_preview_url="https://private.example.test/parent.jpg?signature=secret",
+    )
+    ctx["db"].add(parent)
+    ctx["db"].flush()
+    child = InstagramRemoteMedia(
+        business_id=ctx["business"].id,
+        integration_id=integration.id,
+        provider_media_id="carousel-child",
+        parent_id=parent.id,
+        position=0,
+        media_type="IMAGE",
+        origin="instagram",
+        remote_status="available",
+        provider_preview_url="https://private.example.test/child.jpg?signature=secret",
+    )
+    other = InstagramRemoteMedia(
+        business_id=ctx["other_business"].id,
+        integration_id=other_integration.id,
+        provider_media_id="other-media",
+        media_type="IMAGE",
+        origin="instagram",
+        remote_status="available",
+    )
+    sync_state = InstagramMediaSyncState(
+        business_id=ctx["business"].id,
+        integration_id=integration.id,
+        status="succeeded",
+        last_success_at=datetime.now(timezone.utc),
+    )
+    ctx["db"].add_all([child, other, sync_state])
+    ctx["db"].commit()
+
+    library = ctx["client"].get(f"{owner_base(ctx)}/instagram-media")
+    assert library.status_code == 200
+    serialized = json.dumps(library.json())
+    assert "carousel-parent" not in serialized
+    assert "signature=secret" not in serialized
+    assert "other-media" not in serialized
+    assert library.json()["items"][0]["child_count"] == 1
+
+    downloaded_content = _png_bytes(800, 800)
+    monkeypatch.setattr(
+        "app.routers.instagram_content.refresh_remote_media_item",
+        lambda *_args, **_kwargs: InstagramRemoteMediaItem(
+            provider_media_id="carousel-child",
+            media_type="IMAGE",
+            media_product_type="CAROUSEL_ITEM",
+            caption=None,
+            timestamp=None,
+            permalink=None,
+            media_url="https://cdn.example.test/child.png",
+            thumbnail_url=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.routers.instagram_content.download_remote_image",
+        lambda *_args, **_kwargs: DownloadedImage(
+            content=downloaded_content,
+            media_type="image/png",
+            extension=".png",
+            sha256=hashlib.sha256(downloaded_content).hexdigest(),
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.instagram_remote_asset_service.get_uploads_dir",
+        lambda: ctx["uploads_dir"],
+    )
+    monkeypatch.setattr(
+        "app.services.instagram_story_service.get_uploads_dir",
+        lambda: ctx["uploads_dir"],
+    )
+    response = ctx["client"].post(
+        f"{owner_base(ctx)}/contents/{content_id}/story-image",
+        data={
+            "remote_media_id": str(child.id),
+            "transform": '{"mode":"fill","background":"dark"}',
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["content"]["source_instagram_media"] == {
+        "id": child.id,
+        "origin": "instagram",
+        "remote_status": "available",
+        "source_internal_content_id": None,
+    }
+    assert response.json()["content"]["source_assets"] == []
+    raw = ctx["db"].get(
+        InstagramRawAsset, response.json()["asset"]["source_raw_asset_id"]
+    )
+    assert raw.source_kind == "instagram"
+    assert raw.source_remote_media_id == child.id
+    assert (
+        ctx["db"]
+        .query(InstagramRawAsset)
+        .filter(InstagramRawAsset.source_remote_media_id == child.id)
+        .count()
+        == 1
     )

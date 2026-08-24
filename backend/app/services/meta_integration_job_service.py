@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any
 
@@ -15,6 +15,7 @@ from app.models import (
     Business,
     BusinessChannelControl,
     BusinessChannelIntegration,
+    InstagramMediaSyncState,
     InstagramOAuthAttempt,
     MetaIntegrationJob,
     User,
@@ -61,11 +62,16 @@ def enqueue_meta_integration_job(
     now: datetime | None = None,
 ) -> tuple[MetaIntegrationJob, bool]:
     current = _now(now)
-    if job_type in {"health_check", "retry_subscription"} and integration_id is None:
+    if job_type in {"health_check", "retry_subscription", "instagram_media_sync"} and integration_id is None:
         raise ValueError("Integration is required for this maintenance job")
     if job_type == "attempt_cleanup" and integration_id is not None:
         raise ValueError("Cleanup jobs cannot target an integration")
-    if job_type not in {"health_check", "retry_subscription", "attempt_cleanup"}:
+    if job_type not in {
+        "health_check",
+        "retry_subscription",
+        "attempt_cleanup",
+        "instagram_media_sync",
+    }:
         raise ValueError("Unsupported maintenance job")
     if origin not in {"scheduler", "owner", "admin", "system"}:
         raise ValueError("Unsupported maintenance job origin")
@@ -128,12 +134,16 @@ def enqueue_meta_integration_job(
     record_audit(
         db,
         action=(
-            "integration_health_check_scheduled"
-            if job_type == "health_check"
+            "instagram_media_sync_scheduled"
+            if job_type == "instagram_media_sync"
             else (
-                "subscription_retry_started"
-                if job_type == "retry_subscription"
-                else "integration_attempt_cleanup_scheduled"
+                "integration_health_check_scheduled"
+                if job_type == "health_check"
+                else (
+                    "subscription_retry_started"
+                    if job_type == "retry_subscription"
+                    else "integration_attempt_cleanup_scheduled"
+                )
             )
         ),
         actor=db.get(User, actor_user_id) if actor_user_id else None,
@@ -189,6 +199,41 @@ def schedule_due_meta_jobs(
             integration.next_health_check_at = current + timedelta(
                 hours=settings.meta_integration_health_check_interval_hours
             )
+            scheduled += int(created)
+
+    if settings.instagram_media_sync_enabled and settings.instagram_provider_enabled:
+        from app.services.instagram_media_sync_service import enqueue_instagram_media_sync
+
+        due_before = current.replace(tzinfo=timezone.utc) - timedelta(
+            hours=settings.instagram_media_sync_interval_hours
+        )
+        integrations = (
+            db.query(BusinessChannelIntegration)
+            .join(
+                InstagramMediaSyncState,
+                InstagramMediaSyncState.integration_id == BusinessChannelIntegration.id,
+            )
+            .filter(
+                BusinessChannelIntegration.channel == "instagram",
+                BusinessChannelIntegration.provider == "instagram",
+                BusinessChannelIntegration.integration_status.in_(("connected", "degraded")),
+                InstagramMediaSyncState.last_success_at.is_not(None),
+                InstagramMediaSyncState.last_success_at <= due_before,
+            )
+            .order_by(InstagramMediaSyncState.last_success_at, BusinessChannelIntegration.id)
+            .limit(settings.meta_integration_health_batch_size)
+            .all()
+        )
+        for integration in integrations:
+            try:
+                _, created, _ = enqueue_instagram_media_sync(
+                    db,
+                    business_id=integration.business_id,
+                    origin="scheduler",
+                    settings=settings,
+                )
+            except ValueError:
+                continue
             scheduled += int(created)
 
     interval_seconds = settings.meta_integration_cleanup_interval_hours * 3600
@@ -332,12 +377,18 @@ def fail_meta_integration_job(
     job.updated_at = current
     record_audit(
         db,
-        action="integration_health_check_failed"
-        if job.job_type == "health_check"
-        else (
-            "subscription_retry_failed"
-            if job.job_type == "retry_subscription"
-            else "integration_attempt_cleanup_failed"
+        action=(
+            "instagram_media_sync_job_failed"
+            if job.job_type == "instagram_media_sync"
+            else (
+                "integration_health_check_failed"
+                if job.job_type == "health_check"
+                else (
+                    "subscription_retry_failed"
+                    if job.job_type == "retry_subscription"
+                    else "integration_attempt_cleanup_failed"
+                )
+            )
         ),
         business_id=job.business_id,
         resource_type="meta_integration_job",

@@ -5,7 +5,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 
-META_INTEGRATION_JOB_TYPES = ("health_check", "retry_subscription", "attempt_cleanup")
+META_INTEGRATION_JOB_TYPES = (
+    "health_check",
+    "retry_subscription",
+    "attempt_cleanup",
+    "instagram_media_sync",
+)
 META_INTEGRATION_JOB_STATUSES = (
     "queued",
     "processing",
@@ -21,7 +26,8 @@ class MetaIntegrationJob(Base):
     __tablename__ = "meta_integration_jobs"
     __table_args__ = (
         CheckConstraint(
-            "job_type IN ('health_check','retry_subscription','attempt_cleanup')",
+            "job_type IN ('health_check','retry_subscription','attempt_cleanup',"
+            "'instagram_media_sync')",
             name="ck_meta_integration_job_type",
         ),
         CheckConstraint(
@@ -35,7 +41,8 @@ class MetaIntegrationJob(Base):
         CheckConstraint("attempt_count >= 0", name="ck_meta_integration_job_attempt_count"),
         CheckConstraint("max_attempts > 0", name="ck_meta_integration_job_max_attempts"),
         CheckConstraint(
-            "((job_type IN ('health_check','retry_subscription') AND integration_id IS NOT NULL) "
+            "((job_type IN ('health_check','retry_subscription','instagram_media_sync') "
+            "AND integration_id IS NOT NULL) "
             "OR (job_type = 'attempt_cleanup' AND integration_id IS NULL))",
             name="ck_meta_integration_job_integration_required",
         ),

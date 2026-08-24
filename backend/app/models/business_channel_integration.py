@@ -127,3 +127,14 @@ class BusinessChannelIntegration(Base):
     )
 
     business = relationship("Business", back_populates="channel_integrations")
+    instagram_media = relationship(
+        "InstagramRemoteMedia",
+        back_populates="integration",
+        cascade="all, delete-orphan",
+    )
+    instagram_media_sync_state = relationship(
+        "InstagramMediaSyncState",
+        back_populates="integration",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )

@@ -47,6 +47,14 @@ class InstagramContentSettings(Base):
 class InstagramRawAsset(Base):
     __tablename__ = "instagram_raw_assets"
     __table_args__ = (
+        CheckConstraint(
+            "source_kind IN ('business_upload','instagram')",
+            name="ck_instagram_raw_assets_source_kind",
+        ),
+        UniqueConstraint(
+            "source_remote_media_id",
+            name="uq_instagram_raw_asset_remote_media",
+        ),
         Index("ix_instagram_raw_assets_business_created", "business_id", "created_at"),
     )
 
@@ -63,10 +71,17 @@ class InstagramRawAsset(Base):
     uploaded_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
+    source_kind: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="business_upload", server_default="business_upload"
+    )
+    source_remote_media_id: Mapped[int | None] = mapped_column(
+        ForeignKey("instagram_remote_media.id", ondelete="RESTRICT"), index=True
+    )
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_key: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
     media_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str | None] = mapped_column(String(64))
     label: Mapped[str | None] = mapped_column(String(240))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -82,6 +97,10 @@ class InstagramRawAsset(Base):
         "InstagramFinalAsset",
         back_populates="source_raw_asset",
         passive_deletes=True,
+    )
+    source_remote_media = relationship(
+        "InstagramRemoteMedia",
+        back_populates="materialized_raw_asset",
     )
 
 
@@ -190,7 +209,8 @@ class InstagramFinalAsset(Base):
         UniqueConstraint(
             "content_id",
             "source_raw_asset_id",
-            name="uq_instagram_final_asset_content_raw_source",
+            "derivation_fingerprint",
+            name="uq_instagram_final_asset_derivation",
         ),
     )
 
@@ -212,6 +232,7 @@ class InstagramFinalAsset(Base):
     media_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     sha256: Mapped[str | None] = mapped_column(String(64))
+    derivation_fingerprint: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     content = relationship("InstagramContent", back_populates="final_assets")
@@ -245,6 +266,8 @@ class InstagramContentVersion(Base):
     editorial_package_json: Mapped[str | None] = mapped_column(Text)
     generation_source: Mapped[str | None] = mapped_column(String(30))
     generator_version: Mapped[str | None] = mapped_column(String(50))
+    story_transform_json: Mapped[str | None] = mapped_column(Text)
+    story_renderer_version: Mapped[str | None] = mapped_column(String(50))
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )

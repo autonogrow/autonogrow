@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Panel AutonoGrow</title>
-  <link rel="stylesheet" href="styles.css?v=20260823-social1" />
+  <link rel="stylesheet" href="styles.css?v=20260824-p1" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -403,8 +403,9 @@
           </div></fieldset>
           <section class="instagram-composer__section" aria-labelledby="owner-instagram-media-title"><div class="instagram-composer__section-heading"><div><h3 id="owner-instagram-media-title">Multimedia</h3><p id="owner-instagram-media-help" class="helper">Añade una imagen JPEG.</p></div><span id="owner-instagram-media-count" class="ag-badge ag-badge--neutral">0</span></div>
             <input id="owner-instagram-composer-file" type="file" accept="image/jpeg" hidden>
-            <div class="instagram-composer__media-actions"><button id="owner-instagram-composer-add" class="button button-secondary" type="button">+ Añadir foto</button><button id="owner-instagram-composer-reuse" class="button button-ghost" type="button" disabled title="Disponible en la siguiente fase">Reutilizar contenido · Próximamente</button></div>
+            <div class="instagram-composer__media-actions"><button id="owner-instagram-composer-add" class="button button-secondary" type="button">+ Añadir foto</button><button id="owner-instagram-composer-reuse" class="button button-ghost" type="button">Reutilizar publicación</button></div>
             <div id="owner-instagram-composer-media" class="instagram-composer__media-list" aria-live="polite"></div>
+            <fieldset id="owner-instagram-story-editor" class="instagram-story-editor" hidden><legend>Ajuste 9:16</legend><div class="instagram-story-editor__modes" role="radiogroup" aria-label="Ajuste de imagen"><label><input type="radio" name="story_mode" value="fill" checked><span>Rellenar</span></label><label><input type="radio" name="story_mode" value="fit"><span>Encajar</span></label></div><label>Zoom <input id="owner-instagram-story-zoom" type="range" min="1" max="2.5" step="0.05" value="1"><output id="owner-instagram-story-zoom-output">1.00×</output></label><label>Posición horizontal <input id="owner-instagram-story-x" type="range" min="0" max="1" step="0.01" value="0.5"></label><label>Posición vertical <input id="owner-instagram-story-y" type="range" min="0" max="1" step="0.01" value="0.5"></label><div class="instagram-story-editor__actions"><button id="owner-instagram-story-center" class="button button-ghost button-small" type="button">Centrar</button><button id="owner-instagram-story-reset" class="button button-ghost button-small" type="button">Restablecer</button></div><div class="instagram-story-editor__background"><span>Fondo</span><label><input type="radio" name="story_background" value="dark" checked> Oscuro</label><label><input type="radio" name="story_background" value="light"> Claro</label></div><p id="owner-instagram-story-editor-help" class="helper">La vista previa y el JPEG final utilizan el mismo encuadre.</p></fieldset>
           </section>
           <label id="owner-instagram-caption-field" class="instagram-composer__caption">Texto<textarea id="owner-instagram-composer-caption" maxlength="2200" rows="5" placeholder="Escribe el texto de la publicación…"></textarea><small><span id="owner-instagram-caption-count">0</span>/2200</small></label>
           <fieldset class="instagram-composer__publication"><legend>Publicación</legend><div class="instagram-composer__publication-options"><label><input type="radio" name="composer_publication" value="now"><span>Publicar ahora</span></label><label><input type="radio" name="composer_publication" value="schedule" checked><span>Programar</span></label></div>
@@ -419,6 +420,17 @@
         </aside>
       </div>
       <footer class="instagram-composer__footer"><div><button id="owner-instagram-composer-cancel-content" class="button button-ghost" type="button" hidden>Cancelar publicación</button></div><div><button id="owner-instagram-composer-save" class="button button-secondary" type="button">Guardar borrador</button><button id="owner-instagram-composer-primary" class="button button-primary" type="button">Programar</button></div></footer>
+    </section>
+  </div>
+  <div id="owner-instagram-library-dialog" class="owner-dialog-backdrop instagram-library-backdrop" hidden>
+    <section class="owner-dialog instagram-library" role="dialog" aria-modal="true" aria-labelledby="owner-instagram-library-title" tabindex="-1">
+      <header><div><p class="eyebrow">Elegir contenido</p><h2 id="owner-instagram-library-title">Contenido social</h2></div><button id="owner-instagram-library-close" class="ag-button ag-button--icon" type="button" aria-label="Cerrar selector">×</button></header>
+      <div class="instagram-library__tabs" role="tablist" aria-label="Fuente de contenido"><button type="button" role="tab" aria-selected="true">Instagram</button><button type="button" role="tab" aria-selected="false" disabled title="Disponible en una fase posterior">Material del negocio</button></div>
+      <div class="instagram-library__toolbar"><div role="group" aria-label="Filtrar contenido"><button class="button button-ghost button-small" type="button" data-instagram-library-filter="recent" aria-pressed="true">Recientes</button><button class="button button-ghost button-small" type="button" data-instagram-library-filter="photos" aria-pressed="false">Fotos</button><button class="button button-ghost button-small" type="button" data-instagram-library-filter="carousels" aria-pressed="false">Carruseles</button><button class="button button-ghost button-small" type="button" data-instagram-library-filter="reels" aria-pressed="false">Reels</button></div><button id="owner-instagram-library-sync" class="button button-secondary button-small" type="button">Actualizar desde Instagram</button></div>
+      <p id="owner-instagram-library-status" class="helper" aria-live="polite"></p>
+      <div id="owner-instagram-library-grid" class="instagram-library__grid" aria-live="polite"></div>
+      <p id="owner-instagram-library-error" class="owner-dialog-error" role="alert"></p>
+      <footer><button id="owner-instagram-library-back" class="button button-ghost" type="button" hidden>Volver a publicaciones</button><button id="owner-instagram-library-done" class="button button-primary" type="button">Cerrar</button></footer>
     </section>
   </div>
   <div id="owner-instagram-associations-dialog" class="owner-dialog-backdrop" hidden>
@@ -455,7 +467,7 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js?v=10b5"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="owner.js?v=20260824-p01"></script>
+  <script src="owner.js?v=20260824-p1"></script>
   <script src="owner-businesses.js?v=20260805-4"></script>
   <script src="owner-operations.js?v=20260805-2"></script>
   <script src="owner-onboarding.js?v=5f1"></script>

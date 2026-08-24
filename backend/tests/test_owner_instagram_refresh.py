@@ -418,7 +418,7 @@ def test_owner_instagram_composer_hides_lifecycle_but_preserves_every_transition
     assert 'multiple = state.format === "carousel"' in js
     assert 'single_image: { label: "Publicación", accept: "image/jpeg"' in js
     assert 'reel: { label: "Reel", accept: "video/mp4"' in js
-    assert 'story: { label: "Historia", accept: "image/jpeg,video/mp4"' in js
+    assert 'story: { label: "Historia", accept: "image/jpeg,image/png,image/webp,video/mp4"' in js
     assert 'data-owner-composer-move="-1"' in js
     assert 'draggable="true"' in js
     assert 'data-owner-composer-preview="previous"' in html
@@ -432,8 +432,36 @@ def test_owner_instagram_composer_hides_lifecycle_but_preserves_every_transition
     assert 'id="owner-instagram-composer-advanced"' in html
     assert "Versión" in js and "Intentos" in js and "provider_media_id" in js
     assert 'id="owner-instagram-composer-reuse"' in html
-    assert "Próximamente" in html
+    assert "Reutilizar publicación" in html
+    assert "Material del negocio" in html
     assert 'id="owner-instagram-detail"' not in html
+
+
+def test_owner_story_editor_and_instagram_library_share_a_versioned_contract() -> None:
+    html = OWNER_HTML.read_text(encoding="utf-8")
+    js = OWNER_JS.read_text(encoding="utf-8")
+
+    for field in (
+        "story_mode",
+        "owner-instagram-story-zoom",
+        "owner-instagram-story-x",
+        "owner-instagram-story-y",
+        "story_background",
+    ):
+        assert field in html
+    for value in ('value="fill"', 'value="fit"', 'value="dark"', 'value="light"'):
+        assert value in html
+    assert "ownerInstagramStoryGeometry" in js
+    assert "Math.floor(sourceWidth * scale + 0.5)" in js
+    assert "source_raw_asset_id" in js
+    assert "/story-image`" in js
+    assert 'data.append("transform", JSON.stringify(state.storyTransform))' in js
+    assert 'id="owner-instagram-library-dialog"' in html
+    assert "/instagram-media?filter=" in js
+    assert "/instagram-media/sync`" in js
+    assert "¿Qué imagen quieres usar?" in js
+    assert "Reel no compatible en P1" in js
+    assert "provider_preview_url" not in js
 
 
 def test_authenticated_rate_limit_is_shared_by_ip_and_documented_as_single_process() -> None:

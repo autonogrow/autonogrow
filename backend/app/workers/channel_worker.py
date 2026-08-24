@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
 
+import requests
 from sqlalchemy import or_
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
@@ -22,6 +23,7 @@ from app.models import (
     BusinessChannelIntegration,
     ChannelOutboxMessage,
     ConversationMessage,
+    InstagramMediaSyncState,
     MetaIntegrationJob,
     WebhookInboxEvent,
 )
@@ -38,6 +40,21 @@ from app.services.channel_provider_service import (
 from app.services.database_error_service import classify_database_error, report_database_incident
 from app.services.inbox_queue_service import claim_inbox_jobs, fail_inbox_job
 from app.services.incident_service import report_incident, resolve_related_incidents
+from app.services.instagram_media_sync_service import (
+    advance_or_finish_sync,
+    enqueue_instagram_media_sync,
+    mark_media_unavailable,
+    mark_probe_available,
+    mark_sync_failed,
+    mark_sync_started,
+    persist_media_page,
+    unavailable_probe_candidates,
+)
+from app.services.instagram_meta_client import (
+    InstagramMetaClient,
+    InstagramRemoteMediaItem,
+    MetaHTTPError,
+)
 from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
 from app.services.maintenance_service import maintenance_enabled
 from app.services.meta_integration_health_checkers import health_checker_for_provider
@@ -92,11 +109,13 @@ class ChannelWorker:
         settings: Settings | None = None,
         session_factory: sessionmaker[Session] = SessionLocal,
         senders: Mapping[str, ProviderSender] | None = None,
+        instagram_media_client: InstagramMetaClient | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.settings = settings or get_settings()
         self.session_factory = session_factory
         self.provider_senders = provider_senders(senders)
+        self.instagram_media_client = instagram_media_client or InstagramMetaClient(self.settings)
         self.sleep = sleep
         configured_id = self.settings.worker_id.strip()
         self.worker_id = configured_id or f"channel-{socket.gethostname()}-{os.getpid()}"
@@ -605,8 +624,248 @@ class ChannelWorker:
                 checker=checker,
             )
 
+    @staticmethod
+    def _sync_error(error: Exception) -> tuple[str, str, bool]:
+        if isinstance(error, MetaHTTPError):
+            if error.authentication:
+                return "instagram_authentication_failed", "Instagram must be reconnected", False
+            if error.permission:
+                return "instagram_permission_denied", "Instagram permissions are insufficient", False
+            return (
+                (error.error_code or "instagram_provider_error")[:120],
+                "Instagram could not be updated. Existing media was preserved",
+                error.retryable,
+            )
+        if isinstance(error, requests.RequestException):
+            return (
+                "instagram_provider_unreachable",
+                "Instagram could not be updated. Existing media was preserved",
+                True,
+            )
+        return (
+            "instagram_media_sync_failed",
+            "Instagram could not be updated. Existing media was preserved",
+            True,
+        )
+
+    def _fail_instagram_media_sync(
+        self, job_id: int, *, error: Exception, started: float
+    ) -> None:
+        error_code, safe_message, retryable = self._sync_error(error)
+        with self.session_factory() as db:
+            job = db.get(MetaIntegrationJob, job_id)
+            state = (
+                db.query(InstagramMediaSyncState)
+                .filter(InstagramMediaSyncState.integration_id == job.integration_id)
+                .first()
+                if job and job.integration_id
+                else None
+            )
+            if job is None or job.status != "processing":
+                return
+            if state is not None:
+                mark_sync_failed(
+                    db,
+                    state=state,
+                    job_id=job.id,
+                    error_code=error_code,
+                    safe_message=safe_message,
+                )
+            fail_meta_integration_job(
+                db,
+                job,
+                error_code=error_code,
+                safe_message=safe_message,
+                retryable=retryable,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            db.commit()
+
+    def _process_instagram_media_sync(self, job_id: int, *, started: float) -> None:
+        try:
+            with self.session_factory() as db:
+                job = db.get(MetaIntegrationJob, job_id)
+                if job is None or job.status != "processing" or job.integration_id is None:
+                    return
+                integration = (
+                    db.query(BusinessChannelIntegration)
+                    .filter(
+                        BusinessChannelIntegration.id == job.integration_id,
+                        BusinessChannelIntegration.business_id == job.business_id,
+                        BusinessChannelIntegration.channel == "instagram",
+                        BusinessChannelIntegration.provider == "instagram",
+                    )
+                    .first()
+                )
+                state = (
+                    db.query(InstagramMediaSyncState)
+                    .filter(
+                        InstagramMediaSyncState.integration_id == job.integration_id,
+                        InstagramMediaSyncState.business_id == job.business_id,
+                    )
+                    .first()
+                )
+                if (
+                    integration is None
+                    or state is None
+                    or not state.run_id
+                    or not integration.encrypted_access_token
+                    or not integration.encryption_key_version
+                ):
+                    raise ValueError("Instagram media sync is not prepared")
+                token = decrypt_secret(
+                    integration.encrypted_access_token,
+                    integration.encryption_key_version,
+                    settings=self.settings,
+                )
+                business_id = job.business_id
+                integration_id = integration.id
+                account_id = integration.external_account_id
+                run_id = state.run_id
+                after_cursor = state.after_cursor
+                mark_sync_started(db, state=state, job=job)
+                db.commit()
+
+            page = self.instagram_media_client.list_account_media(
+                account_id=account_id,
+                access_token=token,
+                after_cursor=after_cursor,
+                limit=self.settings.instagram_media_sync_page_size,
+            )
+            page_items: list[
+                tuple[InstagramRemoteMediaItem, tuple[InstagramRemoteMediaItem, ...]]
+            ] = []
+            for item in page.items:
+                children: list[InstagramRemoteMediaItem] = []
+                if item.media_type == "CAROUSEL_ALBUM":
+                    child_cursor = None
+                    for _ in range(5):
+                        child_page = self.instagram_media_client.list_media_children(
+                            media_id=item.provider_media_id,
+                            access_token=token,
+                            after_cursor=child_cursor,
+                            limit=25,
+                        )
+                        children.extend(child_page.items)
+                        child_cursor = child_page.after_cursor
+                        if not child_cursor:
+                            break
+                    if child_cursor:
+                        raise ValueError("Instagram carousel pagination exceeded safe bound")
+                page_items.append((item, tuple(children)))
+
+            with self.session_factory() as db:
+                state = (
+                    db.query(InstagramMediaSyncState)
+                    .filter(
+                        InstagramMediaSyncState.integration_id == integration_id,
+                        InstagramMediaSyncState.run_id == run_id,
+                    )
+                    .first()
+                )
+                if state is None:
+                    return
+                result = persist_media_page(
+                    db,
+                    business_id=business_id,
+                    integration_id=integration_id,
+                    run_id=run_id,
+                    items=tuple(page_items),
+                )
+                candidates = (
+                    unavailable_probe_candidates(
+                        db,
+                        integration_id=integration_id,
+                        run_id=run_id,
+                        limit=self.settings.instagram_media_unavailable_probe_limit,
+                    )
+                    if page.after_cursor is None
+                    else []
+                )
+                db.commit()
+
+            probe_results: list[tuple[int, InstagramRemoteMediaItem | None, str | None]] = []
+            for media_id, provider_media_id in candidates:
+                try:
+                    refreshed = self.instagram_media_client.get_media(
+                        media_id=provider_media_id,
+                        access_token=token,
+                    )
+                    probe_results.append((media_id, refreshed, None))
+                except MetaHTTPError as error:
+                    if not error.unavailable:
+                        raise
+                    probe_results.append((media_id, None, error.error_code))
+
+            with self.session_factory() as db:
+                job = db.get(MetaIntegrationJob, job_id)
+                state = (
+                    db.query(InstagramMediaSyncState)
+                    .filter(
+                        InstagramMediaSyncState.integration_id == integration_id,
+                        InstagramMediaSyncState.run_id == run_id,
+                    )
+                    .first()
+                )
+                if job is None or job.status != "processing" or state is None:
+                    return
+                unavailable_count = 0
+                for media_id, probe_item, error_code in probe_results:
+                    if probe_item is None:
+                        unavailable_count += int(
+                            mark_media_unavailable(
+                                db,
+                                business_id=business_id,
+                                integration_id=integration_id,
+                                media_id=media_id,
+                                error_code=error_code,
+                            )
+                        )
+                    else:
+                        mark_probe_available(
+                            db,
+                            business_id=business_id,
+                            integration_id=integration_id,
+                            media_id=media_id,
+                            item=probe_item,
+                        )
+                advance_or_finish_sync(
+                    db,
+                    state=state,
+                    job_id=job.id,
+                    after_cursor=page.after_cursor,
+                    result=result,
+                    unavailable_count=unavailable_count,
+                )
+                finish_meta_integration_job(
+                    db,
+                    job,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+                if page.after_cursor is not None:
+                    enqueue_instagram_media_sync(
+                        db,
+                        business_id=business_id,
+                        origin="system",
+                        settings=self.settings,
+                    )
+                db.commit()
+        except (MetaHTTPError, requests.RequestException, IntegrationCryptoError, ValueError) as error:
+            self._fail_instagram_media_sync(job_id, error=error, started=started)
+        except Exception as error:
+            logger.exception("instagram_media_sync_unexpected_failure job_id=%s", job_id)
+            self._fail_instagram_media_sync(job_id, error=error, started=started)
+
     def _process_meta_job(self, job_id: int) -> None:
         started = time.monotonic()
+        with self.session_factory() as type_db:
+            current_job = type_db.get(MetaIntegrationJob, job_id)
+            if current_job is None or current_job.status != "processing":
+                return
+            job_type = current_job.job_type
+        if job_type == "instagram_media_sync":
+            self._process_instagram_media_sync(job_id, started=started)
+            return
         with self.session_factory() as db:
             job = db.get(MetaIntegrationJob, job_id)
             if job is None or job.status != "processing":

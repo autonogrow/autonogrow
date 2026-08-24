@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -13,7 +14,8 @@ from app.core.config import Settings
 logger = logging.getLogger(__name__)
 _SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,255}")
 _SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9_.:-]{1,120}")
-MAX_RESPONSE_BYTES = 64 * 1024
+MAX_RESPONSE_BYTES = 512 * 1024
+_MEDIA_TYPES = frozenset({"IMAGE", "VIDEO", "CAROUSEL_ALBUM"})
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,25 @@ class MetaHTTPError(Exception):
     is_transient: bool | None = None
     provider_request_id: str | None = None
     operation: str | None = None
+    unavailable: bool = False
+
+
+@dataclass(frozen=True)
+class InstagramRemoteMediaItem:
+    provider_media_id: str
+    media_type: str
+    media_product_type: str | None
+    caption: str | None
+    timestamp: datetime | None
+    permalink: str | None
+    media_url: str | None
+    thumbnail_url: str | None
+
+
+@dataclass(frozen=True)
+class InstagramRemoteMediaPage:
+    items: tuple[InstagramRemoteMediaItem, ...]
+    after_cursor: str | None
 
 
 class InstagramMetaClient:
@@ -84,6 +105,8 @@ class InstagramMetaClient:
             is_transient,
             provider_request_id,
             operation,
+            response.status_code == 404
+            or (code == "100" and not authentication and not permission and not retryable),
         )
 
     def _request(
@@ -164,6 +187,142 @@ class InstagramMetaClient:
                 False,
             )
         return value
+
+    @staticmethod
+    def _optional_https_url(payload: dict[str, Any], key: str) -> str | None:
+        value = payload.get(key)
+        if not isinstance(value, str) or len(value) > 4096 or not value.startswith("https://"):
+            return None
+        return value
+
+    @staticmethod
+    def _optional_text(payload: dict[str, Any], key: str, maximum: int) -> str | None:
+        value = payload.get(key)
+        if not isinstance(value, str):
+            return None
+        return value[:maximum]
+
+    @staticmethod
+    def _optional_timestamp(payload: dict[str, Any]) -> datetime | None:
+        value = payload.get("timestamp")
+        if not isinstance(value, str) or len(value) > 80:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _media_item(cls, payload: dict[str, Any]) -> InstagramRemoteMediaItem:
+        provider_media_id = cls._required_id(payload)
+        media_type = payload.get("media_type")
+        if media_type not in _MEDIA_TYPES:
+            raise MetaHTTPError(200, "unsupported_media_type", None, None, False, False, False)
+        product_type = payload.get("media_product_type")
+        if not isinstance(product_type, str) or not re.fullmatch(r"[A-Z_]{1,40}", product_type):
+            product_type = None
+        return InstagramRemoteMediaItem(
+            provider_media_id=provider_media_id,
+            media_type=media_type,
+            media_product_type=product_type,
+            caption=cls._optional_text(payload, "caption", 5000),
+            timestamp=cls._optional_timestamp(payload),
+            permalink=cls._optional_https_url(payload, "permalink"),
+            media_url=cls._optional_https_url(payload, "media_url"),
+            thumbnail_url=cls._optional_https_url(payload, "thumbnail_url"),
+        )
+
+    @staticmethod
+    def _page_cursor(payload: dict[str, Any]) -> str | None:
+        paging = payload.get("paging")
+        cursors = paging.get("cursors") if isinstance(paging, dict) else None
+        value = cursors.get("after") if isinstance(cursors, dict) else None
+        return value if isinstance(value, str) and 0 < len(value) <= 1000 else None
+
+    def _media_page(self, payload: dict[str, Any]) -> InstagramRemoteMediaPage:
+        data = payload.get("data")
+        if not isinstance(data, list):
+            raise MetaHTTPError(200, "invalid_media_page", None, None, False, False, False)
+        items: list[InstagramRemoteMediaItem] = []
+        for raw_item in data:
+            if not isinstance(raw_item, dict):
+                raise MetaHTTPError(200, "invalid_media_item", None, None, False, False, False)
+            try:
+                items.append(self._media_item(raw_item))
+            except MetaHTTPError as error:
+                if error.error_code != "unsupported_media_type":
+                    raise
+        return InstagramRemoteMediaPage(tuple(items), self._page_cursor(payload))
+
+    def list_account_media(
+        self,
+        *,
+        account_id: str,
+        access_token: str,
+        after_cursor: str | None = None,
+        limit: int = 25,
+    ) -> InstagramRemoteMediaPage:
+        if not 1 <= limit <= 100:
+            raise ValueError("Instagram media page size must be between 1 and 100")
+        params = {
+            "fields": (
+                "id,caption,media_type,media_product_type,media_url,permalink,"
+                "thumbnail_url,timestamp"
+            ),
+            "limit": str(limit),
+        }
+        if after_cursor:
+            if len(after_cursor) > 1000:
+                raise ValueError("Invalid Instagram media cursor")
+            params["after"] = after_cursor
+        payload = self._request(
+            "GET",
+            f"{self._identifier(account_id)}/media",
+            access_token=access_token,
+            params=params,
+            operation="list_account_media",
+        )
+        return self._media_page(payload)
+
+    def list_media_children(
+        self,
+        *,
+        media_id: str,
+        access_token: str,
+        after_cursor: str | None = None,
+        limit: int = 25,
+    ) -> InstagramRemoteMediaPage:
+        params = {
+            "fields": "id,media_type,media_product_type,media_url,thumbnail_url,timestamp",
+            "limit": str(limit),
+        }
+        if after_cursor:
+            if len(after_cursor) > 1000:
+                raise ValueError("Invalid Instagram media cursor")
+            params["after"] = after_cursor
+        payload = self._request(
+            "GET",
+            f"{self._identifier(media_id)}/children",
+            access_token=access_token,
+            params=params,
+            operation="list_media_children",
+        )
+        return self._media_page(payload)
+
+    def get_media(self, *, media_id: str, access_token: str) -> InstagramRemoteMediaItem:
+        payload = self._request(
+            "GET",
+            self._identifier(media_id),
+            access_token=access_token,
+            params={
+                "fields": (
+                    "id,caption,media_type,media_product_type,media_url,permalink,"
+                    "thumbnail_url,timestamp"
+                )
+            },
+            operation="get_media",
+        )
+        return self._media_item(payload)
 
     def create_image_container(
         self, *, account_id: str, image_url: str, caption: str, access_token: str

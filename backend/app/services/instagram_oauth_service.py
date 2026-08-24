@@ -18,7 +18,9 @@ from app.models import (
     BusinessChannelIntegration,
     BusinessUser,
     Conversation,
+    InstagramMediaSyncState,
     InstagramOAuthAttempt,
+    InstagramRemoteMedia,
     User,
 )
 from app.services.channel_control_service import utc_now
@@ -753,6 +755,29 @@ def decide_instagram_oauth_candidate(
     integration.health_metadata_json = None
     db.flush()
 
+    if old_account_id and old_account_id != account_id:
+        db.query(InstagramRemoteMedia).filter(
+            InstagramRemoteMedia.integration_id == integration.id,
+            InstagramRemoteMedia.remote_status == "available",
+        ).update(
+            {
+                InstagramRemoteMedia.remote_status: "unavailable",
+                InstagramRemoteMedia.unavailable_at: now,
+                InstagramRemoteMedia.last_error_code: "instagram_account_replaced",
+                InstagramRemoteMedia.updated_at: now,
+            },
+            synchronize_session=False,
+        )
+        sync_state = (
+            db.query(InstagramMediaSyncState)
+            .filter(InstagramMediaSyncState.integration_id == integration.id)
+            .first()
+        )
+        if sync_state is not None:
+            sync_state.status = "idle"
+            sync_state.run_id = None
+            sync_state.after_cursor = None
+
     if control.status == "pending_approval":
         control.status = "approved"
         control.approved_by_user_id = actor.id
@@ -766,4 +791,12 @@ def decide_instagram_oauth_candidate(
     attempt.invalidated_at = now
     _clear_candidate_credentials(attempt)
     db.flush()
+    if get_settings().instagram_media_sync_enabled:
+        from app.services.instagram_media_sync_service import enqueue_instagram_media_sync
+
+        enqueue_instagram_media_sync(
+            db,
+            business_id=business_id,
+            origin="system",
+        )
     return attempt, integration

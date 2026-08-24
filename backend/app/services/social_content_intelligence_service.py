@@ -462,7 +462,10 @@ class SocialContentIntelligenceService:
         )
         raw = (
             self.db.query(InstagramRawAsset)
-            .filter(InstagramRawAsset.business_id == business_id)
+            .filter(
+                InstagramRawAsset.business_id == business_id,
+                InstagramRawAsset.source_kind == "business_upload",
+            )
             .count()
         )
         return gallery + raw

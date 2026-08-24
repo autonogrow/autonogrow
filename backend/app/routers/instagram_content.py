@@ -1,13 +1,14 @@
 import hashlib
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
+import requests
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
@@ -22,8 +23,10 @@ from app.models import (
     InstagramContentVersion,
     InstagramContentVersionAsset,
     InstagramFinalAsset,
+    InstagramMediaSyncState,
     InstagramPublishJob,
     InstagramRawAsset,
+    InstagramRemoteMedia,
     User,
 )
 from app.schemas.instagram_content import (
@@ -67,6 +70,14 @@ from app.services.instagram_content_service import (
     update_material,
     validate_content,
 )
+from app.services.instagram_integration_service import get_instagram_integration
+from app.services.instagram_media_sync_service import (
+    enqueue_instagram_media_sync,
+    mark_media_unavailable,
+    serialize_remote_media,
+    serialize_sync_state,
+)
+from app.services.instagram_meta_client import MetaHTTPError
 from app.services.instagram_publish_service import (
     ACTIVE_JOB_STATUSES,
     cancel_business_jobs,
@@ -78,6 +89,18 @@ from app.services.instagram_publish_service import (
     serialize_publish_job,
     sync_publish_job,
     utc_now,
+)
+from app.services.instagram_remote_asset_service import (
+    RemoteAssetError,
+    download_remote_image,
+    materialize_remote_image,
+    refresh_remote_media_item,
+    remote_media_for_business,
+)
+from app.services.instagram_story_renderer import StoryRenderError, StoryTransform
+from app.services.instagram_story_service import (
+    create_uploaded_story_raw,
+    render_story_version,
 )
 
 owner_router = APIRouter(
@@ -360,7 +383,10 @@ def _list_raw(
                 InstagramContentRawAsset.content
             )
         )
-        .filter(InstagramRawAsset.business_id == business_id)
+        .filter(
+            InstagramRawAsset.business_id == business_id,
+            InstagramRawAsset.source_kind == "business_upload",
+        )
         .order_by(InstagramRawAsset.created_at.desc(), InstagramRawAsset.id.desc())
         .offset(offset)
         .limit(limit)
@@ -392,6 +418,7 @@ async def _upload_raw(
         storage_key=storage_key,
         media_type=media_type,
         size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
         label=label.strip()[:240] if label and label.strip() else None,
     )
     db.add(asset)
@@ -406,6 +433,7 @@ def _raw_or_404(db: Session, business_id: int, asset_id: int) -> InstagramRawAss
         .filter(
             InstagramRawAsset.id == asset_id,
             InstagramRawAsset.business_id == business_id,
+            InstagramRawAsset.source_kind == "business_upload",
         )
         .first()
     )
@@ -1002,6 +1030,7 @@ def owner_use_raw_asset_as_final(
                 media_type=raw_asset.media_type,
                 size_bytes=len(raw_content),
                 sha256=hashlib.sha256(raw_content).hexdigest(),
+                derivation_fingerprint="copy",
             )
             db.add(final_asset)
             db.flush()
@@ -2075,3 +2104,302 @@ def owner_validate_content(
         request=request,
         api_prefix=_owner_prefix(business_id),
     )
+
+
+@owner_router.get("/instagram-media")
+def owner_list_instagram_media(
+    business_id: int,
+    media_filter: str = Query("recent", alias="filter"),
+    limit: int = Query(48, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    del actor
+    _owner_business(db, business_id)
+    require_service_enabled(db, business_id)
+    query = (
+        db.query(InstagramRemoteMedia)
+        .options(selectinload(InstagramRemoteMedia.children))
+        .filter(
+            InstagramRemoteMedia.business_id == business_id,
+            InstagramRemoteMedia.parent_id.is_(None),
+            InstagramRemoteMedia.remote_status == "available",
+        )
+    )
+    if media_filter == "photos":
+        query = query.filter(InstagramRemoteMedia.media_type == "IMAGE")
+    elif media_filter == "carousels":
+        query = query.filter(InstagramRemoteMedia.media_type == "CAROUSEL_ALBUM")
+    elif media_filter == "reels":
+        query = query.filter(
+            InstagramRemoteMedia.media_type == "VIDEO",
+            InstagramRemoteMedia.media_product_type == "REELS",
+        )
+    elif media_filter != "recent":
+        raise HTTPException(status_code=422, detail="Unsupported Instagram media filter")
+    media = (
+        query.order_by(
+            InstagramRemoteMedia.provider_timestamp.desc(), InstagramRemoteMedia.id.desc()
+        )
+        .offset(offset)
+        .limit(limit + 1)
+        .all()
+    )
+    prefix = _owner_prefix(business_id)
+    return {
+        "items": [serialize_remote_media(item, prefix) for item in media[:limit]],
+        "has_more": len(media) > limit,
+        "next_offset": offset + limit if len(media) > limit else None,
+    }
+
+
+@owner_router.get("/instagram-media/sync")
+def owner_instagram_media_sync_status(
+    business_id: int,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    del actor
+    _owner_business(db, business_id)
+    integration = get_instagram_integration(db, business_id=business_id)
+    state = (
+        db.query(InstagramMediaSyncState)
+        .filter(InstagramMediaSyncState.integration_id == integration.id)
+        .first()
+        if integration is not None
+        else None
+    )
+    return serialize_sync_state(state)
+
+
+@owner_router.post("/instagram-media/sync", status_code=202)
+def owner_refresh_instagram_media(
+    business_id: int,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    require_service_enabled(db, business_id)
+    try:
+        job, created, state = enqueue_instagram_media_sync(
+            db,
+            business_id=business_id,
+            origin="owner",
+            actor_user_id=actor.id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail="Instagram is not connected") from error
+    db.commit()
+    return {
+        "accepted": True,
+        "created": created,
+        "job_id": job.id,
+        "sync": serialize_sync_state(state),
+    }
+
+
+@owner_router.get("/instagram-media/{media_id}")
+def owner_instagram_media_detail(
+    business_id: int,
+    media_id: int,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    del actor
+    _owner_business(db, business_id)
+    media = (
+        db.query(InstagramRemoteMedia)
+        .options(selectinload(InstagramRemoteMedia.children))
+        .filter(
+            InstagramRemoteMedia.id == media_id,
+            InstagramRemoteMedia.business_id == business_id,
+        )
+        .first()
+    )
+    if media is None:
+        raise HTTPException(status_code=404, detail="Instagram media not found")
+    return serialize_remote_media(media, _owner_prefix(business_id))
+
+
+@owner_router.get("/instagram-media/{media_id}/preview")
+def owner_instagram_media_preview(
+    business_id: int,
+    media_id: int,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    del actor
+    _owner_business(db, business_id)
+    try:
+        media, integration = remote_media_for_business(
+            db,
+            business_id=business_id,
+            media_id=media_id,
+        )
+        url = media.provider_preview_url
+        try:
+            if not url:
+                raise RemoteAssetError("Instagram preview URL must be refreshed")
+            downloaded = download_remote_image(url)
+        except RemoteAssetError:
+            refreshed = refresh_remote_media_item(media, integration)
+            url = refreshed.thumbnail_url if media.media_type == "VIDEO" else refreshed.media_url
+            url = url or refreshed.thumbnail_url
+            if not url:
+                raise RemoteAssetError("Instagram preview is unavailable")
+            downloaded = download_remote_image(url)
+        media.provider_preview_url = url
+        media.last_checked_at = datetime.now(timezone.utc)
+        media.last_error_code = None
+        db.commit()
+    except MetaHTTPError as error:
+        if error.unavailable:
+            mark_media_unavailable(
+                db,
+                business_id=business_id,
+                integration_id=media.integration_id,
+                media_id=media.id,
+                error_code=error.error_code,
+            )
+            db.commit()
+            raise HTTPException(status_code=404, detail="Instagram media is unavailable") from error
+        raise HTTPException(status_code=502, detail="Instagram preview could not be updated") from error
+    except requests.RequestException as error:
+        raise HTTPException(status_code=502, detail="Instagram preview could not be updated") from error
+    except RemoteAssetError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return Response(
+        content=downloaded.content,
+        media_type=downloaded.media_type,
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@owner_router.post("/contents/{content_id}/story-image", status_code=201)
+async def owner_render_story_image(
+    business_id: int,
+    content_id: int,
+    transform_json: str = Form("{}", alias="transform"),
+    file: UploadFile | None = File(None),
+    remote_media_id: int | None = Form(None),
+    source_raw_asset_id: int | None = Form(None),
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    require_service_enabled(db, business_id)
+    content_or_404(db, business_id, content_id)
+    try:
+        transform = StoryTransform.from_json(transform_json)
+    except StoryRenderError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    selected = sum(
+        (
+            file is not None,
+            remote_media_id is not None,
+            source_raw_asset_id is not None,
+        )
+    )
+    if selected != 1:
+        raise HTTPException(status_code=422, detail="Choose exactly one Story image source")
+
+    source_remote: InstagramRemoteMedia | None = None
+    raw_asset: InstagramRawAsset | None = None
+    if file is not None:
+        maximum = get_settings().upload_max_size_mb * 1024 * 1024
+        content = await file.read(maximum + 1)
+        raw_asset = create_uploaded_story_raw(
+            db,
+            business_id=business_id,
+            actor=actor,
+            filename=file.filename or "story-image",
+            media_type=(file.content_type or "").lower(),
+            content=content,
+        )
+    elif remote_media_id is not None:
+        try:
+            source_remote, integration = remote_media_for_business(
+                db,
+                business_id=business_id,
+                media_id=remote_media_id,
+            )
+            if source_remote.media_type != "IMAGE":
+                raise HTTPException(
+                    status_code=422,
+                    detail="P1 supports Instagram images and carousel image children",
+                )
+            refreshed = refresh_remote_media_item(source_remote, integration)
+            if not refreshed.media_url:
+                raise RemoteAssetError("Instagram image URL is unavailable")
+            downloaded = download_remote_image(refreshed.media_url)
+            source_remote.provider_preview_url = refreshed.media_url
+            source_remote.last_checked_at = datetime.now(timezone.utc)
+            raw_asset, _ = materialize_remote_image(
+                db,
+                media=source_remote,
+                downloaded=downloaded,
+            )
+        except MetaHTTPError as error:
+            if error.unavailable and source_remote is not None:
+                mark_media_unavailable(
+                    db,
+                    business_id=business_id,
+                    integration_id=source_remote.integration_id,
+                    media_id=source_remote.id,
+                    error_code=error.error_code,
+                )
+                db.commit()
+                raise HTTPException(
+                    status_code=409, detail="Instagram media is no longer available"
+                ) from error
+            raise HTTPException(status_code=502, detail="Instagram media could not be read") from error
+        except requests.RequestException as error:
+            raise HTTPException(status_code=502, detail="Instagram media could not be read") from error
+        except RemoteAssetError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+    else:
+        raw_asset = (
+            db.query(InstagramRawAsset)
+            .join(
+                InstagramFinalAsset,
+                InstagramFinalAsset.source_raw_asset_id == InstagramRawAsset.id,
+            )
+            .filter(
+                InstagramRawAsset.id == source_raw_asset_id,
+                InstagramRawAsset.business_id == business_id,
+                InstagramFinalAsset.content_id == content_id,
+                InstagramFinalAsset.business_id == business_id,
+            )
+            .first()
+        )
+        if raw_asset is None:
+            raise HTTPException(status_code=404, detail="Story source not found")
+        source_remote = raw_asset.source_remote_media
+
+    if raw_asset is None:
+        raise HTTPException(status_code=404, detail="Story source not found")
+
+    final_asset, created = render_story_version(
+        db,
+        business_id=business_id,
+        content_id=content_id,
+        raw_asset=raw_asset,
+        actor=actor,
+        transform=transform,
+        source_remote_media=source_remote,
+    )
+    db.commit()
+    return {
+        "created": created,
+        "asset": serialize_final_asset(final_asset, _owner_prefix(business_id)),
+        "content": serialize_content(
+            db,
+            content_or_404(db, business_id, content_id),
+            _owner_prefix(business_id),
+            detailed=True,
+        ),
+    }

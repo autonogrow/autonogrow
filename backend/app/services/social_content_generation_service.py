@@ -323,6 +323,7 @@ def _recommended_assets(
     for asset in db.query(InstagramRawAsset).filter(
         InstagramRawAsset.business_id == proposal.business_id,
         InstagramRawAsset.active.is_(True),
+        InstagramRawAsset.source_kind == "business_upload",
     ):
         compatible = (
             asset.media_type.startswith("video/")

@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import io
 import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from PIL import Image
 from playwright.sync_api import expect
 
 from e2e.seed import JPEG_BYTES
 
 pytestmark = pytest.mark.e2e
+
+
+def _horizontal_png() -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (1200, 600), (190, 50, 25)).save(output, format="PNG")
+    return output.getvalue()
 
 
 def _open_admin(journey, *, mobile: bool = False):
@@ -270,7 +278,7 @@ def test_owner_instagram_composer_uses_day_without_fixed_hour_and_previews_forma
 
     composer.locator(".instagram-composer__formats").get_by_text("Historia", exact=True).click()
     expect(composer.locator("#owner-instagram-composer-reuse")).to_be_visible()
-    expect(composer.locator("#owner-instagram-composer-reuse")).to_be_disabled()
+    expect(composer.locator("#owner-instagram-composer-reuse")).to_be_enabled()
     expect(composer.locator("#owner-instagram-caption-field")).to_be_hidden()
 
 
@@ -304,6 +312,100 @@ def test_owner_instagram_composer_saves_ordered_carousel_without_exposing_assets
     assert payload["current_version"]["format"] == "carousel"
     assert [item["original_filename"] for item in payload["current_version"]["assets"]] == reordered
     assert page.locator("#owner-instagram-enabled-area").get_by_text("Assets finales").count() == 0
+
+
+def test_owner_story_editor_renders_horizontal_upload_with_saved_contract(journey) -> None:
+    _session, page = _open_owner_instagram(journey)
+    page.locator("#owner-instagram-create").click()
+    composer = page.locator("#owner-instagram-composer")
+    composer.locator(".instagram-composer__formats").get_by_text("Historia", exact=True).click()
+    composer.locator("#owner-instagram-composer-file").set_input_files(
+        {"name": "horizontal.png", "mimeType": "image/png", "buffer": _horizontal_png()}
+    )
+    expect(composer.locator("#owner-instagram-story-editor")).to_be_visible()
+    expect(composer.locator("#owner-instagram-preview-stage [data-story-preview]")).to_be_visible()
+    ratio = composer.locator("#owner-instagram-preview-stage").evaluate(
+        "element => element.clientWidth / element.clientHeight"
+    )
+    assert ratio == pytest.approx(9 / 16, rel=0.02)
+    composer.get_by_text("Encajar", exact=True).click()
+    composer.locator("#owner-instagram-story-zoom").fill("1.2")
+    composer.get_by_text("Claro", exact=False).click()
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and response.url.endswith("/story-image")
+    ) as rendered:
+        composer.locator("#owner-instagram-composer-save").click()
+    payload = rendered.value.json()
+    assert payload["asset"]["media_type"] == "image/jpeg"
+    assert payload["asset"]["source_raw_asset_id"] is not None
+    assert payload["content"]["current_version"]["story_transform"]["mode"] == "fit"
+    assert payload["content"]["current_version"]["story_transform"]["background"] == "light"
+    expect(composer).to_be_hidden()
+
+
+def test_owner_instagram_library_selects_explicit_carousel_child(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import Business, BusinessChannelIntegration, InstagramRemoteMedia
+
+    with SessionLocal() as db:
+        business = db.query(Business).filter(Business.slug == "salon-e2e").one()
+        integration = BusinessChannelIntegration(
+            business_id=business.id,
+            channel="instagram",
+            provider="instagram",
+            external_account_id="e2e-library-account",
+            integration_status="connected",
+        )
+        db.add(integration)
+        db.flush()
+        parent = InstagramRemoteMedia(
+            business_id=business.id,
+            integration_id=integration.id,
+            provider_media_id="e2e-carousel",
+            media_type="CAROUSEL_ALBUM",
+            origin="instagram",
+            remote_status="available",
+        )
+        db.add(parent)
+        db.flush()
+        db.add_all(
+            [
+                InstagramRemoteMedia(
+                    business_id=business.id,
+                    integration_id=integration.id,
+                    provider_media_id=f"e2e-child-{position}",
+                    parent_id=parent.id,
+                    position=position,
+                    media_type="IMAGE",
+                    origin="instagram",
+                    remote_status="available",
+                )
+                for position in range(2)
+            ]
+        )
+        db.commit()
+
+    _session, page = _open_owner_instagram(journey)
+    page.route(
+        "**/instagram-media/*/preview",
+        lambda route: route.fulfill(status=200, content_type="image/png", body=_horizontal_png()),
+    )
+    page.locator("#owner-instagram-create").click()
+    composer = page.locator("#owner-instagram-composer")
+    composer.locator(".instagram-composer__formats").get_by_text("Historia", exact=True).click()
+    composer.locator("#owner-instagram-composer-reuse").click()
+    library = page.locator("#owner-instagram-library-dialog")
+    expect(library).to_be_visible()
+    expect(library.get_by_role("tab", name="Instagram")).to_have_attribute(
+        "aria-selected", "true"
+    )
+    expect(library.get_by_role("tab", name="Material del negocio")).to_be_disabled()
+    library.get_by_role("button", name="Elegir imagen").click()
+    expect(library.get_by_text("¿Qué imagen quieres usar?")).to_be_visible()
+    library.get_by_role("button", name="Usar en Story").first.click()
+    expect(library).to_be_hidden()
+    expect(composer.locator("#owner-instagram-story-editor")).to_be_visible()
 
 
 def test_owner_raw_association_manager_protects_and_updates_without_reload(journey) -> None:
