@@ -44,6 +44,13 @@ ACTIVE_JOB_STATUSES = {
     "simulating_publish",
     "retry_wait",
 }
+EXECUTING_JOB_STATUSES = {
+    "claimed",
+    "creating_container",
+    "publishing",
+    "simulating_publish",
+    "retry_wait",
+}
 BLOCKING_HEALTH = {"action_required", "revoked", "suspended", "error"}
 UNCERTAIN_PROVIDER_STATUSES = {
     "unknown_result",
@@ -451,20 +458,13 @@ def sync_publish_job(
         raise HTTPException(
             status_code=409, detail="Unknown publish outcomes require manual review"
         )
-    if job is not None and job.status in {"simulating_publish", "publishing"}:
-        job.status = "action_required"
-        job.safe_error_message = "Schedule changed after publishing execution began"
-        job.provider_status = "outcome_requires_review"
-        _clear_claim(job)
-        _audit_job(
-            db,
-            job,
-            "publish_action_required",
-            {"reason": "execution_already_started"},
-            actor=actor,
+    if job is not None and job.status in EXECUTING_JOB_STATUSES:
+        if force_now:
+            return job
+        raise HTTPException(
+            status_code=409,
+            detail="Publication is already in process and cannot be rescheduled",
         )
-        db.flush()
-        return job
     created = job is None
     if job is None:
         job = InstagramPublishJob(

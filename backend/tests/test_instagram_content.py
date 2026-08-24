@@ -768,6 +768,46 @@ def test_owner_schedule_reschedule_publish_now_and_cancel_endpoints(editorial_co
     assert publish_now.status_code == 200
     assert publish_now.json()["status"] == "queued"
     assert publish_now.json()["id"] == first_job["id"]
+    active_job = ctx["db"].get(InstagramPublishJob, first_job["id"])
+    active_job.status = "creating_container"
+    active_job.attempt_count = 1
+    active_job.claimed_by = "worker-in-flight"
+    active_job.claimed_at = datetime.now(timezone.utc)
+    active_job.claim_expires_at = datetime.now(timezone.utc) + timedelta(minutes=2)
+    active_job.provider_status = "carousel_child_created"
+    active_job.provider_metadata_json = json.dumps(
+        {"carousel_child_container_ids": ["persisted-child"]}
+    )
+    ctx["db"].commit()
+    repeated_publish_now = ctx["client"].post(
+        f"{owner_base(ctx)}/contents/{content_id}/publish-now"
+    )
+    assert repeated_publish_now.status_code == 200
+    assert repeated_publish_now.json()["id"] == first_job["id"]
+    assert repeated_publish_now.json()["status"] == "creating_container"
+    ctx["db"].expire_all()
+    preserved = ctx["db"].get(InstagramPublishJob, first_job["id"])
+    assert preserved.attempt_count == 1
+    assert preserved.claimed_by == "worker-in-flight"
+    assert json.loads(preserved.provider_metadata_json)["carousel_child_container_ids"] == [
+        "persisted-child"
+    ]
+    assert (
+        ctx["db"]
+        .query(AuditLog)
+        .filter_by(action="publish_now_already_active", resource_id=first_job["id"])
+        .count()
+        == 1
+    )
+    blocked_reschedule = ctx["client"].patch(
+        f"{owner_base(ctx)}/contents/{content_id}/publish-job/reschedule",
+        json={"planned_publish_at": (future + timedelta(days=1)).isoformat()},
+    )
+    assert blocked_reschedule.status_code == 409
+    ctx["db"].expire_all()
+    preserved = ctx["db"].get(InstagramPublishJob, first_job["id"])
+    assert preserved.status == "creating_container"
+    assert preserved.claimed_by == "worker-in-flight"
     cancelled = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/publish-job/cancel")
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"

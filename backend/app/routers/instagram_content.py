@@ -68,6 +68,7 @@ from app.services.instagram_content_service import (
     validate_content,
 )
 from app.services.instagram_publish_service import (
+    ACTIVE_JOB_STATUSES,
     cancel_business_jobs,
     cancel_publish_job,
     normalize_planned_datetime,
@@ -1712,7 +1713,7 @@ def owner_publish_now(
     require_service_enabled(db, business_id)
     content = content_or_404(db, business_id, content_id, for_update=True)
     job = sync_publish_job(db, content, actor=actor, now=utc_now(), force_now=True)
-    if job.status != "queued":
+    if job.status not in ACTIVE_JOB_STATUSES:
         raise HTTPException(
             status_code=409,
             detail=job.safe_error_message or "Publishing preflight failed",
@@ -1722,7 +1723,11 @@ def owner_publish_now(
         request=request,
         actor=actor,
         business_id=business_id,
-        action="publish_now_requested",
+        action=(
+            "publish_now_requested"
+            if job.status == "queued"
+            else "publish_now_already_active"
+        ),
         resource_type="instagram_publish_job",
         resource_id=job.id,
         metadata={"content_id": content_id, "version_id": job.content_version_id},
@@ -1812,7 +1817,7 @@ def admin_publish_now(
     require_service_enabled(db, business.id)
     content = content_or_404(db, business.id, content_id, for_update=True)
     job = sync_publish_job(db, content, actor=actor, now=utc_now(), force_now=True)
-    if job.status != "queued":
+    if job.status not in ACTIVE_JOB_STATUSES:
         raise HTTPException(
             status_code=409,
             detail=job.safe_error_message or "Publishing preflight failed",
@@ -1822,7 +1827,11 @@ def admin_publish_now(
         request=request,
         actor=actor,
         business_id=business.id,
-        action="publish_now_requested",
+        action=(
+            "publish_now_requested"
+            if job.status == "queued"
+            else "publish_now_already_active"
+        ),
         resource_type="instagram_publish_job",
         resource_id=job.id,
         metadata={"content_id": content_id, "version_id": job.content_version_id},

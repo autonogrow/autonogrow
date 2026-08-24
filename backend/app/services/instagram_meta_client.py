@@ -25,6 +25,9 @@ class MetaHTTPError(Exception):
     retryable: bool
     authentication: bool
     permission: bool
+    is_transient: bool | None = None
+    provider_request_id: str | None = None
+    operation: str | None = None
 
 
 class InstagramMetaClient:
@@ -44,22 +47,32 @@ class InstagramMetaClient:
         return value
 
     @staticmethod
-    def _error(response: requests.Response, payload: dict[str, Any] | None) -> MetaHTTPError:
+    def _error(
+        response: requests.Response,
+        payload: dict[str, Any] | None,
+        *,
+        provider_request_id: str | None = None,
+        operation: str | None = None,
+    ) -> MetaHTTPError:
         error = payload.get("error") if isinstance(payload, dict) else None
         error = error if isinstance(error, dict) else {}
         raw_code = error.get("code")
         raw_subcode = error.get("error_subcode")
         raw_type = error.get("type")
+        raw_is_transient = error.get("is_transient")
         code = str(raw_code)[:30] if isinstance(raw_code, (str, int)) else None
         subcode = str(raw_subcode)[:30] if isinstance(raw_subcode, (str, int)) else None
         error_type = str(raw_type)[:80] if isinstance(raw_type, str) else None
+        is_transient = raw_is_transient if isinstance(raw_is_transient, bool) else None
         authentication = response.status_code == 401 or code == "190"
         permission = response.status_code == 403 or code in {"10", "200"}
-        retryable = (
-            response.status_code == 429
-            or response.status_code >= 500
-            or code in {"1", "2", "4", "17", "32", "341", "368", "613", "9007"}
-        )
+        retryable = response.status_code == 429 or response.status_code >= 500
+        if not retryable:
+            retryable = (
+                is_transient
+                if is_transient is not None
+                else code in {"1", "2", "4", "17", "32", "341", "368", "613", "9007"}
+            )
         return MetaHTTPError(
             response.status_code,
             code,
@@ -68,6 +81,9 @@ class InstagramMetaClient:
             retryable,
             authentication,
             permission,
+            is_transient,
+            provider_request_id,
+            operation,
         )
 
     def _request(
@@ -115,7 +131,12 @@ class InstagramMetaClient:
             provider_request_id or "unavailable",
         )
         if not response.ok:
-            raise self._error(response, payload if isinstance(payload, dict) else None)
+            raise self._error(
+                response,
+                payload if isinstance(payload, dict) else None,
+                provider_request_id=provider_request_id,
+                operation=operation,
+            )
         if not isinstance(payload, dict):
             raise MetaHTTPError(
                 response.status_code, "invalid_json", None, None, False, False, False
@@ -171,7 +192,7 @@ class InstagramMetaClient:
                 "image_url": image_url,
                 "is_carousel_item": "true",
             },
-            operation="create_carousel_image_item",
+            operation="carousel_child_create",
         )
         return self._required_id(payload)
 
@@ -202,7 +223,7 @@ class InstagramMetaClient:
                 "children": ",".join(validated_children),
                 "caption": caption,
             },
-            operation="create_carousel_container",
+            operation="carousel_parent_create",
         )
         return self._required_id(payload)
 
@@ -275,7 +296,7 @@ class InstagramMetaClient:
             self._identifier(container_id),
             access_token=access_token,
             params={"fields": "status_code"},
-            operation="get_container_status",
+            operation="container_status",
         )
         return self._status_code(payload)
 
@@ -285,7 +306,7 @@ class InstagramMetaClient:
             f"{self._identifier(account_id)}/media_publish",
             access_token=access_token,
             data={"creation_id": self._identifier(container_id)},
-            operation="publish_container",
+            operation="media_publish",
         )
         return self._required_id(payload)
 

@@ -874,6 +874,34 @@ class InstagramPublishWorker:
                     job.provider_status = "attempts_exhausted"
             job.provider_error_code = code
             job.safe_error_message = message[:500]
+            if isinstance(exc, InstagramPublishingError) and exc.provider_diagnostics:
+                try:
+                    provider_metadata = json.loads(job.provider_metadata_json or "{}")
+                except (TypeError, ValueError):
+                    provider_metadata = {}
+                if not isinstance(provider_metadata, dict):
+                    provider_metadata = {}
+                provider_metadata["last_provider_error"] = {
+                    key: value
+                    for key, value in exc.provider_diagnostics.items()
+                    if key
+                    in {
+                        "operation",
+                        "http_status",
+                        "error_code",
+                        "error_subcode",
+                        "error_type",
+                        "is_transient",
+                        "trace_id",
+                        "container_status",
+                        "carousel_position",
+                    }
+                    and value is not None
+                }
+                job.provider_metadata_json = json.dumps(
+                    provider_metadata,
+                    sort_keys=True,
+                )
             _clear_claim(job)
             record_audit(
                 db,
@@ -898,12 +926,30 @@ class InstagramPublishWorker:
         try:
             result = self.adapter.publish(prepared.request)
         except Exception as exc:
-            logger.warning(
-                "instagram_publish_failed job_id=%s worker_id=%s error_type=%s",
-                job_id,
-                self.worker_id,
-                type(exc).__name__,
-            )
+            if isinstance(exc, InstagramPublishingError):
+                diagnostics = exc.provider_diagnostics
+                logger.warning(
+                    "instagram_publish_failed job_id=%s worker_id=%s error_type=%s "
+                    "safe_code=%s provider_operation=%s provider_http_status=%s "
+                    "provider_error_subcode=%s provider_is_transient=%s",
+                    job_id,
+                    self.worker_id,
+                    type(exc).__name__,
+                    exc.code,
+                    diagnostics.get("operation") or "unavailable",
+                    diagnostics.get("http_status") or "unavailable",
+                    diagnostics.get("error_subcode") or "unavailable",
+                    diagnostics.get("is_transient")
+                    if diagnostics.get("is_transient") is not None
+                    else "unavailable",
+                )
+            else:
+                logger.warning(
+                    "instagram_publish_failed job_id=%s worker_id=%s error_type=%s",
+                    job_id,
+                    self.worker_id,
+                    type(exc).__name__,
+                )
             self._finish_error(job_id, exc)
             return
         self._finish_success(job_id, result)

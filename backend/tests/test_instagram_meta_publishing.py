@@ -47,6 +47,7 @@ from app.services.instagram_meta_client import InstagramMetaClient, MetaHTTPErro
 from app.services.instagram_publishing_adapter import (
     InstagramPublishRequest,
     MetaInstagramPublishingAdapter,
+    PermanentPublishingError,
     PublishingActionRequired,
     PublishingAuthenticationError,
     PublishingResultUnknown,
@@ -344,6 +345,7 @@ class FakeMetaClient:
         self.permalink_error = None
         self.inspect_status = None
         self.reel_status = "FINISHED"
+        self.container_statuses: dict[str, str] = {}
         self.reel_status_error = None
         self.carousel_child_error_at = None
         self.carousel_child_counter = 0
@@ -391,7 +393,7 @@ class FakeMetaClient:
         self.calls.append(("status", container_id, access_token))
         if self.reel_status_error:
             raise self.reel_status_error
-        return self.reel_status
+        return self.container_statuses.get(container_id, self.reel_status)
 
     def publish_container(self, **kwargs):
         self.calls.append(("publish", kwargs))
@@ -520,7 +522,11 @@ def test_carousel_creates_children_in_order_parent_and_publish():
         "create_carousel_child",
         "create_carousel_child",
         "create_carousel_child",
+        "status",
+        "status",
+        "status",
         "create_carousel",
+        "status",
         "publish",
         "permalink",
     ]
@@ -534,7 +540,7 @@ def test_carousel_creates_children_in_order_parent_and_publish():
         ("media", "media-1"),
     ]
 
-    assert client.calls[3][1]["children"] == (
+    assert client.calls[6][1]["children"] == (
         "carousel-child-1",
         "carousel-child-2",
         "carousel-child-3",
@@ -569,12 +575,16 @@ def test_carousel_restart_reuses_persisted_children_and_creates_only_missing_chi
 
     assert [call[0] for call in client.calls] == [
         "create_carousel_child",
+        "status",
+        "status",
+        "status",
         "create_carousel",
+        "status",
         "publish",
         "permalink",
     ]
 
-    assert client.calls[1][1]["children"] == (
+    assert client.calls[4][1]["children"] == (
         "persisted-child-1",
         "carousel-child-1",
         "persisted-child-3",
@@ -608,6 +618,7 @@ def test_carousel_restart_with_persisted_parent_skips_children_and_parent_creati
     )
 
     assert [call[0] for call in client.calls] == [
+        "status",
         "publish",
         "permalink",
     ]
@@ -668,6 +679,173 @@ def test_carousel_child_timeout_preserves_progress_before_failed_child():
         "create_carousel_child",
         "create_carousel_child",
     ]
+
+
+def test_carousel_waits_for_every_child_before_creating_parent():
+    client = FakeMetaClient()
+    client.container_statuses["carousel-child-2"] = "IN_PROGRESS"
+
+    with pytest.raises(TemporaryPublishingError) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="carousel",
+                asset_storage_keys=("one.jpg", "two.jpg"),
+                asset_urls=(
+                    "https://assets.example.test/one.jpg",
+                    "https://assets.example.test/two.jpg",
+                ),
+            )
+        )
+
+    assert raised.value.code == "instagram_carousel_child_processing"
+    assert raised.value.provider_diagnostics == {
+        "operation": "carousel_child_status",
+        "container_status": "IN_PROGRESS",
+        "carousel_position": 1,
+    }
+    assert "create_carousel" not in [call[0] for call in client.calls]
+
+
+@pytest.mark.parametrize("status", ["ERROR", "EXPIRED"])
+def test_carousel_child_terminal_status_requires_action(status):
+    client = FakeMetaClient()
+    client.container_statuses["carousel-child-1"] = status
+
+    with pytest.raises(PublishingActionRequired) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="carousel",
+                asset_storage_keys=("one.jpg", "two.jpg"),
+                asset_urls=(
+                    "https://assets.example.test/one.jpg",
+                    "https://assets.example.test/two.jpg",
+                ),
+            )
+        )
+
+    expected_code = {
+        "ERROR": "instagram_carousel_child_processing_failed",
+        "EXPIRED": "instagram_carousel_child_container_expired",
+    }[status]
+    assert raised.value.code == expected_code
+    assert raised.value.provider_diagnostics["carousel_position"] == 0
+    assert "create_carousel" not in [call[0] for call in client.calls]
+
+
+def test_carousel_parent_is_persisted_and_rechecked_without_recreation():
+    client = FakeMetaClient()
+    client.container_statuses["carousel-container-1"] = "IN_PROGRESS"
+    progress = Progress()
+    publish_request = request(
+        format="carousel",
+        asset_storage_keys=("one.jpg", "two.jpg"),
+        asset_urls=(
+            "https://assets.example.test/one.jpg",
+            "https://assets.example.test/two.jpg",
+        ),
+        progress=progress,
+    )
+
+    with pytest.raises(TemporaryPublishingError) as raised:
+        MetaInstagramPublishingAdapter(client).publish(publish_request)
+
+    assert raised.value.code == "instagram_carousel_parent_processing"
+    assert ("container", "carousel-container-1") in progress.events
+    assert "publish" not in [call[0] for call in client.calls]
+
+    retry_client = FakeMetaClient()
+    result = MetaInstagramPublishingAdapter(retry_client).publish(
+        request(
+            format="carousel",
+            asset_storage_keys=("one.jpg", "two.jpg"),
+            asset_urls=(
+                "https://assets.example.test/one.jpg",
+                "https://assets.example.test/two.jpg",
+            ),
+            existing_child_container_ids=("carousel-child-1", "carousel-child-2"),
+            existing_container_id="carousel-container-1",
+        )
+    )
+    assert [call[0] for call in retry_client.calls] == ["status", "publish", "permalink"]
+    assert result.media_id == "media-1"
+
+
+def test_carousel_parent_already_published_never_calls_publish_again():
+    client = FakeMetaClient()
+    client.container_statuses["persisted-parent"] = "PUBLISHED"
+
+    with pytest.raises(PublishingResultUnknown) as raised:
+        MetaInstagramPublishingAdapter(client).publish(
+            request(
+                format="carousel",
+                asset_storage_keys=("one.jpg", "two.jpg"),
+                asset_urls=(
+                    "https://assets.example.test/one.jpg",
+                    "https://assets.example.test/two.jpg",
+                ),
+                existing_child_container_ids=("child-1", "child-2"),
+                existing_container_id="persisted-parent",
+            )
+        )
+
+    assert raised.value.code == "instagram_carousel_parent_already_published_unknown"
+    assert [call[0] for call in client.calls] == ["status"]
+
+
+@pytest.mark.parametrize("asset_count", [2, 5, 10])
+def test_carousel_supports_valid_asset_counts(asset_count):
+    client = FakeMetaClient()
+    names = tuple(f"asset-{index}.jpg" for index in range(asset_count))
+    urls = tuple(f"https://assets.example.test/{name}" for name in names)
+
+    result = MetaInstagramPublishingAdapter(client).publish(
+        request(format="carousel", asset_storage_keys=names, asset_urls=urls)
+    )
+
+    assert result.metadata["carousel_asset_count"] == str(asset_count)
+    assert [call[0] for call in client.calls].count("status") == asset_count + 1
+
+
+@pytest.mark.parametrize(
+    ("is_transient", "provider_code", "expected_error"),
+    [
+        (True, -1, TemporaryPublishingError),
+        (False, 2, PermanentPublishingError),
+        (None, 2, TemporaryPublishingError),
+    ],
+)
+def test_provider_is_transient_controls_error_classification(
+    is_transient, provider_code, expected_error
+):
+    client = InstagramMetaClient(settings())
+    response = SimpleNamespace(status_code=400)
+    error = client._error(
+        response,
+        {
+            "error": {
+                "code": provider_code,
+                "error_subcode": 2207001,
+                "type": "OAuthException",
+                "message": "safe provider message",
+                **({"is_transient": is_transient} if is_transient is not None else {}),
+            }
+        },
+        provider_request_id="trace-safe",
+        operation="carousel_parent_create",
+    )
+
+    with pytest.raises(expected_error) as raised:
+        raise MetaInstagramPublishingAdapter._mapped_error(error)
+
+    assert raised.value.provider_diagnostics == {
+        "operation": "carousel_parent_create",
+        "http_status": 400,
+        "error_code": str(provider_code),
+        "error_subcode": "2207001",
+        "error_type": "OAuthException",
+        "is_transient": is_transient,
+        "trace_id": "trace-safe",
+    }
 
 
 def test_reel_requires_exactly_one_final_video():

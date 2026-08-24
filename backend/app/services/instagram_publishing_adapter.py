@@ -54,10 +54,17 @@ class InstagramPublishResult:
 
 
 class InstagramPublishingError(Exception):
-    def __init__(self, code: str, safe_message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        safe_message: str,
+        *,
+        provider_diagnostics: dict[str, str | int | bool | None] | None = None,
+    ) -> None:
         super().__init__(safe_message)
         self.code = code
         self.safe_message = safe_message
+        self.provider_diagnostics = provider_diagnostics or {}
 
 
 class TemporaryPublishingError(InstagramPublishingError):
@@ -145,26 +152,131 @@ class MetaInstagramPublishingAdapter:
         self.client = client
 
     @staticmethod
-    def _mapped_error(exc: MetaHTTPError) -> InstagramPublishingError:
+    def _safe_provider_diagnostics(
+        exc: MetaHTTPError,
+        *,
+        operation: str | None = None,
+    ) -> dict[str, str | int | bool | None]:
+        return {
+            "operation": operation or exc.operation,
+            "http_status": exc.status_code,
+            "error_code": exc.error_code,
+            "error_subcode": exc.error_subcode,
+            "error_type": exc.error_type,
+            "is_transient": exc.is_transient,
+            "trace_id": exc.provider_request_id,
+        }
+
+    @classmethod
+    def _mapped_error(
+        cls,
+        exc: MetaHTTPError,
+        *,
+        operation: str | None = None,
+    ) -> InstagramPublishingError:
         suffix = f"_{exc.error_code}" if exc.error_code else ""
+        diagnostics = cls._safe_provider_diagnostics(exc, operation=operation)
         if exc.authentication:
             return PublishingAuthenticationError(
-                f"instagram_authentication{suffix}", "Instagram needs to be reconnected"
+                f"instagram_authentication{suffix}",
+                "Instagram needs to be reconnected",
+                provider_diagnostics=diagnostics,
             )
         if exc.permission:
             return PublishingActionRequired(
                 f"instagram_permission{suffix}",
                 "Instagram publishing permission requires attention",
+                provider_diagnostics=diagnostics,
             )
         if exc.retryable:
             return TemporaryPublishingError(
-                f"instagram_temporary{suffix}", "Instagram is temporarily unavailable"
+                f"instagram_temporary{suffix}",
+                "Instagram is temporarily unavailable",
+                provider_diagnostics=diagnostics,
             )
         return PermanentPublishingError(
-            f"instagram_provider_rejected{suffix}", "Instagram rejected the publication"
+            f"instagram_provider_rejected{suffix}",
+            "Instagram rejected the publication",
+            provider_diagnostics=diagnostics,
         )
 
-    def publish(self, request: InstagramPublishRequest) -> InstagramPublishResult:
+    def _require_container_finished(
+        self,
+        request: InstagramPublishRequest,
+        *,
+        container_id: str,
+        code_prefix: str,
+        media_label: str,
+        operation: str,
+        position: int | None = None,
+    ) -> None:
+        diagnostics: dict[str, str | int | bool | None] = {
+            "operation": operation,
+            "container_status": None,
+        }
+        if position is not None:
+            diagnostics["carousel_position"] = position
+
+        try:
+            container_status = self.client.get_container_status(
+                container_id,
+                request.access_token or "",
+            )
+            diagnostics["container_status"] = container_status
+        except (requests.ConnectTimeout, requests.ReadTimeout) as exc:
+            raise TemporaryPublishingError(
+                f"{code_prefix}_status_timeout",
+                f"Instagram {media_label} processing status could not be checked yet",
+                provider_diagnostics=diagnostics,
+            ) from exc
+        except requests.RequestException as exc:
+            raise TemporaryPublishingError(
+                f"{code_prefix}_status_network",
+                "Instagram is temporarily unavailable",
+                provider_diagnostics=diagnostics,
+            ) from exc
+        except ValueError as exc:
+            raise PublishingActionRequired(
+                "instagram_provider_identifier_invalid",
+                "Instagram provider identifier is invalid",
+                provider_diagnostics=diagnostics,
+            ) from exc
+        except MetaHTTPError as exc:
+            raise self._mapped_error(exc, operation=operation) from exc
+
+        if container_status == "IN_PROGRESS":
+            raise TemporaryPublishingError(
+                f"{code_prefix}_processing",
+                f"Instagram {media_label} is still being processed",
+                provider_diagnostics=diagnostics,
+            )
+        if container_status == "ERROR":
+            raise PublishingActionRequired(
+                f"{code_prefix}_processing_failed",
+                f"Instagram could not process the {media_label} asset",
+                provider_diagnostics=diagnostics,
+            )
+        if container_status == "EXPIRED":
+            raise PublishingActionRequired(
+                f"{code_prefix}_container_expired",
+                f"Instagram {media_label} container expired before publication",
+                provider_diagnostics=diagnostics,
+            )
+        if container_status == "PUBLISHED":
+            raise PublishingResultUnknown(
+                f"{code_prefix}_already_published_unknown",
+                "Publishing outcome requires manual verification",
+                provider_diagnostics=diagnostics,
+            )
+        if container_status != "FINISHED":
+            raise PublishingActionRequired(
+                f"{code_prefix}_status_unrecognized",
+                f"Instagram {media_label} processing status requires attention",
+                provider_diagnostics=diagnostics,
+            )
+
+    @staticmethod
+    def _validate_request(request: InstagramPublishRequest) -> None:
         if request.format == "single_image":
             if len(request.asset_storage_keys) != 1 or len(request.asset_urls) != 1:
                 raise PublishingValidationError(
@@ -230,6 +342,53 @@ class MetaInstagramPublishingAdapter:
                 "Instagram publishing configuration requires attention",
             )
 
+    def _create_carousel_container(self, request: InstagramPublishRequest) -> str:
+        assert request.professional_account_id is not None
+        assert request.access_token is not None
+        children = list(
+            request.existing_child_container_ids
+            or (None,) * len(request.asset_storage_keys)
+        )
+        for position, child_id in enumerate(children):
+            if child_id:
+                continue
+            child_id = self.client.create_carousel_image_container(
+                account_id=request.professional_account_id,
+                image_url=request.asset_urls[position],
+                access_token=request.access_token,
+            )
+            children[position] = child_id
+            if request.progress:
+                request.progress.carousel_child_created(position, child_id)
+
+        if any(child_id is None for child_id in children):
+            raise PublishingActionRequired(
+                "instagram_carousel_children_incomplete",
+                "Instagram carousel state requires attention",
+            )
+        for position, child_id in enumerate(children):
+            if child_id is None:
+                continue
+            self._require_container_finished(
+                request,
+                container_id=child_id,
+                code_prefix="instagram_carousel_child",
+                media_label="carousel item",
+                operation="carousel_child_status",
+                position=position,
+            )
+        return self.client.create_carousel_container(
+            account_id=request.professional_account_id,
+            children=tuple(child_id for child_id in children if child_id is not None),
+            caption=request.caption,
+            access_token=request.access_token,
+        )
+
+    def publish(self, request: InstagramPublishRequest) -> InstagramPublishResult:
+        self._validate_request(request)
+        assert request.professional_account_id is not None
+        assert request.access_token is not None
+
         container_id = request.existing_container_id
 
         if not container_id:
@@ -265,45 +424,7 @@ class MetaInstagramPublishingAdapter:
                         )
 
                 else:
-                    children = list(
-                        request.existing_child_container_ids
-                        or (None,) * len(request.asset_storage_keys)
-                    )
-
-                    for position, child_id in enumerate(children):
-                        if child_id:
-                            continue
-
-                        child_id = self.client.create_carousel_image_container(
-                            account_id=request.professional_account_id,
-                            image_url=request.asset_urls[position],
-                            access_token=request.access_token,
-                        )
-
-                        children[position] = child_id
-
-                        if request.progress:
-                            request.progress.carousel_child_created(
-                                position,
-                                child_id,
-                            )
-
-                    if any(child_id is None for child_id in children):
-                        raise PublishingActionRequired(
-                            "instagram_carousel_children_incomplete",
-                            "Instagram carousel state requires attention",
-                        )
-
-                    container_id = self.client.create_carousel_container(
-                        account_id=request.professional_account_id,
-                        children=tuple(
-                            child_id
-                            for child_id in children
-                            if child_id is not None
-                        ),
-                        caption=request.caption,
-                        access_token=request.access_token,
-                    )
+                    container_id = self._create_carousel_container(request)
 
             except (requests.ConnectTimeout, requests.ReadTimeout) as exc:
                 raise TemporaryPublishingError(
@@ -338,67 +459,24 @@ class MetaInstagramPublishingAdapter:
         )
         asynchronous_video = request.format == "reel" or story_video
 
+        if request.format == "carousel" and not media_id:
+            self._require_container_finished(
+                request,
+                container_id=container_id,
+                code_prefix="instagram_carousel_parent",
+                media_label="carousel",
+                operation="carousel_parent_status",
+            )
+
         if asynchronous_video and not media_id:
             is_reel = request.format == "reel"
-            media_label = "Reel" if is_reel else "Story video"
-            code_prefix = "instagram_reel" if is_reel else "instagram_story_video"
-
-            try:
-                container_status = self.client.get_container_status(
-                    container_id,
-                    request.access_token,
-                )
-
-            except (requests.ConnectTimeout, requests.ReadTimeout) as exc:
-                raise TemporaryPublishingError(
-                    f"{code_prefix}_status_timeout",
-                    f"Instagram {media_label} processing status could not be checked yet",
-                ) from exc
-
-            except requests.RequestException as exc:
-                raise TemporaryPublishingError(
-                    f"{code_prefix}_status_network",
-                    "Instagram is temporarily unavailable",
-                ) from exc
-
-            except ValueError as exc:
-                raise PublishingActionRequired(
-                    "instagram_provider_identifier_invalid",
-                    "Instagram provider identifier is invalid",
-                ) from exc
-
-            except MetaHTTPError as exc:
-                raise self._mapped_error(exc) from exc
-
-            if container_status == "IN_PROGRESS":
-                raise TemporaryPublishingError(
-                    f"{code_prefix}_processing",
-                    f"Instagram {media_label} is still being processed",
-                )
-
-            if container_status == "ERROR":
-                raise PublishingActionRequired(
-                    f"{code_prefix}_processing_failed",
-                    f"Instagram could not process the {media_label} asset",
-                )
-
-            if container_status == "EXPIRED":
-                raise PublishingActionRequired(
-                    f"{code_prefix}_container_expired",
-                    f"Instagram {media_label} container expired before publication",
-                )
-
-            if container_status == "PUBLISHED":
-                raise PublishingResultUnknown(
-                    f"{code_prefix}_already_published_unknown",
-                    "Publishing outcome requires manual verification",
-                )
-
-            if container_status != "FINISHED":
-                raise PublishingActionRequired(
-                    f"{code_prefix}_status_unrecognized",
-                    f"Instagram {media_label} processing status requires attention",
-                )
+            self._require_container_finished(
+                request,
+                container_id=container_id,
+                code_prefix="instagram_reel" if is_reel else "instagram_story_video",
+                media_label="Reel" if is_reel else "Story video",
+                operation="container_status",
+            )
 
         if not media_id:
             if request.progress:
@@ -446,6 +524,10 @@ class MetaInstagramPublishingAdapter:
                     raise TemporaryPublishingError(
                         "instagram_container_not_ready",
                         "Instagram container is not ready yet",
+                        provider_diagnostics=self._safe_provider_diagnostics(
+                            exc,
+                            operation="media_publish",
+                        ),
                     ) from exc
 
                 if exc.retryable:
@@ -460,7 +542,7 @@ class MetaInstagramPublishingAdapter:
                         "Publishing outcome requires manual verification",
                     ) from exc
 
-                raise self._mapped_error(exc) from exc
+                raise self._mapped_error(exc, operation="media_publish") from exc
 
             if request.progress:
                 request.progress.media_published(media_id)

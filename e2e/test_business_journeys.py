@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from playwright.sync_api import expect
@@ -179,6 +180,60 @@ def test_owner_instagram_calendar_views_filter_and_quick_action(journey) -> None
     expect(composer.get_by_text("Versión", exact=True)).to_be_hidden()
     composer.locator("#owner-instagram-composer-advanced").click()
     expect(composer.get_by_text("Versión", exact=True)).to_be_visible()
+
+
+def test_owner_instagram_polling_moves_processing_to_published_without_reload(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import Business, InstagramContent, InstagramPublishJob
+
+    with SessionLocal() as db:
+        business = db.query(Business).filter(Business.slug == "salon-e2e").one()
+        content = (
+            db.query(InstagramContent)
+            .filter_by(business_id=business.id, title="SALON lanzamiento")
+            .one()
+        )
+        version = content.versions[0]
+        now = datetime.now(timezone.utc)
+        content.status = "scheduled"
+        job = InstagramPublishJob(
+            business_id=business.id,
+            content_item_id=content.id,
+            content_version_id=version.id,
+            status="retry_wait",
+            scheduled_for=now,
+            attempt_count=1,
+            max_attempts=3,
+            next_attempt_at=now + timedelta(seconds=30),
+            idempotency_key=f"e2e-poll-{content.id}-{version.id}",
+            provider_status="temporary_failure",
+            provider_error_code="instagram_carousel_parent_processing",
+            safe_error_message="Instagram carousel is still being processed",
+        )
+        db.add(job)
+        db.commit()
+        content_id = content.id
+        job_id = job.id
+
+    _session, page = _open_owner_instagram(journey)
+    item = page.get_by_role("button", name=re.compile("SALON lanzamiento"))
+    expect(item).to_contain_text("Procesando en Instagram")
+
+    with SessionLocal() as db:
+        content = db.get(InstagramContent, content_id)
+        job = db.get(InstagramPublishJob, job_id)
+        content.status = "published"
+        job.status = "published"
+        job.provider_status = "published_simulated"
+        job.provider_error_code = None
+        job.safe_error_message = None
+        job.provider_media_id = "e2e-media-published"
+        job.provider_permalink = "https://www.instagram.com/p/e2e-safe/"
+        job.published_at = datetime.now(timezone.utc)
+        job.next_attempt_at = None
+        db.commit()
+
+    expect(item).to_contain_text("Publicado", timeout=15_000)
 
 
 def test_owner_instagram_composer_uses_day_without_fixed_hour_and_previews_formats(journey) -> None:

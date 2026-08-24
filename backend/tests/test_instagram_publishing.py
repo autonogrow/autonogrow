@@ -47,6 +47,7 @@ from app.services.instagram_publish_service import (
 from app.services.instagram_publishing_adapter import (
     MetaInstagramPublishingAdapter,
     SimulatedInstagramPublishingAdapter,
+    TemporaryPublishingError,
 )
 from app.services.integration_crypto_service import encrypt_secret
 from app.workers.instagram_publish_worker import InstagramPublishWorker
@@ -334,6 +335,81 @@ def test_claim_is_single_and_expired_claim_is_recovered(publishing_context):
     )
 
 
+@pytest.mark.parametrize(
+    "executing_status",
+    ["claimed", "creating_container", "publishing", "simulating_publish", "retry_wait"],
+)
+def test_repeated_publish_now_preserves_the_active_job(publishing_context, executing_status):
+    ctx = publishing_context
+    job = queue_now(ctx)
+    claimed_at = utc_now()
+    expires_at = claimed_at + timedelta(seconds=30)
+    job.status = executing_status
+    job.attempt_count = 1
+    job.claimed_by = "worker-in-flight"
+    job.claimed_at = claimed_at
+    job.claim_expires_at = expires_at
+    job.provider_status = "container_created"
+    job.provider_container_id = "persisted-container"
+    original_scheduled_for = job.scheduled_for
+    original_audit_count = ctx["db"].query(AuditLog).count()
+    ctx["db"].commit()
+
+    content = ctx["db"].get(InstagramContent, job.content_item_id)
+    returned = sync_publish_job(
+        ctx["db"], content, actor=ctx["owner"], now=utc_now(), force_now=True
+    )
+    ctx["db"].flush()
+
+    assert returned.id == job.id
+    assert returned.status == executing_status
+    assert returned.attempt_count == 1
+    assert returned.claimed_by == "worker-in-flight"
+    assert returned.claimed_at == claimed_at
+    assert returned.claim_expires_at == expires_at
+    assert returned.provider_container_id == "persisted-container"
+    assert returned.scheduled_for == original_scheduled_for
+    assert ctx["db"].query(InstagramPublishJob).count() == 1
+    assert ctx["db"].query(AuditLog).count() == original_audit_count
+
+
+def test_reschedule_during_container_creation_is_rejected_without_mutating_job(
+    publishing_context,
+):
+    ctx = publishing_context
+    job = queue_now(ctx)
+    claimed_at = utc_now()
+    expires_at = claimed_at + timedelta(seconds=30)
+    job.status = "creating_container"
+    job.attempt_count = 1
+    job.claimed_by = "worker-in-flight"
+    job.claimed_at = claimed_at
+    job.claim_expires_at = expires_at
+    job.provider_status = "carousel_child_created"
+    job.provider_metadata_json = json.dumps(
+        {"carousel_child_container_ids": ["persisted-child-1"]}
+    )
+    original_scheduled_for = job.scheduled_for
+    ctx["db"].commit()
+
+    content = ctx["db"].get(InstagramContent, job.content_item_id)
+    content.planned_publish_at = utc_now() + timedelta(hours=6)
+    with pytest.raises(HTTPException, match="already in process"):
+        sync_publish_job(ctx["db"], content, actor=ctx["owner"], force_now=False)
+
+    ctx["db"].expire(job)
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+    assert stored.status == "creating_container"
+    assert stored.attempt_count == 1
+    assert stored.claimed_by == "worker-in-flight"
+    assert stored.claimed_at == claimed_at
+    assert stored.claim_expires_at == expires_at
+    assert stored.scheduled_for == original_scheduled_for
+    assert json.loads(stored.provider_metadata_json)["carousel_child_container_ids"] == [
+        "persisted-child-1"
+    ]
+
+
 def test_expired_claim_after_execution_is_not_retried(publishing_context):
     ctx = publishing_context
     job = queue_now(ctx)
@@ -453,6 +529,65 @@ def test_retry_reuses_same_job_and_provider_identity(publishing_context):
     assert stored.attempt_count == 2
     assert ctx["db"].query(InstagramPublishJob).count() == 1
     assert stored.provider_status == "duplicate_idempotent"
+
+
+def test_worker_persists_only_whitelisted_provider_diagnostics(publishing_context):
+    ctx = publishing_context
+    job = queue_now(ctx)
+    job.status = "creating_container"
+    job.claimed_by = "diagnostic-worker"
+    job.claimed_at = utc_now()
+    job.claim_expires_at = utc_now() + timedelta(seconds=30)
+    job.attempt_count = 1
+    ctx["db"].commit()
+    worker = InstagramPublishWorker(
+        settings=worker_settings(),
+        session_factory=ctx["factory"],
+        worker_id="diagnostic-worker",
+    )
+
+    worker._finish_error(
+        job.id,
+        TemporaryPublishingError(
+            "instagram_carousel_child_processing",
+            "Instagram carousel item is still being processed",
+            provider_diagnostics={
+                "operation": "carousel_child_status",
+                "http_status": 400,
+                "error_code": "-1",
+                "error_subcode": "2207001",
+                "error_type": "OAuthException",
+                "is_transient": True,
+                "trace_id": "safe-trace",
+                "container_status": "IN_PROGRESS",
+                "carousel_position": 1,
+                "access_token": "must-never-be-stored",
+                "signed_url": "https://must-never-be-stored.invalid/signed",
+                "raw_payload": {"secret": "must-never-be-stored"},
+            },
+        ),
+    )
+
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+    assert stored.status == "retry_wait"
+    metadata = json.loads(stored.provider_metadata_json)
+    assert metadata["last_provider_error"] == {
+        "carousel_position": 1,
+        "container_status": "IN_PROGRESS",
+        "error_code": "-1",
+        "error_subcode": "2207001",
+        "error_type": "OAuthException",
+        "http_status": 400,
+        "is_transient": True,
+        "operation": "carousel_child_status",
+        "trace_id": "safe-trace",
+    }
+    serialized = stored.provider_metadata_json
+    assert "must-never-be-stored" not in serialized
+    assert "access_token" not in serialized
+    assert "signed_url" not in serialized
+    assert "raw_payload" not in serialized
 
 
 def test_admin_job_serialization_hides_owner_only_technical_details(publishing_context):
@@ -716,6 +851,11 @@ class RetryableCarouselMetaClient:
             )
         )
         return "real-carousel-parent"
+
+    def get_container_status(self, container_id, access_token):
+        assert access_token == "access-token-only-in-memory"
+        self.calls.append(("status", container_id))
+        return "FINISHED"
 
     def publish_container(self, **kwargs):
         self.calls.append(

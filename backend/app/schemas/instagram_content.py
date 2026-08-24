@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -41,7 +41,7 @@ class InstagramPublishJobRead(BaseModel):
     provider_status: str | None
     provider_error_code: str | None
     safe_error_message: str | None
-    provider_metadata: dict[str, str] | None
+    provider_metadata: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
     published_at: datetime | None

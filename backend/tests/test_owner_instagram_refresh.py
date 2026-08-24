@@ -321,6 +321,83 @@ def test_owner_instagram_copy_tracks_real_or_simulated_publishing_mode() -> None
     assert 'id="owner-instagram-mode-copy"' in html
 
 
+def test_owner_instagram_async_lifecycle_is_centralized_polled_and_action_safe() -> None:
+    js = OWNER_JS.read_text(encoding="utf-8")
+    lifecycle = source_block(
+        js,
+        "function ownerInstagramPublicationUxState",
+        "function ownerInstagramFormatLabel",
+    )
+    polling = source_block(
+        js,
+        "function stopOwnerInstagramLifecyclePolling",
+        "function upsertOwnerInstagramContent",
+    )
+    composer = source_block(
+        js,
+        "function renderOwnerInstagramComposer()",
+        "function ownerInstagramComposerChangeFormat",
+    )
+
+    for status in (
+        "queued",
+        "claimed",
+        "creating_container",
+        "publishing",
+        "simulating_publish",
+        "retry_wait",
+        "action_required",
+        "failed",
+        "published",
+    ):
+        assert status in lifecycle
+    for label in (
+        "Preparando publicación",
+        "Procesando en Instagram",
+        "Publicando en Instagram",
+        "Publicado",
+        "Publicación fallida",
+        "Reconectar Instagram",
+        "Verificar publicación",
+    ):
+        assert label in lifecycle
+    assert 'tone: "scheduled"' in lifecycle
+    assert 'status === "retry_wait"' in lifecycle
+    assert "ownerInstagramPublicationUxState(item)" in js
+    assert "ownerInstagramPublicationUxState(state.content)" in composer
+    assert "lifecycle.actionLocked" in composer
+    assert "owner-instagram-composer-primary" in composer
+
+    assert "window.setTimeout" in polling
+    assert "10_000" in polling
+    assert "document.hidden" in polling
+    assert "ownerInstagramMutationKeys.size > 0" in polling
+    assert "loadOwnerInstagramCalendarPeriod()" in polling
+    assert "ownerInstagramJson(" not in polling
+    assert "stopOwnerInstagramLifecyclePolling()" in js
+    assert 'document.addEventListener("visibilitychange"' in js
+    assert "fetch(" not in lifecycle
+    assert "Meta" not in polling
+
+    advanced = source_block(
+        js,
+        "function ownerInstagramComposerAdvanced",
+        "function ownerInstagramComposerMediaMarkup",
+    )
+    for field in (
+        "provider_status",
+        "next_attempt_at",
+        "last_provider_error",
+        "error_subcode",
+        "is_transient",
+        "container_status",
+        "carousel_position",
+    ):
+        assert field in advanced
+    assert "access_token" not in advanced
+    assert "signed" not in advanced
+
+
 def test_owner_instagram_composer_hides_lifecycle_but_preserves_every_transition() -> None:
     html = OWNER_HTML.read_text(encoding="utf-8")
     js = OWNER_JS.read_text(encoding="utf-8")
