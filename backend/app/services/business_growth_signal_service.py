@@ -57,6 +57,7 @@ DEMAND_MIN_ABSOLUTE_DROP = 3
 DEMAND_MIN_CAPACITY_RATIO = 0.70
 SEASONAL_HORIZON_DAYS = 30
 SIGNAL_HISTORY_EXPIRY_DAYS = 14
+NEW_SERVICE_WINDOW_DAYS = 21
 
 OCCUPANCY_BOOKING_STATUSES = {"requested", "pending", "confirmed", "completed"}
 DEMAND_BOOKING_STATUSES = {"requested", "pending", "confirmed", "completed"}
@@ -178,8 +179,67 @@ class BusinessGrowthSignalService:
         self._evaluate_high_due_customer_pool(business)
         self._evaluate_low_return_rate(business)
         self._evaluate_service_demand_drop(business)
+        self._evaluate_new_services(business)
         self._evaluate_seasonal_windows(business)
         return self.result
+
+    def _evaluate_new_services(self, business: Business) -> None:
+        cutoff = self.now - timedelta(days=NEW_SERVICE_WINDOW_DAYS)
+        services = (
+            self.db.query(BusinessService)
+            .filter(
+                BusinessService.business_id == business.id,
+                BusinessService.active.is_(True),
+                BusinessService.archived_at.is_(None),
+                BusinessService.created_at >= _naive(cutoff),
+            )
+            .order_by(BusinessService.created_at.asc(), BusinessService.id.asc())
+            .all()
+        )
+        touched: set[str] = set()
+        for service in services:
+            created_at = _aware(service.created_at)
+            expires_at = created_at + timedelta(days=NEW_SERVICE_WINDOW_DAYS)
+            if expires_at <= self.now:
+                continue
+            dedupe = f"new_service:service:{service.id}"
+            touched.add(dedupe)
+            age_days = max(0, (self.now.date() - created_at.date()).days)
+            self._upsert(
+                dedupe_key=dedupe,
+                values={
+                    "business_id": business.id,
+                    "type": "new_service",
+                    "status": "active",
+                    "severity": "info",
+                    "scope_type": "service",
+                    "service_id": service.id,
+                    "calendar_event_id": None,
+                    "detected_at": self.now,
+                    "period_start": created_at,
+                    "period_end": expires_at,
+                    "expires_at": expires_at,
+                    "resolved_at": None,
+                    "dismissed_at": None,
+                    "last_evaluated_at": self.now,
+                    "reason_code": "active_service_recently_created",
+                    "explanation_json": _json(
+                        self._explanation(
+                            title="Servicio nuevo",
+                            what=f"{service.name} se añadió hace {age_days} días.",
+                            comparison="La señal usa exclusivamente la fecha real de alta del servicio.",
+                            importance="Es posible que parte de la clientela todavía no lo conozca.",
+                            action="Valorar una presentación del nuevo servicio.",
+                        )
+                    ),
+                    "observed_json": _json(
+                        {"schema_version": 1, "service_age_days": age_days}
+                    ),
+                    "baseline_json": None,
+                    "recommendation_code": "introduce_new_service",
+                },
+            )
+        self._resolve_untouched(business.id, "new_service", touched)
 
     def capacity_snapshot(
         self, business: Business, *, start: date, end: date

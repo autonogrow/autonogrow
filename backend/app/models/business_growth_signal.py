@@ -23,6 +23,7 @@ GROWTH_SIGNAL_TYPES = (
     "low_return_rate",
     "service_demand_drop",
     "seasonal_window",
+    "new_service",
 )
 GROWTH_SIGNAL_STATUSES = ("active", "dismissed", "resolved", "expired")
 GROWTH_SIGNAL_SEVERITIES = ("info", "low", "medium", "high")
@@ -38,7 +39,7 @@ class BusinessGrowthSignal(Base):
     __table_args__ = (
         CheckConstraint(
             "type IN ('low_future_occupancy','high_due_customer_pool',"
-            "'low_return_rate','service_demand_drop','seasonal_window')",
+            "'low_return_rate','service_demand_drop','seasonal_window','new_service')",
             name="ck_business_growth_signals_type",
         ),
         CheckConstraint(

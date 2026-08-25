@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.models import (
     InstagramContent,
     InstagramContentComment,
+    InstagramContentEditorialReview,
     InstagramContentRawAsset,
     InstagramContentSettings,
     InstagramContentValidation,
@@ -317,6 +318,27 @@ def submit_for_review(db: Session, business_id: int, content_id: int) -> Instagr
             status_code=409,
             detail="story requires one final image or video asset",
         )
+    editorial_review = (
+        db.query(InstagramContentEditorialReview)
+        .filter(InstagramContentEditorialReview.version_id == version.id)
+        .first()
+    )
+    if editorial_review is None:
+        db.add(
+            InstagramContentEditorialReview(
+                business_id=business_id,
+                content_id=content.id,
+                version_id=version.id,
+                status="pending",
+                submitted_at=utc_now(),
+            )
+        )
+    elif editorial_review.status != "pending":
+        editorial_review.status = "pending"
+        editorial_review.submitted_at = utc_now()
+        editorial_review.reviewed_by_user_id = None
+        editorial_review.reviewed_at = None
+        editorial_review.note = None
     content.status = "ready_for_review"
     db.flush()
     return content
@@ -357,6 +379,16 @@ def add_admin_comment(
 
         cancel_publish_job(db, content, reason="validation_revoked_by_change_request", actor=actor)
         content.status = "changes_requested"
+        editorial_review = (
+            db.query(InstagramContentEditorialReview)
+            .filter(InstagramContentEditorialReview.version_id == version.id)
+            .first()
+        )
+        if editorial_review is not None:
+            editorial_review.status = "changes_requested"
+            editorial_review.reviewed_by_user_id = actor.id
+            editorial_review.reviewed_at = utc_now()
+            editorial_review.note = body
     comment = InstagramContentComment(
         business_id=business_id,
         content_id=content.id,
@@ -386,6 +418,21 @@ def validate_content(
         raise HTTPException(status_code=409, detail="Validation must target the current version")
     if content.status != "ready_for_review":
         raise HTTPException(status_code=409, detail="Content is not ready for validation")
+    editorial_review = (
+        db.query(InstagramContentEditorialReview)
+        .filter(
+            InstagramContentEditorialReview.business_id == business_id,
+            InstagramContentEditorialReview.content_id == content.id,
+            InstagramContentEditorialReview.version_id == version.id,
+            InstagramContentEditorialReview.status == "approved",
+        )
+        .first()
+    )
+    if editorial_review is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Current version requires AutonoGrow editorial approval",
+        )
     existing = _active_validation(db, content)
     if existing is not None:
         raise HTTPException(status_code=409, detail="Current version is already validated")
@@ -429,6 +476,7 @@ def schedule_content(
         raise HTTPException(status_code=409, detail="Only validated content can be scheduled")
     if content.planned_publish_at is None:
         raise HTTPException(status_code=409, detail="A planned date is required")
+    ensure_promotion_window(db, content, content.planned_publish_at)
     from app.services.instagram_publish_service import sync_publish_job
 
     job = sync_publish_job(db, content, actor=actor)
@@ -437,6 +485,47 @@ def schedule_content(
             status_code=409, detail=job.safe_error_message or "Publishing requires action"
         )
     return content
+
+
+def ensure_promotion_window(
+    db: Session, content: InstagramContent, planned_at: datetime
+) -> None:
+    proposal = content.source_proposal
+    review = proposal.idea_review if proposal is not None else None
+    promotion = review.promotion if review is not None else None
+    if promotion is None:
+        return
+    revision = next(
+        (item for item in reversed(promotion.revisions) if item.status == "owner_approved"),
+        None,
+    )
+    if revision is None:
+        raise HTTPException(status_code=409, detail="Promotion requires Business Owner approval")
+    value = planned_at if planned_at.tzinfo else planned_at.replace(tzinfo=timezone.utc)
+    start = (
+        revision.valid_from
+        if revision.valid_from.tzinfo
+        else revision.valid_from.replace(tzinfo=timezone.utc)
+    )
+    end = (
+        revision.valid_until
+        if revision.valid_until.tzinfo
+        else revision.valid_until.replace(tzinfo=timezone.utc)
+    )
+    if not start <= value <= end:
+        raise HTTPException(
+            status_code=409,
+            detail="La fecha debe estar dentro de la ventana aprobada de la promoción",
+        )
+    try:
+        days = json.loads(revision.days_json)
+    except (TypeError, json.JSONDecodeError):
+        days = []
+    if days and value.weekday() not in days:
+        raise HTTPException(
+            status_code=409,
+            detail="La fecha no coincide con los días aprobados de la promoción",
+        )
 
 
 def cancel_content(
@@ -926,6 +1015,14 @@ def serialize_raw_asset(
 ) -> dict:
     payload = {
         "id": asset.id,
+        "source_kind": asset.source_kind,
+        "origin": (
+            "instagram"
+            if asset.source_kind == "instagram"
+            else "autonogrow_admin"
+            if asset.uploaded_by is not None and asset.uploaded_by.is_owner
+            else "business_owner"
+        ),
         "original_filename": asset.original_filename,
         "media_type": asset.media_type,
         "size_bytes": asset.size_bytes,
@@ -1009,6 +1106,21 @@ def serialize_version(version: InstagramContentVersion, api_prefix: str) -> dict
             for link in links
         ],
         "validation": serialize_validation(version.validation) if version.validation else None,
+        "editorial_review": (
+            {
+                "id": version.editorial_review.id,
+                "status": version.editorial_review.status,
+                "submitted_at": version.editorial_review.submitted_at.isoformat(),
+                "reviewed_at": (
+                    version.editorial_review.reviewed_at.isoformat()
+                    if version.editorial_review.reviewed_at
+                    else None
+                ),
+                "note": version.editorial_review.note,
+            }
+            if version.editorial_review
+            else None
+        ),
     }
 
 

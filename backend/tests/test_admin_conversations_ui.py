@@ -45,10 +45,14 @@ def test_templates_are_initialized_before_parallel_automation_load() -> None:
 def test_delegated_instagram_forms_use_the_submitted_form() -> None:
     _, _, js = read_sources()
     comment = function_block(
-        js, "async function submitAdminInstagramComment", "async function submitAdminInstagramReview"
+        js,
+        "async function submitAdminInstagramComment",
+        "async function submitAdminInstagramFinalApproval",
     )
     review = function_block(
-        js, "async function submitAdminInstagramReview", 'document.addEventListener("DOMContentLoaded"'
+        js,
+        "async function submitAdminInstagramFinalApproval",
+        "async function submitAdminInstagramPublication",
     )
 
     assert "const form = event.target;" in comment

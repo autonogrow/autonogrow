@@ -35,7 +35,8 @@ def test_owner_instagram_load_has_constant_request_count_and_is_single_flight() 
 
     assert 'ownerInstagramJson(`${api}/settings`)' in load
     assert "await loadOwnerInstagramWorkspace(api)" in load
-    assert workspace.count("ownerInstagramJson(") == 2
+    assert workspace.count("ownerInstagramJson(") == 3
+    assert "/idea-reviews" in workspace
     assert 'ownerInstagramJson(`${api}/raw-assets`)' in workspace
     assert 'ownerInstagramJson(`${api}/contents?${range.toString()}`)' in workspace
     assert period.count("ownerInstagramJson(") == 1
@@ -398,7 +399,7 @@ def test_owner_instagram_async_lifecycle_is_centralized_polled_and_action_safe()
     assert "signed" not in advanced
 
 
-def test_owner_instagram_composer_hides_lifecycle_but_preserves_every_transition() -> None:
+def test_owner_instagram_composer_submits_review_without_final_approval_bypass() -> None:
     html = OWNER_HTML.read_text(encoding="utf-8")
     js = OWNER_JS.read_text(encoding="utf-8")
     ensure = source_block(
@@ -424,8 +425,11 @@ def test_owner_instagram_composer_hides_lifecycle_but_preserves_every_transition
     assert 'data-owner-composer-preview="previous"' in html
     assert '<video src="${escapeHtml(media.url)}" controls muted playsinline' in js
 
-    assert ensure.index("/submit-for-review`") < ensure.index("/validate`")
-    assert "ownerInstagramComposerClearPlannedDate" in ensure
+    assert "/submit-for-review`" in ensure
+    assert "/validate`" not in ensure
+    assert "ownerInstagramComposerClearPlannedDate" not in ensure
+    assert 'content.status === "ready_for_review"' in publish
+    assert "Versión enviada a revisión AutonoGrow" in publish
     assert "/publish-now`" in publish
     assert "/schedule`" in publish
     assert "ownerInstagramComposerPatchDate" in publish
@@ -434,6 +438,9 @@ def test_owner_instagram_composer_hides_lifecycle_but_preserves_every_transition
     assert 'id="owner-instagram-composer-reuse"' in html
     assert "Reutilizar publicación" in html
     assert "Material del negocio" in html
+    assert 'data-instagram-library-source="business"' in html
+    assert "data-instagram-library-raw" in js
+    assert "/raw-assets?limit=200" in js
     assert 'id="owner-instagram-detail"' not in html
 
 
@@ -462,6 +469,28 @@ def test_owner_story_editor_and_instagram_library_share_a_versioned_contract() -
     assert "¿Qué imagen quieres usar?" in js
     assert "Reel no compatible en P1" in js
     assert "provider_preview_url" not in js
+
+
+def test_autonogrow_owner_surface_has_owner_first_and_version_review_queues() -> None:
+    html = OWNER_HTML.read_text(encoding="utf-8")
+    js = OWNER_JS.read_text(encoding="utf-8")
+
+    for marker in (
+        'id="owner-social-review-list"',
+        'id="owner-editorial-review-list"',
+        "Ideas que interesan al negocio",
+        "La aprobación editorial queda ligada a la versión exacta",
+    ):
+        assert marker in html
+    for marker in (
+        "/idea-reviews",
+        "data-owner-idea-review",
+        "data-owner-promotion-proposal",
+        "data-owner-editorial-review",
+        "/editorial-review`",
+    ):
+        assert marker in js
+    assert "Guardar y enviar a revisión" in js
 
 
 def test_authenticated_rate_limit_is_shared_by_ip_and_documented_as_single_process() -> None:

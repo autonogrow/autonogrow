@@ -23,6 +23,7 @@ from app.models import (
     InstagramRawAsset,
     SocialContentProposal,
     SocialContentProposalSignal,
+    SocialIdeaReview,
     User,
 )
 from app.routers.social_content_generation import _proposal_or_404
@@ -138,6 +139,22 @@ def records(db: Session) -> dict[str, object]:
         dedupe_key="generation:test",
     )
     db.add(proposal)
+    db.flush()
+    db.add(
+        SocialIdeaReview(
+            proposal=proposal,
+            business_id=business.id,
+            status="approved",
+            owner_intent="visibility",
+            owner_accepted_by_user_id=actor.id,
+            owner_accepted_at=NOW,
+            owner_context_json=json.dumps(snapshot),
+            presentation_json='{"template_version":"test_v1"}',
+            template_version="test_v1",
+            admin_reviewed_by_user_id=owner.id,
+            admin_reviewed_at=NOW,
+        )
+    )
     db.commit()
     return {
         "business": business,
@@ -200,6 +217,21 @@ def test_generation_is_idempotent_and_hook_rotation_is_deterministic(db: Session
     assert second_idempotent
     assert second_content.id == first_content.id
     assert second_version.id == first_version.id
+
+
+def test_legacy_accepted_proposal_cannot_generate_without_explicit_admin_review(
+    db: Session, records
+) -> None:
+    proposal = records["proposal"]
+    db.delete(proposal.idea_review)
+    db.commit()
+    db.refresh(proposal)
+
+    with pytest.raises(HTTPException) as exc:
+        generate_from_proposal(db, proposal=proposal, actor=records["owner"], now=NOW)
+
+    assert exc.value.status_code == 409
+    assert "Explicit AutonoGrow Admin" in str(exc.value.detail)
 
 
 def test_assets_are_tenant_scoped_active_and_service_ranked(db: Session, records) -> None:
@@ -424,15 +456,15 @@ def test_generation_api_is_owner_only_and_tenant_scoped(db: Session, records) ->
         )
 
 
-def test_admin_exposes_review_without_owner_generation_controls() -> None:
+def test_business_owner_ui_exposes_interest_and_final_approval_without_admin_review() -> None:
     admin = (Path(__file__).resolve().parents[2] / "autonogrow-admin" / "admin.js").read_text(
         encoding="utf-8"
     )
     for marker in (
-        "Idea enviada a AutonoGrow",
-        "Aprobar editorialmente",
-        "data-admin-instagram-review",
-        "/editorial-review",
+        "Me interesa",
+        "Estudiar promoción",
+        "data-admin-instagram-final-approval",
+        "/validate",
     ):
         assert marker in admin
     for forbidden in (
@@ -441,5 +473,6 @@ def test_admin_exposes_review_without_owner_generation_controls() -> None:
         "data-generated-regenerate",
         "/generated-draft",
         "/regenerate",
+        "/editorial-review",
     ):
         assert forbidden not in admin

@@ -730,7 +730,7 @@ def test_disabling_service_cancels_pending_and_reenable_does_not_revive(publishi
     assert ctx["db"].get(InstagramPublishJob, job.id).status == "cancelled"
 
 
-def test_owner_ui_exposes_publish_actions_and_admin_is_read_only():
+def test_autonogrow_ui_submits_review_and_business_owner_controls_final_publication():
     root = Path(__file__).resolve().parents[2]
     owner = (root / "autonogrow-owner" / "owner.js").read_text(encoding="utf-8")
     admin = (root / "autonogrow-admin" / "admin.js").read_text(encoding="utf-8")
@@ -750,23 +750,23 @@ def test_owner_ui_exposes_publish_actions_and_admin_is_read_only():
         "job.status",
         "provider_permalink",
         "/submit-for-review",
-        "/validate",
         "/publish-now",
         "/schedule",
         "/cancel",
     ):
         assert owner_contract in owner
+    assert "/validate`" not in owner
     assert "provider_permalink" in admin
     assert 'data-owner-instagram-action="validate"' not in owner
     assert "data-owner-instagram-action" not in admin
-    for admin_action in (
-        "data-admin-instagram-plan",
-        "data-admin-instagram-publish-now",
-        "data-admin-instagram-cancel-job",
-        "data-admin-instagram-retry",
+    for business_owner_contract in (
+        "/validate`",
+        "/planned-date`",
+        "/publish-now`",
+        "/schedule`",
     ):
-        assert admin_action not in admin
-    assert "AutonoGrow gestiona la validación y publicación" in admin
+        assert business_owner_contract in admin
+    assert "Aprobación final registrada para esta versión" in admin
 
 
 def meta_worker_settings(tmp_path: Path) -> Settings:

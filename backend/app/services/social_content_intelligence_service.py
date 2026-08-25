@@ -10,11 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Business,
-    BusinessGalleryImage,
     BusinessGrowthSignal,
     BusinessReview,
     BusinessService,
-    InstagramRawAsset,
     SocialContentProposal,
     SocialContentProposalSignal,
 )
@@ -45,6 +43,7 @@ SAFE_SIGNAL_FIELDS = {
     "low_return_rate": {"return_rate", "sample_size", "returned", "period_days"},
     "service_demand_drop": {"booking_count", "period_days", "capacity_ratio"},
     "seasonal_window": {"days_until_start", "event_title", "event_category"},
+    "new_service": {"service_age_days"},
 }
 SAFE_BASELINE_FIELDS = {
     "low_future_occupancy": {"occupancy_rate", "booking_count", "weeks_used"},
@@ -57,6 +56,7 @@ SAFE_BASELINE_FIELDS = {
         "relative_ratio",
     },
     "seasonal_window": set(),
+    "new_service": set(),
 }
 
 
@@ -183,7 +183,6 @@ class SocialContentIntelligenceService:
             .order_by(BusinessService.position.asc(), BusinessService.id.asc())
             .all()
         }
-        asset_count = self._asset_count(business_id)
         candidates = self._signal_candidates(signals, services)
         candidates.extend(self._review_candidates(business_id))
         if not any(item.score >= 35 for item in candidates):
@@ -201,7 +200,7 @@ class SocialContentIntelligenceService:
                     continue
                 per_service[candidate.service_id] = count + 1
             touched.add(candidate.dedupe_key)
-            self._upsert(business_id, candidate, asset_count)
+            self._upsert(business_id, candidate)
         self._resolve_untouched(business_id, touched)
         return self.result
 
@@ -380,6 +379,24 @@ class SocialContentIntelligenceService:
                 self.now, end, expires, (signal.id,), signal.calendar_event_id,
                 evidence=evidence,
             )
+        if signal.type == "new_service" and service is not None:
+            return ProposalCandidate(
+                f"new-service:{signal.dedupe_key}",
+                "promote_service",
+                "service_push",
+                55,
+                service.id,
+                "new_service",
+                f"{service.name} se ha incorporado recientemente y puede que tus clientes todavía no lo conozcan.",
+                ("carousel", "story", "static_post"),
+                "discover_service",
+                "educational",
+                self.now,
+                end,
+                expires,
+                (signal.id,),
+                evidence=evidence,
+            )
         return None
 
     def _review_candidates(self, business_id: int) -> list[ProposalCandidate]:
@@ -451,28 +468,7 @@ class SocialContentIntelligenceService:
             evidence={"schema_version": 1, "fallback": "weekly_evergreen"},
         )
 
-    def _asset_count(self, business_id: int) -> int:
-        gallery = (
-            self.db.query(BusinessGalleryImage)
-            .filter(
-                BusinessGalleryImage.business_id == business_id,
-                BusinessGalleryImage.active.is_(True),
-            )
-            .count()
-        )
-        raw = (
-            self.db.query(InstagramRawAsset)
-            .filter(
-                InstagramRawAsset.business_id == business_id,
-                InstagramRawAsset.source_kind == "business_upload",
-            )
-            .count()
-        )
-        return gallery + raw
-
-    def _upsert(
-        self, business_id: int, candidate: ProposalCandidate, asset_count: int
-    ) -> None:
+    def _upsert(self, business_id: int, candidate: ProposalCandidate) -> None:
         row = (
             self.db.query(SocialContentProposal)
             .filter(
@@ -498,10 +494,6 @@ class SocialContentIntelligenceService:
             "recommended_formats_json": _json(list(candidate.formats)),
             "recommended_cta": candidate.cta,
             "angle_code": candidate.angle,
-            "available_asset_count": asset_count,
-            "asset_requirement": "existing_media" if asset_count else (
-                "review" if candidate.proposal_type == "review_social_proof" else "new_photo"
-            ),
             "target_window_start": candidate.target_start,
             "target_window_end": candidate.target_end,
             "expires_at": candidate.expires_at,
@@ -514,6 +506,8 @@ class SocialContentIntelligenceService:
                 detected_at=self.now,
                 dedupe_key=candidate.dedupe_key,
                 created_at=self.now,
+                available_asset_count=0,
+                asset_requirement="none",
                 **values,
             )
             self.db.add(row)
@@ -582,6 +576,7 @@ def serialize_social_content_proposal(row: SocialContentProposal) -> dict[str, A
         "type": row.proposal_type,
         "priority": row.priority,
         "priority_score": row.priority_score,
+        "opportunity_score": row.priority_score,
         "service": {"id": row.service.id, "name": row.service.name} if row.service else None,
         "source_signal_ids": [link.signal_id for link in row.signal_links],
         "source_event_id": row.source_event_id,
@@ -592,12 +587,6 @@ def serialize_social_content_proposal(row: SocialContentProposal) -> dict[str, A
         "recommended_formats": formats,
         "recommended_cta": row.recommended_cta,
         "angle_code": row.angle_code,
-        "available_assets": {
-            "available": row.available_asset_count > 0,
-            "count": row.available_asset_count,
-            "scope": "business",
-        },
-        "asset_requirement": row.asset_requirement,
         "target_window_start": row.target_window_start.isoformat(),
         "target_window_end": row.target_window_end.isoformat(),
         "detected_at": row.detected_at.isoformat(),
@@ -637,8 +626,6 @@ def acceptance_snapshot(row: SocialContentProposal) -> str:
             "recommended_formats": json.loads(row.recommended_formats_json),
             "recommended_cta": row.recommended_cta,
             "angle_code": row.angle_code,
-            "available_asset_count": row.available_asset_count,
-            "asset_requirement": row.asset_requirement,
             "target_window_start": row.target_window_start.isoformat(),
             "target_window_end": row.target_window_end.isoformat(),
         },

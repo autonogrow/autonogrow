@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -87,6 +87,7 @@ class InstagramRawAsset(Base):
 
     business = relationship("Business", back_populates="instagram_raw_assets")
     service = relationship("BusinessService", back_populates="instagram_raw_assets")
+    uploaded_by = relationship("User", foreign_keys=[uploaded_by_user_id])
     content_links = relationship(
         "InstagramContentRawAsset",
         back_populates="raw_asset",
@@ -155,6 +156,11 @@ class InstagramContent(Base):
     )
     validations = relationship(
         "InstagramContentValidation", back_populates="content", cascade="all, delete-orphan"
+    )
+    editorial_reviews = relationship(
+        "InstagramContentEditorialReview",
+        back_populates="content",
+        cascade="all, delete-orphan",
     )
     publish_jobs = relationship(
         "InstagramPublishJob", back_populates="content", cascade="all, delete-orphan"
@@ -281,6 +287,9 @@ class InstagramContentVersion(Base):
         order_by="InstagramContentVersionAsset.position",
     )
     validation = relationship("InstagramContentValidation", back_populates="version", uselist=False)
+    editorial_review = relationship(
+        "InstagramContentEditorialReview", back_populates="version", uselist=False
+    )
     comments = relationship("InstagramContentComment", back_populates="version")
     publish_job = relationship("InstagramPublishJob", back_populates="version", uselist=False)
 
@@ -340,6 +349,54 @@ class InstagramContentValidation(Base):
 
     content = relationship("InstagramContent", back_populates="validations")
     version = relationship("InstagramContentVersion", back_populates="validation")
+
+
+class InstagramContentEditorialReview(Base):
+    __tablename__ = "instagram_content_editorial_reviews"
+    __table_args__ = (
+        UniqueConstraint("version_id", name="uq_instagram_editorial_review_version"),
+        CheckConstraint(
+            "status IN ('pending','approved','changes_requested','rejected')",
+            name="ck_instagram_editorial_reviews_status",
+        ),
+        Index(
+            "ix_instagram_editorial_reviews_business_status", "business_id", "status"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    content_id: Mapped[int] = mapped_column(
+        ForeignKey("instagram_contents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_id: Mapped[int] = mapped_column(
+        ForeignKey("instagram_content_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False, index=True)
+    submitted_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    content = relationship("InstagramContent", back_populates="editorial_reviews")
+    version = relationship("InstagramContentVersion", back_populates="editorial_review")
+    reviewed_by = relationship("User")
 
 
 class InstagramContentComment(Base):

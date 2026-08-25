@@ -29,6 +29,7 @@ POST_BASELINE_TABLES = {
     "instagram_final_assets",
     "instagram_content_versions",
     "instagram_content_version_assets",
+    "instagram_content_editorial_reviews",
     "instagram_content_validations",
     "instagram_content_comments",
     "instagram_publish_jobs",
@@ -38,6 +39,11 @@ POST_BASELINE_TABLES = {
     "booking_attributions",
     "business_calendar_events",
     "business_growth_signals",
+    "social_content_proposals",
+    "social_content_proposal_signals",
+    "social_idea_reviews",
+    "social_promotions",
+    "social_promotion_revisions",
     "customer_memory_items",
 }
 POST_BASELINE_COLUMNS = {

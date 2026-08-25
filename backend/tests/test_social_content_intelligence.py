@@ -22,6 +22,7 @@ from app.models import (
     BusinessUser,
     Customer,
     CustomerMemoryItem,
+    InstagramRawAsset,
     SocialContentProposal,
     User,
 )
@@ -32,10 +33,15 @@ from app.routers.social_content import (
     list_social_content_proposals,
     social_content_proposals_summary,
 )
+from app.schemas.social_content_workflow import SocialIdeaAcceptRequest
 from app.services.social_content_intelligence_service import (
     SocialContentIntelligenceService,
     serialize_social_content_proposal,
 )
+from app.services.social_content_presentation_service import (
+    present_social_content_proposal,
+)
+from app.services.social_production_readiness_service import production_readiness
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 ROOT = Path(__file__).resolve().parents[2]
@@ -411,7 +417,7 @@ def test_review_rules_require_recent_text_positive_approval_and_tenant_isolation
     assert valid.id == payload["source_review_id"]
 
 
-def test_evergreen_is_finite_and_reports_business_asset_availability(
+def test_evergreen_is_finite_and_owner_presentation_excludes_materials(
     db: Session, records
 ) -> None:
     business = records["business"]
@@ -430,8 +436,139 @@ def test_evergreen_is_finite_and_reports_business_asset_availability(
     assert len(rows) == 1
     payload = serialize_social_content_proposal(rows[0])
     assert payload["type"] == "evergreen_content"
-    assert payload["available_assets"] == {"available": True, "count": 1, "scope": "business"}
-    assert payload["asset_requirement"] == "existing_media"
+    assert "available_assets" not in payload
+    assert "asset_requirement" not in payload
+    assert payload["opportunity_score"] == payload["priority_score"]
+
+
+def test_material_count_never_changes_idea_or_opportunity_score(db: Session, records) -> None:
+    business = records["business"]
+    other = records["other"]
+    signal(
+        db,
+        business,
+        "service_demand_drop",
+        service=records["service"],
+        suffix="material-invariance",
+    )
+    signal(
+        db,
+        other,
+        "service_demand_drop",
+        service=records["other_service"],
+        suffix="material-invariance",
+    )
+    db.add_all(
+        InstagramRawAsset(
+            business_id=business.id,
+            service_id=records["service"].id,
+            source_kind="business_upload",
+            original_filename=f"material-{index}.jpg",
+            storage_key=f"_instagram_content/{business.id}/raw/material-{index}.jpg",
+            media_type="image/jpeg",
+            size_bytes=10,
+        )
+        for index in range(100)
+    )
+    db.commit()
+
+    SocialContentIntelligenceService(db, now=NOW).evaluate_business(business.id)
+    SocialContentIntelligenceService(db, now=NOW).evaluate_business(other.id)
+    db.commit()
+    first = proposals(db, business)[0]
+    second = proposals(db, other)[0]
+
+    assert first.proposal_type == second.proposal_type == "service_push"
+    assert first.reason_code == second.reason_code
+    assert first.priority_score == second.priority_score
+    assert first.available_asset_count == second.available_asset_count == 0
+    assert first.asset_requirement == second.asset_requirement == "none"
+
+
+def test_material_for_other_service_never_selects_that_service(db: Session, records) -> None:
+    business = records["business"]
+    signaled = BusinessService(
+        business_id=business.id,
+        name="Masaje",
+        duration_minutes=60,
+        active=True,
+        bookable=True,
+        position=2,
+    )
+    db.add(signaled)
+    db.flush()
+    signal(db, business, "service_demand_drop", service=signaled, suffix="service-b")
+    db.add_all(
+        InstagramRawAsset(
+            business_id=business.id,
+            service_id=records["service"].id,
+            source_kind="business_upload",
+            original_filename=f"service-a-{index}.jpg",
+            storage_key=f"_instagram_content/{business.id}/raw/service-a-{index}.jpg",
+            media_type="image/jpeg",
+            size_bytes=10,
+        )
+        for index in range(10)
+    )
+    db.commit()
+
+    SocialContentIntelligenceService(db, now=NOW).evaluate_business(business.id)
+    db.commit()
+    row = max(proposals(db, business), key=lambda item: item.priority_score)
+    assert row.service_id == signaled.id
+
+
+def test_presentation_is_deterministic_human_and_material_free(db: Session, records) -> None:
+    business = records["business"]
+    signal(
+        db,
+        business,
+        "service_demand_drop",
+        service=records["service"],
+        suffix="presentation",
+    )
+    SocialContentIntelligenceService(db, now=NOW).evaluate_business(business.id)
+    db.commit()
+    row = proposals(db, business)[0]
+    first = present_social_content_proposal(row).as_dict()
+    second = present_social_content_proposal(row).as_dict()
+    assert first == second
+    assert first["template_version"] == "owner_idea_es_v1"
+    encoded = json.dumps(first, ensure_ascii=False).lower()
+    assert "material" not in encoded
+    assert "score" not in encoded
+    assert "manicura" in encoded
+
+
+def test_production_readiness_is_separate_from_opportunity_score(db: Session, records) -> None:
+    business = records["business"]
+    signal(
+        db,
+        business,
+        "service_demand_drop",
+        service=records["service"],
+        suffix="readiness",
+    )
+    SocialContentIntelligenceService(db, now=NOW).evaluate_business(business.id)
+    db.commit()
+    row = proposals(db, business)[0]
+    original_score = row.priority_score
+    assert production_readiness(db, business_id=business.id, proposal=row)["status"] == "needs_material"
+    db.add(
+        InstagramRawAsset(
+            business_id=business.id,
+            source_kind="business_upload",
+            original_filename="ready.jpg",
+            storage_key=f"_instagram_content/{business.id}/raw/ready.jpg",
+            media_type="image/jpeg",
+            size_bytes=10,
+        )
+    )
+    db.commit()
+    readiness = production_readiness(db, business_id=business.id, proposal=row)
+    assert readiness["status"] == "ready"
+    assert readiness["counts"]["images"] == 1
+    assert row.priority_score == original_score
 
 
 def test_accept_and_dismiss_lifecycle_keep_aggregate_snapshot(db: Session, records) -> None:
@@ -442,7 +579,12 @@ def test_accept_and_dismiss_lifecycle_keep_aggregate_snapshot(db: Session, recor
     db.commit()
     first = proposals(db, business)[0]
     accepted = accept_social_content_proposal(
-        business.slug, first.id, request(), actor=admin, db=db
+        business.slug,
+        first.id,
+        SocialIdeaAcceptRequest(),
+        request(),
+        actor=admin,
+        db=db,
     )
     assert accepted["proposal"]["status"] == "accepted"
     snapshot = json.dumps(accepted["proposal"]["accepted_context"], ensure_ascii=False)
@@ -450,7 +592,12 @@ def test_accept_and_dismiss_lifecycle_keep_aggregate_snapshot(db: Session, recor
     for forbidden in ("customer_name", "phone", "email", "conversation", "sensitive"):
         assert forbidden not in snapshot
     repeat = accept_social_content_proposal(
-        business.slug, first.id, request(), actor=admin, db=db
+        business.slug,
+        first.id,
+        SocialIdeaAcceptRequest(),
+        request(),
+        actor=admin,
+        db=db,
     )
     assert repeat["idempotent"] is True
 
@@ -547,11 +694,13 @@ def test_admin_rrss_area_renders_recommended_ideas_and_actions() -> None:
     assert 'id="social-content-ideas-title">Ideas recomendadas' in html
     assert "loadSocialContentProposals" in js
     assert "social-content-proposals" in js
-    assert ">Proponer esta idea</button>" in js
-    assert ">Descartar</button>" in js
+    assert ">Me interesa</button>" in js
+    assert ">Estudiar promoción</button>" in js
+    assert ">Ahora no</button>" in js
     assert "if (isBusinessStaff())" in js
-    assert "Puedes proponer ideas." in js
-    assert "Usar una idea todavía no crea ni publica contenido" in html
+    assert "reservadas al responsable del negocio" in js
+    assert "Solo entonces AutonoGrow recibirá una tarea" in html
+    assert "available_assets" not in js
 
 
 def test_existing_maintenance_pipeline_registers_social_content_task() -> None:

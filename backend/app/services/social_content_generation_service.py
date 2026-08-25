@@ -144,6 +144,18 @@ class DeterministicContentGenerator:
         ]
         if cta_text:
             caption_parts.append(f"{cta_text}.")
+        promotion = context.snapshot.get("promotion")
+        if isinstance(promotion, dict):
+            regular = str(promotion.get("regular_price") or "").strip()
+            promotional = str(promotion.get("promotional_price") or "").strip()
+            currency = str(promotion.get("currency") or "").strip()
+            valid_from = str(promotion.get("valid_from") or "")[:10]
+            valid_until = str(promotion.get("valid_until") or "")[:10]
+            if regular and promotional and currency and valid_from and valid_until:
+                caption_parts.append(
+                    f"Promoción aprobada: de {regular} {currency} a {promotional} {currency}, "
+                    f"válida del {valid_from} al {valid_until}."
+                )
         hashtags = _hashtags(business, proposal.service)
         package: dict[str, Any] = {
             "schema_version": PACKAGE_SCHEMA_VERSION,
@@ -167,6 +179,7 @@ class DeterministicContentGenerator:
                 "missing": context.missing_assets,
                 "media_generation_requested": False,
             },
+            "promotion": promotion if isinstance(promotion, dict) else None,
             "generation_context": {
                 "proposal_id": proposal.id,
                 "service_id": proposal.service_id,
@@ -315,6 +328,15 @@ def _validate_source(db: Session, proposal: SocialContentProposal, now: datetime
     return snapshot
 
 
+def _require_admin_idea_approval(proposal: SocialContentProposal) -> None:
+    review = proposal.idea_review
+    if review is None or review.status != "approved" or review.admin_reviewed_at is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Explicit AutonoGrow Admin idea approval is required before generation",
+        )
+
+
 def _recommended_assets(
     db: Session, proposal: SocialContentProposal, editorial_format: str
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -323,7 +345,6 @@ def _recommended_assets(
     for asset in db.query(InstagramRawAsset).filter(
         InstagramRawAsset.business_id == proposal.business_id,
         InstagramRawAsset.active.is_(True),
-        InstagramRawAsset.source_kind == "business_upload",
     ):
         compatible = (
             asset.media_type.startswith("video/")
@@ -402,6 +423,7 @@ def generate_from_proposal(
     existing = proposal.generated_content
     if existing is not None:
         return existing, current_version(db, existing), True
+    _require_admin_idea_approval(proposal)
     editorial_format = _format_from_snapshot(snapshot, requested_format)
     assets, missing = _recommended_assets(db, proposal, editorial_format)
     context = GenerationContext(
@@ -488,6 +510,7 @@ def regenerate_content(
         raise HTTPException(status_code=409, detail="Terminal content cannot be regenerated")
     if content.source_proposal is None:
         raise HTTPException(status_code=409, detail="Content was not generated from a proposal")
+    _require_admin_idea_approval(content.source_proposal)
     snapshot = _validate_source(db, content.source_proposal, now or utc_now())
     editorial_format = _format_from_snapshot(snapshot, requested_format)
     assets, missing = _recommended_assets(db, content.source_proposal, editorial_format)

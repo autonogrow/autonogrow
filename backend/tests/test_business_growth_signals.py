@@ -874,6 +874,33 @@ def test_expiry_and_new_temporal_window_are_preserved(
     assert len(signals(db, "seasonal_window")) == 2
 
 
+def test_recent_active_service_creates_deduplicated_signal_without_material(
+    db: Session, records: dict[str, object]
+) -> None:
+    business = records["a"]
+    assert isinstance(business, Business)
+    recent = BusinessService(
+        business_id=business.id,
+        name="Masaje deportivo",
+        duration_minutes=60,
+        active=True,
+        bookable=True,
+        created_at=(NOW - timedelta(days=2)).replace(tzinfo=None),
+    )
+    db.add(recent)
+    db.commit()
+
+    BusinessGrowthSignalService(db, now=NOW).evaluate_business(business.id)
+    BusinessGrowthSignalService(db, now=NOW + timedelta(hours=1)).evaluate_business(business.id)
+    db.commit()
+
+    rows = signals(db, "new_service")
+    assert len(rows) == 1
+    assert rows[0].service_id == recent.id
+    assert rows[0].dedupe_key == f"new_service:service:{recent.id}"
+    assert json.loads(rows[0].observed_json)["service_age_days"] == 2
+
+
 def test_contracts_document_future_social_context_without_automation() -> None:
     root = Path(__file__).resolve().parents[2]
     architecture = (root / "docs/business_growth_signals_architecture.md").read_text(

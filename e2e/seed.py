@@ -28,6 +28,7 @@ from app.models import (  # noqa: E402
     Customer,
     CustomerAccountLink,
     InstagramContent,
+    InstagramContentEditorialReview,
     InstagramContentRawAsset,
     InstagramContentSettings,
     InstagramContentVersion,
@@ -142,21 +143,35 @@ def _seed_instagram(db: Session, business: Business, owner: User, marker: str) -
     )
     db.add_all((review, published, removable))
     db.flush()
+    versions = []
     for content, caption in (
         (review, f"Caption de revisión {marker}"),
         (published, f"Caption publicada {marker}"),
         (removable, f"Caption borrador {marker}"),
     ):
-        db.add(
-            InstagramContentVersion(
-                business_id=business.id,
-                content_id=content.id,
-                version_number=1,
-                caption=caption,
-                format="single_image",
-                created_by_user_id=owner.id,
-            )
+        version = InstagramContentVersion(
+            business_id=business.id,
+            content_id=content.id,
+            version_number=1,
+            caption=caption,
+            format="single_image",
+            created_by_user_id=owner.id,
         )
+        db.add(version)
+        versions.append(version)
+    db.flush()
+    db.add(
+        InstagramContentEditorialReview(
+            business_id=business.id,
+            content_id=review.id,
+            version_id=versions[0].id,
+            status="approved",
+            submitted_at=fixture_planned_at - timedelta(hours=1),
+            reviewed_by_user_id=owner.id,
+            reviewed_at=fixture_planned_at - timedelta(minutes=30),
+            note="Revisión editorial E2E aprobada.",
+        )
+    )
 
     raw_dir = Path(os.environ["UPLOADS_DIR"]) / "_instagram_content" / str(business.id) / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)

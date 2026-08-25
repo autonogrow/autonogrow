@@ -43,8 +43,9 @@ def test_business_admin_calendar_keeps_editorial_permissions_narrow() -> None:
     )[0]
     assert "Revisar" in block
     assert "data-owner-instagram-action" not in block
-    assert "Aprobar editorialmente" in ADMIN_JS
-    assert "AutonoGrow realizará después la validación técnica" in ADMIN_JS
+    assert "Dar aprobación final" in ADMIN_JS
+    assert "Revisado por AutonoGrow" in ADMIN_JS
+    assert "/editorial-review" not in ADMIN_JS
     assert ADMIN_HTML.index('id="admin-instagram-planning-title"') < ADMIN_HTML.index(
         'id="social-content-ideas-title"'
     )

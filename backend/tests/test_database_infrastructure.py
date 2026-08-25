@@ -247,6 +247,10 @@ def test_legacy_stamp_then_upgrade_preserves_encrypted_data(tmp_path: Path) -> N
     register_models()
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
+        connection.execute(text("DROP TABLE instagram_content_editorial_reviews"))
+        connection.execute(text("DROP TABLE social_promotion_revisions"))
+        connection.execute(text("DROP TABLE social_promotions"))
+        connection.execute(text("DROP TABLE social_idea_reviews"))
         connection.execute(text("DROP TABLE channel_outbox_messages"))
         connection.execute(text("DROP TABLE webhook_inbox_events"))
         connection.execute(text("DROP TABLE worker_heartbeats"))

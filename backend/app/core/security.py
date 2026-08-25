@@ -112,6 +112,20 @@ def require_business_admin(
     return user
 
 
+def require_tenant_business_admin(
+    business_slug: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """Require the tenant Business Owner, never the global AutonoGrow operator."""
+    if user.is_owner:
+        raise HTTPException(status_code=403, detail="Business owner access required")
+    membership = get_business_membership(db, business_slug=business_slug, user_id=user.id)
+    if membership is None or membership.role != "business_admin":
+        raise HTTPException(status_code=403, detail="Business owner access required")
+    return user
+
+
 require_business_member = require_business_access
 require_business_staff_or_admin = require_business_access
 require_can_manage_business_settings = require_business_admin

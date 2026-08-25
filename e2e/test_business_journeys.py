@@ -106,14 +106,14 @@ def test_admin_instagram_calendar_editorial_action_and_permissions(journey) -> N
     page.get_by_role("button", name=re.compile("SALON lanzamiento")).click()
     detail = page.locator("[data-admin-instagram-content]")
     expect(detail).to_contain_text("Caption de revisión SALON")
-    with page.expect_response(lambda response: "editorial-review" in response.url) as review_info:
-        detail.get_by_role("button", name="Aprobar editorialmente").click()
-    assert review_info.value.status == 201
-    assert review_info.value.json()["decision"] == "approve"
+    expect(detail).to_contain_text("Revisado por AutonoGrow")
+    with page.expect_response(lambda response: response.url.endswith("/validate")) as review_info:
+        detail.get_by_role("button", name="Dar aprobación final").click()
+    assert review_info.value.status == 200
     reviewed = page.request.get(
         "/api/admin/businesses/salon-e2e/instagram-content/contents/1"
     ).json()
-    assert any("editorial registrada" in comment["body"] for comment in reviewed["comments"])
+    assert reviewed["current_version"]["validation"]["validator_role"] == "business_admin"
     assert (
         page.request.post(
             "/api/owner/businesses/1/instagram-content/contents/1/schedule", data={}
@@ -400,7 +400,7 @@ def test_owner_instagram_library_selects_explicit_carousel_child(journey) -> Non
     expect(library.get_by_role("tab", name="Instagram")).to_have_attribute(
         "aria-selected", "true"
     )
-    expect(library.get_by_role("tab", name="Material del negocio")).to_be_disabled()
+    expect(library.get_by_role("tab", name="Material del negocio")).to_be_enabled()
     library.get_by_role("button", name="Elegir imagen").click()
     expect(library.get_by_text("¿Qué imagen quieres usar?")).to_be_visible()
     library.get_by_role("button", name="Usar en Story").first.click()

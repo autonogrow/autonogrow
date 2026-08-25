@@ -15,10 +15,16 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.audit import record_audit
 from app.core.config import get_settings, get_uploads_dir
 from app.core.database import get_db
-from app.core.security import get_business_membership, get_current_user, require_owner
+from app.core.security import (
+    get_business_membership,
+    get_current_user,
+    require_owner,
+    require_tenant_business_admin,
+)
 from app.models import (
     Business,
     InstagramContent,
+    InstagramContentEditorialReview,
     InstagramContentRawAsset,
     InstagramContentVersion,
     InstagramContentVersionAsset,
@@ -53,6 +59,7 @@ from app.services.instagram_content_service import (
     current_version,
     disassociate_permitted_raw_asset_associations,
     disassociate_raw_asset,
+    ensure_promotion_window,
     get_or_create_settings,
     prepare_content_removal,
     prepare_raw_asset_as_final,
@@ -374,20 +381,23 @@ def _list_raw(
     *,
     limit: int,
     offset: int,
+    include_instagram: bool = False,
 ) -> dict:
     require_service_enabled(db, business_id)
-    assets = (
+    query = (
         db.query(InstagramRawAsset)
         .options(
+            selectinload(InstagramRawAsset.uploaded_by),
             selectinload(InstagramRawAsset.content_links).selectinload(
                 InstagramContentRawAsset.content
             )
         )
-        .filter(
-            InstagramRawAsset.business_id == business_id,
-            InstagramRawAsset.source_kind == "business_upload",
-        )
-        .order_by(InstagramRawAsset.created_at.desc(), InstagramRawAsset.id.desc())
+        .filter(InstagramRawAsset.business_id == business_id)
+    )
+    if not include_instagram:
+        query = query.filter(InstagramRawAsset.source_kind == "business_upload")
+    assets = (
+        query.order_by(InstagramRawAsset.created_at.desc(), InstagramRawAsset.id.desc())
         .offset(offset)
         .limit(limit)
         .all()
@@ -665,7 +675,12 @@ def owner_list_raw_assets(
 ):
     _owner_business(db, business_id)
     return _list_raw(
-        db, business_id, _owner_prefix(business_id), limit=limit, offset=offset
+        db,
+        business_id,
+        _owner_prefix(business_id),
+        limit=limit,
+        offset=offset,
+        include_instagram=True,
     )
 
 
@@ -1507,7 +1522,7 @@ def admin_update_planned_date(
     content_id: int,
     payload: InstagramPlannedDateUpdate,
     request: Request,
-    actor: User = Depends(require_owner),
+    actor: User = Depends(require_tenant_business_admin),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1515,6 +1530,11 @@ def admin_update_planned_date(
     content = content_or_404(db, business.id, content_id, for_update=True)
     if content.status in {"cancelled", "published"}:
         raise HTTPException(status_code=409, detail="Terminal content cannot be edited")
+    if content.status not in {"validated", "scheduled"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Planning is available after Business Owner final approval",
+        )
     planned = normalize_planned_datetime(
         payload.planned_publish_at,
         _business_timezone(business),
@@ -1741,6 +1761,7 @@ def owner_publish_now(
     _owner_business(db, business_id)
     require_service_enabled(db, business_id)
     content = content_or_404(db, business_id, content_id, for_update=True)
+    ensure_promotion_window(db, content, utc_now())
     job = sync_publish_job(db, content, actor=actor, now=utc_now(), force_now=True)
     if job.status not in ACTIVE_JOB_STATUSES:
         raise HTTPException(
@@ -1808,7 +1829,7 @@ def admin_schedule_content(
     business_slug: str,
     content_id: int,
     request: Request,
-    actor: User = Depends(require_owner),
+    actor: User = Depends(require_tenant_business_admin),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1839,12 +1860,13 @@ def admin_publish_now(
     business_slug: str,
     content_id: int,
     request: Request,
-    actor: User = Depends(require_owner),
+    actor: User = Depends(require_tenant_business_admin),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
     require_service_enabled(db, business.id)
     content = content_or_404(db, business.id, content_id, for_update=True)
+    ensure_promotion_window(db, content, utc_now())
     job = sync_publish_job(db, content, actor=actor, now=utc_now(), force_now=True)
     if job.status not in ACTIVE_JOB_STATUSES:
         raise HTTPException(
@@ -1876,7 +1898,7 @@ def admin_publish_now(
 def admin_cancel_publish_job(
     business_slug: str,
     content_id: int,
-    actor: User = Depends(require_owner),
+    actor: User = Depends(require_tenant_business_admin),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1898,7 +1920,7 @@ def admin_cancel_publish_job(
 def admin_retry_publish_job(
     business_slug: str,
     content_id: int,
-    actor: User = Depends(require_owner),
+    actor: User = Depends(require_tenant_business_admin),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1955,7 +1977,7 @@ def admin_review_content(
     content_id: int,
     payload: InstagramEditorialReviewCreate,
     request: Request,
-    actor: User = Depends(require_instagram_business_admin),
+    actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1965,8 +1987,8 @@ def admin_review_content(
         raise HTTPException(status_code=409, detail="Review must target the current version")
     if content.status != "ready_for_review":
         raise HTTPException(status_code=409, detail="Content is not ready for editorial review")
-    if payload.decision == "reject" and payload.note is None:
-        raise HTTPException(status_code=422, detail="A rejection note is required")
+    if payload.decision != "approve" and payload.note is None:
+        raise HTTPException(status_code=422, detail="A review note is required")
 
     approved = payload.decision == "approve"
     comment = add_admin_comment(
@@ -1984,6 +2006,31 @@ def admin_review_content(
         if approved
         else payload.note or "",
     )
+    editorial_review = (
+        db.query(InstagramContentEditorialReview)
+        .filter(InstagramContentEditorialReview.version_id == version.id)
+        .first()
+    )
+    if editorial_review is None:
+        editorial_review = InstagramContentEditorialReview(
+            business_id=business.id,
+            content_id=content.id,
+            version_id=version.id,
+            status="pending",
+            submitted_at=datetime.now(timezone.utc),
+        )
+        db.add(editorial_review)
+    editorial_review.status = (
+        "approved"
+        if approved
+        else "changes_requested"
+        if payload.decision == "changes_requested"
+        else "rejected"
+    )
+    editorial_review.reviewed_by_user_id = actor.id
+    editorial_review.reviewed_at = datetime.now(timezone.utc)
+    editorial_review.note = payload.note
+    db.flush()
     _audit(
         db,
         request=request,
@@ -1992,10 +2039,12 @@ def admin_review_content(
         action=(
             "instagram_content_editorially_approved"
             if approved
+            else "instagram_content_editorially_changes_requested"
+            if payload.decision == "changes_requested"
             else "instagram_content_editorially_rejected"
         ),
-        resource_type="instagram_content_comment",
-        resource_id=comment.id,
+        resource_type="instagram_content_editorial_review",
+        resource_id=editorial_review.id,
         metadata={
             "content_id": content_id,
             "version_id": version.id,
@@ -2008,7 +2057,32 @@ def admin_review_content(
         "decision": payload.decision,
         "content_status": content.status,
         "comment": serialize_comment(comment),
+        "editorial_review": {
+            "id": editorial_review.id,
+            "status": editorial_review.status,
+            "version_id": editorial_review.version_id,
+        },
     }
+
+
+@owner_router.post("/contents/{content_id}/editorial-review", status_code=201)
+def owner_review_content(
+    business_id: int,
+    content_id: int,
+    payload: InstagramEditorialReviewCreate,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    business = _owner_business(db, business_id)
+    return admin_review_content(
+        business.slug,
+        content_id,
+        payload,
+        request,
+        actor,
+        db,
+    )
 
 
 def _validate_and_commit(
@@ -2035,7 +2109,11 @@ def _validate_and_commit(
         request=request,
         actor=actor,
         business_id=business_id,
-        action="instagram_content_validated",
+        action=(
+            "instagram_content_business_owner_final_approved"
+            if role == "business_admin"
+            else "instagram_content_validated"
+        ),
         resource_type="instagram_content_validation",
         resource_id=validation.id,
         metadata={
@@ -2068,7 +2146,7 @@ def admin_validate_content(
     content_id: int,
     payload: InstagramValidationCreate,
     request: Request,
-    actor: User = Depends(require_owner),
+    actor: User = Depends(require_tenant_business_admin),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -2094,15 +2172,10 @@ def owner_validate_content(
     db: Session = Depends(get_db),
 ):
     _owner_business(db, business_id)
-    return _validate_and_commit(
-        db,
-        business_id=business_id,
-        content_id=content_id,
-        version_id=payload.version_id,
-        actor=actor,
-        role="owner_delegate",
-        request=request,
-        api_prefix=_owner_prefix(business_id),
+    del content_id, payload, request, actor
+    raise HTTPException(
+        status_code=403,
+        detail="Final approval belongs to the Business Owner",
     )
 
 
@@ -2283,6 +2356,7 @@ def owner_instagram_media_preview(
 async def owner_render_story_image(
     business_id: int,
     content_id: int,
+    request: Request,
     transform_json: str = Form("{}", alias="transform"),
     file: UploadFile | None = File(None),
     remote_media_id: int | None = Form(None),
@@ -2364,15 +2438,11 @@ async def owner_render_story_image(
     else:
         raw_asset = (
             db.query(InstagramRawAsset)
-            .join(
-                InstagramFinalAsset,
-                InstagramFinalAsset.source_raw_asset_id == InstagramRawAsset.id,
-            )
             .filter(
                 InstagramRawAsset.id == source_raw_asset_id,
                 InstagramRawAsset.business_id == business_id,
-                InstagramFinalAsset.content_id == content_id,
-                InstagramFinalAsset.business_id == business_id,
+                InstagramRawAsset.active.is_(True),
+                InstagramRawAsset.media_type.in_(("image/jpeg", "image/png", "image/webp")),
             )
             .first()
         )
@@ -2391,6 +2461,16 @@ async def owner_render_story_image(
         actor=actor,
         transform=transform,
         source_remote_media=source_remote,
+    )
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business_id,
+        action="instagram_raw_asset_reused",
+        resource_type="instagram_raw_asset",
+        resource_id=raw_asset.id,
+        metadata={"content_id": content_id, "final_asset_id": final_asset.id},
     )
     db.commit()
     return {

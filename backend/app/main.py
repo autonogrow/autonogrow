@@ -55,6 +55,7 @@ from app.routers.pilot_operations import owner_router as pilot_operations_owner_
 from app.routers.services import router as services_router
 from app.routers.social_content import router as social_content_router
 from app.routers.social_content_generation import router as social_content_generation_router
+from app.routers.social_content_workflow import router as social_content_workflow_router
 from app.routers.staff import (
     admin_router as admin_staff_router,
 )
@@ -149,6 +150,7 @@ app.include_router(growth_actions_router)
 app.include_router(growth_signals_router)
 app.include_router(social_content_router)
 app.include_router(social_content_generation_router)
+app.include_router(social_content_workflow_router)
 app.include_router(channel_onboarding_router)
 app.include_router(owner_router)
 app.include_router(owner_channel_controls_router)

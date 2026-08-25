@@ -8,8 +8,18 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
-from app.core.security import require_business_access
-from app.models import Business, BusinessService, SocialContentProposal, User
+from app.core.security import require_tenant_business_admin
+from app.models import (
+    AuditLog,
+    Business,
+    BusinessGrowthSignal,
+    BusinessService,
+    SocialContentProposal,
+    SocialIdeaReview,
+    SocialPromotion,
+    SocialPromotionRevision,
+    User,
+)
 from app.models.social_content_proposal import (
     SOCIAL_CONTENT_FORMATS,
     SOCIAL_PROPOSAL_OBJECTIVES,
@@ -17,16 +27,23 @@ from app.models.social_content_proposal import (
     SOCIAL_PROPOSAL_STATUSES,
     SOCIAL_PROPOSAL_TYPES,
 )
+from app.schemas.social_content_workflow import (
+    SocialIdeaAcceptRequest,
+    SocialPromotionDecisionRequest,
+)
 from app.services.capability_service import require_social_access
 from app.services.social_content_intelligence_service import (
     acceptance_snapshot,
     serialize_social_content_proposal,
 )
+from app.services.social_content_presentation_service import (
+    present_social_content_proposal,
+)
 
 router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}",
     tags=["social-content-intelligence"],
-    dependencies=[Depends(require_social_access)],
+    dependencies=[Depends(require_social_access), Depends(require_tenant_business_admin)],
 )
 
 
@@ -67,6 +84,81 @@ def _service_or_422(db: Session, *, business_id: int, service_id: int) -> None:
     )
     if exists is None:
         raise HTTPException(status_code=422, detail="Service does not belong to this business")
+
+
+def _promotion_eligible(db: Session, row: SocialContentProposal) -> bool:
+    if row.service_id is None:
+        return False
+    signal_types = {link.signal.type for link in row.signal_links}
+    if "service_demand_drop" not in signal_types:
+        return False
+    return (
+        db.query(BusinessGrowthSignal.id)
+        .filter(
+            BusinessGrowthSignal.business_id == row.business_id,
+            BusinessGrowthSignal.status == "active",
+            BusinessGrowthSignal.type == "low_future_occupancy",
+        )
+        .first()
+        is not None
+    )
+
+
+def _serialize_owner_idea(db: Session, row: SocialContentProposal) -> dict:
+    payload = serialize_social_content_proposal(row)
+    review = row.idea_review
+    payload["presentation"] = present_social_content_proposal(row).as_dict()
+    payload["owner_first"] = review is not None
+    payload["legacy_accepted"] = row.status == "accepted" and review is None
+    payload["owner_state"] = (
+        "new"
+        if row.status == "active"
+        else "dismissed"
+        if row.status == "dismissed"
+        else "legacy_accepted"
+        if review is None
+        else "pending_admin"
+        if review.status == "pending"
+        else "preparing_content"
+        if review.status == "approved" and row.generated_content is not None
+        else review.status
+    )
+    payload["promotion_eligible"] = _promotion_eligible(db, row)
+    payload["idea_review"] = (
+        {
+            "id": review.id,
+            "status": review.status,
+            "owner_intent": review.owner_intent,
+            "promotion": (
+                {
+                    "id": review.promotion.id,
+                    "status": review.promotion.status,
+                    "revisions": [
+                        {
+                            "id": revision.id,
+                            "revision_number": revision.revision_number,
+                            "status": revision.status,
+                            "discount_type": revision.discount_type,
+                            "discount_value": str(revision.discount_value),
+                            "regular_price": str(revision.regular_price),
+                            "promotional_price": str(revision.promotional_price),
+                            "currency": revision.currency,
+                            "valid_from": revision.valid_from.isoformat(),
+                            "valid_until": revision.valid_until.isoformat(),
+                            "days": json.loads(revision.days_json),
+                            "scope": revision.scope,
+                        }
+                        for revision in review.promotion.revisions
+                    ],
+                }
+                if review.promotion
+                else None
+            ),
+        }
+        if review
+        else None
+    )
+    return payload
 
 
 @router.get("/social-content-proposals")
@@ -115,7 +207,7 @@ def list_social_content_proposals(
     )
     return {
         "business_slug": business.slug,
-        "proposals": [serialize_social_content_proposal(row) for row in rows],
+        "proposals": [_serialize_owner_idea(db, row) for row in rows],
     }
 
 
@@ -156,10 +248,46 @@ def get_social_content_proposal(
 ):
     business = _business_or_404(db, business_slug)
     return {
-        "proposal": serialize_social_content_proposal(
-            _proposal_or_404(db, business_id=business.id, proposal_id=proposal_id)
+        "proposal": _serialize_owner_idea(
+            db, _proposal_or_404(db, business_id=business.id, proposal_id=proposal_id)
         )
     }
+
+
+@router.post("/social-content-proposals/{proposal_id}/seen")
+def mark_social_content_proposal_seen(
+    business_slug: str,
+    proposal_id: int,
+    request: Request,
+    actor: User = Depends(require_tenant_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = _business_or_404(db, business_slug)
+    row = _proposal_or_404(db, business_id=business.id, proposal_id=proposal_id)
+    exists = (
+        db.query(AuditLog.id)
+        .filter(
+            AuditLog.action == "social_idea_business_owner_seen",
+            AuditLog.business_id == business.id,
+            AuditLog.actor_user_id == actor.id,
+            AuditLog.resource_type == "social_content_proposal",
+            AuditLog.resource_id == str(row.id),
+        )
+        .first()
+        is not None
+    )
+    if not exists:
+        record_audit(
+            db,
+            action="social_idea_business_owner_seen",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="social_content_proposal",
+            resource_id=row.id,
+            metadata={"status": row.status},
+        )
+    return {"ok": True, "idempotent": exists}
 
 
 @router.post("/social-content-proposals/{proposal_id}/dismiss")
@@ -167,7 +295,7 @@ def dismiss_social_content_proposal(
     business_slug: str,
     proposal_id: int,
     request: Request,
-    actor: User = Depends(require_business_access),
+    actor: User = Depends(require_tenant_business_admin),
     db: Session = Depends(get_db),
 ):
     business = _business_or_404(db, business_slug)
@@ -175,7 +303,7 @@ def dismiss_social_content_proposal(
         db, business_id=business.id, proposal_id=proposal_id, lock=True
     )
     if row.status == "dismissed":
-        return {"ok": True, "idempotent": True, "proposal": serialize_social_content_proposal(row)}
+        return {"ok": True, "idempotent": True, "proposal": _serialize_owner_idea(db, row)}
     if row.status != "active":
         raise HTTPException(status_code=409, detail="Only an active proposal can be dismissed")
     row.status = "dismissed"
@@ -185,7 +313,7 @@ def dismiss_social_content_proposal(
     db.refresh(row)
     record_audit(
         db,
-        action="social_content_proposal_dismissed",
+        action="social_idea_business_owner_dismissed",
         request=request,
         actor=actor,
         business_id=business.id,
@@ -193,15 +321,16 @@ def dismiss_social_content_proposal(
         resource_id=row.id,
         metadata={"type": row.proposal_type, "service_id": row.service_id},
     )
-    return {"ok": True, "idempotent": False, "proposal": serialize_social_content_proposal(row)}
+    return {"ok": True, "idempotent": False, "proposal": _serialize_owner_idea(db, row)}
 
 
 @router.post("/social-content-proposals/{proposal_id}/accept")
 def accept_social_content_proposal(
     business_slug: str,
     proposal_id: int,
+    payload: SocialIdeaAcceptRequest,
     request: Request,
-    actor: User = Depends(require_business_access),
+    actor: User = Depends(require_tenant_business_admin),
     db: Session = Depends(get_db),
 ):
     business = _business_or_404(db, business_slug)
@@ -209,25 +338,142 @@ def accept_social_content_proposal(
         db, business_id=business.id, proposal_id=proposal_id, lock=True
     )
     if row.status == "accepted":
-        return {"ok": True, "idempotent": True, "proposal": serialize_social_content_proposal(row)}
+        if row.idea_review is None:
+            raise HTTPException(
+                status_code=409,
+                detail="This legacy acceptance has no Business Owner evidence",
+            )
+        return {"ok": True, "idempotent": True, "proposal": _serialize_owner_idea(db, row)}
     if row.status != "active":
         raise HTTPException(status_code=409, detail="Only an active proposal can be accepted")
+    promotion_eligible = _promotion_eligible(db, row)
+    if payload.intent == "promotion" and not promotion_eligible:
+        raise HTTPException(
+            status_code=409,
+            detail="This opportunity does not support a promotion study",
+        )
     now = _now()
     row.accepted_context_json = acceptance_snapshot(row)
     row.status = "accepted"
     row.accepted_at = now
     row.accepted_by_user_id = actor.id
     row.updated_at = now
+    presentation = present_social_content_proposal(row)
+    review = SocialIdeaReview(
+        business_id=business.id,
+        proposal=row,
+        status="pending",
+        owner_intent=payload.intent,
+        owner_accepted_by_user_id=actor.id,
+        owner_accepted_at=now,
+        owner_context_json=row.accepted_context_json,
+        presentation_json=json.dumps(
+            presentation.as_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ),
+        template_version=presentation.template_version,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(review)
+    db.flush()
+    if payload.intent == "promotion":
+        db.add(
+            SocialPromotion(
+                business_id=business.id,
+                idea_review_id=review.id,
+                service_id=row.service_id,
+                status="requested",
+                requested_by_user_id=actor.id,
+                requested_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
     db.commit()
     db.refresh(row)
     record_audit(
         db,
-        action="social_content_proposal_accepted",
+        action="social_idea_business_owner_accepted",
         request=request,
         actor=actor,
         business_id=business.id,
         resource_type="social_content_proposal",
         resource_id=row.id,
-        metadata={"type": row.proposal_type, "service_id": row.service_id},
+        metadata={
+            "type": row.proposal_type,
+            "service_id": row.service_id,
+            "idea_review_id": review.id,
+            "owner_intent": payload.intent,
+        },
     )
-    return {"ok": True, "idempotent": False, "proposal": serialize_social_content_proposal(row)}
+    if payload.intent == "promotion":
+        record_audit(
+            db,
+            action="social_promotion_business_owner_requested",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="social_idea_review",
+            resource_id=review.id,
+            metadata={"proposal_id": row.id, "service_id": row.service_id},
+        )
+    return {"ok": True, "idempotent": False, "proposal": _serialize_owner_idea(db, row)}
+
+
+@router.post("/social-content-proposals/{proposal_id}/promotion/decision")
+def decide_social_promotion(
+    business_slug: str,
+    proposal_id: int,
+    payload: SocialPromotionDecisionRequest,
+    request: Request,
+    actor: User = Depends(require_tenant_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = _business_or_404(db, business_slug)
+    row = _proposal_or_404(
+        db, business_id=business.id, proposal_id=proposal_id, lock=True
+    )
+    review = row.idea_review
+    promotion = review.promotion if review else None
+    if promotion is None:
+        raise HTTPException(status_code=404, detail="Promotion request not found")
+    revision = (
+        db.query(SocialPromotionRevision)
+        .filter(
+            SocialPromotionRevision.id == payload.revision_id,
+            SocialPromotionRevision.promotion_id == promotion.id,
+        )
+        .first()
+    )
+    if revision is None:
+        raise HTTPException(status_code=404, detail="Promotion revision not found")
+    if revision.status in {"owner_approved", "owner_rejected"}:
+        expected = "owner_approved" if payload.decision == "approve" else "owner_rejected"
+        if revision.status != expected:
+            raise HTTPException(status_code=409, detail="Promotion already has another decision")
+        return {"ok": True, "idempotent": True, "promotion_id": promotion.id}
+    if revision.status != "proposed" or revision is not promotion.revisions[-1]:
+        raise HTTPException(status_code=409, detail="Only the current proposal can be decided")
+    now = _now()
+    revision.status = "owner_approved" if payload.decision == "approve" else "owner_rejected"
+    revision.owner_decided_by_user_id = actor.id
+    revision.owner_decided_at = now
+    revision.owner_note = payload.note
+    promotion.status = revision.status
+    promotion.updated_at = now
+    db.commit()
+    record_audit(
+        db,
+        action=(
+            "social_promotion_business_owner_approved"
+            if payload.decision == "approve"
+            else "social_promotion_business_owner_rejected"
+        ),
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="social_promotion_revision",
+        resource_id=revision.id,
+        metadata={"proposal_id": row.id, "promotion_id": promotion.id},
+    )
+    return {"ok": True, "idempotent": False, "promotion_id": promotion.id}

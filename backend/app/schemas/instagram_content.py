@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 InstagramFormat = Literal["single_image", "carousel", "reel", "story"]
 CommentKind = Literal["comment", "proposal", "change_request"]
-EditorialReviewDecision = Literal["approve", "reject"]
+EditorialReviewDecision = Literal["approve", "changes_requested", "reject"]
 InstagramPublishJobStatus = Literal[
     "queued",
     "claimed",

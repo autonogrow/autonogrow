@@ -41,6 +41,7 @@ from app.models.google_integration import GoogleIntegration
 from app.models.instagram_content import (
     InstagramContent,
     InstagramContentComment,
+    InstagramContentEditorialReview,
     InstagramContentRawAsset,
     InstagramContentSettings,
     InstagramContentValidation,
@@ -62,6 +63,9 @@ from app.models.social_content_proposal import (
     BusinessReview,
     SocialContentProposal,
     SocialContentProposalSignal,
+    SocialIdeaReview,
+    SocialPromotion,
+    SocialPromotionRevision,
 )
 from app.models.sync_job import SyncJob
 from app.models.system_incident import SystemIncident
@@ -92,6 +96,7 @@ __all__ = [
     "InstagramOAuthAttempt",
     "InstagramContent",
     "InstagramContentComment",
+    "InstagramContentEditorialReview",
     "InstagramContentSettings",
     "InstagramContentRawAsset",
     "InstagramContentValidation",
@@ -108,6 +113,9 @@ __all__ = [
     "BusinessReview",
     "SocialContentProposal",
     "SocialContentProposalSignal",
+    "SocialIdeaReview",
+    "SocialPromotion",
+    "SocialPromotionRevision",
     "MessageOutbox",
     "MetaIntegrationJob",
     "BackupRecord",

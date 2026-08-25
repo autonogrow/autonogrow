@@ -93,8 +93,8 @@ def test_all_real_frontend_surfaces_and_local_assets_are_present() -> None:
 
 def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
     expected = {
-        "autonogrow-admin": ("styles.css?v=10a", "responsive.css?v=5f1", "auth.js?v=10b5", "admin.js?v=5f1"),
-        "autonogrow-owner": ("styles.css?v=20260824-p1", "responsive.css?v=5f1", "auth.js?v=10b5", "owner.js?v=20260824-p1", "owner-onboarding.js?v=5f1"),
+        "autonogrow-admin": ("styles.css?v=10a", "responsive.css?v=5f1", "auth.js?v=10b5", "admin.js?v=20260825-p12-a"),
+        "autonogrow-owner": ("styles.css?v=20260825-p12-b", "responsive.css?v=5f1", "auth.js?v=10b5", "owner.js?v=20260825-p12-b", "owner-onboarding.js?v=5f1"),
         "autonogrow-landing": ("styles.css?v=10b5", "auth.js?v=10b5", "script.js?v=10b5"),
         "autonogrow-customer": ("styles.css?v=10b5", "auth.js?v=10b5", "customer.js?v=10b5"),
     }
@@ -105,6 +105,14 @@ def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
         scripts = re.findall(r'<script\b[^>]*src="([^"]+)"', source)
         assert "accounts.google.com/gsi/client" in scripts[0]
         assert next(i for i, item in enumerate(scripts) if "auth.js" in item) < len(scripts) - 1
+
+
+def test_admin_instagram_planning_preserves_the_business_civil_time() -> None:
+    source = text(ROOT / "autonogrow-admin" / "admin.js")
+    assert "function adminInstagramLocalInput(isoValue, timeZone)" in source
+    assert "adminInstagramLocalInput(item.planned_publish_at, item.business_timezone)" in source
+    assert 'JSON.stringify({ planned_publish_at: localValue })' in source
+    assert 'new Date(localValue).toISOString()' not in source
 
 
 def test_static_ids_aria_references_and_rendered_page_headings_are_coherent() -> None:

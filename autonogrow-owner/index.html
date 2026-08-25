@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Panel AutonoGrow</title>
-  <link rel="stylesheet" href="styles.css?v=20260824-p1" />
+  <link rel="stylesheet" href="styles.css?v=20260825-p12-b" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -233,6 +233,8 @@
       <div id="owner-instagram-workspace" hidden>
         <section class="instagram-editorial-card"><div><h3>Servicio adicional</h3><p>Solo Owner puede activar o desactivar esta función.</p></div><label class="checkbox-row"><input id="owner-instagram-enabled" type="checkbox"> Gestión de contenido activa</label></section>
         <div id="owner-instagram-enabled-area" hidden>
+          <section class="instagram-editorial-card" aria-labelledby="owner-social-review-title"><div><p class="eyebrow">Owner-first</p><h3 id="owner-social-review-title">Ideas que interesan al negocio</h3><p>Solo aparecen después de una decisión explícita del Business Owner. Revisa el contexto, ajusta lo permitido y prepara el borrador.</p></div><p id="owner-social-review-status" class="status-text" aria-live="polite"></p><div id="owner-social-review-list" class="instagram-content-list"></div></section>
+          <section class="instagram-editorial-card" aria-labelledby="owner-editorial-review-title"><div><p class="eyebrow">Revisión AutonoGrow</p><h3 id="owner-editorial-review-title">Versiones pendientes</h3><p>La aprobación editorial queda ligada a la versión exacta. La aprobación final seguirá perteneciendo al negocio.</p></div><div id="owner-editorial-review-list" class="instagram-content-list"></div></section>
           <section class="instagram-calendar-shell" aria-labelledby="owner-instagram-calendar-title">
             <header class="instagram-calendar-header">
               <div><p class="eyebrow">Plan editorial</p><h3 id="owner-instagram-calendar-title">Calendario de publicaciones</h3><p id="owner-instagram-period-label" class="instagram-period-label"></p></div>
@@ -425,8 +427,8 @@
   <div id="owner-instagram-library-dialog" class="owner-dialog-backdrop instagram-library-backdrop" hidden>
     <section class="owner-dialog instagram-library" role="dialog" aria-modal="true" aria-labelledby="owner-instagram-library-title" tabindex="-1">
       <header><div><p class="eyebrow">Elegir contenido</p><h2 id="owner-instagram-library-title">Contenido social</h2></div><button id="owner-instagram-library-close" class="ag-button ag-button--icon" type="button" aria-label="Cerrar selector">×</button></header>
-      <div class="instagram-library__tabs" role="tablist" aria-label="Fuente de contenido"><button type="button" role="tab" aria-selected="true">Instagram</button><button type="button" role="tab" aria-selected="false" disabled title="Disponible en una fase posterior">Material del negocio</button></div>
-      <div class="instagram-library__toolbar"><div role="group" aria-label="Filtrar contenido"><button class="button button-ghost button-small" type="button" data-instagram-library-filter="recent" aria-pressed="true">Recientes</button><button class="button button-ghost button-small" type="button" data-instagram-library-filter="photos" aria-pressed="false">Fotos</button><button class="button button-ghost button-small" type="button" data-instagram-library-filter="carousels" aria-pressed="false">Carruseles</button><button class="button button-ghost button-small" type="button" data-instagram-library-filter="reels" aria-pressed="false">Reels</button></div><button id="owner-instagram-library-sync" class="button button-secondary button-small" type="button">Actualizar desde Instagram</button></div>
+      <div class="instagram-library__tabs" role="tablist" aria-label="Fuente de contenido"><button type="button" role="tab" data-instagram-library-source="instagram" aria-selected="true">Instagram</button><button type="button" role="tab" data-instagram-library-source="business" aria-selected="false">Material del negocio</button></div>
+      <div class="instagram-library__toolbar"><div id="owner-instagram-library-filters" role="group" aria-label="Filtrar contenido"><button class="button button-ghost button-small" type="button" data-instagram-library-filter="recent" aria-pressed="true">Recientes</button><button class="button button-ghost button-small" type="button" data-instagram-library-filter="photos" aria-pressed="false">Fotos</button><button class="button button-ghost button-small" type="button" data-instagram-library-filter="carousels" aria-pressed="false">Carruseles</button><button class="button button-ghost button-small" type="button" data-instagram-library-filter="reels" aria-pressed="false">Reels</button></div><button id="owner-instagram-library-sync" class="button button-secondary button-small" type="button">Actualizar desde Instagram</button></div>
       <p id="owner-instagram-library-status" class="helper" aria-live="polite"></p>
       <div id="owner-instagram-library-grid" class="instagram-library__grid" aria-live="polite"></div>
       <p id="owner-instagram-library-error" class="owner-dialog-error" role="alert"></p>
@@ -467,7 +469,7 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js?v=10b5"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="owner.js?v=20260824-p1"></script>
+  <script src="owner.js?v=20260825-p12-b"></script>
   <script src="owner-businesses.js?v=20260805-4"></script>
   <script src="owner-operations.js?v=20260805-2"></script>
   <script src="owner-onboarding.js?v=5f1"></script>
