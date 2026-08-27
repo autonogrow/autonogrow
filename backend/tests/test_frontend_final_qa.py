@@ -93,8 +93,8 @@ def test_all_real_frontend_surfaces_and_local_assets_are_present() -> None:
 
 def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
     expected = {
-        "autonogrow-admin": ("styles.css?v=10a", "responsive.css?v=5f1", "auth.js?v=10b5", "admin.js?v=20260825-p12-a"),
-        "autonogrow-owner": ("styles.css?v=20260825-p12-b", "responsive.css?v=5f1", "auth.js?v=10b5", "owner.js?v=20260825-p12-b", "owner-onboarding.js?v=5f1"),
+        "autonogrow-admin": ("styles.css?v=10a", "responsive.css?v=5f1", "auth.js?v=10b5", "admin.js?v=20260825-p121-a"),
+        "autonogrow-owner": ("styles.css?v=20260825-p12-b", "responsive.css?v=5f1", "auth.js?v=10b5", "owner.js?v=20260825-p121-a", "owner-onboarding.js?v=5f1"),
         "autonogrow-landing": ("styles.css?v=10b5", "auth.js?v=10b5", "script.js?v=10b5"),
         "autonogrow-customer": ("styles.css?v=10b5", "auth.js?v=10b5", "customer.js?v=10b5"),
     }
@@ -110,8 +110,8 @@ def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
 def test_admin_instagram_planning_preserves_the_business_civil_time() -> None:
     source = text(ROOT / "autonogrow-admin" / "admin.js")
     assert "function adminInstagramLocalInput(isoValue, timeZone)" in source
-    assert "adminInstagramLocalInput(item.planned_publish_at, item.business_timezone)" in source
-    assert 'JSON.stringify({ planned_publish_at: localValue })' in source
+    assert 'timeZone: item.business_timezone' in source
+    assert "data-admin-instagram-publication" not in source
     assert 'new Date(localValue).toISOString()' not in source
 
 

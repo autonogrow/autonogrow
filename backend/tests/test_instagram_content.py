@@ -419,7 +419,7 @@ def test_admin_is_isolated_to_own_business_and_cannot_create_final_content(edito
             json={"version_id": _version_id, "decision": "approve"},
             )
             .status_code
-            == 403
+            == 404
         )
 
     set_actor(ctx, ctx["admin"])
@@ -470,7 +470,7 @@ def test_owner_and_admin_upload_raw_but_raw_never_becomes_final(editorial_contex
     )
 
 
-def test_autonogrow_review_is_persisted_before_business_owner_final_approval(
+def test_business_review_is_optional_and_owner_review_cannot_impersonate_client(
     editorial_context,
 ):
     ctx = editorial_context
@@ -481,13 +481,14 @@ def test_autonogrow_review_is_persisted_before_business_owner_final_approval(
     )
 
     set_actor(ctx, ctx["admin"])
-    assert (
-        ctx["client"].post(
-            f"{admin_base(ctx)}/contents/{content_id}/editorial-review",
-            json={"version_id": version_id, "decision": "approve"},
-        ).status_code
-        == 403
+    response = ctx["client"].post(
+        f"{admin_base(ctx)}/contents/{content_id}/editorial-review",
+        json={"version_id": version_id, "decision": "approve"},
     )
+    assert response.status_code == 201
+    assert response.json()["editorial_review"]["status"] == "approved"
+    assert response.json()["content_status"] == "ready_for_review"
+    assert ctx["db"].query(InstagramContentValidation).count() == 0
 
     set_actor(ctx, ctx["owner"])
     response = ctx["client"].post(
@@ -498,23 +499,19 @@ def test_autonogrow_review_is_persisted_before_business_owner_final_approval(
             "note": "El mensaje representa correctamente al negocio.",
         },
     )
-    assert response.status_code == 201
-    assert response.json()["editorial_review"]["status"] == "approved"
-    assert response.json()["content_status"] == "ready_for_review"
-    assert ctx["db"].query(InstagramContentValidation).count() == 0
+    assert response.status_code == 403
 
     set_actor(ctx, ctx["admin"])
     final = ctx["client"].post(
         f"{admin_base(ctx)}/contents/{content_id}/validate",
         json={"version_id": version_id},
     )
-    assert final.status_code == 200, final.text
-    assert final.json()["status"] == "validated"
-    assert ctx["db"].query(InstagramContentValidation).count() == 1
+    assert final.status_code == 409
+    assert ctx["db"].query(InstagramContentValidation).count() == 0
     audit = (
         ctx["db"]
         .query(AuditLog)
-        .filter_by(action="instagram_content_editorially_approved")
+        .filter_by(action="content_admin_approved_optional")
         .one()
     )
     assert json.loads(audit.metadata_json)["version_id"] == version_id
@@ -566,52 +563,43 @@ def test_business_roles_respect_review_and_final_approval_boundaries(
         f"{admin_base(ctx)}/contents/{content_id}/editorial-review",
         json={"version_id": version_id, "decision": "approve"},
     )
-    assert review.status_code == 403
+    assert review.status_code == (201 if role == "admin" else 403)
 
 
 def test_material_change_versions_and_invalidates_but_date_change_does_not(editorial_context):
     ctx = editorial_context
+    enable_publish_integration(ctx)
     content_id, asset_id, version_id = create_content_with_asset(ctx)
     response = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review")
     assert response.status_code == 200
     assert response.json()["status"] == "ready_for_review"
 
-    set_actor(ctx, ctx["owner"])
-    response = ctx["client"].post(
-        f"{owner_base(ctx)}/contents/{content_id}/editorial-review",
-        json={"version_id": version_id, "decision": "approve"},
-    )
-    assert response.status_code == 201
-    set_actor(ctx, ctx["admin"])
-    response = ctx["client"].post(
-        f"{admin_base(ctx)}/contents/{content_id}/validate",
-        json={"version_id": version_id},
-    )
+    response = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule")
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "validated"
+    assert response.json()["status"] == "scheduled"
     assert response.json()["current_version"]["validation"]["approved_asset_ids"] == [asset_id]
     validation = ctx["db"].query(InstagramContentValidation).one()
     assert validation.version_id == version_id
+    assert validation.validator_role == "owner_delegate"
     assert validation.invalidated_at is None
     audit = (
         ctx["db"]
         .query(AuditLog)
-        .filter_by(action="instagram_content_business_owner_final_approved")
+        .filter_by(action="content_scheduled_by_owner")
         .one()
     )
-    assert json.loads(audit.metadata_json)["approved_asset_ids"] == [asset_id]
+    assert json.loads(audit.metadata_json)["new_status"] == "scheduled"
 
     response = ctx["client"].patch(
-        f"{admin_base(ctx)}/contents/{content_id}/planned-date",
+        f"{owner_base(ctx)}/contents/{content_id}/planned-date",
         json={"planned_publish_at": future_planned_at()},
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "validated"
+    assert response.json()["status"] == "scheduled"
     assert response.json()["current_version"]["id"] == version_id
     ctx["db"].refresh(validation)
     assert validation.invalidated_at is None
 
-    set_actor(ctx, ctx["owner"])
     response = ctx["client"].put(
         f"{owner_base(ctx)}/contents/{content_id}/material",
         json={
@@ -629,8 +617,9 @@ def test_material_change_versions_and_invalidates_but_date_change_does_not(edito
     assert validation.invalidation_reason == "material_content_changed"
 
 
-def test_autonogrow_review_precedes_business_owner_final_approval(editorial_context):
+def test_optional_business_review_does_not_precede_owner_operational_selection(editorial_context):
     ctx = editorial_context
+    enable_publish_integration(ctx)
     content_id, _asset_id, version_id = create_content_with_asset(ctx)
     assert (
         ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review").status_code
@@ -645,24 +634,16 @@ def test_autonogrow_review_precedes_business_owner_final_approval(editorial_cont
         == 409
     )
 
-    set_actor(ctx, ctx["owner"])
     response = ctx["client"].post(
-        f"{owner_base(ctx)}/contents/{content_id}/validate", json={"version_id": version_id}
-    )
-    assert response.status_code == 403
-
-    response = ctx["client"].post(
-        f"{owner_base(ctx)}/contents/{content_id}/editorial-review",
+        f"{admin_base(ctx)}/contents/{content_id}/editorial-review",
         json={"version_id": version_id, "decision": "approve"},
     )
     assert response.status_code == 201
 
-    set_actor(ctx, ctx["admin"])
-    response = ctx["client"].post(
-        f"{admin_base(ctx)}/contents/{content_id}/validate", json={"version_id": version_id}
-    )
+    set_actor(ctx, ctx["owner"])
+    response = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule")
     assert response.status_code == 200
-    assert response.json()["current_version"]["validation"]["validator_role"] == "business_admin"
+    assert response.json()["current_version"]["validation"]["validator_role"] == "owner_delegate"
 
     asset_id = response.json()["current_version"]["assets"][0]["id"]
     set_actor(ctx, ctx["owner"])
@@ -681,10 +662,6 @@ def test_autonogrow_review_precedes_business_owner_final_approval(editorial_cont
         == 200
     )
     assert (
-        ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review").status_code
-        == 200
-    )
-    assert (
         ctx["client"]
         .post(f"{owner_base(ctx)}/contents/{content_id}/validate", json={"version_id": version_id})
         .status_code
@@ -699,70 +676,115 @@ def test_schedule_is_blocked_without_an_approved_integration(editorial_context):
         ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review").status_code
         == 200
     )
-    set_actor(ctx, ctx["owner"])
-    response = ctx["client"].post(
-        f"{owner_base(ctx)}/contents/{content_id}/editorial-review",
-        json={
-            "version_id": version_id,
-            "decision": "reject",
-            "note": "Ajustar el tono de la llamada a la acción.",
-        },
-    )
-    assert response.status_code == 201
-    content = ctx["db"].get(InstagramContent, content_id)
-    assert content.status == "changes_requested"
-    assert ctx["db"].query(InstagramContentValidation).count() == 0
-
-    current = (
-        ctx["db"]
-        .query(InstagramContentVersion)
-        .filter_by(content_id=content_id)
-        .order_by(InstagramContentVersion.version_number.desc())
-        .first()
-    )
-    asset_id = current.asset_links[0].asset_id
-    assert (
-        ctx["client"]
-        .put(
-            f"{owner_base(ctx)}/contents/{content_id}/material",
-            json={
-                "caption": "Tono ajustado",
-                "format": "single_image",
-                "asset_ids": [asset_id],
-                "cover_asset_id": asset_id,
-            },
-        )
-        .status_code
-        == 200
-    )
-    submitted = (
-        ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review").json()
-    )
-    approved = ctx["client"].post(
-        f"{owner_base(ctx)}/contents/{content_id}/editorial-review",
-        json={"version_id": submitted["current_version"]["id"], "decision": "approve"},
-    )
-    assert approved.status_code == 201
-    assert approved.json()["content_status"] == "ready_for_review"
-    set_actor(ctx, ctx["admin"])
-    assert (
-        ctx["client"]
-        .post(
-            f"{admin_base(ctx)}/contents/{content_id}/validate",
-            json={"version_id": submitted["current_version"]["id"]},
-        )
-        .status_code
-        == 200
-    )
-    set_actor(ctx, ctx["owner"])
     scheduled = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule")
     assert scheduled.status_code == 409
+    validation = ctx["db"].query(InstagramContentValidation).one()
+    assert validation.version_id == version_id
+    assert validation.validator_role == "owner_delegate"
     assert ctx["db"].query(InstagramPublishJob).count() == 1
     assert (
         ctx["db"].query(InstagramPublishJob).order_by(InstagramPublishJob.id.desc()).first().status
         == "action_required"
     )
     assert ctx["db"].query(MetaIntegrationJob).count() == 0
+
+
+def test_owner_can_schedule_routine_content_when_business_does_nothing(editorial_context):
+    ctx = editorial_context
+    enable_publish_integration(ctx)
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    submitted = ctx["client"].post(
+        f"{owner_base(ctx)}/contents/{content_id}/submit-for-review"
+    )
+    assert submitted.status_code == 200
+    assert submitted.json()["current_version"]["editorial_review"]["status"] == "pending"
+
+    scheduled = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule")
+    assert scheduled.status_code == 200, scheduled.text
+    assert scheduled.json()["status"] == "scheduled"
+    assert scheduled.json()["current_version"]["id"] == version_id
+    assert scheduled.json()["current_version"]["validation"]["validator_role"] == "owner_delegate"
+
+
+@pytest.mark.parametrize("decision", ["changes_requested", "reject"])
+def test_business_version_blocker_does_not_block_a_new_version(editorial_context, decision):
+    ctx = editorial_context
+    enable_publish_integration(ctx)
+    content_id, asset_id, blocked_version_id = create_content_with_asset(ctx)
+    ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review")
+    set_actor(ctx, ctx["admin"])
+    blocked = ctx["client"].post(
+        f"{admin_base(ctx)}/contents/{content_id}/editorial-review",
+        json={
+            "version_id": blocked_version_id,
+            "decision": decision,
+            "note": "Ajusta esta versión.",
+        },
+    )
+    assert blocked.status_code == 201
+
+    set_actor(ctx, ctx["owner"])
+    assert ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 409
+    updated = ctx["client"].put(
+        f"{owner_base(ctx)}/contents/{content_id}/material",
+        json={
+            "caption": "Nueva versión corregida",
+            "format": "single_image",
+            "asset_ids": [asset_id],
+            "cover_asset_id": asset_id,
+        },
+    )
+    assert updated.status_code == 200
+    new_version_id = updated.json()["current_version"]["id"]
+    assert new_version_id != blocked_version_id
+    assert ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review").status_code == 200
+    scheduled = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule")
+    assert scheduled.status_code == 200, scheduled.text
+    assert scheduled.json()["current_version"]["id"] == new_version_id
+
+
+def test_publication_hold_survives_versions_until_business_releases_it(editorial_context):
+    ctx = editorial_context
+    enable_publish_integration(ctx)
+    content_id, asset_id, _version_id = create_content_with_asset(ctx)
+    ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review")
+    assert ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 200
+
+    set_actor(ctx, ctx["admin"])
+    held = ctx["client"].post(
+        f"{admin_base(ctx)}/contents/{content_id}/publication-hold",
+        json={"reason": "No publicar hasta confirmar campaña."},
+    )
+    assert held.status_code == 201
+    assert ctx["db"].query(InstagramPublishJob).one().status == "cancelled"
+
+    set_actor(ctx, ctx["owner"])
+    updated = ctx["client"].put(
+        f"{owner_base(ctx)}/contents/{content_id}/material",
+        json={
+            "caption": "Versión nueva durante el hold",
+            "format": "single_image",
+            "asset_ids": [asset_id],
+            "cover_asset_id": asset_id,
+        },
+    )
+    assert updated.status_code == 200
+    ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review")
+    assert ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 409
+
+    set_actor(ctx, ctx["staff"])
+    assert ctx["client"].post(
+        f"{admin_base(ctx)}/contents/{content_id}/publication-hold/release",
+        json={"note": "sin permiso"},
+    ).status_code == 403
+    set_actor(ctx, ctx["admin"])
+    released = ctx["client"].post(
+        f"{admin_base(ctx)}/contents/{content_id}/publication-hold/release",
+        json={"note": "Campaña confirmada."},
+    )
+    assert released.status_code == 200
+    set_actor(ctx, ctx["owner"])
+    assert ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 200
 
 
 def test_same_material_payload_does_not_create_a_version(editorial_context):
@@ -805,19 +827,11 @@ def test_owner_schedule_reschedule_publish_now_and_cancel_endpoints(editorial_co
         ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review").status_code
         == 200
     )
-    reviewed = ctx["client"].post(
-        f"{owner_base(ctx)}/contents/{content_id}/editorial-review",
-        json={"version_id": version_id, "decision": "approve"},
-    )
-    assert reviewed.status_code == 201
-    set_actor(ctx, ctx["admin"])
-    validated = ctx["client"].post(
-        f"{admin_base(ctx)}/contents/{content_id}/validate", json={"version_id": version_id}
-    )
-    assert validated.status_code == 200
-    assert validated.json()["status"] == "scheduled"
-    first_job = validated.json()["publish_jobs"][0]
-    set_actor(ctx, ctx["owner"])
+    scheduled = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule")
+    assert scheduled.status_code == 200
+    assert scheduled.json()["status"] == "scheduled"
+    assert scheduled.json()["current_version"]["validation"]["validator_role"] == "owner_delegate"
+    first_job = scheduled.json()["publish_jobs"][0]
     future = datetime.now(timezone.utc) + timedelta(days=3)
     rescheduled = ctx["client"].patch(
         f"{owner_base(ctx)}/contents/{content_id}/publish-job/reschedule",

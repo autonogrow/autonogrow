@@ -242,6 +242,9 @@ class SocialContentProposal(Base):
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     accepted_context_json: Mapped[str | None] = mapped_column(Text)
+    operator_postponed_until: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), index=True
+    )
     resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
@@ -419,3 +422,6 @@ class SocialPromotionRevision(Base):
     promotion = relationship("SocialPromotion", back_populates="revisions")
     proposed_by = relationship("User", foreign_keys=[proposed_by_user_id])
     owner_decided_by = relationship("User", foreign_keys=[owner_decided_by_user_id])
+    content_versions = relationship(
+        "InstagramContentVersion", back_populates="promotion_revision"
+    )

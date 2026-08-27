@@ -162,6 +162,12 @@ class InstagramContent(Base):
         back_populates="content",
         cascade="all, delete-orphan",
     )
+    publication_holds = relationship(
+        "InstagramContentPublicationHold",
+        back_populates="content",
+        cascade="all, delete-orphan",
+        order_by="InstagramContentPublicationHold.held_at",
+    )
     publish_jobs = relationship(
         "InstagramPublishJob", back_populates="content", cascade="all, delete-orphan"
     )
@@ -272,6 +278,9 @@ class InstagramContentVersion(Base):
     editorial_package_json: Mapped[str | None] = mapped_column(Text)
     generation_source: Mapped[str | None] = mapped_column(String(30))
     generator_version: Mapped[str | None] = mapped_column(String(50))
+    promotion_revision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("social_promotion_revisions.id", ondelete="RESTRICT"), index=True
+    )
     story_transform_json: Mapped[str | None] = mapped_column(Text)
     story_renderer_version: Mapped[str | None] = mapped_column(String(50))
     created_by_user_id: Mapped[int | None] = mapped_column(
@@ -289,6 +298,9 @@ class InstagramContentVersion(Base):
     validation = relationship("InstagramContentValidation", back_populates="version", uselist=False)
     editorial_review = relationship(
         "InstagramContentEditorialReview", back_populates="version", uselist=False
+    )
+    promotion_revision = relationship(
+        "SocialPromotionRevision", back_populates="content_versions"
     )
     comments = relationship("InstagramContentComment", back_populates="version")
     publish_job = relationship("InstagramPublishJob", back_populates="version", uselist=False)
@@ -397,6 +409,46 @@ class InstagramContentEditorialReview(Base):
     content = relationship("InstagramContent", back_populates="editorial_reviews")
     version = relationship("InstagramContentVersion", back_populates="editorial_review")
     reviewed_by = relationship("User")
+
+
+class InstagramContentPublicationHold(Base):
+    __tablename__ = "instagram_content_publication_holds"
+    __table_args__ = (
+        Index(
+            "ix_instagram_content_holds_content_released",
+            "content_id",
+            "released_at",
+        ),
+        Index(
+            "ix_instagram_content_holds_business_held",
+            "business_id",
+            "held_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    content_id: Mapped[int] = mapped_column(
+        ForeignKey("instagram_contents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    held_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    held_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    released_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    released_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), index=True)
+    release_note: Mapped[str | None] = mapped_column(Text)
+
+    content = relationship("InstagramContent", back_populates="publication_holds")
+    held_by = relationship("User", foreign_keys=[held_by_user_id])
+    released_by = relationship("User", foreign_keys=[released_by_user_id])
 
 
 class InstagramContentComment(Base):

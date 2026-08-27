@@ -219,7 +219,7 @@ def test_generation_is_idempotent_and_hook_rotation_is_deterministic(db: Session
     assert second_version.id == first_version.id
 
 
-def test_legacy_accepted_proposal_cannot_generate_without_explicit_admin_review(
+def test_legacy_accepted_proposal_can_generate_without_new_review_gate(
     db: Session, records
 ) -> None:
     proposal = records["proposal"]
@@ -227,11 +227,13 @@ def test_legacy_accepted_proposal_cannot_generate_without_explicit_admin_review(
     db.commit()
     db.refresh(proposal)
 
-    with pytest.raises(HTTPException) as exc:
-        generate_from_proposal(db, proposal=proposal, actor=records["owner"], now=NOW)
+    content, version, idempotent = generate_from_proposal(
+        db, proposal=proposal, actor=records["owner"], now=NOW
+    )
 
-    assert exc.value.status_code == 409
-    assert "Explicit AutonoGrow Admin" in str(exc.value.detail)
+    assert content.id is not None
+    assert version.id is not None
+    assert idempotent is False
 
 
 def test_assets_are_tenant_scoped_active_and_service_ranked(db: Session, records) -> None:
@@ -456,15 +458,15 @@ def test_generation_api_is_owner_only_and_tenant_scoped(db: Session, records) ->
         )
 
 
-def test_business_owner_ui_exposes_interest_and_final_approval_without_admin_review() -> None:
+def test_business_ui_exposes_optional_supervision_and_commercial_decisions() -> None:
     admin = (Path(__file__).resolve().parents[2] / "autonogrow-admin" / "admin.js").read_text(
         encoding="utf-8"
     )
     for marker in (
-        "Me interesa",
-        "Estudiar promoción",
-        "data-admin-instagram-final-approval",
-        "/validate",
+        "Dar visto bueno",
+        "Solicitar cambios",
+        "Detener publicación",
+        "Aprobar condiciones",
     ):
         assert marker in admin
     for forbidden in (
@@ -473,6 +475,7 @@ def test_business_owner_ui_exposes_interest_and_final_approval_without_admin_rev
         "data-generated-regenerate",
         "/generated-draft",
         "/regenerate",
-        "/editorial-review",
     ):
         assert forbidden not in admin
+    assert "Me interesa" not in admin
+    assert "data-admin-instagram-publication" not in admin

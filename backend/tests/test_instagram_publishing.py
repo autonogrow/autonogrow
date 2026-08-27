@@ -23,6 +23,7 @@ from app.models import (
     BusinessChannelControl,
     BusinessChannelIntegration,
     InstagramContent,
+    InstagramContentPublicationHold,
     InstagramContentSettings,
     InstagramContentValidation,
     InstagramContentVersion,
@@ -45,6 +46,7 @@ from app.services.instagram_publish_service import (
     utc_now,
 )
 from app.services.instagram_publishing_adapter import (
+    InstagramPublishResult,
     MetaInstagramPublishingAdapter,
     SimulatedInstagramPublishingAdapter,
     TemporaryPublishingError,
@@ -654,6 +656,41 @@ def test_material_cancellation_and_executing_claim_require_manual_action(publish
     assert second.status == "action_required"
 
 
+def test_known_success_after_hold_is_recorded_as_published_without_retry(publishing_context):
+    ctx = publishing_context
+    job = queue_now(ctx)
+    job.status = "simulating_publish"
+    job.claimed_by = "hold-outcome-worker"
+    job.claimed_at = utc_now()
+    job.claim_expires_at = utc_now() + timedelta(minutes=1)
+    ctx["db"].commit()
+    content = ctx["db"].get(InstagramContent, job.content_item_id)
+    cancel_publish_job(ctx["db"], content, reason="business_hold", actor=ctx["owner"])
+    ctx["db"].commit()
+    assert job.status == "action_required"
+    assert job.provider_status == "outcome_requires_review"
+
+    worker = InstagramPublishWorker(
+        settings=worker_settings(),
+        session_factory=ctx["factory"],
+        worker_id="hold-outcome-worker",
+    )
+    worker._finish_success(
+        job.id,
+        InstagramPublishResult(
+            container_id="known-container",
+            media_id="known-media",
+            permalink="https://simulated.invalid/p/known",
+        ),
+    )
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+    assert stored.status == "published"
+    assert stored.provider_media_id == "known-media"
+    audit = ctx["db"].query(AuditLog).filter_by(action="publish_succeeded").one()
+    assert json.loads(audit.metadata_json)["completed_after_publication_hold"] is True
+
+
 def test_worker_rechecks_integration_before_adapter(publishing_context):
     ctx = publishing_context
     job = queue_now(ctx)
@@ -668,6 +705,51 @@ def test_worker_rechecks_integration_before_adapter(publishing_context):
     assert stored.status == "action_required"
     assert stored.provider_media_id is None
     assert ctx["db"].query(AuditLog).filter_by(action="integration_blocked_publish").count() == 1
+
+
+def test_worker_hold_before_provider_authorization_makes_zero_adapter_calls(
+    publishing_context, monkeypatch
+):
+    ctx = publishing_context
+    job = queue_now(ctx)
+
+    class CountingAdapter(SimulatedInstagramPublishingAdapter):
+        calls = 0
+
+        def publish(self, request):
+            self.calls += 1
+            return super().publish(request)
+
+    adapter = CountingAdapter()
+    worker = InstagramPublishWorker(
+        settings=worker_settings(),
+        session_factory=ctx["factory"],
+        adapter=adapter,
+        worker_id="hold-race-worker",
+    )
+    original_authorize = worker._authorize_provider_call
+
+    def activate_hold_then_authorize(job_id):
+        with ctx["factory"]() as race_db:
+            race_db.add(
+                InstagramContentPublicationHold(
+                    business_id=ctx["business"].id,
+                    content_id=job.content_item_id,
+                    reason="Business stopped publication before provider authorization",
+                    held_by_user_id=ctx["owner"].id,
+                    held_at=utc_now(),
+                )
+            )
+            race_db.commit()
+        return original_authorize(job_id)
+
+    monkeypatch.setattr(worker, "_authorize_provider_call", activate_hold_then_authorize)
+    assert worker.run_once() == 1
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramPublishJob, job.id)
+    assert adapter.calls == 0
+    assert stored.status == "action_required"
+    assert stored.provider_error_code == "publish_business_hold_active"
 
 
 def test_worker_blocks_validation_revoked_after_scheduling(publishing_context):
@@ -687,6 +769,35 @@ def test_worker_blocks_validation_revoked_after_scheduling(publishing_context):
     assert stored.status == "action_required"
     assert stored.provider_error_code == "publish_validation_revoked"
     assert stored.provider_media_id is None
+
+
+def test_unapproved_structured_promotion_blocks_publish_preflight(publishing_context):
+    ctx = publishing_context
+    content = make_validated_content(ctx)
+    version = ctx["db"].query(InstagramContentVersion).filter_by(content_id=content.id).one()
+    version.editorial_package_json = json.dumps(
+        {
+            "promotion": {
+                "id": 999999,
+                "discount_type": "percent",
+                "discount_value": "10.00",
+                "regular_price": "40.00",
+                "promotional_price": "36.00",
+                "currency": "EUR",
+                "valid_from": "2026-08-25T00:00:00+00:00",
+                "valid_until": "2026-09-25T00:00:00+00:00",
+                "days": [],
+                "scope": "Servicio A",
+            }
+        }
+    )
+    ctx["db"].commit()
+
+    result = publication_preflight(
+        ctx["db"], content, version=version, publication_at=utc_now()
+    )
+    assert result.ok is False
+    assert result.code == "publish_promotion_not_business_approved"
 
 
 def test_worker_commits_started_state_before_calling_adapter(publishing_context):
@@ -760,13 +871,13 @@ def test_autonogrow_ui_submits_review_and_business_owner_controls_final_publicat
     assert 'data-owner-instagram-action="validate"' not in owner
     assert "data-owner-instagram-action" not in admin
     for business_owner_contract in (
-        "/validate`",
-        "/planned-date`",
-        "/publish-now`",
-        "/schedule`",
+        "/editorial-review`",
+        "/publication-hold",
+        "Dar visto bueno",
+        "Solicitar cambios",
     ):
         assert business_owner_contract in admin
-    assert "Aprobación final registrada para esta versión" in admin
+    assert "Visto bueno del negocio registrado" in admin
 
 
 def meta_worker_settings(tmp_path: Path) -> Settings:

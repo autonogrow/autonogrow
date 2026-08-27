@@ -36,7 +36,7 @@ def test_owner_instagram_load_has_constant_request_count_and_is_single_flight() 
     assert 'ownerInstagramJson(`${api}/settings`)' in load
     assert "await loadOwnerInstagramWorkspace(api)" in load
     assert workspace.count("ownerInstagramJson(") == 3
-    assert "/idea-reviews" in workspace
+    assert "/ideas" in workspace
     assert 'ownerInstagramJson(`${api}/raw-assets`)' in workspace
     assert 'ownerInstagramJson(`${api}/contents?${range.toString()}`)' in workspace
     assert period.count("ownerInstagramJson(") == 1
@@ -428,8 +428,9 @@ def test_owner_instagram_composer_submits_review_without_final_approval_bypass()
     assert "/submit-for-review`" in ensure
     assert "/validate`" not in ensure
     assert "ownerInstagramComposerClearPlannedDate" not in ensure
-    assert 'content.status === "ready_for_review"' in publish
-    assert "Versión enviada a revisión AutonoGrow" in publish
+    assert '["ready_for_review", "validated"].includes(content.status)' in publish
+    assert "/publish-now`" in publish
+    assert "/schedule`" in publish
     assert "/publish-now`" in publish
     assert "/schedule`" in publish
     assert "ownerInstagramComposerPatchDate" in publish
@@ -478,19 +479,19 @@ def test_autonogrow_owner_surface_has_owner_first_and_version_review_queues() ->
     for marker in (
         'id="owner-social-review-list"',
         'id="owner-editorial-review-list"',
-        "Ideas que interesan al negocio",
-        "La aprobación editorial queda ligada a la versión exacta",
+        "Ideas y oportunidades",
+        "Supervisión opcional del negocio",
     ):
         assert marker in html
     for marker in (
-        "/idea-reviews",
+        "/ideas",
         "data-owner-idea-review",
         "data-owner-promotion-proposal",
-        "data-owner-editorial-review",
-        "/editorial-review`",
+        "data-owner-idea-action",
+        "renderOwnerBusinessSupervision",
     ):
         assert marker in js
-    assert "Guardar y enviar a revisión" in js
+    assert "Preparar contenido" in js
 
 
 def test_authenticated_rate_limit_is_shared_by_ip_and_documented_as_single_process() -> None:

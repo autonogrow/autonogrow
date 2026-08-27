@@ -1760,7 +1760,7 @@ function ownerInstagramRemovalConfirmation(item) {
 
 function renderOwnerInstagramContents() {
   renderOwnerInstagramCalendar();
-  renderOwnerInstagramEditorialQueue();
+  renderOwnerBusinessSupervision();
 }
 
 function ownerSocialContentWorkflowApi() {
@@ -2202,8 +2202,7 @@ function renderOwnerInstagramComposer() {
   byId("owner-instagram-composer-advanced-content").innerHTML = ownerInstagramComposerAdvanced(state.content);
   byId("owner-instagram-composer-save").disabled = locked || state.busy;
   byId("owner-instagram-composer-primary").disabled = locked || state.busy;
-  const needsReview = !state.content || ["draft", "changes_requested", "ready_for_review"].includes(state.content.status);
-  byId("owner-instagram-composer-primary").textContent = lifecycleLocked && !terminal ? lifecycle.label : needsReview ? "Guardar y enviar a revisión" : state.publication === "now" ? "Publicar ahora" : state.content?.status === "scheduled" ? "Reprogramar" : "Programar";
+  byId("owner-instagram-composer-primary").textContent = lifecycleLocked && !terminal ? lifecycle.label : state.publication === "now" ? "Publicar ahora" : state.content?.status === "scheduled" ? "Reprogramar" : "Programar";
   byId("owner-instagram-composer-cancel-content").hidden = !state.content || locked;
   byId("owner-instagram-composer-close").disabled = state.busy;
   byId("owner-instagram-composer").querySelector(".instagram-composer").setAttribute("aria-busy", String(state.busy));
@@ -2661,13 +2660,6 @@ async function publishOwnerInstagramComposer() {
     let content = await ownerInstagramComposerSave({ persistDate: false });
     const wasScheduled = content.status === "scheduled";
     if (!wasScheduled) content = await ownerInstagramComposerEnsureValidated(content);
-    if (content.status === "ready_for_review") {
-      upsertOwnerInstagramContent(content);
-      state.dirty = false;
-      closeOwnerInstagramComposer({ force: true });
-      byId("owner-instagram-status").textContent = "Versión enviada a revisión AutonoGrow. El negocio dará la aprobación final después.";
-      return;
-    }
     if (state.publication === "now") {
       content = await ownerInstagramComposerClearPlannedDate(content);
       await ownerInstagramJson(`${ownerInstagramApi()}/contents/${content.id}/publish-now`, { method: "POST" });
@@ -2678,7 +2670,7 @@ async function publishOwnerInstagramComposer() {
       byId("owner-instagram-status").textContent = "Publicación reprogramada.";
     } else {
       content = await ownerInstagramComposerPatchDate(content, desired);
-      if (content.status === "validated") content = await ownerInstagramJson(`${ownerInstagramApi()}/contents/${content.id}/schedule`, { method: "POST" });
+      if (["ready_for_review", "validated"].includes(content.status)) content = await ownerInstagramJson(`${ownerInstagramApi()}/contents/${content.id}/schedule`, { method: "POST" });
       byId("owner-instagram-status").textContent = "Publicación programada.";
     }
     upsertOwnerInstagramContent(content);
@@ -3129,9 +3121,64 @@ function upsertOwnerInstagramContent(content) {
   if (index === -1) ownerInstagramContents.unshift(content);
   else ownerInstagramContents[index] = content;
   syncOwnerInstagramComposerLifecycle(content);
-  renderOwnerInstagramContents();
+  renderOwnerInstagramCalendar();
+  renderOwnerBusinessSupervision();
   renderOwnerInstagramRaw(ownerInstagramRawAssets);
   scheduleOwnerInstagramLifecyclePolling();
+}
+
+function renderOwnerOperationalIdeas() {
+  const container = byId("owner-social-review-list");
+  if (!container) return;
+  byId("owner-social-review-status").textContent = `${ownerSocialIdeaReviews.length} oportunidad${ownerSocialIdeaReviews.length === 1 ? "" : "es"} disponible${ownerSocialIdeaReviews.length === 1 ? "" : "s"}`;
+  if (!ownerSocialIdeaReviews.length) {
+    container.innerHTML = `<p class="helper">No hay oportunidades operativas pendientes para este negocio.</p>`;
+    return;
+  }
+  container.innerHTML = ownerSocialIdeaReviews.map((idea) => {
+    const presentation = idea.presentation || {};
+    const promotion = idea.promotion;
+    const revisions = promotion?.revisions || [];
+    const latest = revisions[revisions.length - 1];
+    const canProposePromotion = idea.idea_review_id && (!latest || ["business_rejected", "superseded"].includes(latest.status));
+    const promotionForm = canProposePromotion ? `<form data-owner-promotion-proposal><input type="hidden" name="review_id" value="${idea.idea_review_id}"><div class="form-grid"><label>Tipo<select name="discount_type"><option value="percent">Porcentaje</option><option value="fixed">Importe</option></select></label><label>Descuento<input name="discount_value" type="number" min="0.01" step="0.01" required></label><label>Precio habitual<input name="regular_price" type="number" min="0.01" step="0.01" required></label><label>Precio promocional<input name="promotional_price" type="number" min="0" step="0.01" required></label><label>Moneda<input name="currency" value="EUR" maxlength="3" required></label><label>Desde<input name="valid_from" type="datetime-local" required></label><label>Hasta<input name="valid_until" type="datetime-local" required></label><label class="wide">Alcance<input name="scope" maxlength="240" required placeholder="Servicio y condiciones aplicables"></label></div><button class="button button-secondary" type="submit">${latest ? "Proponer nuevas condiciones" : "Enviar condiciones al negocio"}</button></form>` : "";
+    const promotionPanel = promotion ? `<details open><summary>Decisi&oacute;n comercial &middot; ${escapeHtml(promotion.status)}</summary>${latest ? `<p>Revisi&oacute;n ${latest.revision_number}: ${escapeHtml(latest.regular_price)} ${escapeHtml(latest.currency)} &rarr; ${escapeHtml(latest.promotional_price)} ${escapeHtml(latest.currency)} &middot; ${escapeHtml(latest.status)}</p>` : ""}${promotionForm}</details>` : "";
+    const promotionApproved = promotion?.status === "business_approved";
+    const normalAction = !promotion || promotionApproved ? `<form data-owner-idea-action="prepare" data-proposal-id="${idea.id}"><label>Formato<select name="format"><option value="">Mantener recomendado</option><option value="static_post">Publicaci&oacute;n</option><option value="story">Story</option><option value="carousel">Carrusel</option><option value="reel">Reel</option></select></label><button class="button button-primary" type="submit">Preparar contenido</button></form>` : `<p class="helper">Las condiciones econ&oacute;micas necesitan respuesta del negocio antes de preparar el contenido.</p>`;
+    const promotionAction = idea.promotion_eligible && !promotion ? `<button class="button button-secondary" type="button" data-owner-idea-action="promotion" data-proposal-id="${idea.id}">Preparar promoci&oacute;n</button>` : "";
+    return `<article class="instagram-content-card" data-owner-idea-card="${idea.id}"><header><div><h4>${escapeHtml(presentation.title || "Oportunidad editorial")}</h4><p>${escapeHtml(idea.business_name || "")} &middot; ${escapeHtml(presentation.explanation || idea.reason_text || "")}</p></div><span class="ag-badge ag-badge--neutral">Score ${Number(idea.opportunity_score || 0)}</span></header><p><strong>${escapeHtml(presentation.suggested_action || "")}</strong></p><p class="helper">Objetivo: ${escapeHtml(idea.objective || "visibilidad")} &middot; Formatos: ${escapeHtml((presentation.suggested_formats || idea.recommended_formats || []).join(", ") || "por definir")}</p>${promotionPanel}<div class="growth-action-card-actions">${normalAction}${promotionAction}<button class="button button-secondary" type="button" data-owner-idea-action="postpone" data-proposal-id="${idea.id}">Posponer 7 d&iacute;as</button><button class="button button-ghost" type="button" data-owner-idea-action="discard" data-proposal-id="${idea.id}">Descartar</button></div></article>`;
+  }).join("");
+}
+
+function renderOwnerBusinessSupervision() {
+  const container = byId("owner-editorial-review-list");
+  if (!container) return;
+  const supervised = ownerInstagramContents.filter((item) => item.publication_hold || ["changes_requested", "rejected", "approved"].includes(item.current_version?.editorial_review?.status));
+  container.innerHTML = supervised.length
+    ? supervised.map((item) => `<article class="instagram-content-card"><header><div><h4>${escapeHtml(item.title)}</h4><p>Versi&oacute;n ${item.current_version.version_number} &middot; supervisi&oacute;n del negocio</p></div><span class="ag-badge ag-badge--neutral">${item.publication_hold ? "Publicaci&oacute;n detenida" : item.current_version.editorial_review?.status === "approved" ? "Visto bueno del negocio" : "Requiere cambios"}</span></header><p class="helper">${item.publication_hold ? escapeHtml(item.publication_hold.reason) : "La decisi&oacute;n del negocio est&aacute; registrada para esta versi&oacute;n."}</p></article>`).join("")
+    : `<p class="helper">No hay intervenciones del negocio que requieran seguimiento.</p>`;
+}
+
+async function handleOwnerOperationalIdeaAction(event) {
+  const target = event.target.closest("[data-owner-idea-action]");
+  if (!target) return;
+  event.preventDefault();
+  const action = target.dataset.ownerIdeaAction;
+  const proposalId = Number(target.dataset.proposalId);
+  try {
+    if (action === "prepare") {
+      const format = String(new FormData(target).get("format") || "");
+      await ownerInstagramJson(`${ownerSocialContentWorkflowApi()}/ideas/${proposalId}/prepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent: "visibility", format: format || null }) });
+    } else if (action === "promotion") {
+      await ownerInstagramJson(`${ownerSocialContentWorkflowApi()}/ideas/${proposalId}/prepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent: "promotion", format: null }) });
+    } else if (action === "postpone") {
+      await ownerInstagramJson(`${ownerSocialContentWorkflowApi()}/ideas/${proposalId}/postpone`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ until: new Date(Date.now() + 7 * 86400000).toISOString() }) });
+    } else if (action === "discard") {
+      if (!window.confirm("Descartar esta idea editorial? La señal de negocio se conservará.")) return;
+      await ownerInstagramJson(`${ownerSocialContentWorkflowApi()}/ideas/${proposalId}/discard`, { method: "POST" });
+    }
+    await loadOwnerInstagramPanel();
+  } catch (error) { byId("owner-social-review-status").textContent = error.message; }
 }
 
 async function loadOwnerInstagramWorkspace(api) {
@@ -3145,16 +3192,17 @@ async function loadOwnerInstagramWorkspace(api) {
   const [raw, contentList, ideaReviewList] = await Promise.all([
     ownerInstagramJson(`${api}/raw-assets`),
     ownerInstagramJson(`${api}/contents?${range.toString()}`),
-    ownerInstagramJson(`${ownerSocialContentWorkflowApi()}/idea-reviews`)
+    ownerInstagramJson(`${ownerSocialContentWorkflowApi()}/ideas`)
   ]);
   ownerInstagramRawAssets = raw.assets;
   ownerInstagramContents = contentList.contents;
-  ownerSocialIdeaReviews = ideaReviewList.reviews || [];
+  ownerSocialIdeaReviews = ideaReviewList.ideas || [];
   const openContent = ownerInstagramContents.find((item) => item.id === ownerInstagramComposerState?.contentId);
   if (openContent) syncOwnerInstagramComposerLifecycle(openContent);
   renderOwnerInstagramRaw(ownerInstagramRawAssets);
-  renderOwnerInstagramContents();
-  renderOwnerSocialIdeaReviews();
+  renderOwnerInstagramCalendar();
+  renderOwnerBusinessSupervision();
+  renderOwnerOperationalIdeas();
   scheduleOwnerInstagramLifecyclePolling();
 }
 
@@ -3479,6 +3527,8 @@ byId("owner-instagram-raw-list").addEventListener("click", (event) => {
 });
 byId("owner-instagram-create").addEventListener("click", (event) => openOwnerInstagramComposer({ trigger: event.currentTarget }));
 byId("owner-instagram-enabled-area").addEventListener("click", (event) => {
+  const ideaAction = event.target.closest("button[data-owner-idea-action]");
+  if (ideaAction) { handleOwnerOperationalIdeaAction(event); return; }
   const create = event.target.closest("[data-owner-instagram-create-date]");
   if (create) {
     openOwnerInstagramComposer({ date: create.dataset.ownerInstagramCreateDate, trigger: create });
@@ -3497,9 +3547,8 @@ byId("owner-instagram-enabled-area").addEventListener("click", (event) => {
   }
 });
 byId("owner-instagram-enabled-area").addEventListener("submit", (event) => {
-  if (event.target.matches("[data-owner-idea-review]")) submitOwnerIdeaReview(event);
+  if (event.target.matches('[data-owner-idea-action="prepare"]')) handleOwnerOperationalIdeaAction(event);
   if (event.target.matches("[data-owner-promotion-proposal]")) submitOwnerPromotionProposal(event);
-  if (event.target.matches("[data-owner-editorial-review]")) submitOwnerEditorialReview(event);
 });
 document.querySelectorAll("[data-owner-instagram-view]").forEach((button) => button.addEventListener("click", () => {
   ownerInstagramCalendarView = button.dataset.ownerInstagramView;

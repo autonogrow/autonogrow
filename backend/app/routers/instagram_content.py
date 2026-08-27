@@ -25,6 +25,7 @@ from app.models import (
     Business,
     InstagramContent,
     InstagramContentEditorialReview,
+    InstagramContentPublicationHold,
     InstagramContentRawAsset,
     InstagramContentVersion,
     InstagramContentVersionAsset,
@@ -41,6 +42,8 @@ from app.schemas.instagram_content import (
     InstagramEditorialReviewCreate,
     InstagramMaterialUpdate,
     InstagramPlannedDateUpdate,
+    InstagramPublicationHoldCreate,
+    InstagramPublicationHoldRelease,
     InstagramPublishJobHistory,
     InstagramPublishJobRead,
     InstagramRawContentTarget,
@@ -51,6 +54,7 @@ from app.schemas.instagram_content import (
 )
 from app.services.capability_service import require_module_available
 from app.services.instagram_content_service import (
+    active_publication_hold,
     add_admin_comment,
     associate_raw_asset,
     cancel_content,
@@ -59,7 +63,7 @@ from app.services.instagram_content_service import (
     current_version,
     disassociate_permitted_raw_asset_associations,
     disassociate_raw_asset,
-    ensure_promotion_window,
+    ensure_owner_operational_validation,
     get_or_create_settings,
     prepare_content_removal,
     prepare_raw_asset_as_final,
@@ -1626,7 +1630,11 @@ def _owner_transition_and_commit(
         request=request,
         actor=actor,
         business_id=business_id,
-        action=f"instagram_content_{action.replace('-', '_')}",
+        action=(
+            "content_scheduled_by_owner"
+            if action == "schedule"
+            else f"instagram_content_{action.replace('-', '_')}"
+        ),
         resource_type="instagram_content",
         resource_id=content.id,
         metadata={"new_status": content.status},
@@ -1761,7 +1769,7 @@ def owner_publish_now(
     _owner_business(db, business_id)
     require_service_enabled(db, business_id)
     content = content_or_404(db, business_id, content_id, for_update=True)
-    ensure_promotion_window(db, content, utc_now())
+    ensure_owner_operational_validation(db, content, actor)
     job = sync_publish_job(db, content, actor=actor, now=utc_now(), force_now=True)
     if job.status not in ACTIVE_JOB_STATUSES:
         raise HTTPException(
@@ -1774,7 +1782,7 @@ def owner_publish_now(
         actor=actor,
         business_id=business_id,
         action=(
-            "publish_now_requested"
+            "content_publish_now_by_owner"
             if job.status == "queued"
             else "publish_now_already_active"
         ),
@@ -1866,7 +1874,6 @@ def admin_publish_now(
     business = _admin_business(db, business_slug)
     require_service_enabled(db, business.id)
     content = content_or_404(db, business.id, content_id, for_update=True)
-    ensure_promotion_window(db, content, utc_now())
     job = sync_publish_job(db, content, actor=actor, now=utc_now(), force_now=True)
     if job.status not in ACTIVE_JOB_STATUSES:
         raise HTTPException(
@@ -1931,6 +1938,118 @@ def admin_retry_publish_job(
     return serialize_publish_job(job, owner_technical=False)
 
 
+@admin_router.post("/contents/{content_id}/publication-hold", status_code=201)
+def admin_hold_publication(
+    business_slug: str,
+    content_id: int,
+    payload: InstagramPublicationHoldCreate,
+    request: Request,
+    actor: User = Depends(require_tenant_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = _admin_business(db, business_slug)
+    content = content_or_404(db, business.id, content_id, for_update=True)
+    if content.status in {"cancelled", "published"}:
+        raise HTTPException(status_code=409, detail="Terminal content cannot be stopped")
+    existing = active_publication_hold(db, content, lock=True)
+    if existing is not None:
+        latest_job = (
+            db.query(InstagramPublishJob)
+            .filter(
+                InstagramPublishJob.business_id == business.id,
+                InstagramPublishJob.content_item_id == content.id,
+            )
+            .order_by(InstagramPublishJob.created_at.desc())
+            .first()
+        )
+        return {
+            "ok": True,
+            "idempotent": True,
+            "hold_id": existing.id,
+            "outcome_requires_review": bool(
+                latest_job is not None
+                and latest_job.status == "action_required"
+                and latest_job.provider_status == "outcome_requires_review"
+            ),
+        }
+    now = datetime.now(timezone.utc)
+    hold = InstagramContentPublicationHold(
+        business_id=business.id,
+        content_id=content.id,
+        reason=payload.reason,
+        held_by_user_id=actor.id,
+        held_at=now,
+    )
+    db.add(hold)
+    db.flush()
+    job = cancel_publish_job(
+        db,
+        content,
+        reason="publication_hold_activated_by_business",
+        actor=actor,
+    )
+    outcome_requires_review = bool(
+        job is not None
+        and job.status == "action_required"
+        and job.provider_status == "outcome_requires_review"
+    )
+    if content.status == "scheduled":
+        content.status = "validated"
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        action="content_admin_publication_hold",
+        resource_type="instagram_content_publication_hold",
+        resource_id=hold.id,
+        metadata={
+            "content_id": content.id,
+            "version_id": current_version(db, content).id,
+            "job_id": job.id if job else None,
+            "outcome_requires_review": outcome_requires_review,
+        },
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "idempotent": False,
+        "hold_id": hold.id,
+        "outcome_requires_review": outcome_requires_review,
+    }
+
+
+@admin_router.post("/contents/{content_id}/publication-hold/release")
+def admin_release_publication_hold(
+    business_slug: str,
+    content_id: int,
+    payload: InstagramPublicationHoldRelease,
+    request: Request,
+    actor: User = Depends(require_tenant_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = _admin_business(db, business_slug)
+    content = content_or_404(db, business.id, content_id, for_update=True)
+    hold = active_publication_hold(db, content, lock=True)
+    if hold is None:
+        return {"ok": True, "idempotent": True, "hold_id": None}
+    hold.released_by_user_id = actor.id
+    hold.released_at = datetime.now(timezone.utc)
+    hold.release_note = payload.note
+    _audit(
+        db,
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        action="content_admin_publication_resumed",
+        resource_type="instagram_content_publication_hold",
+        resource_id=hold.id,
+        metadata={"content_id": content.id},
+    )
+    db.commit()
+    return {"ok": True, "idempotent": False, "hold_id": hold.id}
+
+
 @admin_router.post("/contents/{content_id}/comments", status_code=201)
 def admin_create_comment(
     business_slug: str,
@@ -1977,7 +2096,7 @@ def admin_review_content(
     content_id: int,
     payload: InstagramEditorialReviewCreate,
     request: Request,
-    actor: User = Depends(require_owner),
+    actor: User = Depends(require_tenant_business_admin),
     db: Session = Depends(get_db),
 ):
     business = _admin_business(db, business_slug)
@@ -1985,8 +2104,8 @@ def admin_review_content(
     version = current_version(db, content)
     if version.id != payload.version_id:
         raise HTTPException(status_code=409, detail="Review must target the current version")
-    if content.status != "ready_for_review":
-        raise HTTPException(status_code=409, detail="Content is not ready for editorial review")
+    if content.status not in {"ready_for_review", "validated", "scheduled"}:
+        raise HTTPException(status_code=409, detail="Content is not available for business review")
     if payload.decision != "approve" and payload.note is None:
         raise HTTPException(status_code=422, detail="A review note is required")
 
@@ -2037,11 +2156,11 @@ def admin_review_content(
         actor=actor,
         business_id=business.id,
         action=(
-            "instagram_content_editorially_approved"
+            "content_admin_approved_optional"
             if approved
-            else "instagram_content_editorially_changes_requested"
+            else "content_admin_changes_requested"
             if payload.decision == "changes_requested"
-            else "instagram_content_editorially_rejected"
+            else "content_admin_version_rejected"
         ),
         resource_type="instagram_content_editorial_review",
         resource_id=editorial_review.id,
@@ -2074,14 +2193,11 @@ def owner_review_content(
     actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
-    business = _owner_business(db, business_id)
-    return admin_review_content(
-        business.slug,
-        content_id,
-        payload,
-        request,
-        actor,
-        db,
+    _owner_business(db, business_id)
+    del content_id, payload, request, actor, db
+    raise HTTPException(
+        status_code=403,
+        detail="Optional business review belongs to the business administrator",
     )
 
 
@@ -2149,16 +2265,11 @@ def admin_validate_content(
     actor: User = Depends(require_tenant_business_admin),
     db: Session = Depends(get_db),
 ):
-    business = _admin_business(db, business_slug)
-    return _validate_and_commit(
-        db,
-        business_id=business.id,
-        content_id=content_id,
-        version_id=payload.version_id,
-        actor=actor,
-        role="business_admin",
-        request=request,
-        api_prefix=_admin_prefix(business_slug),
+    _admin_business(db, business_slug)
+    del content_id, payload, request, actor
+    raise HTTPException(
+        status_code=409,
+        detail="Business approval is optional; publication selection belongs to AutonoGrow",
     )
 
 
@@ -2175,7 +2286,7 @@ def owner_validate_content(
     del content_id, payload, request, actor
     raise HTTPException(
         status_code=403,
-        detail="Final approval belongs to the Business Owner",
+        detail="Scheduling or publishing records the AutonoGrow operational selection",
     )
 
 

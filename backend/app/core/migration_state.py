@@ -30,6 +30,7 @@ POST_BASELINE_TABLES = {
     "instagram_content_versions",
     "instagram_content_version_assets",
     "instagram_content_editorial_reviews",
+    "instagram_content_publication_holds",
     "instagram_content_validations",
     "instagram_content_comments",
     "instagram_publish_jobs",
@@ -53,6 +54,8 @@ POST_BASELINE_COLUMNS = {
     "bookings.price_amount_snapshot",
     "instagram_contents.archived_at",
     "instagram_final_assets.source_raw_asset_id",
+    "instagram_content_versions.promotion_revision_id",
+    "social_content_proposals.operator_postponed_until",
 }
 
 CRITICAL_COLUMNS: dict[str, set[str]] = {

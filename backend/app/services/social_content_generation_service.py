@@ -22,6 +22,7 @@ from app.models import (
     InstagramContentVersionAsset,
     InstagramRawAsset,
     SocialContentProposal,
+    SocialPromotionRevision,
     User,
 )
 from app.schemas.social_content_generation import EditorialPackageEdit
@@ -328,13 +329,31 @@ def _validate_source(db: Session, proposal: SocialContentProposal, now: datetime
     return snapshot
 
 
-def _require_admin_idea_approval(proposal: SocialContentProposal) -> None:
+def _approved_promotion_revision(
+    db: Session,
+    proposal: SocialContentProposal,
+    snapshot: dict[str, Any],
+) -> SocialPromotionRevision | None:
+    raw = snapshot.get("promotion")
+    if not isinstance(raw, dict):
+        return None
+    revision_id = raw.get("id")
+    if not isinstance(revision_id, int):
+        raise HTTPException(status_code=409, detail="Promotion revision is missing")
+    revision = db.get(SocialPromotionRevision, revision_id)
     review = proposal.idea_review
-    if review is None or review.status != "approved" or review.admin_reviewed_at is None:
+    if (
+        revision is None
+        or revision.status != "owner_approved"
+        or review is None
+        or review.promotion is None
+        or revision.promotion_id != review.promotion.id
+    ):
         raise HTTPException(
             status_code=409,
-            detail="Explicit AutonoGrow Admin idea approval is required before generation",
+            detail="Promotion requires approval by the business",
         )
+    return revision
 
 
 def _recommended_assets(
@@ -423,7 +442,7 @@ def generate_from_proposal(
     existing = proposal.generated_content
     if existing is not None:
         return existing, current_version(db, existing), True
-    _require_admin_idea_approval(proposal)
+    promotion_revision = _approved_promotion_revision(db, proposal, snapshot)
     editorial_format = _format_from_snapshot(snapshot, requested_format)
     assets, missing = _recommended_assets(db, proposal, editorial_format)
     context = GenerationContext(
@@ -452,6 +471,9 @@ def generate_from_proposal(
     version.editorial_package_json = _package_json(package)
     version.generation_source = "generated"
     version.generator_version = selected_generator.version
+    version.promotion_revision_id = (
+        promotion_revision.id if promotion_revision is not None else None
+    )
     db.flush()
     return content, version, False
 
@@ -475,6 +497,7 @@ def _new_generated_version(
         editorial_package_json=_package_json(package),
         generation_source=generation_source,
         generator_version=generator_version,
+        promotion_revision_id=previous.promotion_revision_id,
         created_by_user_id=actor.id,
     )
     db.add(version)
@@ -510,8 +533,10 @@ def regenerate_content(
         raise HTTPException(status_code=409, detail="Terminal content cannot be regenerated")
     if content.source_proposal is None:
         raise HTTPException(status_code=409, detail="Content was not generated from a proposal")
-    _require_admin_idea_approval(content.source_proposal)
     snapshot = _validate_source(db, content.source_proposal, now or utc_now())
+    promotion_revision = _approved_promotion_revision(
+        db, content.source_proposal, snapshot
+    )
     editorial_format = _format_from_snapshot(snapshot, requested_format)
     assets, missing = _recommended_assets(db, content.source_proposal, editorial_format)
     context = GenerationContext(
@@ -530,7 +555,7 @@ def regenerate_content(
     )
     selected_generator = generator or DeterministicContentGenerator()
     package = selected_generator.generate(context)
-    return _new_generated_version(
+    version = _new_generated_version(
         db,
         content=content,
         actor=actor,
@@ -538,6 +563,10 @@ def regenerate_content(
         generation_source="regenerated",
         generator_version=selected_generator.version,
     )
+    version.promotion_revision_id = (
+        promotion_revision.id if promotion_revision is not None else None
+    )
+    return version
 
 
 def update_generated_draft(

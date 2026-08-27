@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -18,10 +19,13 @@ from app.models import (
     BusinessChannelControl,
     BusinessChannelIntegration,
     InstagramContent,
+    InstagramContentEditorialReview,
+    InstagramContentPublicationHold,
     InstagramContentSettings,
     InstagramContentValidation,
     InstagramContentVersion,
     InstagramPublishJob,
+    SocialPromotionRevision,
     User,
 )
 from app.services.instagram_asset_url_service import resolve_private_asset_path
@@ -149,13 +153,14 @@ def _validate_instagram_reel_asset(
         )
 
 
-def publication_preflight(
+def publication_preflight(  # noqa: C901
     db: Session,
     content: InstagramContent,
     *,
     version: InstagramContentVersion | None = None,
     settings: Settings | None = None,
     validate_files: bool = False,
+    publication_at: datetime | None = None,
 ) -> InstagramPublicationPreflight:
     """Return the shared, side-effect-free gate used by scheduling and workers."""
     config = settings or get_settings()
@@ -165,6 +170,49 @@ def publication_preflight(
     latest = _current_version(db, content)
     if latest is None or latest.id != current.id:
         return InstagramPublicationPreflight(False, "publish_version_is_not_current", "Only the current version can be published", None)
+    if content.status in {"cancelled", "published"}:
+        return InstagramPublicationPreflight(
+            False,
+            "publish_content_not_active",
+            "Content is no longer available for publication",
+            None,
+        )
+    hold = (
+        db.query(InstagramContentPublicationHold.id)
+        .filter(
+            InstagramContentPublicationHold.business_id == content.business_id,
+            InstagramContentPublicationHold.content_id == content.id,
+            InstagramContentPublicationHold.released_at.is_(None),
+        )
+        .first()
+    )
+    if hold is not None:
+        return InstagramPublicationPreflight(
+            False,
+            "publish_business_hold_active",
+            "Publication is stopped by the business",
+            None,
+        )
+    review_blocker = (
+        db.query(InstagramContentEditorialReview.status)
+        .filter(
+            InstagramContentEditorialReview.business_id == content.business_id,
+            InstagramContentEditorialReview.content_id == content.id,
+            InstagramContentEditorialReview.version_id == current.id,
+            InstagramContentEditorialReview.status.in_({"changes_requested", "rejected"}),
+        )
+        .first()
+    )
+    if review_blocker is not None:
+        return InstagramPublicationPreflight(
+            False,
+            "publish_business_review_blocking",
+            "The business requested changes to the current version",
+            None,
+        )
+    promotion_error = promotion_preflight(db, current, publication_at)
+    if promotion_error is not None:
+        return InstagramPublicationPreflight(False, *promotion_error, None)
     service = db.get(InstagramContentSettings, content.business_id)
     if service is None or not service.enabled:
         return InstagramPublicationPreflight(False, "instagram_content_service_disabled", "Instagram content service is disabled", None)
@@ -271,6 +319,91 @@ def publication_preflight(
             except InstagramPublishingError as exc:
                 return InstagramPublicationPreflight(False, exc.code, exc.safe_message, integration)
     return InstagramPublicationPreflight(True, None, None, integration)
+
+
+def promotion_preflight(
+    db: Session,
+    version: InstagramContentVersion,
+    publication_at: datetime | None,
+) -> tuple[str, str] | None:
+    try:
+        package = json.loads(version.editorial_package_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        package = {}
+    raw = package.get("promotion") if isinstance(package, dict) else None
+    raw_id = raw.get("id") if isinstance(raw, dict) else None
+    revision_id = version.promotion_revision_id or raw_id
+    if revision_id is None:
+        return None
+    if not isinstance(revision_id, int):
+        return (
+            "publish_promotion_revision_missing",
+            "Promotion approval is unavailable",
+        )
+    revision = version.promotion_revision
+    if revision is None or revision.id != revision_id:
+        revision = db.get(SocialPromotionRevision, revision_id)
+    if revision is None or revision.status != "owner_approved":
+        return (
+            "publish_promotion_not_business_approved",
+            "Promotion requires approval by the business",
+        )
+    if not isinstance(raw, dict) or not _promotion_payload_matches(raw, revision):
+        return (
+            "publish_promotion_terms_changed",
+            "Promotion terms no longer match the approved revision",
+        )
+    if publication_at is None:
+        return None
+    value = as_utc(publication_at)
+    start = as_utc(revision.valid_from)
+    end = as_utc(revision.valid_until)
+    if value is None or start is None or end is None or not start <= value <= end:
+        return (
+            "publish_promotion_outside_window",
+            "Publication date is outside the approved promotion window",
+        )
+    try:
+        days = json.loads(revision.days_json)
+    except (TypeError, json.JSONDecodeError):
+        days = []
+    if days and value.weekday() not in days:
+        return (
+            "publish_promotion_day_not_approved",
+            "Publication date does not match the approved promotion days",
+        )
+    return None
+
+
+def _promotion_payload_matches(raw: dict, revision: SocialPromotionRevision) -> bool:
+    try:
+        numeric_matches = all(
+            Decimal(str(raw.get(key))) == Decimal(str(expected))
+            for key, expected in (
+                ("discount_value", revision.discount_value),
+                ("regular_price", revision.regular_price),
+                ("promotional_price", revision.promotional_price),
+            )
+        )
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+    try:
+        raw_days = sorted(set(int(item) for item in raw.get("days", [])))
+        approved_days = sorted(set(int(item) for item in json.loads(revision.days_json)))
+        raw_start = as_utc(datetime.fromisoformat(str(raw.get("valid_from"))))
+        raw_end = as_utc(datetime.fromisoformat(str(raw.get("valid_until"))))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        raw.get("id") == revision.id
+        and raw.get("discount_type") == revision.discount_type
+        and numeric_matches
+        and str(raw.get("currency", "")).upper() == revision.currency.upper()
+        and raw_start == as_utc(revision.valid_from)
+        and raw_end == as_utc(revision.valid_until)
+        and raw_days == approved_days
+        and str(raw.get("scope", "")) == revision.scope
+    )
 
 
 def utc_now() -> datetime:
@@ -425,6 +558,7 @@ def sync_publish_job(
         version=current,
         settings=config,
         validate_files=config.instagram_publishing_mode == "meta",
+        publication_at=planned,
     )
     integration = preflight.integration
     eligibility_error = preflight.code if not preflight.ok else None
@@ -585,11 +719,13 @@ def retry_publish_job(
         or _active_validation(db, content, current.id) is None
     ):
         raise HTTPException(status_code=409, detail="The job version is no longer validated")
+    clock = as_utc(now) or utc_now()
     preflight = publication_preflight(
         db,
         content,
         version=current,
         validate_files=get_settings().instagram_publishing_mode == "meta",
+        publication_at=clock,
     )
     integration = preflight.integration
     if not preflight.ok:
@@ -597,7 +733,6 @@ def retry_publish_job(
             status_code=409,
             detail=preflight.safe_message or "Instagram integration requires action",
         )
-    clock = as_utc(now) or utc_now()
     job.integration_id = integration.id if integration else None
     job.status = "queued"
     job.scheduled_for = clock

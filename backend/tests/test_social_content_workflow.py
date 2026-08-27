@@ -20,6 +20,7 @@ from app.models import (
     BusinessService,
     BusinessUser,
     InstagramContentSettings,
+    InstagramContentVersion,
     SocialContentProposal,
     SocialContentProposalSignal,
     SocialIdeaReview,
@@ -238,6 +239,55 @@ def test_real_roles_enforce_owner_first_tenant_and_admin_boundaries(workflow_con
     assert reviews.json()["reviews"] == []
 
 
+def test_new_idea_goes_directly_to_owner_and_prepares_without_client_review(
+    workflow_context,
+):
+    ctx = workflow_context
+    set_actor(ctx, ctx["autonogrow_admin"])
+
+    queue = ctx["client"].get(f"{owner_api(ctx)}/ideas")
+    assert queue.status_code == 200
+    assert ctx["proposal"].id in {item["id"] for item in queue.json()["ideas"]}
+
+    prepared = ctx["client"].post(
+        f"{owner_api(ctx)}/ideas/{ctx['proposal'].id}/prepare",
+        json={"intent": "visibility", "format": "story"},
+    )
+    assert prepared.status_code == 200, prepared.text
+    assert prepared.json()["waiting_for_business"] is False
+    assert prepared.json()["content"]["current_version"]["format"] == "story"
+    assert ctx["db"].query(SocialIdeaReview).count() == 0
+    assert (
+        ctx["db"].query(AuditLog).filter_by(action="idea_owner_prepared").count() == 1
+    )
+
+
+def test_owner_postpone_and_discard_do_not_dismiss_business_signal(workflow_context):
+    ctx = workflow_context
+    set_actor(ctx, ctx["autonogrow_admin"])
+    proposal_id = ctx["proposal"].id
+    signal_states = {
+        item.signal.id: item.signal.status for item in ctx["proposal"].signal_links
+    }
+
+    postponed = ctx["client"].post(
+        f"{owner_api(ctx)}/ideas/{proposal_id}/postpone",
+        json={"until": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()},
+    )
+    assert postponed.status_code == 200
+    queue = ctx["client"].get(f"{owner_api(ctx)}/ideas").json()["ideas"]
+    assert proposal_id not in {item["id"] for item in queue}
+
+    ctx["proposal"].operator_postponed_until = None
+    ctx["db"].commit()
+    discarded = ctx["client"].post(f"{owner_api(ctx)}/ideas/{proposal_id}/discard")
+    assert discarded.status_code == 200
+    assert ctx["proposal"].status == "dismissed"
+    assert {
+        item.signal.id: item.signal.status for item in ctx["proposal"].signal_links
+    } == signal_states
+
+
 def test_legacy_accepted_is_not_owner_interest_or_admin_task(workflow_context):
     ctx = workflow_context
     listing = ctx["client"].get(f"{business_api(ctx)}/social-content-proposals?status=accepted")
@@ -311,7 +361,19 @@ def test_owner_interest_creates_one_admin_review_and_approved_promotion_generati
     assert generated.json()["generated"] is True
     package = generated.json()["content"]["current_version"]["editorial_package"]
     assert package["generation_context"]["generator_version"] == "deterministic_v1"
-    assert package["promotion"]["status"] == "owner_approved"
+    assert package["promotion"]["status"] == "business_approved"
+    assert (
+        generated.json()["content"]["current_version"]["promotion_revision"]["id"]
+        == revision_id
+    )
+    generated_version = (
+        ctx["db"]
+        .query(InstagramContentVersion)
+        .filter_by(content_id=ctx["proposal"].generated_content.id)
+        .order_by(InstagramContentVersion.version_number.desc())
+        .first()
+    )
+    assert generated_version.promotion_revision_id == revision_id
     assert "rentab" not in json.dumps(package, ensure_ascii=False).lower()
     assert ctx["service"].price_amount == Decimal("40.00")
     content = ctx["proposal"].generated_content
@@ -326,7 +388,7 @@ def test_owner_interest_creates_one_admin_review_and_approved_promotion_generati
         "social_idea_business_owner_accepted",
         "social_promotion_business_owner_requested",
         "social_promotion_autonogrow_admin_proposed",
-        "social_promotion_business_owner_approved",
+        "promotion_business_approved",
         "social_idea_autonogrow_admin_approved",
         "social_content_draft_generated",
     } <= actions

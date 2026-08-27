@@ -9,6 +9,7 @@ from app.models import (
     InstagramContent,
     InstagramContentComment,
     InstagramContentEditorialReview,
+    InstagramContentPublicationHold,
     InstagramContentRawAsset,
     InstagramContentSettings,
     InstagramContentValidation,
@@ -99,6 +100,73 @@ def invalidate_validation(db: Session, content: InstagramContent, reason: str) -
     validation.invalidated_at = utc_now()
     validation.invalidation_reason = reason[:240]
     return True
+
+
+def active_publication_hold(
+    db: Session, content: InstagramContent, *, lock: bool = False
+) -> InstagramContentPublicationHold | None:
+    query = db.query(InstagramContentPublicationHold).filter(
+        InstagramContentPublicationHold.business_id == content.business_id,
+        InstagramContentPublicationHold.content_id == content.id,
+        InstagramContentPublicationHold.released_at.is_(None),
+    )
+    if lock:
+        query = query.with_for_update()
+    return query.order_by(InstagramContentPublicationHold.held_at.desc()).first()
+
+
+def current_version_review_blocker(
+    db: Session, content: InstagramContent, version: InstagramContentVersion
+) -> InstagramContentEditorialReview | None:
+    return (
+        db.query(InstagramContentEditorialReview)
+        .filter(
+            InstagramContentEditorialReview.business_id == content.business_id,
+            InstagramContentEditorialReview.content_id == content.id,
+            InstagramContentEditorialReview.version_id == version.id,
+            InstagramContentEditorialReview.status.in_({"changes_requested", "rejected"}),
+        )
+        .first()
+    )
+
+
+def ensure_owner_operational_validation(
+    db: Session, content: InstagramContent, actor: User
+) -> InstagramContentValidation:
+    version = current_version(db, content)
+    blocker = current_version_review_blocker(db, content, version)
+    if blocker is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="The business requested changes to the current version",
+        )
+    if active_publication_hold(db, content) is not None:
+        raise HTTPException(status_code=409, detail="Publication is stopped by the business")
+    existing = _active_validation(db, content)
+    if existing is not None and existing.version_id == version.id:
+        return existing
+    if not actor.is_owner:
+        raise HTTPException(
+            status_code=409,
+            detail="AutonoGrow must select the current version for publication",
+        )
+    if content.status not in {"ready_for_review", "validated", "scheduled"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Content must be ready before it can be selected for publication",
+        )
+    validation = InstagramContentValidation(
+        business_id=content.business_id,
+        content_id=content.id,
+        version_id=version.id,
+        validated_by_user_id=actor.id,
+        validator_role="owner_delegate",
+        validated_at=utc_now(),
+    )
+    db.add(validation)
+    content.status = "validated"
+    db.flush()
+    return validation
 
 
 def create_content(
@@ -232,6 +300,7 @@ def update_material(
         ),
         generation_source="manual_edit" if previous.editorial_package_json else None,
         generator_version=previous.generator_version,
+        promotion_revision_id=previous.promotion_revision_id,
         story_transform_json=effective_story_transform,
         story_renderer_version=effective_story_renderer,
     )
@@ -372,8 +441,8 @@ def add_admin_comment(
     if kind == "change_request":
         if version.id != current_version(db, content).id:
             raise HTTPException(status_code=409, detail="Changes must target the current version")
-        if content.status != "ready_for_review":
-            raise HTTPException(status_code=409, detail="Content is not in review")
+        if content.status not in {"ready_for_review", "validated", "scheduled"}:
+            raise HTTPException(status_code=409, detail="Current version cannot be reviewed")
         invalidate_validation(db, content, "changes_requested_by_admin")
         from app.services.instagram_publish_service import cancel_publish_job
 
@@ -418,21 +487,10 @@ def validate_content(
         raise HTTPException(status_code=409, detail="Validation must target the current version")
     if content.status != "ready_for_review":
         raise HTTPException(status_code=409, detail="Content is not ready for validation")
-    editorial_review = (
-        db.query(InstagramContentEditorialReview)
-        .filter(
-            InstagramContentEditorialReview.business_id == business_id,
-            InstagramContentEditorialReview.content_id == content.id,
-            InstagramContentEditorialReview.version_id == version.id,
-            InstagramContentEditorialReview.status == "approved",
-        )
-        .first()
-    )
-    if editorial_review is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Current version requires AutonoGrow editorial approval",
-        )
+    if current_version_review_blocker(db, content, version) is not None:
+        raise HTTPException(status_code=409, detail="Current version is blocked by the business")
+    if active_publication_hold(db, content) is not None:
+        raise HTTPException(status_code=409, detail="Publication is stopped by the business")
     existing = _active_validation(db, content)
     if existing is not None:
         raise HTTPException(status_code=409, detail="Current version is already validated")
@@ -472,11 +530,11 @@ def schedule_content(
 ) -> InstagramContent:
     require_service_enabled(db, business_id)
     content = content_or_404(db, business_id, content_id, for_update=True)
-    if content.status != "validated" or _active_validation(db, content) is None:
-        raise HTTPException(status_code=409, detail="Only validated content can be scheduled")
+    if actor is None:
+        raise HTTPException(status_code=409, detail="A publication actor is required")
+    ensure_owner_operational_validation(db, content, actor)
     if content.planned_publish_at is None:
         raise HTTPException(status_code=409, detail="A planned date is required")
-    ensure_promotion_window(db, content, content.planned_publish_at)
     from app.services.instagram_publish_service import sync_publish_job
 
     job = sync_publish_job(db, content, actor=actor)
@@ -490,42 +548,11 @@ def schedule_content(
 def ensure_promotion_window(
     db: Session, content: InstagramContent, planned_at: datetime
 ) -> None:
-    proposal = content.source_proposal
-    review = proposal.idea_review if proposal is not None else None
-    promotion = review.promotion if review is not None else None
-    if promotion is None:
-        return
-    revision = next(
-        (item for item in reversed(promotion.revisions) if item.status == "owner_approved"),
-        None,
-    )
-    if revision is None:
-        raise HTTPException(status_code=409, detail="Promotion requires Business Owner approval")
-    value = planned_at if planned_at.tzinfo else planned_at.replace(tzinfo=timezone.utc)
-    start = (
-        revision.valid_from
-        if revision.valid_from.tzinfo
-        else revision.valid_from.replace(tzinfo=timezone.utc)
-    )
-    end = (
-        revision.valid_until
-        if revision.valid_until.tzinfo
-        else revision.valid_until.replace(tzinfo=timezone.utc)
-    )
-    if not start <= value <= end:
-        raise HTTPException(
-            status_code=409,
-            detail="La fecha debe estar dentro de la ventana aprobada de la promoción",
-        )
-    try:
-        days = json.loads(revision.days_json)
-    except (TypeError, json.JSONDecodeError):
-        days = []
-    if days and value.weekday() not in days:
-        raise HTTPException(
-            status_code=409,
-            detail="La fecha no coincide con los días aprobados de la promoción",
-        )
+    from app.services.instagram_publish_service import promotion_preflight
+
+    error = promotion_preflight(db, current_version(db, content), planned_at)
+    if error is not None:
+        raise HTTPException(status_code=409, detail=error[1])
 
 
 def cancel_content(
@@ -1091,6 +1118,30 @@ def serialize_version(version: InstagramContentVersion, api_prefix: str) -> dict
         ),
         "generation_source": version.generation_source,
         "generator_version": version.generator_version,
+        "promotion_revision": (
+            {
+                "id": version.promotion_revision.id,
+                "revision_number": version.promotion_revision.revision_number,
+                "status": (
+                    "business_approved"
+                    if version.promotion_revision.status == "owner_approved"
+                    else "business_rejected"
+                    if version.promotion_revision.status == "owner_rejected"
+                    else version.promotion_revision.status
+                ),
+                "discount_type": version.promotion_revision.discount_type,
+                "discount_value": str(version.promotion_revision.discount_value),
+                "regular_price": str(version.promotion_revision.regular_price),
+                "promotional_price": str(version.promotion_revision.promotional_price),
+                "currency": version.promotion_revision.currency,
+                "valid_from": version.promotion_revision.valid_from.isoformat(),
+                "valid_until": version.promotion_revision.valid_until.isoformat(),
+                "days": json.loads(version.promotion_revision.days_json),
+                "scope": version.promotion_revision.scope,
+            }
+            if version.promotion_revision
+            else None
+        ),
         "story_transform": (
             json.loads(version.story_transform_json) if version.story_transform_json else None
         ),
@@ -1163,6 +1214,7 @@ def serialize_content(
         ),
         None,
     )
+    publication_hold = active_publication_hold(db, content)
     payload = {
         "id": content.id,
         "business_id": content.business_id,
@@ -1178,6 +1230,16 @@ def serialize_content(
         "current_version": serialize_version(version, api_prefix),
         "created_at": content.created_at.isoformat(),
         "updated_at": content.updated_at.isoformat(),
+        "publication_hold": (
+            {
+                "id": publication_hold.id,
+                "reason": publication_hold.reason,
+                "held_by_user_id": publication_hold.held_by_user_id,
+                "held_at": publication_hold.held_at.isoformat(),
+            }
+            if publication_hold
+            else None
+        ),
         "instagram_remote": (
             {
                 "id": published_remote.id,
@@ -1206,6 +1268,18 @@ def serialize_content(
     if detailed:
         payload["versions"] = [serialize_version(item, api_prefix) for item in content.versions]
         payload["comments"] = [serialize_comment(item) for item in content.comments]
+        payload["publication_hold_history"] = [
+            {
+                "id": item.id,
+                "reason": item.reason,
+                "held_by_user_id": item.held_by_user_id,
+                "held_at": item.held_at.isoformat(),
+                "released_by_user_id": item.released_by_user_id,
+                "released_at": item.released_at.isoformat() if item.released_at else None,
+                "release_note": item.release_note,
+            }
+            for item in content.publication_holds
+        ]
         payload["final_assets"] = [
             serialize_final_asset(item, api_prefix) for item in content.final_assets
         ]

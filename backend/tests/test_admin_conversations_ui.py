@@ -47,12 +47,10 @@ def test_delegated_instagram_forms_use_the_submitted_form() -> None:
     comment = function_block(
         js,
         "async function submitAdminInstagramComment",
-        "async function submitAdminInstagramFinalApproval",
+        "async function submitAdminInstagramBusinessReview",
     )
     review = function_block(
-        js,
-        "async function submitAdminInstagramFinalApproval",
-        "async function submitAdminInstagramPublication",
+        js, "async function submitAdminInstagramBusinessReview", "async function submitAdminInstagramHold"
     )
 
     assert "const form = event.target;" in comment

@@ -13,6 +13,19 @@ class SocialIdeaAcceptRequest(BaseModel):
     intent: Literal["visibility", "promotion"] = "visibility"
 
 
+class SocialIdeaPrepareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intent: Literal["visibility", "promotion"] = "visibility"
+    format: Literal["reel", "story", "carousel", "static_post"] | None = None
+
+
+class SocialIdeaPostponeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    until: datetime
+
+
 class SocialIdeaAdminReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -117,7 +130,7 @@ class SocialPromotionDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     revision_id: int = Field(gt=0)
-    decision: Literal["approve", "reject"]
+    decision: Literal["approve", "modify", "reject"]
     note: str | None = Field(default=None, max_length=4000)
 
     @field_validator("note")
@@ -125,3 +138,9 @@ class SocialPromotionDecisionRequest(BaseModel):
     def normalize_note(cls, value: str | None) -> str | None:
         normalized = value.strip() if value else ""
         return normalized or None
+
+    @model_validator(mode="after")
+    def require_modification_note(self):
+        if self.decision == "modify" and self.note is None:
+            raise ValueError("A modification note is required")
+        return self

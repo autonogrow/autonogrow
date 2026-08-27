@@ -687,19 +687,20 @@ def test_customer_memory_and_conversations_are_never_read_or_serialized(
         assert forbidden not in payload
 
 
-def test_admin_rrss_area_renders_recommended_ideas_and_actions() -> None:
+def test_admin_rrss_area_renders_only_required_commercial_decisions() -> None:
     html = (ROOT / "autonogrow-admin" / "index.html").read_text(encoding="utf-8")
     js = (ROOT / "autonogrow-admin" / "admin.js").read_text(encoding="utf-8")
     assert 'data-admin-section="instagram-content"' in html
-    assert 'id="social-content-ideas-title">Ideas recomendadas' in html
+    assert 'id="social-content-ideas-title">Promociones y condiciones comerciales' in html
     assert "loadSocialContentProposals" in js
     assert "social-content-proposals" in js
-    assert ">Me interesa</button>" in js
-    assert ">Estudiar promoción</button>" in js
-    assert ">Ahora no</button>" in js
+    assert ">Aprobar condiciones</button>" in js
+    assert ">Pedir modificación</button>" in js
+    assert ">Rechazar</button>" in js
+    assert ">Me interesa</button>" not in js
     assert "if (isBusinessStaff())" in js
     assert "reservadas al responsable del negocio" in js
-    assert "Solo entonces AutonoGrow recibirá una tarea" in html
+    assert "requieren aprobación expresa del negocio" in html
     assert "available_assets" not in js
 
 

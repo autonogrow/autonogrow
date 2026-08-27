@@ -7196,24 +7196,16 @@ function socialContentLabel(kind, value) {
 function renderSocialContentProposals() {
   const container = document.getElementById("social-content-ideas-list");
   if (!socialContentProposals.length) {
-    container.innerHTML = `<div class="conversation-state conversation-state--compact"><strong>No hay ideas activas ahora</strong><p>La siguiente evaluación volverá a revisar las señales y el contenido evergreen.</p></div>`;
+    container.innerHTML = `<div class="conversation-state conversation-state--compact"><strong>No hay decisiones pendientes</strong><p>Solo aparecerán aquí promociones u otras decisiones comerciales que necesiten tu respuesta.</p></div>`;
     return;
   }
   container.innerHTML = socialContentProposals.map((item) => {
     const busy = socialContentProposalMutationIds.has(item.id);
     const presentation = item.presentation || {};
     const title = presentation.title || item.service?.name || "Idea para tu negocio";
-    const formats = (presentation.suggested_formats || item.recommended_formats || []).map((format) => socialContentLabel("format", format)).join(" + ");
-    const reasons = (presentation.human_reasons || []).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
     const promotion = item.idea_review?.promotion;
     const promotionRevision = promotion?.revisions?.[promotion.revisions.length - 1];
-    const promotionDecision = promotionRevision?.status === "proposed" ? `<div class="ag-alert ag-alert--info"><strong>Propuesta de promoción · revisión ${promotionRevision.revision_number}</strong><p>${escapeHtml(promotionRevision.regular_price)} ${escapeHtml(promotionRevision.currency)} → ${escapeHtml(promotionRevision.promotional_price)} ${escapeHtml(promotionRevision.currency)}, del ${escapeHtml(promotionRevision.valid_from.slice(0, 10))} al ${escapeHtml(promotionRevision.valid_until.slice(0, 10))}. ${escapeHtml(promotionRevision.scope)}</p><div class="growth-action-card-actions"><button class="btn btn-primary" type="button" data-social-proposal-action="promotion-approve" data-revision-id="${promotionRevision.id}">Aprobar promoción</button><button class="btn btn-secondary" type="button" data-social-proposal-action="promotion-reject" data-revision-id="${promotionRevision.id}">Rechazar promoción</button></div></div>` : "";
-    const actions = item.status === "accepted"
-      ? item.generated_content
-        ? `<button class="btn btn-secondary" type="button" data-social-proposal-action="open" data-content-id="${item.generated_content.id}">Abrir borrador</button>`
-        : `<span class="helper">Ya has mostrado interés. AutonoGrow está revisando la idea.</span>`
-      : `<button class="btn btn-primary" type="button" data-social-proposal-action="accept" data-owner-intent="visibility" ${busy ? "disabled" : ""}>Me interesa</button>${item.promotion_eligible ? `<button class="btn btn-secondary" type="button" data-social-proposal-action="accept" data-owner-intent="promotion" ${busy ? "disabled" : ""}>Estudiar promoción</button>` : ""}<button class="btn btn-secondary" type="button" data-social-proposal-action="dismiss" ${busy ? "disabled" : ""}>Ahora no</button>`;
-    return `<article class="instagram-content-card" data-social-content-proposal="${item.id}"><header><div><h4>${escapeHtml(title)}</h4><p>${escapeHtml(presentation.explanation || item.reason_text)}</p></div>${formats ? `<span class="ag-badge ag-badge--neutral">${escapeHtml(formats)}</span>` : ""}</header>${reasons ? `<ul>${reasons}</ul>` : ""}<p><strong>${escapeHtml(presentation.suggested_action || "Podría ser un buen momento para comunicarlo.")}</strong></p>${promotionDecision}<div class="growth-action-card-actions">${actions}</div></article>`;
+    return `<article class="instagram-content-card" data-social-content-proposal="${item.id}"><header><div><h4>${escapeHtml(title)}</h4><p>Necesitamos tu aprobación para publicar estas condiciones económicas.</p></div><span class="ag-badge ag-badge--neutral">Promoción</span></header><div class="ag-alert ag-alert--info"><strong>Revisión ${promotionRevision.revision_number}</strong><p>${escapeHtml(promotionRevision.regular_price)} ${escapeHtml(promotionRevision.currency)} → ${escapeHtml(promotionRevision.promotional_price)} ${escapeHtml(promotionRevision.currency)}, del ${escapeHtml(promotionRevision.valid_from.slice(0, 10))} al ${escapeHtml(promotionRevision.valid_until.slice(0, 10))}. ${escapeHtml(promotionRevision.scope)}</p><div class="growth-action-card-actions"><button class="btn btn-primary" type="button" data-social-proposal-action="promotion-approve" data-revision-id="${promotionRevision.id}" ${busy ? "disabled" : ""}>Aprobar condiciones</button><button class="btn btn-secondary" type="button" data-social-proposal-action="promotion-modify" data-revision-id="${promotionRevision.id}" ${busy ? "disabled" : ""}>Pedir modificación</button><button class="btn btn-secondary" type="button" data-social-proposal-action="promotion-reject" data-revision-id="${promotionRevision.id}" ${busy ? "disabled" : ""}>Rechazar</button></div></div></article>`;
   }).join("");
 }
 
@@ -7225,10 +7217,9 @@ async function loadSocialContentProposals() {
       adminInstagramJson(`${socialContentProposalsApi()}?status=active`),
       adminInstagramJson(`${socialContentProposalsApi()}?status=accepted`)
     ]);
-    socialContentProposals = [...(accepted.proposals || []).filter((item) => item.owner_first), ...(active.proposals || [])];
+    socialContentProposals = [...(accepted.proposals || []), ...(active.proposals || [])].filter((item) => item.idea_review?.promotion?.revisions?.at(-1)?.status === "proposed");
     renderSocialContentProposals();
-    Promise.allSettled((active.proposals || []).map((item) => adminInstagramJson(`${socialContentProposalsApi()}/${item.id}/seen`, { method: "POST" })));
-    status.textContent = `${socialContentProposals.length} ideas activas`;
+    status.textContent = `${socialContentProposals.length} decisión${socialContentProposals.length === 1 ? "" : "es"} pendiente${socialContentProposals.length === 1 ? "" : "s"}`;
   } catch (error) {
     socialContentProposals = [];
     renderSocialContentProposals();
@@ -7240,22 +7231,15 @@ async function mutateSocialContentProposal(button) {
   const card = button.closest("[data-social-content-proposal]");
   const proposalId = Number(card?.dataset.socialContentProposal);
   const action = button.dataset.socialProposalAction;
-  if (!Number.isInteger(proposalId) || !["accept", "dismiss", "open", "promotion-approve", "promotion-reject"].includes(action) || socialContentProposalMutationIds.has(proposalId)) return;
-  if (action === "open") {
-    openAdminInstagramContent(Number(button.dataset.contentId));
-    return;
-  }
+  if (!Number.isInteger(proposalId) || !["promotion-approve", "promotion-modify", "promotion-reject"].includes(action) || socialContentProposalMutationIds.has(proposalId)) return;
   socialContentProposalMutationIds.add(proposalId);
   renderSocialContentProposals();
   try {
-    const promotionDecision = action.startsWith("promotion-");
-    const options = promotionDecision
-      ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revision_id: Number(button.dataset.revisionId), decision: action === "promotion-approve" ? "approve" : "reject", note: null }) }
-      : action === "accept"
-      ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent: button.dataset.ownerIntent || "visibility" }) }
-      : { method: "POST" };
-    const endpoint = promotionDecision ? "promotion/decision" : action;
-    await adminInstagramJson(`${socialContentProposalsApi()}/${proposalId}/${endpoint}`, options);
+    const decision = action.replace("promotion-", "");
+    const note = decision === "modify" ? window.prompt("Indica qué condiciones deben modificarse:") : decision === "reject" ? window.prompt("Motivo del rechazo (opcional):") : null;
+    if (decision === "modify" && !String(note || "").trim()) return;
+    const options = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revision_id: Number(button.dataset.revisionId), decision, note: String(note || "").trim() || null }) };
+    await adminInstagramJson(`${socialContentProposalsApi()}/${proposalId}/promotion/decision`, options);
     await loadSocialContentProposals();
   } catch (error) {
     document.getElementById("social-content-ideas-status").textContent = error.message;
@@ -7437,13 +7421,10 @@ function renderAdminInstagramContents() {
     const events = (item.publication_events || []).map((event) => `<li>${escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(event.created_at)))} · ${escapeHtml(event.action)}${event.actor_user_id ? ` · usuario ${event.actor_user_id}` : " · worker"}</li>`).join("");
     const unsupported = adminInstagramSettings?.publishing_mode === "meta" && version.format !== "single_image" ? `<p class="inline-feedback">Formato preparado para futuro soporte: la publicación real V1 solo admite una imagen JPEG.</p>` : "";
     const editorial = version.editorial_review;
-    const review = item.status === "ready_for_review"
-      ? editorial?.status === "approved"
-        ? `<form data-admin-instagram-final-approval><input type="hidden" name="version_id" value="${version.id}"><div class="ag-alert ag-alert--success"><strong>Revisado por AutonoGrow</strong><p>La aprobación final quedará ligada a esta versión.</p></div><div class="growth-action-card-actions"><button class="btn btn-primary" type="submit">Dar aprobación final</button></div></form>`
-        : `<div class="ag-alert ag-alert--info"><strong>Pendiente de revisión por AutonoGrow</strong><p>Podrás aprobar esta versión cuando termine la revisión editorial.</p></div>`
-      : "";
-    const publication = ["validated", "scheduled"].includes(item.status) ? `<form data-admin-instagram-publication><label>Fecha y hora<input name="planned_publish_at" type="datetime-local" value="${escapeHtml(adminInstagramLocalInput(item.planned_publish_at, item.business_timezone))}"></label><div class="growth-action-card-actions"><button class="btn btn-primary" type="submit" name="publication_action" value="schedule">Programar</button><button class="btn btn-secondary" type="submit" name="publication_action" value="publish-now">Publicar ahora</button></div></form>` : "";
-    return `<article class="instagram-content-card" data-admin-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(adminInstagramStateLabel(item.status))} · versión ${version.version_number}</p></div><span class="ag-badge ag-badge--neutral">${item.planned_publish_at ? escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(item.planned_publish_at))) : "Sin fecha"}</span></header><p class="instagram-caption">${escapeHtml(version.caption) || "Sin caption"}</p>${unsupported}${generatedEditorialPreview(item)}<div class="instagram-final-assets">${assets || "<p class='helper'>Sin assets finales.</p>"}</div>${adminInstagramJobPanel(item)}<details><summary>Historial de versiones y aprobación</summary><ul>${history}</ul></details>${events ? `<details><summary>Historial de publicación</summary><ul>${events}</ul></details>` : ""}${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong><p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}<form data-admin-instagram-comment><input type="hidden" name="version_id" value="${version.id}"><label>Tipo<select name="kind"><option value="comment">Comentario</option><option value="proposal">Propuesta</option><option value="change_request">Solicitar cambios</option></select></label><label>Mensaje<textarea name="body" maxlength="4000" required rows="3"></textarea></label><button class="btn btn-secondary" type="submit">Enviar</button></form>${review}${publication}</article>`;
+    const reviewBadge = editorial?.status === "approved" ? `<div class="ag-alert ag-alert--success"><strong>Visto bueno del negocio ✓</strong><p>Registrado para esta versión. No es un requisito para publicar contenido rutinario.</p></div>` : ["changes_requested", "rejected"].includes(editorial?.status) ? `<div class="ag-alert ag-alert--info"><strong>Esta versión está bloqueada</strong><p>${escapeHtml(editorial.note || "El negocio ha pedido cambios.")}</p></div>` : `<p class="helper">Si todo está bien, no necesitas hacer nada.</p>`;
+    const review = ["ready_for_review", "validated", "scheduled"].includes(item.status) ? `<form data-admin-instagram-business-review><input type="hidden" name="version_id" value="${version.id}">${reviewBadge}<label>Nota para AutonoGrow<textarea name="note" maxlength="4000" rows="2"></textarea></label><div class="growth-action-card-actions"><button class="btn btn-secondary" type="submit" name="decision" value="approve">Dar visto bueno</button><button class="btn btn-secondary" type="submit" name="decision" value="changes_requested">Solicitar cambios</button><button class="btn btn-secondary" type="submit" name="decision" value="reject">Rechazar esta versión</button></div></form>` : reviewBadge;
+    const hold = item.publication_hold ? `<form data-admin-instagram-hold="release"><div class="ag-alert ag-alert--info"><strong>Publicación detenida</strong><p>${escapeHtml(item.publication_hold.reason)}</p></div><label>Nota al reanudar<textarea name="note" maxlength="4000" rows="2"></textarea></label><button class="btn btn-primary" type="submit">Reanudar publicación</button></form>` : ["cancelled", "published"].includes(item.status) ? "" : `<form data-admin-instagram-hold="create"><label>Motivo para detener esta publicación<textarea name="reason" maxlength="4000" required rows="2"></textarea></label><button class="btn btn-secondary" type="submit">Detener publicación</button></form>`;
+    return `<article class="instagram-content-card" data-admin-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(adminInstagramStateLabel(item.status))} · versión ${version.version_number}</p></div><span class="ag-badge ag-badge--neutral">${item.planned_publish_at ? escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(item.planned_publish_at))) : "Sin fecha"}</span></header><p class="instagram-caption">${escapeHtml(version.caption) || "Sin caption"}</p>${unsupported}${generatedEditorialPreview(item)}<div class="instagram-final-assets">${assets || "<p class='helper'>Sin assets finales.</p>"}</div>${adminInstagramJobPanel(item)}<details><summary>Historial de versiones y decisiones</summary><ul>${history}</ul></details>${events ? `<details><summary>Historial de publicación</summary><ul>${events}</ul></details>` : ""}${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong><p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}<form data-admin-instagram-comment><input type="hidden" name="version_id" value="${version.id}"><label>Comentario<textarea name="body" maxlength="4000" required rows="3"></textarea></label><input type="hidden" name="kind" value="comment"><button class="btn btn-secondary" type="submit">Enviar comentario</button></form>${review}${hold}</article>`;
   }).join("");
 }
 
@@ -7583,36 +7564,36 @@ async function submitAdminInstagramComment(event) {
   } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
 }
 
-async function submitAdminInstagramFinalApproval(event) {
+async function submitAdminInstagramBusinessReview(event) {
+  event.preventDefault();
+  const form = event.target;
+  const card = form.closest("[data-admin-instagram-content]");
+  const data = new FormData(form);
+  const decision = event.submitter?.value;
+  const note = String(data.get("note") || "").trim();
+  if (!card || !["approve", "changes_requested", "reject"].includes(decision)) return;
+  if (decision !== "approve" && !note) {
+    document.getElementById("admin-instagram-status").textContent = "Añade una nota para solicitar cambios o rechazar esta versión.";
+    return;
+  }
+  try {
+    await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/editorial-review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version_id: Number(data.get("version_id")), decision, note: note || null }) });
+    document.getElementById("admin-instagram-status").textContent = decision === "approve" ? "Visto bueno del negocio registrado." : "La decisión sobre esta versión ha sido registrada.";
+    await loadAdminInstagramPanel();
+  } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
+}
+
+async function submitAdminInstagramHold(event) {
   event.preventDefault();
   const form = event.target;
   const card = form.closest("[data-admin-instagram-content]");
   if (!card) return;
   const data = new FormData(form);
+  const action = form.dataset.adminInstagramHold;
   try {
-    await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version_id: Number(data.get("version_id")) }) });
-    document.getElementById("admin-instagram-status").textContent = "Aprobación final registrada para esta versión.";
-    await loadAdminInstagramPanel();
-  } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
-}
-
-async function submitAdminInstagramPublication(event) {
-  event.preventDefault();
-  const form = event.target;
-  const card = form.closest("[data-admin-instagram-content]");
-  const action = event.submitter?.value;
-  if (!card || !["schedule", "publish-now"].includes(action)) return;
-  try {
-    if (action === "schedule") {
-      const localValue = String(new FormData(form).get("planned_publish_at") || "");
-      if (!localValue) throw new Error("Elige una fecha y hora para programar.");
-      const content = await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/planned-date`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ planned_publish_at: localValue }) });
-      if (content.status === "validated") await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/schedule`, { method: "POST" });
-      document.getElementById("admin-instagram-status").textContent = "Publicación programada.";
-    } else {
-      await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/publish-now`, { method: "POST" });
-      document.getElementById("admin-instagram-status").textContent = "Publicación enviada a la cola.";
-    }
+    const payload = action === "create" ? { reason: String(data.get("reason") || "").trim() } : { note: String(data.get("note") || "").trim() || null };
+    const result = await adminInstagramJson(`${adminInstagramApi()}/contents/${card.dataset.adminInstagramContent}/publication-hold${action === "release" ? "/release" : ""}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    document.getElementById("admin-instagram-status").textContent = action === "release" ? "Publicación reanudada." : result.outcome_requires_review ? "La publicación ya estaba en curso. AutonoGrow revisará el resultado y no la reenviará." : "Publicación detenida.";
     await loadAdminInstagramPanel();
   } catch (error) { document.getElementById("admin-instagram-status").textContent = error.message; }
 }
@@ -7622,8 +7603,8 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("admin-instagram-raw-form").addEventListener("submit", uploadAdminInstagramRaw);
   document.getElementById("admin-instagram-content-list").addEventListener("submit", (event) => {
     if (event.target.matches("[data-admin-instagram-comment]")) submitAdminInstagramComment(event);
-    if (event.target.matches("[data-admin-instagram-final-approval]")) submitAdminInstagramFinalApproval(event);
-    if (event.target.matches("[data-admin-instagram-publication]")) submitAdminInstagramPublication(event);
+    if (event.target.matches("[data-admin-instagram-business-review]")) submitAdminInstagramBusinessReview(event);
+    if (event.target.matches("[data-admin-instagram-hold]")) submitAdminInstagramHold(event);
   });
   document.getElementById("admin-instagram-workspace").addEventListener("click", (event) => {
     const open = event.target.closest("[data-admin-instagram-open]");

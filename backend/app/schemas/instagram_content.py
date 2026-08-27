@@ -139,6 +139,29 @@ class InstagramEditorialReviewCreate(BaseModel):
         return normalized or None
 
 
+class InstagramPublicationHoldCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("reason")
+    @classmethod
+    def strip_reason(cls, value: str) -> str:
+        return value.strip()
+
+
+class InstagramPublicationHoldRelease(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("note")
+    @classmethod
+    def strip_release_note(cls, value: str | None) -> str | None:
+        normalized = value.strip() if value else ""
+        return normalized or None
+
+
 class InstagramCommentCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

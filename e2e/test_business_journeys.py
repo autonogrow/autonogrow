@@ -106,14 +106,14 @@ def test_admin_instagram_calendar_editorial_action_and_permissions(journey) -> N
     page.get_by_role("button", name=re.compile("SALON lanzamiento")).click()
     detail = page.locator("[data-admin-instagram-content]")
     expect(detail).to_contain_text("Caption de revisión SALON")
-    expect(detail).to_contain_text("Revisado por AutonoGrow")
-    with page.expect_response(lambda response: response.url.endswith("/validate")) as review_info:
-        detail.get_by_role("button", name="Dar aprobación final").click()
-    assert review_info.value.status == 200
+    expect(detail).to_contain_text("Visto bueno del negocio")
+    expect(detail).to_contain_text("No es un requisito")
     reviewed = page.request.get(
         "/api/admin/businesses/salon-e2e/instagram-content/contents/1"
     ).json()
-    assert reviewed["current_version"]["validation"]["validator_role"] == "business_admin"
+    assert reviewed["current_version"]["editorial_review"]["status"] == "approved"
+    assert detail.get_by_role("button", name="Programar").count() == 0
+    assert detail.get_by_role("button", name="Publicar ahora").count() == 0
     assert (
         page.request.post(
             "/api/owner/businesses/1/instagram-content/contents/1/schedule", data={}

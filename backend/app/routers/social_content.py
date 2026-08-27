@@ -104,6 +104,22 @@ def _promotion_eligible(db: Session, row: SocialContentProposal) -> bool:
     )
 
 
+def _promotion_revision_context(revision: SocialPromotionRevision) -> dict[str, object]:
+    return {
+        "id": revision.id,
+        "revision_number": revision.revision_number,
+        "discount_type": revision.discount_type,
+        "discount_value": str(revision.discount_value),
+        "regular_price": str(revision.regular_price),
+        "promotional_price": str(revision.promotional_price),
+        "currency": revision.currency,
+        "valid_from": revision.valid_from.isoformat(),
+        "valid_until": revision.valid_until.isoformat(),
+        "days": json.loads(revision.days_json),
+        "scope": revision.scope,
+    }
+
+
 def _serialize_owner_idea(db: Session, row: SocialContentProposal) -> dict:
     payload = serialize_social_content_proposal(row)
     review = row.idea_review
@@ -132,12 +148,24 @@ def _serialize_owner_idea(db: Session, row: SocialContentProposal) -> dict:
             "promotion": (
                 {
                     "id": review.promotion.id,
-                    "status": review.promotion.status,
+                    "status": (
+                        "business_approved"
+                        if review.promotion.status == "owner_approved"
+                        else "business_rejected"
+                        if review.promotion.status == "owner_rejected"
+                        else review.promotion.status
+                    ),
                     "revisions": [
                         {
                             "id": revision.id,
                             "revision_number": revision.revision_number,
-                            "status": revision.status,
+                            "status": (
+                                "business_approved"
+                                if revision.status == "owner_approved"
+                                else "business_rejected"
+                                if revision.status == "owner_rejected"
+                                else revision.status
+                            ),
                             "discount_type": revision.discount_type,
                             "discount_value": str(revision.discount_value),
                             "regular_price": str(revision.regular_price),
@@ -461,13 +489,22 @@ def decide_social_promotion(
     revision.owner_note = payload.note
     promotion.status = revision.status
     promotion.updated_at = now
+    if payload.decision == "approve":
+        context = json.loads(row.accepted_context_json or "{}")
+        context["promotion"] = _promotion_revision_context(revision)
+        row.accepted_context_json = json.dumps(
+            context, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        row.updated_at = now
     db.commit()
     record_audit(
         db,
         action=(
-            "social_promotion_business_owner_approved"
+            "promotion_business_approved"
             if payload.decision == "approve"
-            else "social_promotion_business_owner_rejected"
+            else "promotion_business_modified"
+            if payload.decision == "modify"
+            else "promotion_business_rejected"
         ),
         request=request,
         actor=actor,

@@ -450,6 +450,7 @@ class InstagramPublishWorker:
                     version=version,
                     settings=self.settings,
                     validate_files=self.settings.instagram_publishing_mode == "meta",
+                    publication_at=utc_now(),
                 )
                 integration = preflight.integration
                 preflight_error = (
@@ -597,6 +598,73 @@ class InstagramPublishWorker:
             )
             db.commit()
             return PreparedPublish(request, job.business_id, job.content_item_id)
+
+    def _authorize_provider_call(self, job_id: int) -> bool:
+        with self.session_factory() as db:
+            seed = db.get(InstagramPublishJob, job_id)
+            if seed is None:
+                return False
+            content = (
+                db.query(InstagramContent)
+                .filter(InstagramContent.id == seed.content_item_id)
+                .with_for_update()
+                .first()
+            )
+            job = (
+                db.query(InstagramPublishJob)
+                .filter(InstagramPublishJob.id == job_id)
+                .with_for_update()
+                .first()
+            )
+            if (
+                content is None
+                or job is None
+                or job.claimed_by != self.worker_id
+                or job.status
+                not in {"simulating_publish", "creating_container", "publishing"}
+            ):
+                return False
+            version = db.get(InstagramContentVersion, job.content_version_id)
+            preflight = (
+                publication_preflight(
+                    db,
+                    content,
+                    version=version,
+                    settings=self.settings,
+                    validate_files=self.settings.instagram_publishing_mode == "meta",
+                    publication_at=utc_now(),
+                )
+                if version is not None
+                else None
+            )
+            if content.status != "scheduled" or preflight is None or not preflight.ok:
+                error = PublishingActionRequired(
+                    (preflight.code or "publish_preflight_failed")
+                    if preflight
+                    else "publish_version_is_not_current",
+                    (preflight.safe_message or "Publication is not allowed")
+                    if preflight
+                    else "Publishing version is unavailable",
+                )
+                self._block_job(db, job, error)
+                db.commit()
+                return False
+            job.provider_status = "provider_call_authorized"
+            record_audit(
+                db,
+                action="publish_provider_call_authorized",
+                business_id=job.business_id,
+                resource_type="instagram_publish_job",
+                resource_id=job.id,
+                metadata={
+                    "content_id": job.content_item_id,
+                    "version_id": job.content_version_id,
+                    "worker_id": self.worker_id,
+                },
+                commit=False,
+            )
+            db.commit()
+            return True
 
     def _persist_carousel_child(
         self,
@@ -751,12 +819,54 @@ class InstagramPublishWorker:
 
     def _persist_publish_started(self, job_id: int) -> None:
         with self.session_factory() as db:
-            job = db.query(InstagramPublishJob).filter_by(id=job_id).with_for_update().first()
-            if job is None or job.status != "publishing" or job.claimed_by != self.worker_id:
+            seed = db.get(InstagramPublishJob, job_id)
+            if seed is None:
                 raise PublishingActionRequired(
                     "publish_job_changed_before_provider_publish",
                     "Publishing job changed before provider publication",
                 )
+            content = (
+                db.query(InstagramContent)
+                .filter(InstagramContent.id == seed.content_item_id)
+                .with_for_update()
+                .first()
+            )
+            job = db.query(InstagramPublishJob).filter_by(id=job_id).with_for_update().first()
+            if (
+                content is None
+                or job is None
+                or job.status != "publishing"
+                or job.claimed_by != self.worker_id
+            ):
+                raise PublishingActionRequired(
+                    "publish_job_changed_before_provider_publish",
+                    "Publishing job changed before provider publication",
+                )
+            version = db.get(InstagramContentVersion, job.content_version_id)
+            preflight = (
+                publication_preflight(
+                    db,
+                    content,
+                    version=version,
+                    settings=self.settings,
+                    validate_files=self.settings.instagram_publishing_mode == "meta",
+                    publication_at=utc_now(),
+                )
+                if version is not None
+                else None
+            )
+            if content.status != "scheduled" or preflight is None or not preflight.ok:
+                error = PublishingActionRequired(
+                    (preflight.code or "publish_preflight_failed")
+                    if preflight
+                    else "publish_version_is_not_current",
+                    (preflight.safe_message or "Publication is not allowed")
+                    if preflight
+                    else "Publishing version is unavailable",
+                )
+                self._block_job(db, job, error)
+                db.commit()
+                raise error
             job.provider_status = "media_publish_started"
             record_audit(
                 db,
@@ -776,11 +886,17 @@ class InstagramPublishWorker:
     def _finish_success(self, job_id: int, result: InstagramPublishResult) -> None:
         with self.session_factory() as db:
             job = db.query(InstagramPublishJob).filter_by(id=job_id).with_for_update().first()
-            if (
-                job is None
-                or job.status not in {"simulating_publish", "publishing"}
-                or job.claimed_by != self.worker_id
-            ):
+            normal_completion = bool(
+                job is not None
+                and job.status in {"simulating_publish", "publishing"}
+                and job.claimed_by == self.worker_id
+            )
+            known_completion_after_hold = bool(
+                job is not None
+                and job.status == "action_required"
+                and job.provider_status == "outcome_requires_review"
+            )
+            if job is None or not (normal_completion or known_completion_after_hold):
                 return
             job.status = "published"
             job.provider_container_id = result.container_id
@@ -822,6 +938,7 @@ class InstagramPublishWorker:
                     "version_id": job.content_version_id,
                     "provider_media_id": result.media_id,
                     "attempt": job.attempt_count,
+                    "completed_after_publication_hold": known_completion_after_hold,
                 },
                 commit=False,
             )
@@ -921,7 +1038,7 @@ class InstagramPublishWorker:
 
     def process_job(self, job_id: int) -> None:
         prepared = self._prepare(job_id)
-        if prepared is None:
+        if prepared is None or not self._authorize_provider_call(job_id):
             return
         try:
             result = self.adapter.publish(prepared.request)
