@@ -2865,10 +2865,21 @@ async function openOwnerInstagramPreview(asset, trigger) {
 
 function ownerInstagramAssociationUsage(association) {
   const uses = [];
-  if (association.is_source_material) uses.push("Material de origen");
-  if (association.has_final_derivative) uses.push("Origen de material final");
-  if (association.has_historical_reference) uses.push("Historial editorial");
-  return uses.join(" + ") || "Dependencia editorial";
+  if (association.direct_association) uses.push("Vínculo operativo");
+  if (association.current_version_reference) uses.push("Versión actual");
+  if (association.historical_version_reference) uses.push("Historial editorial");
+  if (association.final_asset_provenance) uses.push("Origen de material final");
+  return uses.join(" · ") || "Provenance editorial";
+}
+
+function ownerInstagramAssociationExplanation(association) {
+  const messages = [];
+  if (association.current_physical_dependency) messages.push("Este material todavía se utiliza para preparar la versión actual.");
+  else if (association.current_version_reference) messages.push("La versión actual ya dispone de material final utilizable.");
+  if (association.historical_version_reference) messages.push("Este material se utilizó anteriormente en esta publicación.");
+  if (association.final_asset_provenance) messages.push("Un material final se creó originalmente a partir de este archivo.");
+  if (association.direct_association && association.can_disassociate) messages.push("El vínculo operativo puede retirarse sin alterar el historial.");
+  return messages.join(" ");
 }
 
 function renderOwnerInstagramAssociationManager() {
@@ -2878,13 +2889,17 @@ function renderOwnerInstagramAssociationManager() {
   byId("owner-instagram-associations-title").textContent = data.raw_asset.label || data.raw_asset.original_filename;
   byId("owner-instagram-associations-filename").textContent = data.raw_asset.original_filename;
   byId("owner-instagram-associations-count").textContent = String(count);
-  byId("owner-instagram-associations-description").textContent = count
-    ? "Este material está siendo utilizado y no puede eliminarse todavía."
-    : "Este material no tiene asociaciones y ya puede eliminarse de forma segura.";
+  byId("owner-instagram-associations-description").textContent = data.can_delete
+    ? "Este material no tiene dependencias y puede eliminarse definitivamente."
+    : data.has_current_physical_dependency
+      ? "Puedes retirarlo de la biblioteca, pero el archivo se conservará mientras la versión actual lo necesite."
+      : "Puedes retirarlo de la biblioteca sin borrar el historial editorial.";
   byId("owner-instagram-associations-remove-all").hidden = data.modifiable_count < 2;
-  byId("owner-instagram-associations-delete").hidden = count !== 0;
+  byId("owner-instagram-associations-delete").hidden = !data.can_delete;
+  byId("owner-instagram-associations-retire").hidden = data.can_delete || !data.can_retire;
+  byId("owner-instagram-associations-purge").hidden = data.raw_asset.active || !data.can_purge_storage || Boolean(data.raw_asset.storage_deleted_at);
   byId("owner-instagram-associations-list").innerHTML = count
-    ? data.associations.map((association) => `<article class="instagram-association-row" data-owner-instagram-association="${association.content_id}"><header><div><h3>${escapeHtml(association.content_title)}</h3><p>${escapeHtml(ownerInstagramStateLabel(association.content_status))}${association.content_archived ? " · Archivado" : ""}</p></div><span class="ag-badge ag-badge--neutral">${escapeHtml(ownerInstagramAssociationUsage(association))}</span></header><dl><div><dt>Uso</dt><dd>${escapeHtml(ownerInstagramAssociationUsage(association))}</dd></div><div><dt>Modificable</dt><dd>${association.modifiable ? "Sí" : "No"}</dd></div></dl>${association.protected_reason ? `<p class="instagram-association-protection">${escapeHtml(association.protected_reason)}</p>` : ""}<div class="instagram-editorial-actions"><button class="button button-secondary button-small" type="button" data-owner-instagram-association-open="${association.content_id}">Abrir contenido</button>${association.modifiable ? `<button class="button button-ghost button-small" type="button" data-owner-instagram-association-remove="${association.content_id}" data-owner-instagram-association-mutation>Desasociar</button>` : ""}</div></article>`).join("")
+    ? data.associations.map((association) => `<article class="instagram-association-row" data-owner-instagram-association="${association.content_id}"><header><div><h3>${escapeHtml(association.content_title)}</h3><p>${escapeHtml(ownerInstagramStateLabel(association.content_status))}${association.content_archived ? " · Archivado" : ""}</p></div><span class="ag-badge ag-badge--neutral">${association.current_physical_dependency ? "USO ACTUAL" : association.historical_only ? "HISTÓRICO" : "PROVENANCE"}</span></header><dl><div><dt>Relación</dt><dd>${escapeHtml(ownerInstagramAssociationUsage(association))}</dd></div><div><dt>Afecta a versión actual</dt><dd>${association.current_version_reference ? "Sí" : "No"}</dd></div><div><dt>Solo histórica</dt><dd>${association.historical_only ? "Sí" : "No"}</dd></div></dl><p class="instagram-association-protection">${escapeHtml(ownerInstagramAssociationExplanation(association))}</p><div class="instagram-editorial-actions">${association.content_archived ? "" : `<button class="button button-secondary button-small" type="button" data-owner-instagram-association-open="${association.content_id}">Abrir contenido</button>`}${association.can_disassociate ? `<button class="button button-ghost button-small" type="button" data-owner-instagram-association-remove="${association.content_id}" data-owner-instagram-association-mutation>Desasociar</button>` : ""}</div></article>`).join("")
     : `<p class="instagram-associations-empty">Este archivo no se utiliza en ningún contenido.</p>`;
 }
 
@@ -3423,6 +3438,51 @@ async function deleteOwnerInstagramRaw(button) {
   }
 }
 
+async function retireOwnerInstagramRaw(button) {
+  const api = ownerInstagramApi();
+  const assetId = ownerInstagramAssociationData?.raw_asset.id;
+  const mutationKey = `raw:${assetId}`;
+  if (!api || !assetId || !window.confirm("¿Retirar este material de la biblioteca? El historial editorial se conservará.")) return;
+  if (!beginOwnerInstagramMutation(mutationKey)) return;
+  setOwnerInstagramAssociationBusy(true, button, "Retirando…");
+  byId("owner-instagram-associations-error").textContent = "";
+  try {
+    const result = await ownerInstagramJson(`${api}/raw-assets/${assetId}/retire`, { method: "POST" });
+    ownerInstagramRawAssets = ownerInstagramRawAssets.filter((item) => item.id !== assetId);
+    renderOwnerInstagramRaw(ownerInstagramRawAssets);
+    setOwnerInstagramAssociationBusy(false, button);
+    closeOwnerInstagramAssociationManager(false);
+    byId("owner-instagram-status").textContent = result.storage_purged
+      ? "Material retirado y archivo original purgado."
+      : "Material retirado. El archivo se conserva temporalmente para la versión actual.";
+  } catch (error) {
+    byId("owner-instagram-associations-error").textContent = error.message;
+  } finally {
+    if (ownerInstagramAssociationBusy) setOwnerInstagramAssociationBusy(false, button);
+    endOwnerInstagramMutation(mutationKey);
+  }
+}
+
+async function purgeOwnerInstagramRawStorage(button) {
+  const api = ownerInstagramApi();
+  const assetId = ownerInstagramAssociationData?.raw_asset.id;
+  const mutationKey = `raw:${assetId}`;
+  if (!api || !assetId || !window.confirm("¿Purgar el archivo original? La metadata histórica se conservará.")) return;
+  if (!beginOwnerInstagramMutation(mutationKey)) return;
+  setOwnerInstagramAssociationBusy(true, button, "Purgando…");
+  byId("owner-instagram-associations-error").textContent = "";
+  try {
+    await ownerInstagramJson(`${api}/raw-assets/${assetId}/purge-storage`, { method: "POST" });
+    await refreshOwnerInstagramAssociationManager(api, assetId);
+    byId("owner-instagram-status").textContent = "Archivo original purgado; la trazabilidad se conserva.";
+  } catch (error) {
+    byId("owner-instagram-associations-error").textContent = error.message;
+  } finally {
+    setOwnerInstagramAssociationBusy(false, button);
+    endOwnerInstagramMutation(mutationKey);
+  }
+}
+
 async function handleOwnerInstagramRawAction(button) {
   const api = ownerInstagramApi();
   const assetId = Number(button.dataset.rawAssetId);
@@ -3686,6 +3746,8 @@ byId("owner-instagram-preview-dialog").addEventListener("click", (event) => {
 byId("owner-instagram-associations-close").addEventListener("click", () => closeOwnerInstagramAssociationManager());
 byId("owner-instagram-associations-done").addEventListener("click", () => closeOwnerInstagramAssociationManager());
 byId("owner-instagram-associations-delete").addEventListener("click", (event) => deleteOwnerInstagramRaw(event.currentTarget));
+byId("owner-instagram-associations-retire").addEventListener("click", (event) => retireOwnerInstagramRaw(event.currentTarget));
+byId("owner-instagram-associations-purge").addEventListener("click", (event) => purgeOwnerInstagramRawStorage(event.currentTarget));
 byId("owner-instagram-associations-remove-all").addEventListener("click", (event) => disassociateAllOwnerInstagramAssociations(event.currentTarget));
 byId("owner-instagram-associations-list").addEventListener("click", (event) => {
   const remove = event.target.closest("[data-owner-instagram-association-remove]");

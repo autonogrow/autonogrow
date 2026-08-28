@@ -52,6 +52,38 @@ def test_business_admin_calendar_keeps_editorial_permissions_narrow() -> None:
     )
 
 
+def test_business_admin_review_reveals_only_action_specific_inputs() -> None:
+    for marker in (
+        "Añadir comentario",
+        "¿Qué quieres que cambiemos?",
+        "Cuéntanos brevemente por qué",
+        "Confirmar solicitud",
+        "Confirmar rechazo",
+        "Confirmar detención",
+        "data-admin-instagram-comment-panel hidden",
+        'data-admin-instagram-review-panel="changes_requested" hidden',
+        'data-admin-instagram-review-panel="reject" hidden',
+        "data-admin-instagram-hold-panel hidden",
+    ):
+        assert marker in ADMIN_JS
+    assert "Nota para AutonoGrow" not in ADMIN_JS
+    assert 'name="decision" value="approve"' in ADMIN_JS
+
+
+def test_owner_raw_dependency_modal_exposes_lifecycle_actions_and_meaning() -> None:
+    for marker in (
+        'id="owner-instagram-associations-retire"',
+        'id="owner-instagram-associations-delete"',
+        "Retirar de biblioteca",
+        "Eliminar definitivamente",
+        "USO ACTUAL",
+        "HISTÓRICO",
+        "current_physical_dependency",
+        "can_disassociate",
+    ):
+        assert marker in OWNER_HTML or marker in OWNER_JS
+
+
 def test_editorial_calendars_use_bounded_ranges_without_detail_request_fanout() -> None:
     assert 'include_unscheduled: "true"' in OWNER_JS
     assert 'include_unscheduled: "true"' in ADMIN_JS

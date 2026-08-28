@@ -141,10 +141,9 @@ def test_whatsapp_assisted_opens_safe_url_without_claiming_sent(journey) -> None
             break
         page.wait_for_timeout(100)
 
-    assert any(
-        url.startswith("https://wa.me/34611000111")
-        for url in session.whatsapp_urls
-    ), session.whatsapp_urls
+    assert any(url.startswith("https://wa.me/34611000111") for url in session.whatsapp_urls), (
+        session.whatsapp_urls
+    )
     popup.close()
     expect(pending).to_contain_text("Abierta en WhatsApp")
     expect(pending).to_contain_text(re.compile("no lo marc. como enviado", re.IGNORECASE))
@@ -332,8 +331,7 @@ def test_owner_story_editor_renders_horizontal_upload_with_saved_contract(journe
     composer.locator("#owner-instagram-story-zoom").fill("1.2")
     composer.get_by_text("Claro", exact=False).click()
     with page.expect_response(
-        lambda response: response.request.method == "POST"
-        and response.url.endswith("/story-image")
+        lambda response: response.request.method == "POST" and response.url.endswith("/story-image")
     ) as rendered:
         composer.locator("#owner-instagram-composer-save").click()
     payload = rendered.value.json()
@@ -397,9 +395,7 @@ def test_owner_instagram_library_selects_explicit_carousel_child(journey) -> Non
     composer.locator("#owner-instagram-composer-reuse").click()
     library = page.locator("#owner-instagram-library-dialog")
     expect(library).to_be_visible()
-    expect(library.get_by_role("tab", name="Instagram")).to_have_attribute(
-        "aria-selected", "true"
-    )
+    expect(library.get_by_role("tab", name="Instagram")).to_have_attribute("aria-selected", "true")
     expect(library.get_by_role("tab", name="Material del negocio")).to_be_enabled()
     library.get_by_role("button", name="Elegir imagen").click()
     expect(library.get_by_text("¿Qué imagen quieres usar?")).to_be_visible()
@@ -408,7 +404,7 @@ def test_owner_instagram_library_selects_explicit_carousel_child(journey) -> Non
     expect(composer.locator("#owner-instagram-story-editor")).to_be_visible()
 
 
-def test_owner_raw_association_manager_protects_and_updates_without_reload(journey) -> None:
+def test_owner_raw_association_manager_classifies_and_updates_without_reload(journey) -> None:
     session, page = _open_owner_instagram(journey)
     page.locator("summary", has_text="Herramientas avanzadas de material").click()
     shared = page.locator("[data-owner-instagram-raw]", has_text="Material compartido SALON")
@@ -418,21 +414,29 @@ def test_owner_raw_association_manager_protects_and_updates_without_reload(journ
     dialog = page.locator("#owner-instagram-associations-dialog")
     expect(dialog).to_be_visible()
     expect(page.locator("#owner-instagram-associations-count")).to_have_text("2")
-    protected = page.locator("[data-owner-instagram-association]", has_text="histórico protegido")
-    expect(protected).to_contain_text("ModificableNo")
-    expect(protected.get_by_role("button", name="Desasociar")).to_have_count(0)
+    published = page.locator("[data-owner-instagram-association]", has_text="histórico protegido")
+    expect(published).to_contain_text("Afecta a versión actualNo")
+    expect(published.get_by_role("button", name="Desasociar")).to_be_visible()
     modifiable = page.locator(
         "[data-owner-instagram-association]", has_text="SALON borrador eliminable"
     )
     modifiable.get_by_role("button", name="Desasociar").click()
     expect(page.locator("#owner-instagram-associations-count")).to_have_text("1")
-    protected.get_by_role("button", name="Abrir contenido").click()
+    published.get_by_role("button", name="Abrir contenido").click()
     expect(page.locator("#owner-instagram-composer")).to_be_visible()
     expect(page.locator("#owner-instagram-composer-title")).to_have_text("Editar publicación")
     expect(page.locator("#owner-instagram-composer-caption")).to_have_value(
         "Caption publicada SALON"
     )
     page.locator("#owner-instagram-composer-close").click()
+    shared.get_by_role("button", name="Asociaciones").click()
+    expect(dialog).to_be_visible()
+    page.locator("[data-owner-instagram-association]", has_text="histórico protegido").get_by_role(
+        "button", name="Desasociar"
+    ).click()
+    expect(page.locator("#owner-instagram-associations-count")).to_have_text("0")
+    expect(page.locator("#owner-instagram-associations-delete")).to_be_visible()
+    page.locator("#owner-instagram-associations-done").click()
 
     freeable = page.locator("[data-owner-instagram-raw]", has_text="Material liberable SALON")
     freeable.get_by_role("button", name="Asociaciones").click()

@@ -46,11 +46,17 @@ def _referenced_paths(db: Session, root: Path) -> tuple[set[str], list[dict[str,
         elif relative is not None:
             referenced.add(relative)
 
-    for row in db.query(InstagramRawAsset.id, InstagramRawAsset.storage_key).all():
+    for row in (
+        db.query(InstagramRawAsset.id, InstagramRawAsset.storage_key)
+        .filter(InstagramRawAsset.storage_deleted_at.is_(None))
+        .all()
+    ):
         add_reference("instagram_raw_asset", row.id, row.storage_key)
     for row in db.query(InstagramFinalAsset.id, InstagramFinalAsset.storage_key).all():
         add_reference("instagram_final_asset", row.id, row.storage_key)
-    for row in db.query(Business.id, Business.logo_url).filter(Business.logo_url.is_not(None)).all():
+    for row in (
+        db.query(Business.id, Business.logo_url).filter(Business.logo_url.is_not(None)).all()
+    ):
         if relative := _internal_media_path(row.logo_url):
             add_reference("business_logo", row.id, relative)
     for row in db.query(BusinessGalleryImage.id, BusinessGalleryImage.url).all():
@@ -148,9 +154,7 @@ def reconcile_managed_storage(
     effective_now = now or datetime.now(timezone.utc)
     cutoff = effective_now.timestamp() - orphan_grace_seconds
     cleanup_candidates = [
-        relative
-        for relative in orphan_files
-        if (uploads_root / relative).stat().st_mtime <= cutoff
+        relative for relative in orphan_files if (uploads_root / relative).stat().st_mtime <= cutoff
     ]
     deleted_files: list[str] = []
     if apply:

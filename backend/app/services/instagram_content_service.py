@@ -1,8 +1,10 @@
 import json
+import re
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import get_settings
 from app.models import (
@@ -266,9 +268,7 @@ def update_material(
         cover_asset_id if cover_asset_id is not None else (asset_ids[0] if asset_ids else None)
     )
     effective_story_transform = (
-        previous.story_transform_json
-        if story_transform_json is _UNSET
-        else story_transform_json
+        previous.story_transform_json if story_transform_json is _UNSET else story_transform_json
     )
     effective_story_renderer = (
         previous.story_renderer_version
@@ -545,9 +545,7 @@ def schedule_content(
     return content
 
 
-def ensure_promotion_window(
-    db: Session, content: InstagramContent, planned_at: datetime
-) -> None:
+def ensure_promotion_window(db: Session, content: InstagramContent, planned_at: datetime) -> None:
     from app.services.instagram_publish_service import promotion_preflight
 
     error = promotion_preflight(db, current_version(db, content), planned_at)
@@ -578,7 +576,7 @@ def _package_references_raw_asset(package_json: str | None, asset_id: int) -> bo
     try:
         package = json.loads(package_json)
     except (TypeError, ValueError):
-        return "instagram_raw_asset" in package_json and str(asset_id) in package_json
+        return False
     recommended = package.get("asset_plan", {}).get("recommended", [])
     return any(
         isinstance(item, dict)
@@ -588,8 +586,82 @@ def _package_references_raw_asset(package_json: str | None, asset_id: int) -> bo
     )
 
 
-def raw_asset_reference_content_ids(db: Session, business_id: int, asset_id: int) -> list[int]:
-    linked_content_ids = {
+def _package_raw_asset_ids(package_json: str | None) -> set[int]:
+    if not package_json:
+        return set()
+    try:
+        package = json.loads(package_json)
+    except (TypeError, ValueError):
+        return set()
+    recommended = package.get("asset_plan", {}).get("recommended", [])
+    return {
+        item["id"]
+        for item in recommended
+        if isinstance(item, dict)
+        and item.get("source") == "instagram_raw_asset"
+        and isinstance(item.get("id"), int)
+    }
+
+
+def _package_may_reference_raw_asset(package_json: str | None, asset_id: int) -> bool:
+    """Conservative delete-only fallback for malformed legacy snapshots."""
+    if _package_references_raw_asset(package_json, asset_id):
+        return True
+    if not package_json:
+        return False
+    compact = "".join(package_json.split())
+    return bool(
+        re.search(r"""["']source["']:["']instagram_raw_asset["']""", compact)
+        and re.search(rf"""["']id["']:{asset_id}(?!\d)""", compact)
+    )
+
+
+def _version_has_usable_final_assets(version: InstagramContentVersion) -> bool:
+    links = sorted(version.asset_links, key=lambda item: item.position)
+    assets = [link.asset for link in links]
+    if not assets or any(not asset.storage_key or asset.size_bytes <= 0 for asset in assets):
+        return False
+    if version.format == "single_image":
+        return len(assets) == 1 and assets[0].media_type.startswith("image/")
+    if version.format == "carousel":
+        return 2 <= len(assets) <= 10 and all(
+            asset.media_type.startswith("image/") for asset in assets
+        )
+    if version.format == "reel":
+        return len(assets) == 1 and assets[0].media_type == "video/mp4"
+    if version.format == "story":
+        return len(assets) == 1 and (
+            assets[0].media_type.startswith("image/") or assets[0].media_type == "video/mp4"
+        )
+    return False
+
+
+def content_dependency_or_404(
+    db: Session, business_id: int, content_id: int, *, for_update: bool = False
+) -> InstagramContent:
+    """Owner-scoped dependency lookup that intentionally includes archived content."""
+    query = db.query(InstagramContent).filter(
+        InstagramContent.id == content_id,
+        InstagramContent.business_id == business_id,
+    )
+    if for_update:
+        query = query.with_for_update()
+    content = query.first()
+    if content is None:
+        raise HTTPException(status_code=404, detail="Instagram content not found")
+    return content
+
+
+def classify_raw_asset_dependencies(
+    db: Session,
+    *,
+    business_id: int,
+    asset_id: int,
+    for_update: bool = False,
+) -> dict:
+    """Classify operational, current, historical, and physical dependencies once."""
+    asset = raw_asset_or_404(db, business_id, asset_id, for_update=for_update)
+    direct_content_ids = {
         content_id
         for (content_id,) in db.query(InstagramContentRawAsset.content_id)
         .filter(
@@ -607,36 +679,134 @@ def raw_asset_reference_content_ids(db: Session, business_id: int, asset_id: int
         )
         .all()
     }
-    rows = (
-        db.query(InstagramContentVersion.content_id, InstagramContentVersion.editorial_package_json)
+    latest_version_numbers: dict[int, int] = {
+        content_id: version_number
+        for content_id, version_number in db.query(
+            InstagramContentVersion.content_id,
+            func.max(InstagramContentVersion.version_number),
+        )
+        .filter(InstagramContentVersion.business_id == business_id)
+        .group_by(InstagramContentVersion.content_id)
+        .all()
+    }
+    version_rows = (
+        db.query(InstagramContentVersion)
+        .options(
+            joinedload(InstagramContentVersion.asset_links).joinedload(
+                InstagramContentVersionAsset.asset
+            )
+        )
         .filter(
             InstagramContentVersion.business_id == business_id,
             InstagramContentVersion.editorial_package_json.is_not(None),
         )
         .all()
     )
-    historical_content_ids = {
-        content_id
-        for content_id, package_json in rows
-        if _package_references_raw_asset(package_json, asset_id)
-    }
-    return sorted(linked_content_ids | final_content_ids | historical_content_ids)
+    references: dict[int, dict[str, object]] = {}
+    malformed_reference_content_ids: set[int] = set()
+    for version in version_rows:
+        strict_reference = _package_references_raw_asset(version.editorial_package_json, asset_id)
+        if not strict_reference:
+            if _package_may_reference_raw_asset(version.editorial_package_json, asset_id):
+                malformed_reference_content_ids.add(version.content_id)
+            continue
+        entry = references.setdefault(
+            version.content_id,
+            {
+                "current": False,
+                "historical": False,
+                "current_version": None,
+                "version_ids": [],
+            },
+        )
+        is_current = version.version_number == latest_version_numbers.get(version.content_id)
+        entry["current"] = bool(entry["current"] or is_current)
+        entry["historical"] = bool(entry["historical"] or not is_current)
+        if is_current:
+            entry["current_version"] = version
+        version_ids = entry["version_ids"]
+        assert isinstance(version_ids, list)
+        version_ids.append(version.id)
 
-
-def _raw_asset_protected_reason(association: dict) -> str | None:
-    if association["has_final_derivative"]:
-        return "Existe un material final cuya procedencia depende de este archivo."
-    if association["has_historical_reference"]:
-        return "Este material forma parte del historial editorial y debe conservarse."
-    if association["content_archived"]:
-        return "Este contenido está archivado y debe conservar su trazabilidad."
+    content_ids = direct_content_ids | final_content_ids | set(references)
+    contents = (
+        db.query(InstagramContent)
+        .filter(
+            InstagramContent.business_id == business_id,
+            InstagramContent.id.in_(content_ids),
+        )
+        .all()
+        if content_ids
+        else []
+    )
+    content_by_id = {content.id: content for content in contents}
+    associations: list[dict] = []
+    for content_id in sorted(content_ids):
+        content = content_by_id[content_id]
+        reference = references.get(content_id, {})
+        current_reference = bool(reference.get("current"))
+        current_version_row = reference.get("current_version")
+        current_has_final = bool(
+            isinstance(current_version_row, InstagramContentVersion)
+            and _version_has_usable_final_assets(current_version_row)
+        )
+        current_physical_dependency = current_reference and not current_has_final
+        direct_association = content_id in direct_content_ids
+        historical_reference = bool(reference.get("historical"))
+        final_provenance = content_id in final_content_ids
+        can_disassociate = direct_association and not current_physical_dependency
+        version_ids = reference.get("version_ids", [])
+        associations.append(
+            {
+                "content_id": content.id,
+                "content_title": content.title,
+                "content_status": content.status,
+                "content_archived": content.archived_at is not None,
+                "direct_association": direct_association,
+                "current_version_reference": current_reference,
+                "historical_version_reference": historical_reference,
+                "final_asset_provenance": final_provenance,
+                "current_physical_dependency": current_physical_dependency,
+                "current_version_has_usable_final": current_has_final,
+                "historical_only": bool(
+                    not current_reference and (historical_reference or final_provenance)
+                ),
+                "can_disassociate": can_disassociate,
+                "protected_reason": (
+                    "Este material todavÃ­a se utiliza para preparar la versiÃ³n actual."
+                    if direct_association and current_physical_dependency
+                    else None
+                ),
+                "version_ids": list(version_ids) if isinstance(version_ids, list) else [],
+                "is_source_material": direct_association,
+                "has_final_derivative": final_provenance,
+                "has_historical_reference": historical_reference or current_reference,
+                "modifiable": can_disassociate,
+            }
+        )
+    has_current_physical_dependency = any(
+        item["current_physical_dependency"] for item in associations
+    )
+    has_version_provenance = bool(references or malformed_reference_content_ids)
+    has_any_dependency = bool(direct_content_ids or final_content_ids or has_version_provenance)
     return {
-        "ready_for_review": "Este contenido está en revisión.",
-        "validated": "Este contenido ya fue validado.",
-        "scheduled": "Este contenido está programado.",
-        "published": "Este material forma parte del historial de una publicación.",
-        "cancelled": "Este contenido está cancelado y debe conservar su trazabilidad.",
-    }.get(association["content_status"])
+        "asset": asset,
+        "associations": associations,
+        "direct_association_count": len(direct_content_ids),
+        "has_current_physical_dependency": has_current_physical_dependency,
+        "has_historical_provenance": bool(final_content_ids or has_version_provenance),
+        "has_malformed_legacy_reference": bool(malformed_reference_content_ids),
+        "can_retire": asset.active,
+        "can_purge_storage": (
+            not has_current_physical_dependency and asset.storage_deleted_at is None
+        ),
+        "can_delete": not has_any_dependency,
+    }
+
+
+def raw_asset_reference_content_ids(db: Session, business_id: int, asset_id: int) -> list[int]:
+    classification = classify_raw_asset_dependencies(db, business_id=business_id, asset_id=asset_id)
+    return [item["content_id"] for item in classification["associations"]]
 
 
 def raw_asset_association_manager(
@@ -646,82 +816,14 @@ def raw_asset_association_manager(
     asset_id: int,
     for_update: bool = False,
 ) -> dict:
-    asset = raw_asset_or_404(db, business_id, asset_id, for_update=for_update)
-    associations: dict[int, dict] = {}
-
-    def association_for(content: InstagramContent) -> dict:
-        return associations.setdefault(
-            content.id,
-            {
-                "content_id": content.id,
-                "content_title": content.title,
-                "content_status": content.status,
-                "content_archived": content.archived_at is not None,
-                "is_source_material": False,
-                "has_final_derivative": False,
-                "has_historical_reference": False,
-            },
-        )
-
-    direct_contents = (
-        db.query(InstagramContent)
-        .join(
-            InstagramContentRawAsset,
-            InstagramContentRawAsset.content_id == InstagramContent.id,
-        )
-        .filter(
-            InstagramContentRawAsset.business_id == business_id,
-            InstagramContentRawAsset.raw_asset_id == asset_id,
-            InstagramContent.business_id == business_id,
-        )
-        .all()
+    classification = classify_raw_asset_dependencies(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+        for_update=for_update,
     )
-    for content in direct_contents:
-        association_for(content)["is_source_material"] = True
-
-    final_contents = (
-        db.query(InstagramContent)
-        .join(InstagramFinalAsset, InstagramFinalAsset.content_id == InstagramContent.id)
-        .filter(
-            InstagramFinalAsset.business_id == business_id,
-            InstagramFinalAsset.source_raw_asset_id == asset_id,
-            InstagramContent.business_id == business_id,
-        )
-        .all()
-    )
-    for content in final_contents:
-        association_for(content)["has_final_derivative"] = True
-
-    historical_rows = (
-        db.query(InstagramContent, InstagramContentVersion.editorial_package_json)
-        .join(InstagramContentVersion, InstagramContentVersion.content_id == InstagramContent.id)
-        .filter(
-            InstagramContentVersion.business_id == business_id,
-            InstagramContentVersion.editorial_package_json.is_not(None),
-            InstagramContent.business_id == business_id,
-        )
-        .all()
-    )
-    for content, package_json in historical_rows:
-        if _package_references_raw_asset(package_json, asset_id):
-            association_for(content)["has_historical_reference"] = True
-
-    serialized = []
-    for association in associations.values():
-        protected_reason = _raw_asset_protected_reason(association)
-        association["modifiable"] = bool(
-            association["is_source_material"]
-            and association["content_status"] in {"draft", "changes_requested"}
-            and not association["content_archived"]
-            and protected_reason is None
-        )
-        association["protected_reason"] = (
-            None
-            if association["modifiable"]
-            else protected_reason
-            or "Esta dependencia debe conservarse para mantener la trazabilidad."
-        )
-        serialized.append(association)
+    asset = classification["asset"]
+    serialized = classification["associations"]
     serialized.sort(key=lambda item: (item["content_title"].casefold(), item["content_id"]))
     return {
         "raw_asset": {
@@ -731,9 +833,20 @@ def raw_asset_association_manager(
             "size_bytes": asset.size_bytes,
             "label": asset.label,
             "created_at": asset.created_at.isoformat(),
+            "active": asset.active,
+            "removed_at": asset.removed_at.isoformat() if asset.removed_at else None,
+            "storage_deleted_at": (
+                asset.storage_deleted_at.isoformat() if asset.storage_deleted_at else None
+            ),
         },
         "association_count": len(serialized),
-        "modifiable_count": sum(item["modifiable"] for item in serialized),
+        "direct_association_count": classification["direct_association_count"],
+        "modifiable_count": sum(item["can_disassociate"] for item in serialized),
+        "has_historical_provenance": classification["has_historical_provenance"],
+        "has_current_physical_dependency": classification["has_current_physical_dependency"],
+        "can_retire": classification["can_retire"],
+        "can_purge_storage": classification["can_purge_storage"],
+        "can_delete": classification["can_delete"],
         "associations": serialized,
     }
 
@@ -744,6 +857,7 @@ def raw_asset_or_404(
     asset_id: int,
     *,
     for_update: bool = False,
+    active_only: bool = False,
 ) -> InstagramRawAsset:
     require_service_enabled(db, business_id)
     query = db.query(InstagramRawAsset).filter(
@@ -751,6 +865,8 @@ def raw_asset_or_404(
         InstagramRawAsset.business_id == business_id,
         InstagramRawAsset.source_kind == "business_upload",
     )
+    if active_only:
+        query = query.filter(InstagramRawAsset.active.is_(True))
     if for_update:
         query = query.with_for_update()
     asset = query.first()
@@ -780,7 +896,6 @@ def associate_raw_asset(
 ) -> tuple[InstagramContent, InstagramRawAsset, InstagramContentRawAsset, bool]:
     content = content_or_404(db, business_id, content_id, for_update=True)
     _require_mutable_source_content(content)
-    asset = raw_asset_or_404(db, business_id, asset_id, for_update=True)
     existing = (
         db.query(InstagramContentRawAsset)
         .filter(
@@ -791,7 +906,11 @@ def associate_raw_asset(
         .first()
     )
     if existing is not None:
+        asset = raw_asset_or_404(db, business_id, asset_id, for_update=True)
+        if asset.storage_deleted_at is not None:
+            raise HTTPException(status_code=410, detail="El archivo original ya fue purgado.")
         return content, asset, existing, False
+    asset = raw_asset_or_404(db, business_id, asset_id, for_update=True, active_only=True)
     link = InstagramContentRawAsset(
         business_id=business_id,
         content_id=content_id,
@@ -810,31 +929,17 @@ def disassociate_raw_asset(
     content_id: int,
     asset_id: int,
 ) -> tuple[InstagramContent, InstagramRawAsset]:
-    content = content_or_404(db, business_id, content_id, for_update=True)
-    _require_mutable_source_content(content)
+    content = content_dependency_or_404(db, business_id, content_id, for_update=True)
     asset = raw_asset_or_404(db, business_id, asset_id, for_update=True)
-    if (
-        db.query(InstagramFinalAsset.id)
-        .filter(
-            InstagramFinalAsset.business_id == business_id,
-            InstagramFinalAsset.content_id == content_id,
-            InstagramFinalAsset.source_raw_asset_id == asset_id,
-            InstagramFinalAsset.derivation_fingerprint == "copy",
-        )
-        .first()
-        is not None
-    ):
+    classification = classify_raw_asset_dependencies(db, business_id=business_id, asset_id=asset_id)
+    association = next(
+        (item for item in classification["associations"] if item["content_id"] == content_id),
+        None,
+    )
+    if association is not None and association["current_physical_dependency"]:
         raise HTTPException(
             status_code=409,
-            detail="Este material es el origen de un asset final y debe conservar su trazabilidad.",
-        )
-    if any(
-        _package_references_raw_asset(version.editorial_package_json, asset_id)
-        for version in content.versions
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="Este material forma parte de una versión editorial histórica.",
+            detail="Este material todavía se utiliza para preparar la versión actual.",
         )
     link = (
         db.query(InstagramContentRawAsset)
@@ -867,7 +972,7 @@ def disassociate_permitted_raw_asset_associations(
     content_ids = [
         association["content_id"]
         for association in manager["associations"]
-        if association["modifiable"]
+        if association["can_disassociate"]
     ]
     if not content_ids:
         return []
@@ -1004,24 +1109,90 @@ def prepare_content_removal(
     }
 
 
+def prepare_raw_asset_retirement(
+    db: Session, *, business_id: int, asset_id: int, actor_user_id: int
+) -> dict:
+    require_service_enabled(db, business_id)
+    classification = classify_raw_asset_dependencies(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+        for_update=True,
+    )
+    asset = classification["asset"]
+    retired = asset.active
+    if retired:
+        asset.active = False
+        asset.removed_at = utc_now()
+        asset.removed_by_user_id = actor_user_id
+    purged = bool(classification["can_purge_storage"])
+    storage_keys: list[str] = []
+    if purged:
+        asset.storage_deleted_at = utc_now()
+        storage_keys.append(asset.storage_key)
+    db.flush()
+    return {
+        "id": asset.id,
+        "retired": retired,
+        "purged": purged,
+        "storage_keys": storage_keys,
+        "has_current_physical_dependency": classification["has_current_physical_dependency"],
+    }
+
+
+def prepare_raw_asset_storage_purge(db: Session, *, business_id: int, asset_id: int) -> dict:
+    require_service_enabled(db, business_id)
+    classification = classify_raw_asset_dependencies(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+        for_update=True,
+    )
+    asset = classification["asset"]
+    if asset.active:
+        raise HTTPException(
+            status_code=409,
+            detail="Retira primero el material de la biblioteca.",
+        )
+    if asset.storage_deleted_at is not None:
+        return {"id": asset.id, "purged": False, "storage_keys": []}
+    if not classification["can_purge_storage"]:
+        raise HTTPException(
+            status_code=409,
+            detail="La versión actual todavía necesita el archivo original.",
+        )
+    asset.storage_deleted_at = utc_now()
+    db.flush()
+    return {"id": asset.id, "purged": True, "storage_keys": [asset.storage_key]}
+
+
 def prepare_raw_asset_removal(db: Session, *, business_id: int, asset_id: int) -> dict:
     require_service_enabled(db, business_id)
-    asset = raw_asset_or_404(db, business_id, asset_id, for_update=True)
-    manager = raw_asset_association_manager(db, business_id=business_id, asset_id=asset_id)
-    if manager["association_count"]:
+    classification = classify_raw_asset_dependencies(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+        for_update=True,
+    )
+    asset = classification["asset"]
+    if not classification["can_delete"]:
+        manager = raw_asset_association_manager(db, business_id=business_id, asset_id=asset_id)
         detail = {
             "code": "raw_asset_in_use",
-            "message": "Este material está siendo utilizado y no puede eliminarse todavía.",
+            "message": (
+                "Este material conserva dependencias. Retíralo de la biblioteca para mantener "
+                "la trazabilidad."
+            ),
             **manager,
         }
         raise HTTPException(
             status_code=409,
             detail=detail,
         )
-    storage_key = asset.storage_key
+    storage_keys = [] if asset.storage_deleted_at is not None else [asset.storage_key]
     db.delete(asset)
     db.flush()
-    return {"id": asset_id, "storage_keys": [storage_key]}
+    return {"id": asset_id, "storage_keys": storage_keys}
 
 
 def serialize_settings(settings: InstagramContentSettings) -> dict:
@@ -1054,11 +1225,25 @@ def serialize_raw_asset(
         "media_type": asset.media_type,
         "size_bytes": asset.size_bytes,
         "label": asset.label,
+        "active": asset.active,
+        "removed_at": asset.removed_at.isoformat() if asset.removed_at else None,
+        "removed_by_user_id": asset.removed_by_user_id,
+        "storage_deleted_at": (
+            asset.storage_deleted_at.isoformat() if asset.storage_deleted_at else None
+        ),
+        "storage_available": asset.storage_deleted_at is None,
         "created_at": asset.created_at.isoformat(),
-        "file_url": f"{api_prefix}/raw-assets/{asset.id}/file",
-        "preview_url": f"{api_prefix}/raw-assets/{asset.id}/file",
-        "download_url": f"{api_prefix}/raw-assets/{asset.id}/download",
     }
+    if asset.storage_deleted_at is None:
+        payload.update(
+            {
+                "file_url": f"{api_prefix}/raw-assets/{asset.id}/file",
+                "preview_url": f"{api_prefix}/raw-assets/{asset.id}/file",
+                "download_url": f"{api_prefix}/raw-assets/{asset.id}/download",
+            }
+        )
+    else:
+        payload.update({"file_url": None, "preview_url": None, "download_url": None})
     if include_associations:
         payload["associations"] = [
             {
@@ -1075,6 +1260,7 @@ def serialize_raw_asset(
 
 
 def serialize_final_asset(asset: InstagramFinalAsset, api_prefix: str) -> dict:
+    source = asset.source_raw_asset
     return {
         "id": asset.id,
         "original_filename": asset.original_filename,
@@ -1082,6 +1268,22 @@ def serialize_final_asset(asset: InstagramFinalAsset, api_prefix: str) -> dict:
         "size_bytes": asset.size_bytes,
         "created_at": asset.created_at.isoformat(),
         "source_raw_asset_id": asset.source_raw_asset_id,
+        "source_raw_asset": (
+            {
+                "id": source.id,
+                "original_filename": source.original_filename,
+                "sha256": source.sha256,
+                "source_kind": source.source_kind,
+                "active": source.active,
+                "removed": not source.active,
+                "storage_available": source.storage_deleted_at is None,
+                "display_status": (
+                    "Material original retirado" if not source.active else "Material original"
+                ),
+            }
+            if source is not None
+            else None
+        ),
         "file_url": f"{api_prefix}/contents/{asset.content_id}/final-assets/{asset.id}/file",
     }
 
@@ -1268,6 +1470,43 @@ def serialize_content(
     if detailed:
         payload["versions"] = [serialize_version(item, api_prefix) for item in content.versions]
         payload["comments"] = [serialize_comment(item) for item in content.comments]
+        referenced_versions: dict[int, list[int]] = {}
+        for historical_version in content.versions:
+            for raw_asset_id in _package_raw_asset_ids(historical_version.editorial_package_json):
+                referenced_versions.setdefault(raw_asset_id, []).append(
+                    historical_version.version_number
+                )
+        historical_assets = (
+            db.query(InstagramRawAsset)
+            .filter(
+                InstagramRawAsset.business_id == content.business_id,
+                InstagramRawAsset.id.in_(referenced_versions),
+            )
+            .all()
+            if referenced_versions
+            else []
+        )
+        payload["raw_asset_history"] = [
+            {
+                "id": asset.id,
+                "original_filename": asset.original_filename,
+                "sha256": asset.sha256,
+                "source_kind": asset.source_kind,
+                "version_numbers": sorted(referenced_versions[asset.id]),
+                "active": asset.active,
+                "removed": not asset.active,
+                "storage_available": asset.storage_deleted_at is None,
+                "display_status": (
+                    "Material original retirado" if not asset.active else "Material original"
+                ),
+                "preview_url": (
+                    f"{api_prefix}/raw-assets/{asset.id}/file"
+                    if asset.storage_deleted_at is None and asset.source_kind == "business_upload"
+                    else None
+                ),
+            }
+            for asset in sorted(historical_assets, key=lambda item: item.id)
+        ]
         payload["publication_hold_history"] = [
             {
                 "id": item.id,

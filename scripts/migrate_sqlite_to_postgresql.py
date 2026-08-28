@@ -184,6 +184,9 @@ ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
         },
         "source_remote_media_id": {"action": "omit_as_null", "expected_value": None},
         "sha256": {"action": "omit_as_null", "expected_value": None},
+        "removed_at": {"action": "omit_as_null", "expected_value": None},
+        "removed_by_user_id": {"action": "omit_as_null", "expected_value": None},
+        "storage_deleted_at": {"action": "omit_as_null", "expected_value": None},
     },
     "instagram_final_assets": {
         "source_raw_asset_id": {"action": "omit_as_null", "expected_value": None},

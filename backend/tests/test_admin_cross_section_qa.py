@@ -77,9 +77,7 @@ def test_main_admin_section_visibility_depends_only_on_active_state() -> None:
     inventory.feed(html)
     sections = [attrs for _, attrs in inventory.tags if attrs.get("data-admin-section")]
     tabs = [
-        attrs
-        for _, attrs in inventory.tags
-        if "admin-tab" in str(attrs.get("class") or "").split()
+        attrs for _, attrs in inventory.tags if "admin-tab" in str(attrs.get("class") or "").split()
     ]
     required_destinations = {
         "summary",
@@ -170,12 +168,14 @@ def test_secondary_navigation_uses_the_exact_active_context() -> None:
     ):
         block = function_block(js, f"function {function_name}", "\nfunction ")
         assert attribute in block
-        assert 'category.id === activeSection ? \'aria-current="page"\'' in block
+        assert "category.id === activeSection ? 'aria-current=\"page\"'" in block
 
 
 def test_contextual_links_reach_the_exact_existing_section_and_subview() -> None:
     html, _, js, _ = sources()
-    dashboard_attention = function_block(js, "function getDashboardAttentionItems", "function renderAttentionItems")
+    dashboard_attention = function_block(
+        js, "function getDashboardAttentionItems", "function renderAttentionItems"
+    )
     for destination in (
         'section: "bookings", view: "pending"',
         'section: "conversations"',
@@ -183,13 +183,17 @@ def test_contextual_links_reach_the_exact_existing_section_and_subview() -> None
         'section: "reviews"',
     ):
         assert destination in dashboard_attention
-    dashboard_navigation = function_block(js, "function navigateFromDashboard", "async function retryDashboardSource")
+    dashboard_navigation = function_block(
+        js, "function navigateFromDashboard", "async function retryDashboardSource"
+    )
     assert "setBookingView(bookingView, { clearDeepLink: false })" in dashboard_navigation
     assert "showAdminSection(section)" in dashboard_navigation
-    growth_navigation = function_block(js, "function navigateToGrowthAction", "function setupGrowthHub")
+    growth_navigation = function_block(
+        js, "function navigateToGrowthAction", "function setupGrowthHub"
+    )
     assert 'showAdminSection("business")' in growth_navigation
     assert 'getElementById("business-setting-reviews-url")?.focus()' in growth_navigation
-    assert 'showAdminSection(`channel-${button.dataset.channel}`)' in growth_navigation
+    assert "showAdminSection(`channel-${button.dataset.channel}`)" in growth_navigation
     assert 'showAdminSection("messages")' in growth_navigation
     assert 'data-admin-action="navigate-section" data-section="reviews"' in js
     assert "function setupAdminDelegatedActions" in js
@@ -233,7 +237,9 @@ def test_stale_async_responses_are_discarded_before_rendering() -> None:
 
 def test_dirty_state_is_delegated_and_protects_navigation_and_unload() -> None:
     _, _, js, _ = sources()
-    setup = function_block(js, "function setupBusinessConfiguration", "function applyRoleVisibility")
+    setup = function_block(
+        js, "function setupBusinessConfiguration", "function applyRoleVisibility"
+    )
     for contract in (
         'addEventListener("input"',
         'addEventListener("change"',
@@ -242,7 +248,9 @@ def test_dirty_state_is_delegated_and_protects_navigation_and_unload() -> None:
         "configurationDirtyKeys.size",
     ):
         assert contract in setup
-    navigation = function_block(js, "function confirmConfigurationNavigation", "function configurationState")
+    navigation = function_block(
+        js, "function confirmConfigurationNavigation", "function configurationState"
+    )
     assert "configurationSectionHasDirty(current)" in navigation
     assert "window.confirm" in navigation
     assert "snapshotConfigurationForm" in js
@@ -259,7 +267,9 @@ def test_drawer_and_modals_restore_focus_and_trap_keyboard_navigation() -> None:
         assert 'aria-modal="true"' in html.split(f'id="{modal_id}"', 1)[1].split(">", 1)[0]
         assert f'aria-labelledby="{title_id}"' in html
         assert f'aria-describedby="{description_id}"' in html
-    modal_keys = function_block(js, "function handleRescheduleModalKeydown", "async function confirmSelectedReschedule")
+    modal_keys = function_block(
+        js, "function handleRescheduleModalKeydown", "async function confirmSelectedReschedule"
+    )
     assert 'event.key === "Escape"' in modal_keys
     assert "trapModalFocus" in modal_keys
     assert "rescheduleReturnFocus" in js and "staffRemovalReturnFocus" in js
@@ -296,7 +306,7 @@ def test_business_requests_are_authenticated_tenant_scoped_and_stale_media_is_sl
     assert 'params.get("b")' in js
     assert "/api/admin/businesses/${getBusinessSlug()}" in js
     assert "/api/admin/businesses/${slug}" in js
-    assert 'JSON.stringify({ slug: getBusinessSlug(), kind })' in js
+    assert "JSON.stringify({ slug: getBusinessSlug(), kind })" in js
     assert "pending.slug !== getBusinessSlug()" in js
     assert "localStorage" not in js
     assert "Booking.business_id == business.id" in router
@@ -305,11 +315,15 @@ def test_business_requests_are_authenticated_tenant_scoped_and_stale_media_is_sl
 
 def test_business_context_is_authorized_from_the_url_and_loads_every_admin_area() -> None:
     _, _, js, _ = sources()
-    bootstrap = function_block(js, "async function bootstrapAdminAuth", "async function adminLogout")
-    assert 'adminAuthUser.businesses.find((item) => item.slug === slug)' in bootstrap
+    bootstrap = function_block(
+        js, "async function bootstrapAdminAuth", "async function adminLogout"
+    )
+    assert "adminAuthUser.businesses.find((item) => item.slug === slug)" in bootstrap
     assert "adminAuthUser.is_owner || Boolean(adminMembership)" in bootstrap
     assert 'showAdminLogin("Tu cuenta no tiene acceso a este negocio.", true)' in bootstrap
-    load_panel = function_block(js, "async function loadAdminPanel", "function channelOnboardingStatusLabel")
+    load_panel = function_block(
+        js, "async function loadAdminPanel", "function channelOnboardingStatusLabel"
+    )
     for loader in (
         "loadAdminServices()",
         "loadStaffMembers()",
@@ -333,16 +347,26 @@ def test_errors_are_filtered_and_media_diagnostics_do_not_log_payloads_or_urls()
     safe_error = function_block(js, "function safeConfigurationError", "function adminMediaError")
     for forbidden in ("traceback", "exception", "payload", "sql", "token"):
         assert forbidden in safe_error.lower()
-    media_error = function_block(js, "function adminMediaError", "async function reloadAdminBusiness")
+    media_error = function_block(
+        js, "function adminMediaError", "async function reloadAdminBusiness"
+    )
     assert 'console.error("Error de media", { action, status: response.status })' in media_error
     assert "response.url" not in media_error
-    save_notes = function_block(js, "async function saveInternalNotes", "function rescheduleBooking")
-    update_status = function_block(js, "async function updateBookingStatus", "function setupConversationInterface")
+    save_notes = function_block(
+        js, "async function saveInternalNotes", "function rescheduleBooking"
+    )
+    update_status = function_block(
+        js, "async function updateBookingStatus", "function setupConversationInterface"
+    )
     assert "safeConfigurationError" in save_notes
     assert update_status.count("safeConfigurationError") >= 2
-    conversation_error = function_block(js, "function conversationErrorMessage", "function conversationDisplayName")
+    conversation_error = function_block(
+        js, "function conversationErrorMessage", "function conversationDisplayName"
+    )
     assert "safeConfigurationError" in conversation_error
-    outbox_actions = function_block(js, "async function openPreparedWhatsAppMessage", "function replaceOutboxMessage")
+    outbox_actions = function_block(
+        js, "async function openPreparedWhatsAppMessage", "function replaceOutboxMessage"
+    )
     assert outbox_actions.count("safeConfigurationError") == 2
     assert "result?.detail ||" not in outbox_actions
 
@@ -366,20 +390,30 @@ def test_no_secret_or_owner_control_is_rendered_and_api_namespaces_are_reused() 
     assert not any(label in html for label in (">Aprobar<", ">Revocar<", ">Suspender<"))
     api_paths = re.findall(r"/api/[A-Za-z0-9_/$?={}.&-]+", js)
     assert api_paths
-    assert all(path.startswith(("/api/admin/", "/api/bookings/", "/api/businesses/")) for path in api_paths)
+    assert all(
+        path.startswith(("/api/admin/", "/api/bookings/", "/api/businesses/")) for path in api_paths
+    )
 
 
 def test_dashboard_and_growth_metrics_are_derived_without_product_claims() -> None:
     _, _, js, _ = sources()
-    dashboard = function_block(js, "function renderDashboardMetrics", "function renderDashboardBlockError")
-    growth = function_block(js, "function renderGrowthOverview", "function renderGrowthOpportunities")
+    dashboard = function_block(
+        js, "function renderDashboardMetrics", "function renderDashboardBlockError"
+    )
+    growth = function_block(
+        js, "function renderGrowthOverview", "function renderGrowthOpportunities"
+    )
     for real_source in (
         "getDashboardTodayBookings()",
         "getDashboardPendingBookings()",
         "getDashboardPendingConversations()",
     ):
         assert real_source in dashboard
-    for real_source in ("getReviewCandidates()", "reviewRequestsByBooking.values()", "getFailedReviewMessages()"):
+    for real_source in (
+        "getReviewCandidates()",
+        "reviewRequestsByBooking.values()",
+        "getFailedReviewMessages()",
+    ):
         assert real_source in growth
     for forbidden in ("conversion", "revenue", "roi", "rating", "review_received"):
         assert forbidden not in (dashboard + growth).lower()
@@ -388,15 +422,21 @@ def test_dashboard_and_growth_metrics_are_derived_without_product_claims() -> No
 def test_cross_section_mutations_reuse_shared_refresh_and_canonical_review_state() -> None:
     _, _, js, _ = sources()
     assert "async function refreshOperationalData" in js
-    booking_review = function_block(js, "function renderReviewRequest", "function showGrowthReviewFeedback")
+    booking_review = function_block(
+        js, "function renderReviewRequest", "function showGrowthReviewFeedback"
+    )
     assert 'data-review-create="${booking.id}"' in booking_review
     assert "Gestionar en Crecimiento" in booking_review
-    review_creation = function_block(js, "async function createReviewRequest", "async function copyReviewMessage")
+    review_creation = function_block(
+        js, "async function createReviewRequest", "async function copyReviewMessage"
+    )
     assert "reviewRequestsByBooking.set" in review_creation
     assert "replaceOutboxMessage" in review_creation
     assert "requestAdminRefresh" in review_creation
     assert "renderGrowth" in review_creation
-    review_loader = function_block(js, "async function loadReviewRequests", "function conversationErrorMessage")
+    review_loader = function_block(
+        js, "async function loadReviewRequests", "function conversationErrorMessage"
+    )
     assert "renderGrowth()" in review_loader
     assert "renderDashboard()" in review_loader
 
@@ -421,4 +461,4 @@ def test_responsive_contracts_cover_phone_tablet_desktop_zoom_and_safe_areas() -
 
 def test_admin_javascript_cachebuster_matches_this_cross_section_pass() -> None:
     html, _, _, _ = sources()
-    assert '<script src="admin.js?v=20260825-p121-a"></script>' in html
+    assert '<script src="admin.js?v=20260827-p122-a"></script>' in html

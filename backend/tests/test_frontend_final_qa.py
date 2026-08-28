@@ -84,7 +84,13 @@ def test_all_real_frontend_surfaces_and_local_assets_are_present() -> None:
         assert path.is_file(), path
         parsed = inventory(path)
         for tag, attrs in parsed.tags:
-            reference = attrs.get("src") if tag == "script" else attrs.get("href") if tag == "link" else None
+            reference = (
+                attrs.get("src")
+                if tag == "script"
+                else attrs.get("href")
+                if tag == "link"
+                else None
+            )
             if not reference or urlparse(reference).scheme or reference.startswith("//"):
                 continue
             local_path = reference.split("?", 1)[0].split("#", 1)[0]
@@ -93,8 +99,19 @@ def test_all_real_frontend_surfaces_and_local_assets_are_present() -> None:
 
 def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
     expected = {
-        "autonogrow-admin": ("styles.css?v=10a", "responsive.css?v=5f1", "auth.js?v=10b5", "admin.js?v=20260825-p121-a"),
-        "autonogrow-owner": ("styles.css?v=20260825-p12-b", "responsive.css?v=5f1", "auth.js?v=10b5", "owner.js?v=20260825-p121-a", "owner-onboarding.js?v=5f1"),
+        "autonogrow-admin": (
+            "styles.css?v=10a",
+            "responsive.css?v=5f1",
+            "auth.js?v=10b5",
+            "admin.js?v=20260827-p122-a",
+        ),
+        "autonogrow-owner": (
+            "styles.css?v=20260825-p12-b",
+            "responsive.css?v=5f1",
+            "auth.js?v=10b5",
+            "owner.js?v=20260827-p122-a",
+            "owner-onboarding.js?v=5f1",
+        ),
         "autonogrow-landing": ("styles.css?v=10b5", "auth.js?v=10b5", "script.js?v=10b5"),
         "autonogrow-customer": ("styles.css?v=10b5", "auth.js?v=10b5", "customer.js?v=10b5"),
     }
@@ -110,9 +127,9 @@ def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
 def test_admin_instagram_planning_preserves_the_business_civil_time() -> None:
     source = text(ROOT / "autonogrow-admin" / "admin.js")
     assert "function adminInstagramLocalInput(isoValue, timeZone)" in source
-    assert 'timeZone: item.business_timezone' in source
+    assert "timeZone: item.business_timezone" in source
     assert "data-admin-instagram-publication" not in source
-    assert 'new Date(localValue).toISOString()' not in source
+    assert "new Date(localValue).toISOString()" not in source
 
 
 def test_static_ids_aria_references_and_rendered_page_headings_are_coherent() -> None:
@@ -147,9 +164,7 @@ def test_native_controls_have_labels_types_and_no_inline_handlers() -> None:
         parsed = inventory(path)
         assert not handler_pattern.search(source)
         label_targets = {
-            str(attrs["for"])
-            for tag, attrs in parsed.tags
-            if tag == "label" and attrs.get("for")
+            str(attrs["for"]) for tag, attrs in parsed.tags if tag == "label" and attrs.get("for")
         }
         for tag, attrs in parsed.tags:
             if tag == "button":
@@ -181,13 +196,18 @@ def test_admin_dynamic_actions_use_one_complete_delegated_contract() -> None:
     assert actions <= handled
     assert js.count("function setupAdminDelegatedActions") == 1
     assert js.count("setupAdminDelegatedActions();") == 1
-    assert 'button[data-admin-action], button[data-booking-action]' in js
+    assert "button[data-admin-action], button[data-booking-action]" in js
     assert "setInterval(" not in js
 
 
 def test_literal_dom_references_resolve_or_are_created_deliberately() -> None:
     surfaces = {
-        "autonogrow-owner": ("owner.js", "owner-businesses.js", "owner-onboarding.js", "owner-operations.js"),
+        "autonogrow-owner": (
+            "owner.js",
+            "owner-businesses.js",
+            "owner-onboarding.js",
+            "owner-operations.js",
+        ),
         "autonogrow-admin": ("admin.js",),
         "autonogrow-landing": ("script.js",),
         "autonogrow-customer": ("customer.js",),
@@ -212,7 +232,9 @@ def test_dialogs_are_labelled_scrollable_and_keyboard_managed() -> None:
                 continue
             assert attrs.get("aria-modal") == "true"
             assert attrs.get("aria-labelledby") in parsed.ids
-    owner = text(ROOT / "autonogrow-owner" / "owner-businesses.js") + text(ROOT / "autonogrow-owner" / "owner-onboarding.js")
+    owner = text(ROOT / "autonogrow-owner" / "owner-businesses.js") + text(
+        ROOT / "autonogrow-owner" / "owner-onboarding.js"
+    )
     admin = text(ROOT / "autonogrow-admin" / "admin.js")
     landing = text(ROOT / "autonogrow-landing" / "script.js")
     customer = text(ROOT / "autonogrow-customer" / "customer.js")
@@ -223,7 +245,12 @@ def test_dialogs_are_labelled_scrollable_and_keyboard_managed() -> None:
     assert "returnFocus" in owner
     assert "galleryReturnFocus" in landing
     assert "detailReturnFocus" in customer
-    for css in (text(ROOT / "autonogrow-owner" / "styles.css"), text(ROOT / "autonogrow-admin" / "styles.css"), text(ROOT / "autonogrow-landing" / "styles.css"), text(ROOT / "autonogrow-customer" / "styles.css")):
+    for css in (
+        text(ROOT / "autonogrow-owner" / "styles.css"),
+        text(ROOT / "autonogrow-admin" / "styles.css"),
+        text(ROOT / "autonogrow-landing" / "styles.css"),
+        text(ROOT / "autonogrow-customer" / "styles.css"),
+    ):
         assert "100dvh" in css
         assert "overflow" in css
 
@@ -262,9 +289,13 @@ def test_unknown_states_and_invalid_dates_have_safe_fallbacks() -> None:
     for function_name in ("getMessageStatusLabel", "getStatusLabel"):
         block = function_block(admin, f"function {function_name}", "\nfunction ")
         assert '|| "Estado no disponible"' in block
-    assert '|| "Sin clasificar"' in function_block(admin, "function conversationIntentLabel", "\nfunction ")
+    assert '|| "Sin clasificar"' in function_block(
+        admin, "function conversationIntentLabel", "\nfunction "
+    )
     assert "Number.isNaN(parsed.getTime())" in onboarding
-    assert 'return "No disponible"' in function_block(admin, "function formatDateTime", "\nfunction ")
+    assert 'return "No disponible"' in function_block(
+        admin, "function formatDateTime", "\nfunction "
+    )
 
 
 def test_security_avoids_executable_html_sensitive_storage_and_verbose_auth_logs() -> None:
@@ -280,17 +311,25 @@ def test_security_avoids_executable_html_sensitive_storage_and_verbose_auth_logs
         "localStorage",
     ):
         assert forbidden not in all_js
-    assert set(re.findall(r'sessionStorage\.(?:getItem|setItem|removeItem)\("([^"]+)"', all_js)) <= {
+    assert set(
+        re.findall(r'sessionStorage\.(?:getItem|setItem|removeItem)\("([^"]+)"', all_js)
+    ) <= {
         "adminMediaPending",
         "ownerMediaPending",
     }
     auth = text(ROOT / "autonogrow-shared" / "auth.js")
     assert 'console.error("Google login failed", { status: error.status || 0 })' in auth
     assert 'console.error("Google login failed", { status: error.status, body:' not in auth
-    for path in (ROOT / "autonogrow-landing" / "script.js", ROOT / "autonogrow-customer" / "customer.js"):
+    for path in (
+        ROOT / "autonogrow-landing" / "script.js",
+        ROOT / "autonogrow-customer" / "customer.js",
+    ):
         assert "innerHTML" not in text(path)
         assert "insertAdjacentHTML" not in text(path)
-    for path in (ROOT / "autonogrow-admin" / "index.html", ROOT / "autonogrow-owner" / "index.html"):
+    for path in (
+        ROOT / "autonogrow-admin" / "index.html",
+        ROOT / "autonogrow-owner" / "index.html",
+    ):
         source = text(path).lower()
         for secret in ("access_token", "refresh_token", "app_secret", "verify_token"):
             assert secret not in source
@@ -302,7 +341,7 @@ def test_external_links_are_safe_in_static_and_generated_markup() -> None:
         for tag in re.findall(r"<a\b[^>]*target=[\"']_blank[\"'][^>]*>", source, re.I):
             assert re.search(r"rel=[\"'][^\"']*noopener", tag, re.I), f"{path}: {tag}"
     admin = text(ROOT / "autonogrow-admin" / "admin.js")
-    assert 'whatsappWindow.opener = null' in admin
+    assert "whatsappWindow.opener = null" in admin
 
 
 def test_responsive_reflow_touch_and_long_content_contracts_cover_all_shells() -> None:
@@ -314,7 +353,9 @@ def test_responsive_reflow_touch_and_long_content_contracts_cover_all_shells() -
     assert "overflow-wrap: anywhere" in combined
     assert "env(safe-area-inset-bottom)" in combined
     assert "env(safe-area-inset-top)" in combined
-    assert ".ag-app :where(input, select, textarea) { font-size: 1rem; }" in text(ROOT / "autonogrow-shared" / "responsive.css")
+    assert ".ag-app :where(input, select, textarea) { font-size: 1rem; }" in text(
+        ROOT / "autonogrow-shared" / "responsive.css"
+    )
     assert "font-size: 16px" in text(ROOT / "autonogrow-landing" / "styles.css")
     assert "font-size: 16px" in text(ROOT / "autonogrow-customer" / "styles.css")
     assert "text-overflow: ellipsis" not in function_block(
@@ -340,7 +381,7 @@ def test_auth_gates_keep_protected_apps_hidden_and_preserve_the_current_document
     owner_html = text(ROOT / "autonogrow-owner" / "index.html")
     admin_html = text(ROOT / "autonogrow-admin" / "index.html")
     customer_html = text(ROOT / "autonogrow-customer" / "index.html")
-    assert 'id="owner-app"' in owner_html and 'data-ag-shell hidden' in owner_html
+    assert 'id="owner-app"' in owner_html and "data-ag-shell hidden" in owner_html
     assert re.search(r'id="admin-app"[^>]*\bhidden\b', admin_html)
     assert 'id="customer-app" hidden' in customer_html
     for directory, script_name in (

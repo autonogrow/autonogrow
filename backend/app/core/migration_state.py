@@ -54,6 +54,9 @@ POST_BASELINE_COLUMNS = {
     "bookings.price_amount_snapshot",
     "instagram_contents.archived_at",
     "instagram_final_assets.source_raw_asset_id",
+    "instagram_raw_assets.removed_at",
+    "instagram_raw_assets.removed_by_user_id",
+    "instagram_raw_assets.storage_deleted_at",
     "instagram_content_versions.promotion_revision_id",
     "social_content_proposals.operator_postponed_until",
 }

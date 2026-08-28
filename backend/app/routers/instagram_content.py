@@ -58,6 +58,7 @@ from app.services.instagram_content_service import (
     add_admin_comment,
     associate_raw_asset,
     cancel_content,
+    content_dependency_or_404,
     content_or_404,
     create_content,
     current_version,
@@ -68,6 +69,8 @@ from app.services.instagram_content_service import (
     prepare_content_removal,
     prepare_raw_asset_as_final,
     prepare_raw_asset_removal,
+    prepare_raw_asset_retirement,
+    prepare_raw_asset_storage_purge,
     raw_asset_association_manager,
     raw_asset_or_404,
     require_service_enabled,
@@ -394,9 +397,12 @@ def _list_raw(
             selectinload(InstagramRawAsset.uploaded_by),
             selectinload(InstagramRawAsset.content_links).selectinload(
                 InstagramContentRawAsset.content
-            )
+            ),
         )
-        .filter(InstagramRawAsset.business_id == business_id)
+        .filter(
+            InstagramRawAsset.business_id == business_id,
+            InstagramRawAsset.active.is_(True),
+        )
     )
     if not include_instagram:
         query = query.filter(InstagramRawAsset.source_kind == "business_upload")
@@ -456,6 +462,14 @@ def _raw_or_404(db: Session, business_id: int, asset_id: int) -> InstagramRawAss
     return asset
 
 
+def _ensure_raw_storage_available(asset: InstagramRawAsset) -> None:
+    if asset.storage_deleted_at is not None:
+        raise HTTPException(
+            status_code=410,
+            detail="El material original fue retirado y su archivo ya no está disponible.",
+        )
+
+
 def _list_content(
     db: Session,
     business_id: int,
@@ -504,9 +518,14 @@ def _list_content(
             if include_unscheduled
             else planned_in_range
         )
-    items = query.order_by(
-        InstagramContent.planned_publish_at.asc(), InstagramContent.updated_at.desc()
-    ).offset(offset).limit(limit).all()
+    items = (
+        query.order_by(
+            InstagramContent.planned_publish_at.asc(), InstagramContent.updated_at.desc()
+        )
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     contents = []
     for item in items:
         setattr(
@@ -555,7 +574,7 @@ def _raw_content_payload(
     db.expire_all()
     api_prefix = _owner_prefix(business_id)
     asset = raw_asset_or_404(db, business_id, asset_id)
-    content = content_or_404(db, business_id, content_id)
+    content = content_dependency_or_404(db, business_id, content_id)
     return {
         "raw_asset": serialize_raw_asset(asset, api_prefix),
         "content": serialize_content(db, content, api_prefix, detailed=True),
@@ -698,9 +717,7 @@ def admin_list_raw_assets(
 ):
     del actor
     business = _admin_business(db, business_slug)
-    return _list_raw(
-        db, business.id, _admin_prefix(business_slug), limit=limit, offset=offset
-    )
+    return _list_raw(db, business.id, _admin_prefix(business_slug), limit=limit, offset=offset)
 
 
 @owner_router.post("/raw-assets", status_code=201)
@@ -776,6 +793,87 @@ def owner_delete_raw_asset(
     return {"id": asset_id, "disposition": "deleted"}
 
 
+@owner_router.post("/raw-assets/{asset_id}/retire")
+def owner_retire_raw_asset(
+    business_id: int,
+    asset_id: int,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    result = prepare_raw_asset_retirement(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+        actor_user_id=actor.id,
+    )
+    if result["retired"]:
+        _audit(
+            db,
+            request=request,
+            actor=actor,
+            business_id=business_id,
+            action="raw_asset_retired",
+            resource_type="instagram_raw_asset",
+            resource_id=asset_id,
+            metadata={
+                "raw_asset_id": asset_id,
+                "storage_retained": not result["purged"],
+            },
+        )
+    if result["purged"]:
+        _audit(
+            db,
+            request=request,
+            actor=actor,
+            business_id=business_id,
+            action="raw_asset_storage_purged",
+            resource_type="instagram_raw_asset",
+            resource_id=asset_id,
+            metadata={"raw_asset_id": asset_id},
+        )
+    _commit_with_staged_files(db, result["storage_keys"])
+    return {
+        "id": asset_id,
+        "disposition": "retired",
+        "storage_purged": result["purged"],
+        "storage_retained_for_current_content": result["has_current_physical_dependency"],
+    }
+
+
+@owner_router.post("/raw-assets/{asset_id}/purge-storage")
+def owner_purge_retired_raw_asset_storage(
+    business_id: int,
+    asset_id: int,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    result = prepare_raw_asset_storage_purge(
+        db,
+        business_id=business_id,
+        asset_id=asset_id,
+    )
+    if result["purged"]:
+        _audit(
+            db,
+            request=request,
+            actor=actor,
+            business_id=business_id,
+            action="raw_asset_storage_purged",
+            resource_type="instagram_raw_asset",
+            resource_id=asset_id,
+            metadata={"raw_asset_id": asset_id},
+        )
+    _commit_with_staged_files(db, result["storage_keys"])
+    return {
+        "id": asset_id,
+        "disposition": "storage_purged" if result["purged"] else "already_purged",
+    }
+
+
 @owner_router.get("/raw-assets/{asset_id}/associations")
 def owner_get_raw_asset_associations(
     business_id: int,
@@ -787,6 +885,8 @@ def owner_get_raw_asset_associations(
 
 
 @admin_router.delete("/raw-assets/{asset_id}")
+@admin_router.post("/raw-assets/{asset_id}/retire")
+@admin_router.post("/raw-assets/{asset_id}/purge-storage")
 def admin_delete_raw_asset_forbidden(
     business_slug: str,
     asset_id: int,
@@ -800,6 +900,7 @@ def admin_delete_raw_asset_forbidden(
 def owner_get_raw_file(business_id: int, asset_id: int, db: Session = Depends(get_db)):
     _owner_business(db, business_id)
     asset = _raw_or_404(db, business_id, asset_id)
+    _ensure_raw_storage_available(asset)
     return FileResponse(_private_file(asset.storage_key), media_type=asset.media_type)
 
 
@@ -811,6 +912,7 @@ def owner_download_raw_file(
 ):
     _owner_business(db, business_id)
     asset = _raw_or_404(db, business_id, asset_id)
+    _ensure_raw_storage_available(asset)
     return FileResponse(
         _private_file(asset.storage_key),
         media_type=asset.media_type,
@@ -884,9 +986,24 @@ def owner_disassociate_raw_asset(
         action="raw_asset_disassociated",
         resource_type="instagram_raw_asset",
         resource_id=asset_id,
-        metadata={"content_id": content.id},
+        metadata={"content_id": content.id, "raw_asset_id": asset_id},
     )
-    db.commit()
+    storage_keys: list[str] = []
+    if not _asset.active and _asset.storage_deleted_at is None:
+        purge = prepare_raw_asset_storage_purge(db, business_id=business_id, asset_id=asset_id)
+        storage_keys = purge["storage_keys"]
+        if purge["purged"]:
+            _audit(
+                db,
+                request=request,
+                actor=actor,
+                business_id=business_id,
+                action="raw_asset_storage_purged",
+                resource_type="instagram_raw_asset",
+                resource_id=asset_id,
+                metadata={"raw_asset_id": asset_id},
+            )
+    _commit_with_staged_files(db, storage_keys)
     return _raw_content_payload(
         db,
         business_id=business_id,
@@ -909,22 +1026,40 @@ def owner_disassociate_permitted_raw_asset_associations(
         business_id=business_id,
         asset_id=asset_id,
     )
-    if content_ids:
+    for content_id in content_ids:
         _audit(
             db,
             request=request,
             actor=actor,
             business_id=business_id,
-            action="raw_asset_associations_disassociated",
+            action="raw_asset_disassociated",
             resource_type="instagram_raw_asset",
             resource_id=asset_id,
-            metadata={"content_ids": content_ids},
+            metadata={"content_id": content_id, "raw_asset_id": asset_id},
         )
-    db.commit()
+    storage_keys: list[str] = []
+    asset_before_commit = raw_asset_or_404(db, business_id, asset_id)
+    if not asset_before_commit.active and asset_before_commit.storage_deleted_at is None:
+        purge = prepare_raw_asset_storage_purge(db, business_id=business_id, asset_id=asset_id)
+        storage_keys = purge["storage_keys"]
+        if purge["purged"]:
+            _audit(
+                db,
+                request=request,
+                actor=actor,
+                business_id=business_id,
+                action="raw_asset_storage_purged",
+                resource_type="instagram_raw_asset",
+                resource_id=asset_id,
+                metadata={"raw_asset_id": asset_id},
+            )
+    _commit_with_staged_files(db, storage_keys)
     db.expire_all()
     api_prefix = _owner_prefix(business_id)
     asset = raw_asset_or_404(db, business_id, asset_id)
-    contents = [content_or_404(db, business_id, content_id) for content_id in content_ids]
+    contents = [
+        content_dependency_or_404(db, business_id, content_id) for content_id in content_ids
+    ]
     return {
         "association_manager": raw_asset_association_manager(
             db,
@@ -947,7 +1082,7 @@ def owner_create_content_from_raw_asset(
     db: Session = Depends(get_db),
 ):
     _owner_business(db, business_id)
-    asset = raw_asset_or_404(db, business_id, asset_id, for_update=True)
+    asset = raw_asset_or_404(db, business_id, asset_id, for_update=True, active_only=True)
     source_name = (asset.label or Path(asset.original_filename).stem).strip()
     title = f"Contenido desde {source_name or 'material bruto'}"[:200]
     content = create_content(
@@ -1023,9 +1158,7 @@ def owner_use_raw_asset_as_final(
                 )
             raw_content = _private_file(raw_asset.storage_key).read_bytes()
             max_bytes = (
-                MAX_VIDEO_ASSET_BYTES
-                if raw_asset.media_type == "video/mp4"
-                else MAX_ASSET_BYTES
+                MAX_VIDEO_ASSET_BYTES if raw_asset.media_type == "video/mp4" else MAX_ASSET_BYTES
             )
             if not raw_content or len(raw_content) > max_bytes:
                 raise HTTPException(
@@ -1109,6 +1242,7 @@ def admin_get_raw_file(
     del actor
     business = _admin_business(db, business_slug)
     asset = _raw_or_404(db, business.id, asset_id)
+    _ensure_raw_storage_available(asset)
     return FileResponse(_private_file(asset.storage_key), media_type=asset.media_type)
 
 
@@ -1753,9 +1887,7 @@ def admin_publish_job_history(
 ):
     del actor
     business = _admin_business(db, business_slug)
-    return _publish_job_history(
-        db, business.id, content_id, owner_technical=False, limit=limit
-    )
+    return _publish_job_history(db, business.id, content_id, owner_technical=False, limit=limit)
 
 
 @owner_router.post("/contents/{content_id}/publish-now", response_model=InstagramPublishJobRead)
@@ -1886,9 +2018,7 @@ def admin_publish_now(
         actor=actor,
         business_id=business.id,
         action=(
-            "publish_now_requested"
-            if job.status == "queued"
-            else "publish_now_already_active"
+            "publish_now_requested" if job.status == "queued" else "publish_now_already_active"
         ),
         resource_type="instagram_publish_job",
         resource_id=job.id,
@@ -2448,9 +2578,13 @@ def owner_instagram_media_preview(
             )
             db.commit()
             raise HTTPException(status_code=404, detail="Instagram media is unavailable") from error
-        raise HTTPException(status_code=502, detail="Instagram preview could not be updated") from error
+        raise HTTPException(
+            status_code=502, detail="Instagram preview could not be updated"
+        ) from error
     except requests.RequestException as error:
-        raise HTTPException(status_code=502, detail="Instagram preview could not be updated") from error
+        raise HTTPException(
+            status_code=502, detail="Instagram preview could not be updated"
+        ) from error
     except RemoteAssetError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     return Response(
@@ -2541,9 +2675,13 @@ async def owner_render_story_image(
                 raise HTTPException(
                     status_code=409, detail="Instagram media is no longer available"
                 ) from error
-            raise HTTPException(status_code=502, detail="Instagram media could not be read") from error
+            raise HTTPException(
+                status_code=502, detail="Instagram media could not be read"
+            ) from error
         except requests.RequestException as error:
-            raise HTTPException(status_code=502, detail="Instagram media could not be read") from error
+            raise HTTPException(
+                status_code=502, detail="Instagram media could not be read"
+            ) from error
         except RemoteAssetError as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
     else:

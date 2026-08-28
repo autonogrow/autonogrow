@@ -163,11 +163,7 @@ def future_planned_at(days: int = 3) -> str:
 
 
 def minimal_mp4_bytes(payload: bytes = b"autonogrow-video") -> bytes:
-    return (
-        b"\x00\x00\x00\x18ftypmp42"
-        b"\x00\x00\x00\x00mp42isom"
-        + payload
-    )
+    return b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + payload
 
 
 def create_content_with_asset(ctx) -> tuple[int, int, int]:
@@ -247,8 +243,7 @@ def test_submit_for_review_rejects_invalid_asset_cardinality(
             uploaded_by_user_id=ctx["owner"].id,
             original_filename=f"extra-{index}.jpg",
             storage_key=(
-                f"_instagram_content/{ctx['business'].id}/final/"
-                f"extra-{content_id}-{index}.jpg"
+                f"_instagram_content/{ctx['business'].id}/final/extra-{content_id}-{index}.jpg"
             ),
             media_type="image/jpeg",
             size_bytes=12,
@@ -266,9 +261,7 @@ def test_submit_for_review_rejects_invalid_asset_cardinality(
 
     ctx["db"].commit()
 
-    response = ctx["client"].post(
-        f"{owner_base(ctx)}/contents/{content_id}/submit-for-review"
-    )
+    response = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review")
 
     assert response.status_code == 409
     assert response.json()["detail"] == expected_detail
@@ -417,10 +410,10 @@ def test_admin_is_isolated_to_own_business_and_cannot_create_final_content(edito
         .post(
             f"{admin_base(ctx, ctx['other_business'].slug)}/contents/{content_id}/editorial-review",
             json={"version_id": _version_id, "decision": "approve"},
-            )
-            .status_code
-            == 404
         )
+        .status_code
+        == 404
+    )
 
     set_actor(ctx, ctx["admin"])
     response = ctx["client"].post(
@@ -508,12 +501,7 @@ def test_business_review_is_optional_and_owner_review_cannot_impersonate_client(
     )
     assert final.status_code == 409
     assert ctx["db"].query(InstagramContentValidation).count() == 0
-    audit = (
-        ctx["db"]
-        .query(AuditLog)
-        .filter_by(action="content_admin_approved_optional")
-        .one()
-    )
+    audit = ctx["db"].query(AuditLog).filter_by(action="content_admin_approved_optional").one()
     assert json.loads(audit.metadata_json)["version_id"] == version_id
 
 
@@ -545,10 +533,9 @@ def test_business_roles_respect_review_and_final_approval_boundaries(
         == expected
     )
     for suffix in ("schedule", "publish-now", "publish-job/cancel", "publish-job/retry"):
-        assert (
-            ctx["client"].post(f"{admin_base(ctx)}/contents/{content_id}/{suffix}").status_code
-            in {expected, 409}
-        )
+        assert ctx["client"].post(
+            f"{admin_base(ctx)}/contents/{content_id}/{suffix}"
+        ).status_code in {expected, 409}
     assert (
         ctx["client"]
         .post(
@@ -582,12 +569,7 @@ def test_material_change_versions_and_invalidates_but_date_change_does_not(edito
     assert validation.version_id == version_id
     assert validation.validator_role == "owner_delegate"
     assert validation.invalidated_at is None
-    audit = (
-        ctx["db"]
-        .query(AuditLog)
-        .filter_by(action="content_scheduled_by_owner")
-        .one()
-    )
+    audit = ctx["db"].query(AuditLog).filter_by(action="content_scheduled_by_owner").one()
     assert json.loads(audit.metadata_json)["new_status"] == "scheduled"
 
     response = ctx["client"].patch(
@@ -693,9 +675,7 @@ def test_owner_can_schedule_routine_content_when_business_does_nothing(editorial
     ctx = editorial_context
     enable_publish_integration(ctx)
     content_id, _asset_id, version_id = create_content_with_asset(ctx)
-    submitted = ctx["client"].post(
-        f"{owner_base(ctx)}/contents/{content_id}/submit-for-review"
-    )
+    submitted = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review")
     assert submitted.status_code == 200
     assert submitted.json()["current_version"]["editorial_review"]["status"] == "pending"
 
@@ -724,7 +704,9 @@ def test_business_version_blocker_does_not_block_a_new_version(editorial_context
     assert blocked.status_code == 201
 
     set_actor(ctx, ctx["owner"])
-    assert ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 409
+    assert (
+        ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 409
+    )
     updated = ctx["client"].put(
         f"{owner_base(ctx)}/contents/{content_id}/material",
         json={
@@ -737,7 +719,10 @@ def test_business_version_blocker_does_not_block_a_new_version(editorial_context
     assert updated.status_code == 200
     new_version_id = updated.json()["current_version"]["id"]
     assert new_version_id != blocked_version_id
-    assert ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review").status_code == 200
+    assert (
+        ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review").status_code
+        == 200
+    )
     scheduled = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule")
     assert scheduled.status_code == 200, scheduled.text
     assert scheduled.json()["current_version"]["id"] == new_version_id
@@ -748,7 +733,9 @@ def test_publication_hold_survives_versions_until_business_releases_it(editorial
     enable_publish_integration(ctx)
     content_id, asset_id, _version_id = create_content_with_asset(ctx)
     ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review")
-    assert ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 200
+    assert (
+        ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 200
+    )
 
     set_actor(ctx, ctx["admin"])
     held = ctx["client"].post(
@@ -770,13 +757,20 @@ def test_publication_hold_survives_versions_until_business_releases_it(editorial
     )
     assert updated.status_code == 200
     ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/submit-for-review")
-    assert ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 409
+    assert (
+        ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 409
+    )
 
     set_actor(ctx, ctx["staff"])
-    assert ctx["client"].post(
-        f"{admin_base(ctx)}/contents/{content_id}/publication-hold/release",
-        json={"note": "sin permiso"},
-    ).status_code == 403
+    assert (
+        ctx["client"]
+        .post(
+            f"{admin_base(ctx)}/contents/{content_id}/publication-hold/release",
+            json={"note": "sin permiso"},
+        )
+        .status_code
+        == 403
+    )
     set_actor(ctx, ctx["admin"])
     released = ctx["client"].post(
         f"{admin_base(ctx)}/contents/{content_id}/publication-hold/release",
@@ -784,7 +778,9 @@ def test_publication_hold_survives_versions_until_business_releases_it(editorial
     )
     assert released.status_code == 200
     set_actor(ctx, ctx["owner"])
-    assert ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 200
+    assert (
+        ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/schedule").status_code == 200
+    )
 
 
 def test_same_material_payload_does_not_create_a_version(editorial_context):
@@ -1087,7 +1083,7 @@ def test_owner_deletes_unused_raw_asset_but_blocks_referenced_material(editorial
     blocked = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{referenced_id}")
     assert blocked.status_code == 409
     assert blocked.json()["detail"]["code"] == "raw_asset_in_use"
-    assert "está siendo utilizado" in blocked.json()["detail"]["message"]
+    assert "conserva dependencias" in blocked.json()["detail"]["message"]
     assert ctx["db"].get(InstagramRawAsset, referenced_id) is not None
 
 
@@ -1234,7 +1230,6 @@ def test_raw_upload_reports_dynamic_size_limit(editorial_context, monkeypatch):
     }
 
 
-
 def test_raw_upload_accepts_valid_mp4_and_persists_video_media_type(editorial_context):
     ctx = editorial_context
     enable_service(ctx)
@@ -1325,9 +1320,7 @@ def test_create_content_from_mp4_raw_asset_uses_reel_format(editorial_context):
     assert uploaded.status_code == 201
     raw_id = uploaded.json()["id"]
 
-    created = ctx["client"].post(
-        f"{owner_base(ctx)}/raw-assets/{raw_id}/create-content"
-    )
+    created = ctx["client"].post(f"{owner_base(ctx)}/raw-assets/{raw_id}/create-content")
 
     assert created.status_code == 201
     body = created.json()
@@ -1348,9 +1341,7 @@ def test_owner_uses_mp4_raw_asset_as_final_with_integrity(editorial_context):
     assert uploaded.status_code == 201
     raw_id = uploaded.json()["id"]
 
-    created = ctx["client"].post(
-        f"{owner_base(ctx)}/raw-assets/{raw_id}/create-content"
-    )
+    created = ctx["client"].post(f"{owner_base(ctx)}/raw-assets/{raw_id}/create-content")
     assert created.status_code == 201
     content_id = created.json()["content"]["id"]
 
@@ -1514,17 +1505,12 @@ def test_raw_asset_association_manager_describes_and_batches_only_safe_links(
     protected_association = next(
         item for item in manager["associations"] if item["content_id"] == protected_id
     )
-    assert protected_association == {
-        "content_id": protected_id,
-        "content_title": "Promo validada",
-        "content_status": "validated",
-        "content_archived": False,
-        "is_source_material": True,
-        "has_final_derivative": True,
-        "has_historical_reference": True,
-        "modifiable": False,
-        "protected_reason": "Existe un material final cuya procedencia depende de este archivo.",
-    }
+    assert protected_association["content_id"] == protected_id
+    assert protected_association["direct_association"] is True
+    assert protected_association["current_version_reference"] is True
+    assert protected_association["final_asset_provenance"] is True
+    assert protected_association["current_physical_dependency"] is True
+    assert protected_association["can_disassociate"] is False
 
     blocked = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}")
     assert blocked.status_code == 409
@@ -1540,10 +1526,7 @@ def test_raw_asset_association_manager_describes_and_batches_only_safe_links(
         for row in ctx["db"].query(InstagramContentRawAsset).filter_by(raw_asset_id=raw["id"])
     }
     assert remaining_ids == {protected_id}
-    assert (
-        ctx["db"].query(AuditLog).filter_by(action="raw_asset_associations_disassociated").count()
-        == 1
-    )
+    assert ctx["db"].query(AuditLog).filter_by(action="raw_asset_disassociated").count() == 2
     assert (
         ctx["client"]
         .delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{protected_id}")
@@ -1612,10 +1595,12 @@ def test_raw_asset_association_manager_uses_constant_queries(editorial_context):
 
     assert manager["association_count"] == 4
     # One constant capability lookup precedes the association queries.
-    assert len(statements) <= 8
+    assert len(statements) <= 10
 
 
-def test_owner_cannot_disassociate_historical_or_final_source(editorial_context):
+def test_owner_can_disassociate_by_operational_need_despite_status_or_final_provenance(
+    editorial_context,
+):
     ctx = editorial_context
     raw = upload_raw_asset(ctx)
     content_id, _asset_id, _version_id = create_content_with_asset(ctx)
@@ -1635,9 +1620,8 @@ def test_owner_cannot_disassociate_historical_or_final_source(editorial_context)
     historical = ctx["client"].delete(
         f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_id}"
     )
-    assert historical.status_code == 409
-    assert "borradores" in historical.json()["detail"]
-    assert ctx["db"].query(InstagramContentRawAsset).count() == 1
+    assert historical.status_code == 200
+    assert ctx["db"].query(InstagramContentRawAsset).count() == 0
 
     content.status = "draft"
     ctx["db"].commit()
@@ -1646,11 +1630,14 @@ def test_owner_cannot_disassociate_historical_or_final_source(editorial_context)
         json={"content_id": content_id},
     )
     assert used.status_code == 201
-    blocked = ctx["client"].delete(
+    removed = ctx["client"].delete(
         f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_id}"
     )
-    assert blocked.status_code == 409
-    assert "trazabilidad" in blocked.json()["detail"]
+    assert removed.status_code == 200
+    assert ctx["db"].query(InstagramContentRawAsset).count() == 0
+    assert (
+        ctx["db"].query(InstagramFinalAsset).filter_by(source_raw_asset_id=raw["id"]).count() == 1
+    )
 
 
 def test_owner_uses_raw_as_final_with_copy_provenance_and_delete_protection(
@@ -1692,6 +1679,330 @@ def test_owner_uses_raw_as_final_with_copy_provenance_and_delete_protection(
     removed_raw = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}")
     assert removed_raw.status_code == 200
     assert not raw_path.exists()
+
+
+def test_cancelled_direct_association_can_be_removed_then_raw_deleted(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx)
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    assert (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+            json={"content_id": content_id},
+        )
+        .status_code
+        == 200
+    )
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "cancelled"
+    ctx["db"].commit()
+
+    removed = ctx["client"].delete(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_id}"
+    )
+    assert removed.status_code == 200
+    deleted = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}")
+    assert deleted.status_code == 200
+    assert ctx["db"].get(InstagramRawAsset, raw["id"]) is None
+
+
+def test_historical_reference_allows_disassociate_and_retire_tombstone(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx, "historical.png")
+    raw_row = ctx["db"].get(InstagramRawAsset, raw["id"])
+    raw_path = ctx["uploads_dir"] / raw_row.storage_key
+    content_id, final_asset_id, _version_id = create_content_with_asset(ctx)
+    associated = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+        json={"content_id": content_id},
+    )
+    assert associated.status_code == 200
+    content = ctx["db"].get(InstagramContent, content_id)
+    old_version = content.versions[0]
+    old_version.editorial_package_json = json.dumps(
+        {"asset_plan": {"recommended": [{"source": "instagram_raw_asset", "id": raw["id"]}]}}
+    )
+    current = content.versions[-1]
+    assert current.id != old_version.id
+    content.status = "cancelled"
+    ctx["db"].commit()
+
+    manager = ctx["client"].get(f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations").json()
+    dependency = next(item for item in manager["associations"] if item["content_id"] == content_id)
+    assert dependency["historical_version_reference"] is True
+    assert dependency["current_version_reference"] is False
+    assert dependency["can_disassociate"] is True
+
+    removed = ctx["client"].delete(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_id}"
+    )
+    assert removed.status_code == 200
+    assert ctx["db"].query(InstagramContentRawAsset).filter_by(raw_asset_id=raw["id"]).count() == 0
+    assert ctx["db"].get(InstagramFinalAsset, final_asset_id) is not None
+    assert old_version.editorial_package_json is not None
+
+    retired = ctx["client"].post(f"{owner_base(ctx)}/raw-assets/{raw['id']}/retire")
+    assert retired.status_code == 200
+    assert retired.json()["storage_purged"] is True
+    ctx["db"].expire_all()
+    tombstone = ctx["db"].get(InstagramRawAsset, raw["id"])
+    assert tombstone.active is False
+    assert tombstone.removed_at is not None
+    assert tombstone.removed_by_user_id == ctx["owner"].id
+    assert tombstone.storage_deleted_at is not None
+    assert not raw_path.exists()
+    assert raw["id"] not in {
+        item["id"] for item in ctx["client"].get(f"{owner_base(ctx)}/raw-assets").json()["assets"]
+    }
+    assert ctx["client"].get(f"{owner_base(ctx)}/raw-assets/{raw['id']}/file").status_code == 410
+    detail = ctx["client"].get(f"{owner_base(ctx)}/contents/{content_id}").json()
+    historical = next(item for item in detail["raw_asset_history"] if item["id"] == raw["id"])
+    assert historical["display_status"] == "Material original retirado"
+    assert historical["preview_url"] is None
+    actions = {row.action for row in ctx["db"].query(AuditLog).all()}
+    assert {
+        "raw_asset_disassociated",
+        "raw_asset_retired",
+        "raw_asset_storage_purged",
+    }.issubset(actions)
+
+
+def test_malformed_legacy_json_never_uses_partial_ids_to_block_cleanup(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx, "legacy.png")
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    version = ctx["db"].get(InstagramContent, content_id).versions[-1]
+    version.editorial_package_json = (
+        f'{{"asset_plan":{{"recommended":[{{"source":"instagram_raw_asset","id":{raw["id"]}0'
+    )
+    ctx["db"].commit()
+
+    deleted = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}")
+    assert deleted.status_code == 200
+
+
+def test_retired_current_dependency_can_finish_then_purge_storage(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx, "current.png")
+    raw_row = ctx["db"].get(InstagramRawAsset, raw["id"])
+    raw_path = ctx["uploads_dir"] / raw_row.storage_key
+    created = ctx["client"].post(f"{owner_base(ctx)}/raw-assets/{raw['id']}/create-content")
+    assert created.status_code == 201
+    content_id = created.json()["content"]["id"]
+    version = ctx["db"].get(
+        InstagramContentVersion, created.json()["content"]["current_version"]["id"]
+    )
+    version.editorial_package_json = json.dumps(
+        {"asset_plan": {"recommended": [{"source": "instagram_raw_asset", "id": raw["id"]}]}}
+    )
+    ctx["db"].commit()
+
+    retired = ctx["client"].post(f"{owner_base(ctx)}/raw-assets/{raw['id']}/retire")
+    assert retired.status_code == 200
+    assert retired.json()["storage_purged"] is False
+    assert retired.json()["storage_retained_for_current_content"] is True
+    assert raw_path.exists()
+    assert raw["id"] not in {
+        item["id"] for item in ctx["client"].get(f"{owner_base(ctx)}/raw-assets").json()["assets"]
+    }
+
+    new_content = (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/contents",
+            json={"title": "Nuevo", "caption": "", "format": "single_image"},
+        )
+        .json()
+    )
+    forbidden_new_use = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+        json={"content_id": new_content["id"]},
+    )
+    assert forbidden_new_use.status_code == 404
+
+    derived = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/use-as-final",
+        json={"content_id": content_id},
+    )
+    assert derived.status_code == 201
+    final_asset = next(
+        item
+        for item in derived.json()["content"]["final_assets"]
+        if item["source_raw_asset_id"] == raw["id"]
+    )
+    updated = ctx["client"].put(
+        f"{owner_base(ctx)}/contents/{content_id}/material",
+        json={
+            "caption": "Lista",
+            "format": "single_image",
+            "asset_ids": [final_asset["id"]],
+            "cover_asset_id": final_asset["id"],
+        },
+    )
+    assert updated.status_code == 200
+    purged = ctx["client"].post(f"{owner_base(ctx)}/raw-assets/{raw['id']}/purge-storage")
+    assert purged.status_code == 200
+    assert purged.json()["disposition"] == "storage_purged"
+    assert not raw_path.exists()
+    assert ctx["client"].get(final_asset["file_url"]).status_code == 200
+
+
+@pytest.mark.parametrize("status", ["published", "cancelled"])
+def test_terminal_status_does_not_block_safe_disassociation(editorial_context, status):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx, f"{status}.png")
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    assert (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+            json={"content_id": content_id},
+        )
+        .status_code
+        == 200
+    )
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = status
+    ctx["db"].commit()
+    assert (
+        ctx["client"]
+        .delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_id}")
+        .status_code
+        == 200
+    )
+
+
+def test_published_final_survives_raw_retirement_and_storage_purge(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx, "published-source.png")
+    content_id, _existing_asset_id, _version_id = create_content_with_asset(ctx)
+    derived = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/use-as-final",
+        json={"content_id": content_id},
+    )
+    assert derived.status_code == 201
+    final_asset = next(
+        item
+        for item in derived.json()["content"]["final_assets"]
+        if item["source_raw_asset_id"] == raw["id"]
+    )
+    assert (
+        ctx["client"]
+        .put(
+            f"{owner_base(ctx)}/contents/{content_id}/material",
+            json={
+                "caption": "Publicada",
+                "format": "single_image",
+                "asset_ids": [final_asset["id"]],
+                "cover_asset_id": final_asset["id"],
+            },
+        )
+        .status_code
+        == 200
+    )
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "published"
+    ctx["db"].commit()
+
+    assert (
+        ctx["client"]
+        .delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_id}")
+        .status_code
+        == 200
+    )
+    retired = ctx["client"].post(f"{owner_base(ctx)}/raw-assets/{raw['id']}/retire")
+    assert retired.status_code == 200
+    assert retired.json()["storage_purged"] is True
+    final_row = ctx["db"].get(InstagramFinalAsset, final_asset["id"])
+    assert final_row is not None
+    assert final_row.source_raw_asset_id == raw["id"]
+    assert ctx["client"].get(final_asset["file_url"]).status_code == 200
+    detail = ctx["client"].get(f"{owner_base(ctx)}/contents/{content_id}").json()
+    serialized = next(item for item in detail["final_assets"] if item["id"] == final_asset["id"])
+    assert serialized["source_raw_asset"]["display_status"] == "Material original retirado"
+    assert serialized["source_raw_asset"]["storage_available"] is False
+
+
+def test_archived_content_dependency_lookup_is_scoped_and_removable(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx, "archived.png")
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    assert (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+            json={"content_id": content_id},
+        )
+        .status_code
+        == 200
+    )
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.archived_at = datetime.now(timezone.utc)
+    ctx["db"].commit()
+    removed = ctx["client"].delete(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_id}"
+    )
+    assert removed.status_code == 200
+    assert removed.json()["content"]["id"] == content_id
+
+
+def test_shared_raw_links_are_independent_and_retirement_blocks_new_links(editorial_context):
+    ctx = editorial_context
+    raw = upload_raw_asset(ctx, "shared.png")
+    content_ids = []
+    for title in ("Contenido A", "Contenido B"):
+        content = (
+            ctx["client"]
+            .post(
+                f"{owner_base(ctx)}/contents",
+                json={"title": title, "caption": "", "format": "single_image"},
+            )
+            .json()
+        )
+        content_ids.append(content["id"])
+        assert (
+            ctx["client"]
+            .post(
+                f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+                json={"content_id": content["id"]},
+            )
+            .status_code
+            == 200
+        )
+
+    assert (
+        ctx["client"]
+        .delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations/{content_ids[0]}")
+        .status_code
+        == 200
+    )
+    remaining = ctx["db"].query(InstagramContentRawAsset).filter_by(raw_asset_id=raw["id"]).all()
+    assert [link.content_id for link in remaining] == [content_ids[1]]
+
+    retired = ctx["client"].post(f"{owner_base(ctx)}/raw-assets/{raw['id']}/retire")
+    assert retired.status_code == 200
+    third = (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/contents",
+            json={"title": "Contenido C", "caption": "", "format": "single_image"},
+        )
+        .json()
+    )
+    assert (
+        ctx["client"]
+        .post(
+            f"{owner_base(ctx)}/raw-assets/{raw['id']}/associations",
+            json={"content_id": third["id"]},
+        )
+        .status_code
+        == 404
+    )
+    assert (
+        ctx["db"].query(InstagramContentRawAsset).filter_by(raw_asset_id=raw["id"]).one().content_id
+        == content_ids[1]
+    )
 
 
 def test_use_as_final_rejects_invalid_stored_media(editorial_context):
@@ -1740,6 +2051,10 @@ def test_raw_library_operations_block_cross_business_idor(editorial_context):
 
     assert ctx["client"].get(f"{other_base}/raw-assets/{raw['id']}/file").status_code == 404
     assert ctx["client"].get(f"{other_base}/raw-assets/{raw['id']}/download").status_code == 404
+    assert ctx["client"].post(f"{other_base}/raw-assets/{raw['id']}/retire").status_code == 404
+    assert (
+        ctx["client"].post(f"{other_base}/raw-assets/{raw['id']}/purge-storage").status_code == 404
+    )
     assert (
         ctx["client"]
         .post(
@@ -1905,9 +2220,7 @@ def test_owner_story_upload_rejects_mime_magic_mismatch(editorial_context, monke
     assert ctx["db"].query(InstagramRawAsset).count() == 0
 
 
-def test_owner_reuses_carousel_child_without_exposing_provider_url(
-    editorial_context, monkeypatch
-):
+def test_owner_reuses_carousel_child_without_exposing_provider_url(editorial_context, monkeypatch):
     ctx = editorial_context
     enable_service(ctx)
     content_id = _create_story_draft(ctx)
@@ -2020,9 +2333,7 @@ def test_owner_reuses_carousel_child_without_exposing_provider_url(
         "source_internal_content_id": None,
     }
     assert response.json()["content"]["source_assets"] == []
-    raw = ctx["db"].get(
-        InstagramRawAsset, response.json()["asset"]["source_raw_asset_id"]
-    )
+    raw = ctx["db"].get(InstagramRawAsset, response.json()["asset"]["source_raw_asset_id"])
     assert raw.source_kind == "instagram"
     assert raw.source_remote_media_id == child.id
     assert (

@@ -59,9 +59,7 @@ def memory_session():
 def test_owner_business_list_has_bounded_queries_and_server_limit() -> None:
     engine, db = memory_session()
     try:
-        db.add_all(
-            [Business(slug=f"pilot-{index}", name=f"Pilot {index}") for index in range(20)]
-        )
+        db.add_all([Business(slug=f"pilot-{index}", name=f"Pilot {index}") for index in range(20)])
         db.commit()
         query_count = 0
 
@@ -214,7 +212,9 @@ def test_default_automation_initialization_is_concurrent_and_idempotent(tmp_path
         assert len({settings_id for settings_id, _ in results}) == 1
         assert {rule_count for _, rule_count in results} == {10}
         assert db.query(ConversationTemplate).filter_by(business_id=business_id).count() == 8
-        assert db.query(ConversationAutomationSettings).filter_by(business_id=business_id).count() == 1
+        assert (
+            db.query(ConversationAutomationSettings).filter_by(business_id=business_id).count() == 1
+        )
         assert db.query(ConversationAutomationRule).filter_by(business_id=business_id).count() == 10
     engine.dispose()
 
@@ -320,6 +320,16 @@ def test_storage_reconciliation_is_dry_run_safe_and_reports_missing(
             media_type="image/png",
             size_bytes=3,
         )
+        purged = InstagramRawAsset(
+            business_id=business.id,
+            active=False,
+            original_filename="purged.png",
+            storage_key=f"_instagram_content/{business.id}/raw/purged.png",
+            media_type="image/png",
+            size_bytes=3,
+            removed_at=now,
+            storage_deleted_at=now,
+        )
         final = InstagramFinalAsset(
             business_id=business.id,
             content_id=content.id,
@@ -341,7 +351,7 @@ def test_storage_reconciliation_is_dry_run_safe_and_reports_missing(
             content_type="image/png",
             size_bytes=3,
         )
-        db.add_all([raw, invalid, final, gallery, attachment])
+        db.add_all([raw, invalid, purged, final, gallery, attachment])
         db.commit()
 
         referenced_files = (
@@ -366,6 +376,7 @@ def test_storage_reconciliation_is_dry_run_safe_and_reports_missing(
         assert recent_orphan.relative_to(tmp_path).as_posix() in report["orphan_files"]
         assert recent_orphan.relative_to(tmp_path).as_posix() not in report["cleanup_candidates"]
         assert final.storage_key in report["missing_files"]
+        assert purged.storage_key not in report["missing_files"]
         assert report["invalid_database_paths"][0]["path"] == "../outside.png"
         assert old_orphan.is_file()
 

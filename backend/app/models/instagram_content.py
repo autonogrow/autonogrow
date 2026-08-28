@@ -71,6 +71,9 @@ class InstagramRawAsset(Base):
     uploaded_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
+    removed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     source_kind: Mapped[str] = mapped_column(
         String(30), nullable=False, default="business_upload", server_default="business_upload"
     )
@@ -84,10 +87,13 @@ class InstagramRawAsset(Base):
     sha256: Mapped[str | None] = mapped_column(String(64))
     label: Mapped[str | None] = mapped_column(String(240))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    removed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), index=True)
+    storage_deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), index=True)
 
     business = relationship("Business", back_populates="instagram_raw_assets")
     service = relationship("BusinessService", back_populates="instagram_raw_assets")
     uploaded_by = relationship("User", foreign_keys=[uploaded_by_user_id])
+    removed_by = relationship("User", foreign_keys=[removed_by_user_id])
     content_links = relationship(
         "InstagramContentRawAsset",
         back_populates="raw_asset",
@@ -115,9 +121,7 @@ class InstagramContent(Base):
         ),
         Index("ix_instagram_contents_business_status", "business_id", "status"),
         Index("ix_instagram_contents_business_planned", "business_id", "planned_publish_at"),
-        UniqueConstraint(
-            "source_proposal_id", name="uq_instagram_contents_source_proposal_id"
-        ),
+        UniqueConstraint("source_proposal_id", name="uq_instagram_contents_source_proposal_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -299,9 +303,7 @@ class InstagramContentVersion(Base):
     editorial_review = relationship(
         "InstagramContentEditorialReview", back_populates="version", uselist=False
     )
-    promotion_revision = relationship(
-        "SocialPromotionRevision", back_populates="content_versions"
-    )
+    promotion_revision = relationship("SocialPromotionRevision", back_populates="content_versions")
     comments = relationship("InstagramContentComment", back_populates="version")
     publish_job = relationship("InstagramPublishJob", back_populates="version", uselist=False)
 
@@ -371,9 +373,7 @@ class InstagramContentEditorialReview(Base):
             "status IN ('pending','approved','changes_requested','rejected')",
             name="ck_instagram_editorial_reviews_status",
         ),
-        Index(
-            "ix_instagram_editorial_reviews_business_status", "business_id", "status"
-        ),
+        Index("ix_instagram_editorial_reviews_business_status", "business_id", "status"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

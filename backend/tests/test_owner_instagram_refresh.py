@@ -33,16 +33,16 @@ def test_owner_instagram_load_has_constant_request_count_and_is_single_flight() 
         "function shiftOwnerInstagramCalendar",
     )
 
-    assert 'ownerInstagramJson(`${api}/settings`)' in load
+    assert "ownerInstagramJson(`${api}/settings`)" in load
     assert "await loadOwnerInstagramWorkspace(api)" in load
     assert workspace.count("ownerInstagramJson(") == 3
     assert "/ideas" in workspace
-    assert 'ownerInstagramJson(`${api}/raw-assets`)' in workspace
-    assert 'ownerInstagramJson(`${api}/contents?${range.toString()}`)' in workspace
+    assert "ownerInstagramJson(`${api}/raw-assets`)" in workspace
+    assert "ownerInstagramJson(`${api}/contents?${range.toString()}`)" in workspace
     assert period.count("ownerInstagramJson(") == 1
-    assert 'ownerInstagramJson(`${api}/contents?${range.toString()}`)' in period
+    assert "ownerInstagramJson(`${api}/contents?${range.toString()}`)" in period
     assert "contentList.contents.map" not in load + workspace
-    assert 'ownerInstagramJson(`${api}/contents/${item.id}`)' not in load + workspace
+    assert "ownerInstagramJson(`${api}/contents/${item.id}`)" not in load + workspace
 
     assert "if (ownerInstagramLoadPromise) return ownerInstagramLoadPromise" in load
     assert "ownerInstagramLoadPromise = task.finally" in load
@@ -194,7 +194,7 @@ def test_owner_instagram_raw_removal_and_busy_copy_are_guarded() -> None:
     assert "beginOwnerInstagramMutation(mutationKey)" in raw_delete
     assert 'method: "DELETE"' in raw_delete
     assert "ownerInstagramRawAssets = ownerInstagramRawAssets.filter" in raw_delete
-    assert "setOwnerInstagramScopeBusy(scope, true, button, \"Eliminando…\")" in raw_delete
+    assert 'setOwnerInstagramScopeBusy(scope, true, button, "Eliminando…")' in raw_delete
     for label in (
         "Subiendo…",
         "Guardando…",
@@ -262,7 +262,7 @@ def test_owner_raw_preview_and_download_use_authenticated_fetch_and_accessible_d
     assert "ownerInstagramRetryAfterSeconds(response)" in preview
     assert "URL.createObjectURL" in preview
     assert "URL.revokeObjectURL" in preview
-    assert 'anchor.download = ownerInstagramDownloadFilename' in preview
+    assert "anchor.download = ownerInstagramDownloadFilename" in preview
     assert 'event.key === "Escape"' in js
     assert "File System Access" not in js
 
@@ -282,12 +282,13 @@ def test_owner_raw_association_manager_is_accessible_reactive_and_server_authori
         "Abrir contenido",
         "Desasociar",
         "Desasociar todos los permitidos",
-        "Eliminar material",
+        "Retirar de biblioteca",
+        "Eliminar definitivamente",
     ):
         assert label in js or label in html
 
-    assert "association.modifiable ?" in js
-    assert "association.protected_reason" in js
+    assert "association.can_disassociate" in js
+    assert "association.current_physical_dependency" in js
     assert "data-owner-instagram-association-mutation" in js
     assert 'error.code === "raw_asset_in_use"' in js
     assert "showOwnerInstagramAssociationManager(error.detail, button)" in js
