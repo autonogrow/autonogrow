@@ -109,7 +109,7 @@ def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
             "styles.css?v=20260825-p12-b",
             "responsive.css?v=5f1",
             "auth.js?v=10b5",
-            "owner.js?v=20260827-p122-a",
+            "owner.js?v=20260828-p123-a",
             "owner-onboarding.js?v=5f1",
         ),
         "autonogrow-landing": ("styles.css?v=10b5", "auth.js?v=10b5", "script.js?v=10b5"),

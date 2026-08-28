@@ -1667,6 +1667,27 @@ def test_owner_uses_raw_as_final_with_copy_provenance_and_delete_protection(
     assert final_path.read_bytes() == raw_path.read_bytes()
     assert ctx["db"].query(AuditLog).filter_by(action="raw_asset_used_as_final").count() == 1
 
+    retried = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/use-as-final",
+        json={"content_id": content_id},
+    )
+    assert retried.status_code == 201
+    assert (
+        ctx["db"]
+        .query(InstagramContentRawAsset)
+        .filter_by(content_id=content_id, raw_asset_id=raw["id"])
+        .count()
+        == 1
+    )
+    assert (
+        ctx["db"]
+        .query(InstagramFinalAsset)
+        .filter_by(content_id=content_id, source_raw_asset_id=raw["id"])
+        .count()
+        == 1
+    )
+    assert ctx["db"].query(AuditLog).filter_by(action="raw_asset_used_as_final").count() == 1
+
     blocked_delete = ctx["client"].delete(f"{owner_base(ctx)}/raw-assets/{raw['id']}")
     assert blocked_delete.status_code == 409
     assert raw_path.exists()
@@ -1820,6 +1841,25 @@ def test_retired_current_dependency_can_finish_then_purge_storage(editorial_cont
         json={"content_id": new_content["id"]},
     )
     assert forbidden_new_use.status_code == 404
+    forbidden_new_final = ctx["client"].post(
+        f"{owner_base(ctx)}/raw-assets/{raw['id']}/use-as-final",
+        json={"content_id": new_content["id"]},
+    )
+    assert forbidden_new_final.status_code == 404
+    assert (
+        ctx["db"]
+        .query(InstagramContentRawAsset)
+        .filter_by(content_id=new_content["id"], raw_asset_id=raw["id"])
+        .count()
+        == 0
+    )
+    assert (
+        ctx["db"]
+        .query(InstagramFinalAsset)
+        .filter_by(content_id=new_content["id"], source_raw_asset_id=raw["id"])
+        .count()
+        == 0
+    )
 
     derived = ctx["client"].post(
         f"{owner_base(ctx)}/raw-assets/{raw['id']}/use-as-final",

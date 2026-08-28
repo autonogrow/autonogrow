@@ -414,7 +414,13 @@ def test_generation_permissions_and_proposal_tenant_isolation(db: Session, recor
     assert hidden.value.status_code == 404
 
 
-def test_generation_api_is_owner_only_and_tenant_scoped(db: Session, records) -> None:
+def test_generation_api_is_owner_only_and_tenant_scoped(
+    db: Session, records, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "app.services.social_content_generation_service.utc_now",
+        lambda: NOW,
+    )
     app = FastAPI()
     app.include_router(social_content_generation_router)
     current_actor = {"user": records["owner"]}

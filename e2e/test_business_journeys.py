@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import io
 import re
 from datetime import datetime, timedelta, timezone
@@ -11,6 +12,9 @@ from playwright.sync_api import expect
 from e2e.seed import JPEG_BYTES
 
 pytestmark = pytest.mark.e2e
+MP4_BYTES = base64.b64decode(
+    "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAN0bW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAAMgAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAp90cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAAMgAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAADIAAAEAAABAAAAAAIXbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAyAAAACgBVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABwm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAYJzdGJsAAAAvnN0c2QAAAAAAAAAAQAAAK5hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFUxhdmM2Mi4xMS4xMDAgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANGF2Y0MBZAAK/+EAF2dkAAqs2V7ARAAAAwAEAAADAMg8SJZYAQAGaOvjyyLA/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAHZwAAAAAAAAABhzdHRzAAAAAAAAAAEAAAAFAAACAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAOGN0dHMAAAAAAAAABQAAAAEAAAQAAAAAAQAACgAAAAABAAAEAAAAAAEAAAAAAAAAAQAAAgAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAUAAAABAAAAKHN0c3oAAAAAAAAAAAAAAAUAAALGAAAADAAAAAwAAAAMAAAADAAAABRzdGNvAAAAAAAAAAEAAAOkAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2Mi4zLjEwMAAAAAhmcmVlAAAC/m1kYXQAAAKvBgX//6vcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY1IHIzMjIyTSBiMzU2MDVhIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAyNSAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTMgZGVibG9jaz0xOjA6MCBhbmFseXNpPTB4MzoweDExMyBtZT1oZXggc3VibWU9NyBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0xIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MSA4eDhkY3Q9MSBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0tMiB0aHJlYWRzPTEgbG9va2FoZWFkX3RocmVhZHM9MSBzbGljZWRfdGhyZWFkcz0wIG5yPTAgZGVjaW1hdGU9MSBpbnRlcmxhY2VkPTAgYmx1cmF5X2NvbXBhdD0wIGNvbnN0cmFpbmVkX2ludHJhPTAgYmZyYW1lcz0zIGJfcHlyYW1pZD0yIGJfYWRhcHQ9MSBiX2JpYXM9MCBkaXJlY3Q9MSB3ZWlnaHRiPTEgb3Blbl9nb3A9MCB3ZWlnaHRwPTIga2V5aW50PTI1MCBrZXlpbnRfbWluPTI1IHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4wMACAAAAAD2WIhAAz//727L4FNhTIwQAAAAhBmiRsQr/+wAAAAAhBnkJ4hf/BgQAAAAgBnmF0Qr/EgAAAAAgBnmNqQr/EgQ=="
+)
 
 
 def _horizontal_png() -> bytes:
@@ -151,7 +155,7 @@ def test_whatsapp_assisted_opens_safe_url_without_claiming_sent(journey) -> None
 
 
 def test_owner_business_switching_isolates_bookings_and_instagram(journey) -> None:
-    _session, page = _open_owner_instagram(journey)
+    session, page = _open_owner_instagram(journey)
     expect(page.locator("#owner-instagram-workspace")).to_contain_text("SALON")
     page.locator("#owner-instagram-business").select_option(label="Fisio E2E")
     expect(page.locator("#owner-instagram-workspace")).to_contain_text("FISIO")
@@ -227,17 +231,19 @@ def test_owner_instagram_polling_moves_processing_to_published_without_reload(jo
     expect(item).to_contain_text("Procesando en Instagram")
 
     with SessionLocal() as db:
-        content = db.get(InstagramContent, content_id)
-        job = db.get(InstagramPublishJob, job_id)
-        content.status = "published"
-        job.status = "published"
-        job.provider_status = "published_simulated"
-        job.provider_error_code = None
-        job.safe_error_message = None
-        job.provider_media_id = "e2e-media-published"
-        job.provider_permalink = "https://www.instagram.com/p/e2e-safe/"
-        job.published_at = datetime.now(timezone.utc)
-        job.next_attempt_at = None
+        persisted_content = db.get(InstagramContent, content_id)
+        persisted_job = db.get(InstagramPublishJob, job_id)
+        assert persisted_content is not None
+        assert persisted_job is not None
+        persisted_content.status = "published"
+        persisted_job.status = "published"
+        persisted_job.provider_status = "published_simulated"
+        persisted_job.provider_error_code = None
+        persisted_job.safe_error_message = None
+        persisted_job.provider_media_id = "e2e-media-published"
+        persisted_job.provider_permalink = "https://www.instagram.com/p/e2e-safe/"
+        persisted_job.published_at = datetime.now(timezone.utc)
+        persisted_job.next_attempt_at = None
         db.commit()
 
     expect(item).to_contain_text("Publicado", timeout=15_000)
@@ -267,8 +273,17 @@ def test_owner_instagram_composer_uses_day_without_fixed_hour_and_previews_forma
     expect(composer.locator("#owner-instagram-preview-position")).to_have_text("2/2")
 
     composer.locator(".instagram-composer__formats").get_by_text("Reel", exact=True).click()
+    expect(composer.locator("#owner-instagram-composer-error")).to_have_text(
+        re.compile("no es compatible con Reel")
+    )
+    expect(composer.locator("#owner-instagram-media-count")).to_have_text("2/10")
+    composer.locator(".instagram-composer-media__remove").first.click()
+    expect(composer.locator("#owner-instagram-media-count")).to_have_text("1/10")
+    composer.locator(".instagram-composer-media__remove").click()
+    expect(composer.locator("#owner-instagram-media-count")).to_have_text("0/10")
+    composer.locator(".instagram-composer__formats").get_by_text("Reel", exact=True).click()
     composer.locator("#owner-instagram-composer-file").set_input_files(
-        {"name": "reel.mp4", "mimeType": "video/mp4", "buffer": b"\x00\x00\x00\x18ftypisom"}
+        {"name": "reel.mp4", "mimeType": "video/mp4", "buffer": MP4_BYTES}
     )
     expect(composer.locator("#owner-instagram-phone")).to_have_class(
         re.compile("instagram-phone--vertical")
@@ -402,6 +417,342 @@ def test_owner_instagram_library_selects_explicit_carousel_child(journey) -> Non
     library.get_by_role("button", name="Usar en Story").first.click()
     expect(library).to_be_hidden()
     expect(composer.locator("#owner-instagram-story-editor")).to_be_visible()
+
+
+def test_owner_create_from_raw_opens_lazy_composer_and_close_leaves_no_garbage(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import (
+        InstagramContent,
+        InstagramContentRawAsset,
+        InstagramContentVersion,
+        InstagramFinalAsset,
+    )
+
+    def persisted_counts() -> tuple[int, int, int, int]:
+        with SessionLocal() as db:
+            return (
+                db.query(InstagramContent).count(),
+                db.query(InstagramContentVersion).count(),
+                db.query(InstagramContentRawAsset).count(),
+                db.query(InstagramFinalAsset).count(),
+            )
+
+    before = persisted_counts()
+    _session, page = _open_owner_instagram(journey)
+    page.locator("summary", has_text="Herramientas avanzadas de material").click()
+    raw = page.locator("[data-owner-instagram-raw]", has_text="Material compartido SALON")
+    raw.get_by_role("button", name="Crear contenido con este material").click()
+
+    composer = page.locator("#owner-instagram-composer")
+    expect(composer).to_be_visible()
+    expect(page.locator("#owner-instagram-composer-title")).to_have_text(
+        re.compile("Crear publicaci")
+    )
+    expect(composer.locator('[name="composer_format"][value="single_image"]')).to_be_checked()
+    expect(page.locator("#owner-instagram-media-count")).to_have_text("1")
+    expect(composer.locator(".instagram-composer-media__meta strong")).to_have_text(
+        "Material compartido SALON"
+    )
+    expect(page.locator("#owner-instagram-preview-stage img")).to_be_visible()
+    assert persisted_counts() == before
+
+    page.locator("#owner-instagram-composer-close").click()
+    expect(composer).to_be_hidden()
+    assert persisted_counts() == before
+
+
+def test_owner_create_from_raw_saves_reopens_retries_and_keeps_carousel_provenance(
+    journey,
+) -> None:
+    from app.core.database import SessionLocal
+    from app.models import (
+        InstagramContent,
+        InstagramContentRawAsset,
+        InstagramFinalAsset,
+        InstagramRawAsset,
+    )
+
+    caption = "P1.2.3 lazy SALON"
+    _session, page = _open_owner_instagram(journey)
+    page.locator("summary", has_text="Herramientas avanzadas de material").click()
+    raw_card = page.locator("[data-owner-instagram-raw]", has_text="Material compartido SALON")
+    raw_card.get_by_role("button", name="Crear contenido con este material").click()
+    composer = page.locator("#owner-instagram-composer")
+    expect(page.locator("#owner-instagram-preview-stage img")).to_be_visible()
+    composer.locator("#owner-instagram-composer-caption").fill(caption)
+    composer.locator("#owner-instagram-composer-save").click()
+    expect(composer).to_be_hidden()
+
+    with SessionLocal() as db:
+        content = db.query(InstagramContent).filter(InstagramContent.title == caption).one()
+        raw = db.query(InstagramRawAsset).filter_by(label="Material compartido SALON").one()
+        content_id = content.id
+        raw_id = raw.id
+        assert content.status == "draft"
+        assert content.planned_publish_at is None
+        assert (
+            db.query(InstagramContentRawAsset)
+            .filter_by(content_id=content_id, raw_asset_id=raw_id)
+            .count()
+            == 1
+        )
+        assert (
+            db.query(InstagramFinalAsset)
+            .filter_by(content_id=content_id, source_raw_asset_id=raw_id)
+            .count()
+            == 1
+        )
+        current = max(content.versions, key=lambda version: version.version_number)
+        assert current.format == "single_image"
+        assert len(current.asset_links) == 1
+        first_version_number = current.version_number
+
+    content_button = page.get_by_role("button", name=re.compile(caption))
+    content_button.click()
+    expect(composer).to_be_visible()
+    expect(page.locator("#owner-instagram-media-count")).to_have_text("1")
+    expect(page.locator("#owner-instagram-preview-stage img")).to_be_visible()
+    composer.locator("#owner-instagram-composer-save").click()
+    expect(composer).to_be_hidden()
+
+    with SessionLocal() as db:
+        persisted_content = db.get(InstagramContent, content_id)
+        assert persisted_content is not None
+        assert (
+            db.query(InstagramContentRawAsset)
+            .filter_by(content_id=content_id, raw_asset_id=raw_id)
+            .count()
+            == 1
+        )
+        assert (
+            db.query(InstagramFinalAsset)
+            .filter_by(content_id=content_id, source_raw_asset_id=raw_id)
+            .count()
+            == 1
+        )
+        assert (
+            max(
+                persisted_content.versions,
+                key=lambda version: version.version_number,
+            ).version_number
+            == first_version_number
+        )
+
+    page.get_by_role("button", name=re.compile(caption)).click()
+    expect(page.locator("#owner-instagram-media-count")).to_have_text("1")
+    composer.locator(".instagram-composer__formats").get_by_text("Carrusel", exact=True).click()
+    expect(page.locator("#owner-instagram-media-count")).to_have_text("1/10")
+    composer.locator("#owner-instagram-composer-file").set_input_files(
+        {"name": "segunda.jpg", "mimeType": "image/jpeg", "buffer": JPEG_BYTES}
+    )
+    expect(page.locator("#owner-instagram-media-count")).to_have_text("2/10")
+    expect(composer.locator(".instagram-composer-media__meta strong").first).to_have_text(
+        "salon-shared.jpg"
+    )
+    composer.locator("#owner-instagram-composer-save").click()
+    expect(composer).to_be_hidden()
+
+    with SessionLocal() as db:
+        persisted_content = db.get(InstagramContent, content_id)
+        assert persisted_content is not None
+        current = max(
+            persisted_content.versions,
+            key=lambda version: version.version_number,
+        )
+        assert current.format == "carousel"
+        assert len(current.asset_links) == 2
+        assert (
+            db.query(InstagramContentRawAsset)
+            .filter_by(content_id=content_id, raw_asset_id=raw_id)
+            .count()
+            == 1
+        )
+        assert (
+            db.query(InstagramFinalAsset)
+            .filter_by(content_id=content_id, source_raw_asset_id=raw_id)
+            .count()
+            == 1
+        )
+
+
+def test_owner_create_from_mp4_raw_preselects_reel_without_browser_reupload(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import InstagramContent, InstagramFinalAsset, InstagramRawAsset
+
+    _session, page = _open_owner_instagram(journey)
+    csrf = page.evaluate(
+        """async () => {
+            const options = await AutonoGrowAuth.secureRequestOptions({ method: "POST" });
+            return options.headers.get("X-CSRF-Token");
+        }"""
+    )
+    uploaded = page.request.post(
+        "/api/owner/businesses/1/instagram-content/raw-assets",
+        headers={"X-CSRF-Token": csrf},
+        multipart={
+            "file": {"name": "p123-reel.mp4", "mimeType": "video/mp4", "buffer": MP4_BYTES},
+            "label": "VÃ­deo P1.2.3 SALON",
+        },
+    )
+    assert uploaded.status == 201
+    raw_id = uploaded.json()["id"]
+    page.locator("#owner-instagram-refresh").click()
+    page.locator("summary", has_text="Herramientas avanzadas de material").click()
+    raw = page.locator("[data-owner-instagram-raw]", has_text="VÃ­deo P1.2.3 SALON")
+    expect(raw).to_be_visible()
+    raw.get_by_role("button", name="Crear contenido con este material").click()
+
+    composer = page.locator("#owner-instagram-composer")
+    expect(composer).to_be_visible()
+    expect(composer.locator('[name="composer_format"][value="reel"]')).to_be_checked()
+    expect(page.locator("#owner-instagram-media-count")).to_have_text("1")
+    expect(page.locator("#owner-instagram-preview-stage video")).to_be_visible()
+    composer.locator("#owner-instagram-composer-caption").fill("Reel lazy P1.2.3 SALON")
+    composer.locator("#owner-instagram-composer-save").click()
+    expect(composer).to_be_hidden()
+
+    with SessionLocal() as db:
+        content = db.query(InstagramContent).filter_by(title="Reel lazy P1.2.3 SALON").one()
+        current = max(content.versions, key=lambda version: version.version_number)
+        assert current.format == "reel"
+        assert len(current.asset_links) == 1
+        assert db.query(InstagramRawAsset).filter_by(id=raw_id).count() == 1
+        assert (
+            db.query(InstagramFinalAsset)
+            .filter_by(content_id=content.id, source_raw_asset_id=raw_id, media_type="video/mp4")
+            .count()
+            == 1
+        )
+
+
+def test_owner_create_from_raw_rejects_concurrent_retirement_without_invalid_final(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import InstagramContent, InstagramContentRawAsset, InstagramFinalAsset
+
+    session, page = _open_owner_instagram(journey)
+    page.locator("summary", has_text="Herramientas avanzadas de material").click()
+    raw = page.locator("[data-owner-instagram-raw]", has_text="Material liberable SALON")
+    raw_id = int(raw.get_attribute("data-owner-instagram-raw"))
+    raw.get_by_role("button", name="Crear contenido con este material").click()
+    composer = page.locator("#owner-instagram-composer")
+    expect(page.locator("#owner-instagram-preview-stage img")).to_be_visible()
+
+    retired = page.evaluate(
+        """async (assetId) => ownerInstagramJson(
+            `${ownerInstagramApi()}/raw-assets/${assetId}/retire`,
+            { method: "POST" }
+        )""",
+        raw_id,
+    )
+    assert retired["disposition"] == "retired"
+    session.expect_response_error(404, "POST", f"/raw-assets/{raw_id}/use-as-final")
+    composer.locator("#owner-instagram-composer-caption").fill("Retirada concurrente P1.2.3")
+    composer.locator("#owner-instagram-composer-save").click()
+    expect(page.locator("#owner-instagram-composer-error")).to_have_text(
+        re.compile("El material ya no est.*disponible en la biblioteca")
+    )
+    expect(composer).to_be_visible()
+
+    with SessionLocal() as db:
+        content = db.query(InstagramContent).filter_by(title="Retirada concurrente P1.2.3").one()
+        assert (
+            db.query(InstagramContentRawAsset)
+            .filter_by(content_id=content.id, raw_asset_id=raw_id)
+            .count()
+            == 0
+        )
+        assert (
+            db.query(InstagramFinalAsset)
+            .filter_by(content_id=content.id, source_raw_asset_id=raw_id)
+            .count()
+            == 0
+        )
+
+
+@pytest.mark.parametrize("publication", ["schedule", "now"])
+def test_owner_create_from_raw_uses_normal_schedule_and_simulated_publish_flow(
+    journey, publication
+) -> None:
+    from app.core.database import SessionLocal
+    from app.models import (
+        Business,
+        BusinessChannelControl,
+        BusinessChannelIntegration,
+        InstagramContent,
+        InstagramContentRawAsset,
+        InstagramFinalAsset,
+    )
+
+    with SessionLocal() as db:
+        business = db.query(Business).filter(Business.slug == "salon-e2e").one()
+        control = (
+            db.query(BusinessChannelControl)
+            .filter_by(business_id=business.id, channel="instagram")
+            .one_or_none()
+        )
+        if control is None:
+            control = BusinessChannelControl(
+                business_id=business.id,
+                channel="instagram",
+                status="approved",
+                connector_policy="owner_only",
+                connection_mode="simulated",
+                integrated_delivery_enabled=True,
+            )
+            db.add(control)
+        else:
+            control.status = "approved"
+            control.integrated_delivery_enabled = True
+        integration = (
+            db.query(BusinessChannelIntegration)
+            .filter_by(business_id=business.id, provider="instagram")
+            .one_or_none()
+        )
+        if integration is None:
+            db.add(
+                BusinessChannelIntegration(
+                    business_id=business.id,
+                    channel="instagram",
+                    provider="instagram",
+                    external_account_id=f"e2e-p123-{publication}",
+                    integration_status="connected",
+                    health_status="healthy",
+                )
+            )
+        else:
+            integration.integration_status = "connected"
+            integration.health_status = "healthy"
+        db.commit()
+
+    caption = f"P1.2.3 {publication} SALON"
+    _session, page = _open_owner_instagram(journey)
+    page.locator("summary", has_text="Herramientas avanzadas de material").click()
+    raw = page.locator("[data-owner-instagram-raw]", has_text="Material liberable SALON")
+    raw.get_by_role("button", name="Crear contenido con este material").click()
+    composer = page.locator("#owner-instagram-composer")
+    expect(page.locator("#owner-instagram-preview-stage img")).to_be_visible()
+    composer.locator("#owner-instagram-composer-caption").fill(caption)
+    if publication == "schedule":
+        planned = datetime.now(timezone.utc) + timedelta(days=3)
+        composer.locator("#owner-instagram-composer-date").fill(planned.date().isoformat())
+        composer.locator("#owner-instagram-composer-time").fill("12:30")
+        composer.locator("#owner-instagram-composer-primary").click()
+    else:
+        composer.get_by_text(re.compile("Publicar ahora")).click()
+        composer.locator("#owner-instagram-composer-primary").click()
+    expect(composer).to_be_hidden(timeout=15_000)
+
+    with SessionLocal() as db:
+        content = db.query(InstagramContent).filter(InstagramContent.title == caption).one()
+        current = max(content.versions, key=lambda version: version.version_number)
+        assert len(current.asset_links) == 1
+        assert db.query(InstagramContentRawAsset).filter_by(content_id=content.id).count() == 1
+        assert db.query(InstagramFinalAsset).filter_by(content_id=content.id).count() == 1
+        assert len(content.publish_jobs) == 1
+        if publication == "schedule":
+            assert content.planned_publish_at is not None
+        else:
+            assert content.planned_publish_at is None
 
 
 def test_owner_raw_association_manager_classifies_and_updates_without_reload(journey) -> None:

@@ -1745,7 +1745,10 @@ function renderOwnerInstagramRaw(assets) {
       const previewAction = asset.media_type?.startsWith("image/")
         ? `<button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="preview" data-raw-asset-id="${asset.id}">Previsualizar</button>`
         : "";
-      return `<article class="instagram-raw-card" data-owner-instagram-raw="${asset.id}"><header><div><strong>${escapeHtml(asset.label || asset.original_filename)}</strong><p class="helper">${escapeHtml(asset.original_filename)} · ${escapeHtml(asset.media_type)}</p></div><span class="ag-badge ag-badge--neutral">Origen</span></header>${associations}<label>Contenido destino<select class="instagram-raw-target" data-owner-instagram-raw-target ${options ? "" : "disabled"}><option value="">Selecciona un contenido</option>${options}</select></label><div class="instagram-raw-actions">${previewAction}<button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="download" data-raw-asset-id="${asset.id}">Descargar</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="associations" data-raw-asset-id="${asset.id}">Asociaciones</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="associate" data-raw-asset-id="${asset.id}" ${options ? "" : "disabled"}>Usar en contenido</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="create-content" data-raw-asset-id="${asset.id}">Crear contenido con este material</button><button class="button button-primary button-small" type="button" data-owner-instagram-raw-action="use-final" data-raw-asset-id="${asset.id}" ${options ? "" : "disabled"}>Usar como final</button><button class="button button-ghost button-small" type="button" data-owner-instagram-raw-delete="${asset.id}">Eliminar</button></div></article>`;
+      const createAction = asset.active && asset.source_kind === "business_upload" && ownerInstagramRawDefaultFormat(asset)
+        ? `<button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="create-content" data-raw-asset-id="${asset.id}">Crear contenido con este material</button>`
+        : "";
+      return `<article class="instagram-raw-card" data-owner-instagram-raw="${asset.id}"><header><div><strong>${escapeHtml(asset.label || asset.original_filename)}</strong><p class="helper">${escapeHtml(asset.original_filename)} · ${escapeHtml(asset.media_type)}</p></div><span class="ag-badge ag-badge--neutral">Origen</span></header>${associations}<label>Contenido destino<select class="instagram-raw-target" data-owner-instagram-raw-target ${options ? "" : "disabled"}><option value="">Selecciona un contenido</option>${options}</select></label><div class="instagram-raw-actions">${previewAction}<button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="download" data-raw-asset-id="${asset.id}">Descargar</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="associations" data-raw-asset-id="${asset.id}">Asociaciones</button><button class="button button-secondary button-small" type="button" data-owner-instagram-raw-action="associate" data-raw-asset-id="${asset.id}" ${options ? "" : "disabled"}>Usar en contenido</button>${createAction}<button class="button button-primary button-small" type="button" data-owner-instagram-raw-action="use-final" data-raw-asset-id="${asset.id}" ${options ? "" : "disabled"}>Usar como final</button><button class="button button-ghost button-small" type="button" data-owner-instagram-raw-delete="${asset.id}">Eliminar</button></div></article>`;
     }).join("")
     : `<p class="helper">Todavía no hay material bruto.</p>`;
 }
@@ -1863,6 +1866,20 @@ const OWNER_INSTAGRAM_COMPOSER_FORMATS = {
 const OWNER_INSTAGRAM_STORY_TRANSFORM_DEFAULT = Object.freeze({ mode: "fill", zoom: 1, position_x: 0.5, position_y: 0.5, background: "dark" });
 let ownerInstagramLibraryState = null;
 
+function ownerInstagramRawDefaultFormat(asset) {
+  if (!asset || asset.active !== true || asset.source_kind !== "business_upload" || !asset.storage_available) return null;
+  if (asset.media_type === "image/jpeg") return "single_image";
+  if (asset.media_type === "video/mp4") return "reel";
+  if (["image/png", "image/webp"].includes(asset.media_type)) return "story";
+  return null;
+}
+
+function ownerInstagramRawFormatNotice(asset) {
+  return ["image/png", "image/webp"].includes(asset?.media_type)
+    ? "PNG y WebP se preparan como Historia porque Publicación y Carrusel requieren JPEG actualmente."
+    : "";
+}
+
 function ownerInstagramComposerBusiness() {
   return businesses.find((business) => business.id === ownerInstagramBusinessId()) || null;
 }
@@ -1926,6 +1943,7 @@ function ownerInstagramComposerItem(content, date = "") {
     busy: false,
     storyTransform: { ...OWNER_INSTAGRAM_STORY_TRANSFORM_DEFAULT, ...(version?.story_transform || {}) },
     storyTransformDirty: false,
+    formatNotice: "",
   };
 }
 
@@ -1948,7 +1966,7 @@ async function ownerInstagramLoadComposerMedia(state) {
   }
 }
 
-async function openOwnerInstagramComposer({ contentId = null, date = "", trigger = null } = {}) {
+async function openOwnerInstagramComposer({ contentId = null, rawAssetId = null, date = "", trigger = null } = {}) {
   const api = ownerInstagramApi();
   if (!api) {
     byId("owner-instagram-status").textContent = "Selecciona primero un negocio.";
@@ -1956,6 +1974,11 @@ async function openOwnerInstagramComposer({ contentId = null, date = "", trigger
     return;
   }
   let content = contentId ? ownerInstagramContents.find((item) => item.id === contentId) : null;
+  const rawAsset = rawAssetId ? ownerInstagramRawAssets.find((item) => item.id === rawAssetId) : null;
+  if (rawAssetId && !ownerInstagramRawDefaultFormat(rawAsset)) {
+    byId("owner-instagram-status").textContent = "El material ya no está disponible en la biblioteca.";
+    return;
+  }
   try {
     if (contentId && !Array.isArray(content?.versions)) {
       content = await ownerInstagramJson(`${api}/contents/${contentId}`);
@@ -1976,18 +1999,28 @@ async function openOwnerInstagramComposer({ contentId = null, date = "", trigger
   renderOwnerInstagramComposer();
   byId("owner-instagram-composer-close").focus();
   if (content) ownerInstagramLoadComposerMedia(ownerInstagramComposerState);
+  else if (rawAsset) {
+    try {
+      await ownerInstagramComposerSelectRawAsset(rawAsset, { initial: true });
+    } catch (error) {
+      byId("owner-instagram-composer-error").textContent = error.message;
+    }
+  }
 }
 
 function closeOwnerInstagramComposer({ force = false } = {}) {
   const state = ownerInstagramComposerState;
   if (!state || (state.busy && !force)) return;
   if (!force && state.dirty && !window.confirm("Hay cambios sin guardar. ¿Cerrar el Composer?")) return;
-  ownerInstagramComposerClearMedia();
+  const media = state.media.splice(0);
+  byId("owner-instagram-preview-stage").replaceChildren();
+  byId("owner-instagram-composer-media").replaceChildren();
   ownerInstagramComposerState = null;
   byId("owner-instagram-composer").hidden = true;
   document.body.classList.remove("owner-dialog-open");
   ownerInstagramComposerReturnFocus?.focus?.();
   ownerInstagramComposerReturnFocus = null;
+  window.setTimeout(() => media.forEach(ownerInstagramComposerRevoke), 100);
 }
 
 function ownerInstagramComposerAdvanced(content) {
@@ -2155,7 +2188,7 @@ function renderOwnerInstagramComposer() {
   const reuseButton = byId("owner-instagram-composer-reuse");
   reuseButton.hidden = state.format !== "story";
   reuseButton.disabled = locked || state.busy;
-  byId("owner-instagram-media-help").textContent = config.help;
+  byId("owner-instagram-media-help").textContent = state.formatNotice ? `${config.help} ${state.formatNotice}` : config.help;
   byId("owner-instagram-media-count").textContent = state.format === "carousel" ? `${state.media.length}/10` : String(state.media.length);
   const mediaList = byId("owner-instagram-composer-media");
   mediaList.innerHTML = state.media.map((media, index) => ownerInstagramComposerMediaMarkup(media, index, state)).join("");
@@ -2168,6 +2201,7 @@ function renderOwnerInstagramComposer() {
     ownerInstagramComposerRevoke(ownerInstagramComposerState.media[index]);
     ownerInstagramComposerState.media.splice(index, 1);
     ownerInstagramComposerState.previewIndex = Math.max(0, Math.min(ownerInstagramComposerState.previewIndex, ownerInstagramComposerState.media.length - 1));
+    if (!ownerInstagramComposerState.media.length) ownerInstagramComposerState.formatNotice = "";
     ownerInstagramComposerState.dirty = true;
     renderOwnerInstagramComposer();
   }, 0)); });
@@ -2364,6 +2398,7 @@ async function ownerInstagramUseRemoteMedia(mediaId) {
     composer.previewIndex = 0;
     composer.storyTransform = { ...OWNER_INSTAGRAM_STORY_TRANSFORM_DEFAULT };
     composer.storyTransformDirty = true;
+    composer.formatNotice = "";
     composer.dirty = true;
     closeOwnerInstagramLibrary();
     renderOwnerInstagramComposer();
@@ -2374,36 +2409,66 @@ async function ownerInstagramUseRemoteMedia(mediaId) {
   }
 }
 
+async function ownerInstagramComposerSelectRawAsset(item, { initial = false } = {}) {
+  const composer = ownerInstagramComposerState;
+  const defaultFormat = initial ? ownerInstagramRawDefaultFormat(item) : composer?.format;
+  if (!composer || item?.active !== true || !item.storage_available || !defaultFormat) {
+    throw new Error("El material ya no está disponible en la biblioteca.");
+  }
+  const generation = composer.generation;
+  if (initial) composer.format = defaultFormat;
+  else if (!ownerInstagramComposerFormatAccepts(composer.format, item.media_type)) {
+    throw new Error("Este material no es compatible con el formato seleccionado.");
+  }
+  composer.media.forEach(ownerInstagramComposerRevoke);
+  composer.media = [{
+    uid: `raw-${item.id}`,
+    id: null,
+    name: item.label || item.original_filename || "Material del negocio",
+    mediaType: item.media_type,
+    file: null,
+    sourceRawAssetId: item.id,
+    remoteMediaId: null,
+    url: "",
+    objectUrl: false,
+    loading: true,
+  }];
+  composer.previewIndex = 0;
+  composer.storyTransform = { ...OWNER_INSTAGRAM_STORY_TRANSFORM_DEFAULT };
+  composer.storyTransformDirty = composer.format === "story" && item.media_type.startsWith("image/");
+  composer.formatNotice = ownerInstagramRawFormatNotice(item);
+  composer.dirty = !initial;
+  renderOwnerInstagramComposer();
+  try {
+    const response = await ownerInstagramFileResponse(`${API_BASE_URL}${item.preview_url}`);
+    const blob = await response.blob();
+    if (generation !== ownerInstagramComposerState?.generation) return;
+    const media = composer.media[0];
+    media.mediaType = item.media_type || blob.type;
+    media.url = URL.createObjectURL(blob);
+    media.objectUrl = true;
+    media.loading = false;
+    renderOwnerInstagramComposer();
+  } catch (error) {
+    if (generation === ownerInstagramComposerState?.generation) {
+      composer.media[0].loading = false;
+      composer.media[0].error = true;
+      renderOwnerInstagramComposer();
+    }
+    throw error;
+  }
+}
+
 async function ownerInstagramUseRawAsset(assetId) {
   const library = ownerInstagramLibraryState;
-  const composer = ownerInstagramComposerState;
-  if (!library || !composer) return;
+  if (!library || !ownerInstagramComposerState) return;
   const item = library.items.find((candidate) => candidate.id === assetId);
   if (!item || item.media_type === "video/mp4") return;
   library.loading = true;
   renderOwnerInstagramLibrary();
   try {
-    const response = await ownerInstagramFileResponse(`${API_BASE_URL}${item.preview_url}`);
-    const blob = await response.blob();
-    composer.media.forEach(ownerInstagramComposerRevoke);
-    composer.media = [{
-      uid: `raw-${item.id}`,
-      id: null,
-      name: item.label || item.original_filename || "Material del negocio",
-      mediaType: item.media_type || blob.type || "image/jpeg",
-      file: null,
-      sourceRawAssetId: item.id,
-      remoteMediaId: null,
-      url: URL.createObjectURL(blob),
-      objectUrl: true,
-      loading: false,
-    }];
-    composer.previewIndex = 0;
-    composer.storyTransform = { ...OWNER_INSTAGRAM_STORY_TRANSFORM_DEFAULT };
-    composer.storyTransformDirty = true;
-    composer.dirty = true;
+    await ownerInstagramComposerSelectRawAsset(item);
     closeOwnerInstagramLibrary();
-    renderOwnerInstagramComposer();
   } catch (error) {
     library.loading = false;
     library.error = error.message || "No se pudo preparar este material.";
@@ -2414,14 +2479,28 @@ async function ownerInstagramUseRawAsset(assetId) {
 function ownerInstagramComposerChangeFormat(format) {
   const state = ownerInstagramComposerState;
   if (!state || !OWNER_INSTAGRAM_COMPOSER_FORMATS[format] || state.format === format) return;
-  const compatible = state.media.filter((item) => ownerInstagramComposerFormatAccepts(format, ownerInstagramComposerMediaType(item)));
-  const max = OWNER_INSTAGRAM_COMPOSER_FORMATS[format].max;
-  state.media.filter((item) => !compatible.slice(0, max).includes(item)).forEach(ownerInstagramComposerRevoke);
-  state.media = compatible.slice(0, max);
+  const target = OWNER_INSTAGRAM_COMPOSER_FORMATS[format];
+  if (state.media.some((item) => !ownerInstagramComposerFormatAccepts(format, ownerInstagramComposerMediaType(item)))) {
+    const message = `El material seleccionado no es compatible con ${target.label}. Quítalo o elige otro formato.`;
+    renderOwnerInstagramComposer();
+    byId("owner-instagram-composer-error").textContent = message;
+    return;
+  }
+  if (state.media.length > target.max) {
+    const message = `${target.label} admite como máximo ${target.max} archivo${target.max === 1 ? "" : "s"}.`;
+    renderOwnerInstagramComposer();
+    byId("owner-instagram-composer-error").textContent = message;
+    return;
+  }
   state.format = format;
   state.previewIndex = 0;
+  state.formatNotice = "";
+  if (format === "story" && state.media[0]?.sourceRawAssetId && ownerInstagramComposerMediaType(state.media[0]).startsWith("image/")) {
+    state.storyTransform = { ...OWNER_INSTAGRAM_STORY_TRANSFORM_DEFAULT };
+    state.storyTransformDirty = true;
+  }
   state.dirty = true;
-  byId("owner-instagram-composer-error").textContent = compatible.length ? "" : "Añade contenido compatible con el formato elegido.";
+  byId("owner-instagram-composer-error").textContent = "";
   renderOwnerInstagramComposer();
 }
 
@@ -2446,6 +2525,7 @@ function ownerInstagramComposerAddFiles(fileList) {
     state.media.forEach(ownerInstagramComposerRevoke);
     state.media = additions.slice(0, 1);
   }
+  state.formatNotice = "";
   state.previewIndex = state.format === "carousel" ? Math.max(0, state.media.length - additions.length) : 0;
   if (state.format === "story" && additions[0]?.mediaType.startsWith("image/")) {
     state.storyTransform = { ...OWNER_INSTAGRAM_STORY_TRANSFORM_DEFAULT };
@@ -2542,6 +2622,28 @@ async function ownerInstagramComposerUploadLocalMedia(contentId) {
       media.uid = `asset-${result.asset.id}`;
       state.content = result.content;
       state.storyTransformDirty = false;
+      continue;
+    }
+    if (media.sourceRawAssetId && !media.id) {
+      byId("owner-instagram-composer-error").textContent = `Preparando ${index + 1} de ${state.media.length} desde la biblioteca…`;
+      let result;
+      try {
+        result = await ownerInstagramJson(`${api}/raw-assets/${media.sourceRawAssetId}/use-as-final`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content_id: contentId }),
+        });
+      } catch (error) {
+        if ([404, 410].includes(error.status)) throw new Error("El material ya no está disponible en la biblioteca.");
+        throw error;
+      }
+      const finalAsset = result.content?.final_assets?.find((asset) => asset.source_raw_asset_id === media.sourceRawAssetId);
+      if (!finalAsset) throw new Error("No se pudo preparar el material seleccionado.");
+      media.id = finalAsset.id;
+      media.mediaType = finalAsset.media_type;
+      media.fileUrl = finalAsset.file_url;
+      media.uid = `asset-${finalAsset.id}`;
+      state.content = result.content;
       continue;
     }
     if (!media.file) continue;
@@ -3497,6 +3599,10 @@ async function handleOwnerInstagramRawAction(button) {
     await openOwnerInstagramAssociationManager(assetId, button);
     return;
   }
+  if (action === "create-content") {
+    await openOwnerInstagramComposer({ rawAssetId: assetId, trigger: button });
+    return;
+  }
   if (["associate", "use-final"].includes(action) && !contentId) {
     byId("owner-instagram-status").textContent = "Selecciona primero un contenido destino.";
     target?.focus();
@@ -3506,7 +3612,7 @@ async function handleOwnerInstagramRawAction(button) {
   if (contentId) mutationKeys.push(`content:${contentId}`);
   if (!beginOwnerInstagramMutationGroup(mutationKeys)) return;
   const scope = contentCard || rawCard;
-  const busyLabels = { preview: "Abriendo…", download: "Descargando…", associate: "Asociando…", disassociate: "Desasociando…", "create-content": "Preparando contenido…", "use-final": "Usando como final…" };
+  const busyLabels = { preview: "Abriendo…", download: "Descargando…", associate: "Asociando…", disassociate: "Desasociando…", "use-final": "Usando como final…" };
   if (scope) setOwnerInstagramScopeBusy(scope, true, button, busyLabels[action] || "Procesando…");
   try {
     if (action === "preview") {
@@ -3521,15 +3627,12 @@ async function handleOwnerInstagramRawAction(button) {
       if (action === "disassociate") {
         url = `${api}/raw-assets/${assetId}/associations/${contentId}`;
         options = { method: "DELETE" };
-      } else if (action === "create-content") {
-        url = `${api}/raw-assets/${assetId}/create-content`;
-        options = { method: "POST" };
       } else if (action === "use-final") {
         url = `${api}/raw-assets/${assetId}/use-as-final`;
       }
       const payload = await ownerInstagramJson(url, options);
       applyOwnerInstagramRawContentPayload(payload);
-      const successMessages = { associate: "Material asociado al contenido.", disassociate: "Material desasociado.", "create-content": "Borrador preparado con el material de origen.", "use-final": "Asset final creado desde el material de origen." };
+      const successMessages = { associate: "Material asociado al contenido.", disassociate: "Material desasociado.", "use-final": "Asset final creado desde el material de origen." };
       byId("owner-instagram-status").textContent = successMessages[action] || "Material actualizado.";
     }
   } catch (error) {

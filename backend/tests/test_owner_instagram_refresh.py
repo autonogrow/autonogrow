@@ -231,7 +231,6 @@ def test_owner_raw_library_actions_are_secure_reactive_and_single_flight() -> No
         "Descargando…",
         "Asociando…",
         "Desasociando…",
-        "Preparando contenido…",
         "Usando como final…",
     ):
         assert state in handler
@@ -241,8 +240,53 @@ def test_owner_raw_library_actions_are_secure_reactive_and_single_flight() -> No
     assert "await loadOwnerInstagramPanel()" not in handler
     assert "error.status === 409" in handler
     assert "/associations/${contentId}" in handler
-    assert "/create-content`" in handler
+    assert "openOwnerInstagramComposer({ rawAssetId: assetId, trigger: button })" in handler
+    assert "/create-content`" not in handler
     assert "/use-as-final`" in handler
+
+
+def test_owner_create_from_raw_opens_a_lazy_preselected_composer() -> None:
+    js = OWNER_JS.read_text(encoding="utf-8")
+    opener = source_block(
+        js,
+        "async function openOwnerInstagramComposer",
+        "function closeOwnerInstagramComposer",
+    )
+    selector = source_block(
+        js,
+        "async function ownerInstagramComposerSelectRawAsset",
+        "async function ownerInstagramUseRawAsset",
+    )
+    uploader = source_block(
+        js,
+        "async function ownerInstagramComposerUploadLocalMedia",
+        "async function ownerInstagramComposerPatchDate",
+    )
+    format_change = source_block(
+        js,
+        "function ownerInstagramComposerChangeFormat",
+        "function ownerInstagramComposerAddFiles",
+    )
+
+    assert "rawAssetId = null" in opener
+    assert "ownerInstagramRawAssets.find" in opener
+    assert "ownerInstagramComposerSelectRawAsset(rawAsset, { initial: true })" in opener
+    assert "ownerInstagramFileResponse" in selector
+    assert "sourceRawAssetId: item.id" in selector
+    assert "loading: true" in selector
+    assert "composer.dirty = !initial" in selector
+    assert "initial ? ownerInstagramRawDefaultFormat(item) : composer?.format" in selector
+    assert 'asset.source_kind === "business_upload"' in js
+    assert 'asset.active && asset.source_kind === "business_upload"' in js
+    assert 'if (asset.media_type === "image/jpeg") return "single_image"' in js
+    assert 'if (asset.media_type === "video/mp4") return "reel"' in js
+    assert "PNG y WebP se preparan como Historia" in js
+    assert "/raw-assets/${media.sourceRawAssetId}/use-as-final`" in uploader
+    assert "body: JSON.stringify({ content_id: contentId })" in uploader
+    assert 'data.append("source_raw_asset_id", String(media.sourceRawAssetId))' in uploader
+    assert "El material ya no está disponible en la biblioteca." in js
+    assert "compatible.slice" not in format_change
+    assert "ownerInstagramComposerRevoke" not in format_change
 
 
 def test_owner_raw_preview_and_download_use_authenticated_fetch_and_accessible_dialog() -> None:
