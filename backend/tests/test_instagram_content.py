@@ -37,6 +37,12 @@ from app.models import (
     User,
 )
 from app.routers.instagram_content import admin_router, owner_router
+from app.services.instagram_calendar_service import (
+    CalendarContext,
+    calendar_datetime,
+    calendar_semantics,
+    operational_week_summary,
+)
 from app.services.instagram_content_service import raw_asset_association_manager
 from app.services.instagram_meta_client import InstagramRemoteMediaItem
 from app.services.instagram_remote_asset_service import DownloadedImage
@@ -328,6 +334,279 @@ def test_calendar_content_range_rejects_unbounded_period(editorial_context):
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "Content range must span between 1 and 62 days"
+
+
+def test_calendar_datetime_uses_real_publication_priority_and_never_created_at(
+    editorial_context,
+):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "published"
+    content.planned_publish_at = datetime(2030, 5, 10, 8, tzinfo=timezone.utc)
+    content.created_at = datetime(2020, 1, 1)
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status="published",
+        scheduled_for=datetime(2030, 5, 10, 8, tzinfo=timezone.utc),
+        published_at=datetime(2030, 5, 11, 9, 30, tzinfo=timezone.utc),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"calendar-priority-{content_id}",
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+
+    value, source = calendar_datetime(
+        content,
+        CalendarContext(
+            provider_timestamp=datetime(2030, 5, 11, 9, 29, tzinfo=timezone.utc),
+            publish_succeeded_at=datetime(2030, 5, 11, 9, 31, tzinfo=timezone.utc),
+        ),
+    )
+
+    assert value == datetime(2030, 5, 11, 9, 30, tzinfo=timezone.utc)
+    assert source == "publish_job.published_at"
+    assert calendar_semantics(content)["calendar_bucket"] == "published"
+
+
+def test_calendar_datetime_fallback_chain_ends_in_null_not_created_at(editorial_context):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "published"
+    content.created_at = datetime(2020, 1, 1)
+    content.planned_publish_at = datetime(2030, 5, 10, 8, tzinfo=timezone.utc)
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status="published",
+        scheduled_for=datetime(2030, 5, 10, 8, tzinfo=timezone.utc),
+        published_at=None,
+        updated_at=datetime(2030, 5, 10, 11, tzinfo=timezone.utc),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"calendar-fallback-{content_id}",
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+
+    provider = datetime(2030, 5, 10, 9, tzinfo=timezone.utc)
+    audit = datetime(2030, 5, 10, 10, tzinfo=timezone.utc)
+    assert calendar_datetime(content, CalendarContext(provider, audit)) == (
+        provider,
+        "instagram_remote_media.provider_timestamp",
+    )
+    assert calendar_datetime(content, CalendarContext(None, audit)) == (
+        audit,
+        "audit.publish_succeeded.created_at",
+    )
+    assert calendar_datetime(content) == (
+        datetime(2030, 5, 10, 11, tzinfo=timezone.utc),
+        "publish_job.updated_at",
+    )
+    job.updated_at = None
+    assert calendar_datetime(content) == (
+        datetime(2030, 5, 10, 8, tzinfo=timezone.utc),
+        "planned_publish_at",
+    )
+    content.planned_publish_at = None
+    assert calendar_datetime(content) == (None, None)
+
+
+def test_publish_now_without_planned_date_uses_real_date_and_history_preserves_archive(
+    editorial_context,
+):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "published"
+    content.planned_publish_at = None
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status="published",
+        scheduled_for=datetime(2030, 5, 12, 14, 32, tzinfo=timezone.utc),
+        published_at=datetime(2030, 5, 12, 14, 33, tzinfo=timezone.utc),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"publish-now-calendar-{content_id}",
+        provider_permalink="https://instagram.example/p/calendar",
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+
+    query = "from=2030-05-01T00:00:00Z&to=2030-06-01T00:00:00Z"
+    payload = ctx["client"].get(f"{owner_base(ctx)}/contents?{query}").json()
+    item = next(entry for entry in payload["contents"] if entry["id"] == content_id)
+    assert item["calendar_datetime"] == "2030-05-12T14:33:00+00:00"
+    assert item["calendar_bucket"] == "published"
+    assert all(entry["id"] != content_id for entry in payload["contents"] if entry["calendar_bucket"] == "unscheduled")
+
+    content.archived_at = datetime(2030, 5, 13, tzinfo=timezone.utc)
+    ctx["db"].commit()
+    assert all(
+        entry["id"] != content_id
+        for entry in ctx["client"].get(f"{owner_base(ctx)}/contents?{query}").json()["contents"]
+    )
+    history = ctx["client"].get(f"{owner_base(ctx)}/publication-history").json()
+    archived = next(entry for entry in history["items"] if entry["id"] == content_id)
+    assert archived["archived_at"] is not None
+    assert archived["history_read_only"] is True
+
+
+def test_publish_now_active_job_remains_pollable_without_becoming_unscheduled(
+    editorial_context,
+):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "scheduled"
+    content.planned_publish_at = None
+    ctx["db"].add(
+        InstagramPublishJob(
+            business_id=ctx["business"].id,
+            content_item_id=content_id,
+            content_version_id=version_id,
+            status="queued",
+            scheduled_for=datetime(2030, 5, 12, 14, 32, tzinfo=timezone.utc),
+            attempt_count=0,
+            max_attempts=3,
+            idempotency_key=f"publish-now-polling-{content_id}",
+        )
+    )
+    ctx["db"].commit()
+
+    payload = ctx["client"].get(
+        f"{owner_base(ctx)}/contents?from=2030-05-01T00:00:00Z"
+        "&to=2030-06-01T00:00:00Z&include_unscheduled=false"
+    ).json()
+    item = next(entry for entry in payload["contents"] if entry["id"] == content_id)
+
+    assert item["calendar_datetime"] is None
+    assert item["calendar_bucket"] == "excluded"
+    assert all(entry["id"] != content_id for entry in payload["contents"] if entry["calendar_bucket"] == "unscheduled")
+
+
+def test_legacy_publication_date_falls_back_to_success_audit(editorial_context):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "published"
+    content.planned_publish_at = None
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status="published",
+        scheduled_for=datetime(2028, 8, 29, 12, tzinfo=timezone.utc),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"legacy-calendar-{content_id}",
+    )
+    ctx["db"].add(job)
+    ctx["db"].flush()
+    ctx["db"].add(
+        AuditLog(
+            business_id=ctx["business"].id,
+            action="publish_succeeded",
+            resource_type="instagram_publish_job",
+            resource_id=job.id,
+            metadata_json=json.dumps({"content_id": content_id}),
+            created_at=datetime(2028, 8, 29, 12, 5),
+        )
+    )
+    ctx["db"].commit()
+
+    item = ctx["client"].get(f"{owner_base(ctx)}/publication-history").json()["items"][0]
+    assert item["calendar_datetime"] == "2028-08-29T12:05:00+00:00"
+    assert item["calendar_datetime_source"] == "audit.publish_succeeded.created_at"
+
+
+def test_attention_is_global_ordered_and_summary_ignores_filters(editorial_context):
+    ctx = editorial_context
+    enable_service(ctx)
+    ids = []
+    for index, planned in enumerate(
+        ("2030-09-07T10:00:00Z", None, "2030-08-30T10:00:00Z", "2030-09-02T10:00:00Z")
+    ):
+        response = ctx["client"].post(
+            f"{owner_base(ctx)}/contents",
+            json={
+                "title": f"Atención {index}",
+                "caption": "Pendiente",
+                "format": "single_image",
+                "planned_publish_at": planned,
+            },
+        )
+        content = ctx["db"].get(InstagramContent, response.json()["id"])
+        content.status = "ready_for_review"
+        content.created_at = datetime(2030, 1, index + 1)
+        ids.append(content.id)
+    ctx["db"].commit()
+
+    payload = ctx["client"].get(
+        f"{owner_base(ctx)}/contents?from=2031-01-01T00:00:00Z&to=2031-02-01T00:00:00Z"
+    ).json()
+    assert payload["attention"]["count"] == 4
+    assert [item["id"] for item in payload["attention"]["items"]] == [ids[2], ids[3], ids[0], ids[1]]
+
+
+def test_operational_week_summary_counts_only_future_pending_days(editorial_context):
+    ctx = editorial_context
+    enable_service(ctx)
+    now = datetime(2030, 9, 2, 9, tzinfo=timezone.utc)
+    contents = []
+    for status, planned in (
+        ("draft", datetime(2030, 9, 2, 10, tzinfo=timezone.utc)),
+        ("published", datetime(2030, 9, 3, 10, tzinfo=timezone.utc)),
+    ):
+        content = InstagramContent(
+            business_id=ctx["business"].id,
+            title=status,
+            status=status,
+            planned_publish_at=planned,
+            created_by_user_id=ctx["owner"].id,
+        )
+        contents.append(content)
+    summary = operational_week_summary(contents, now=now, timezone_name="Europe/Madrid")
+    assert summary["upcoming_scheduled_count"] == 0
+    assert summary["future_gap_count"] == 6
+
+
+def test_publication_history_excludes_cancelled_and_other_business(editorial_context):
+    ctx = editorial_context
+    content_id, _asset_id, _version_id = create_content_with_asset(ctx)
+    cancelled = ctx["db"].get(InstagramContent, content_id)
+    cancelled.status = "cancelled"
+    foreign = InstagramContent(
+        business_id=ctx["other_business"].id,
+        title="Published B",
+        status="published",
+        planned_publish_at=datetime(2030, 9, 1, tzinfo=timezone.utc),
+        created_by_user_id=ctx["owner"].id,
+    )
+    ctx["db"].add(foreign)
+    ctx["db"].flush()
+    ctx["db"].add(
+        InstagramContentVersion(
+            business_id=ctx["other_business"].id,
+            content_id=foreign.id,
+            version_number=1,
+            caption="Foreign",
+            format="single_image",
+            created_by_user_id=ctx["owner"].id,
+        )
+    )
+    ctx["db"].commit()
+
+    history = ctx["client"].get(f"{owner_base(ctx)}/publication-history")
+    assert history.status_code == 200
+    assert all(item["id"] not in {cancelled.id, foreign.id} for item in history.json()["items"])
 
 
 def test_owner_controls_service_and_validation_without_admin_delegation(editorial_context):

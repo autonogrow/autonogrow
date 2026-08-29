@@ -42,6 +42,7 @@ const ownerOperationsState = {
   metaJobErrors: 0,
   maintenance: null,
   sourceState: { queue: "idle", platform: "idle", jobs: "idle", maintenance: "idle" },
+  healthChecks: new Map(),
   operationsInFlight: null,
   integrationsInFlight: null,
 };
@@ -104,6 +105,43 @@ function ownerIntegrationRecommendation(record) {
   if (!record.control.integrated_delivery_enabled) return "Envío integrado desactivado";
   if (!record.control.automation_enabled) return "Automatización desactivada";
   return "Sin acciones prioritarias";
+}
+
+function ownerIntegrationHealthCheckKey(record) {
+  return `${record.business.id}:${record.control.channel}`;
+}
+
+function ownerIntegrationHealthDiagnosis(record) {
+  const code = String(record.health?.safe_error_code || "").toLowerCase();
+  if (record.health?.reconnection_required || ["token_expired", "token_revoked", "integration_expired", "integration_revoked"].includes(code)) {
+    return "La autorización ya no permite comprobar todas las funciones. Vuelve a conectar la cuenta.";
+  }
+  if (code.includes("permission") || code.includes("scope")) return "La conexión no dispone de todos los permisos necesarios. Es necesario volver a autorizarla.";
+  if (record.health?.subscription_status === "missing") return "La suscripción del canal no está activa y debe reintentarse.";
+  if (["account_suspended", "suspended"].includes(code) || record.health?.health_status === "suspended") return "La cuenta está suspendida y no puede operar hasta resolver su estado.";
+  if (record.health?.health_status === "healthy") return "La conexión y sus capacidades comprobadas funcionan correctamente.";
+  if (record.health?.safe_error_message) return record.health.safe_error_message;
+  if (["warning", "degraded"].includes(record.health?.health_status)) return "Algunas funciones pueden no estar disponibles temporalmente.";
+  if (["action_required", "revoked", "error"].includes(record.health?.health_status)) return "La conexión necesita una revisión antes de continuar.";
+  return "Todavía no existe un resultado de comprobación.";
+}
+
+function ownerIntegrationHealthActions(record) {
+  if (record.health?.reconnection_required && record.control.channel === "instagram") return '<button class="button button-primary button-small" type="button" data-owner-integration-reconnect>Reconectar Instagram</button>';
+  if (record.health?.reconnection_required && record.control.channel === "whatsapp") return `<a class="button button-primary button-small" href="../autonogrow-admin/index.html?b=${encodeURIComponent(record.business.slug)}#channels" target="_blank" rel="noopener">Abrir reconexión en Admin</a>`;
+  if (record.health?.subscription_status === "missing") return '<button class="button button-secondary button-small" type="button" data-owner-integration-retry-subscription>Reintentar suscripción</button>';
+  return record.health?.next_health_check_at ? '<p class="helper">AutonoGrow volverá a comprobarlo automáticamente.</p>' : "";
+}
+
+function ownerIntegrationHealthFeedback(record) {
+  const check = ownerOperationsState.healthChecks.get(ownerIntegrationHealthCheckKey(record));
+  if (!check) return "";
+  if (check.phase === "checking") return "Comprobando la conexión con el estado real del backend…";
+  if (check.phase === "error") return "No hemos podido comprobar la conexión. Se conserva el último estado conocido.";
+  if (check.previousStatus !== "healthy" && record.health?.health_status === "healthy") return "Conexión funcionando correctamente. La comprobación acaba de completarse.";
+  if (record.health?.health_status === check.previousStatus && record.health?.health_status !== "healthy") return "Comprobación completada. El problema continúa.";
+  if (record.health?.health_status === "healthy") return "Comprobación completada. La conexión sigue funcionando correctamente.";
+  return "Comprobación completada. El estado mostrado está actualizado.";
 }
 
 function ownerIntegrationFilterMatches(record) {
@@ -207,11 +245,14 @@ function ownerIntegrationDetailMarkup(record) {
   const canChangeCapabilities = record.control.status === "approved" && active && !["revoked", "suspended", "error"].includes(record.health?.health_status);
   const jobs = ownerOperationsState.metaJobs.filter((entry) => String(entry.businessId) === String(record.business.id) && (!entry.channel || entry.channel === record.control.channel));
   const subscriptionJobActive = jobs.some((entry) => entry.job.job_type === "retry_subscription" && ["queued", "processing", "retry"].includes(entry.job.status));
+  const healthCheck = ownerOperationsState.healthChecks.get(ownerIntegrationHealthCheckKey(record));
+  const healthChecking = healthCheck?.phase === "checking";
+  const healthButtonLabel = healthChecking ? "⟳ Comprobando..." : healthCheck?.phase === "error" ? "Reintentar" : "Comprobar ahora";
   return `<header class="owner-integration-detail__header"><div><p class="eyebrow">Detalle de integración</p><h2 id="owner-integration-detail-title">${channel} · ${escapeHtml(record.business.name)}</h2></div><button class="button button-secondary button-small" type="button" data-owner-integration-close>Volver a la lista</button></header><nav class="owner-secondary-nav" aria-label="Detalle de integración">${ownerIntegrationDetailNav()}</nav>
     <section data-owner-integration-panel="summary"><div class="owner-integration-detail-grid"><p><strong>Negocio</strong>${escapeHtml(record.business.name)}</p><p><strong>Canal</strong>${channel}</p><p><strong>Cuenta pública</strong>${escapeHtml(record.publicAccount)}</p><p><strong>Integración activa</strong>${active ? "Sí" : "No"}</p><p><strong>Aprobación</strong>${record.control.status === "approved" ? "Aprobada" : "No aprobada"}</p><p><strong>Salud</strong>${escapeHtml(ownerIntegrationHealthLabel(record.health?.health_status))}</p><p><strong>Última comprobación</strong>${escapeHtml(ownerOperationalDate(record.health?.last_health_check_at))}</p><p><strong>Recomendación</strong>${escapeHtml(ownerIntegrationRecommendation(record))}</p></div><div class="owner-operation-actions"><button class="button button-secondary" type="button" data-owner-integration-business>Abrir negocio</button><button class="button button-secondary" type="button" data-owner-integration-incidents>Ver incidencias asociadas</button></div></section>
     <section data-owner-integration-panel="control" hidden><h3>Control comercial</h3><p>La disponibilidad y aprobación no describen la salud técnica.</p><div class="owner-integration-detail-grid"><p><strong>Disponibilidad</strong>${escapeHtml(ownerChannelControlStatusLabel(record.control.status))}</p><p><strong>Solicitud del negocio</strong>${record.control.requested_at ? `Recibida ${escapeHtml(ownerOperationalDate(record.control.requested_at))}` : "Sin solicitud"}</p><p><strong>Aprobación Owner</strong>${record.control.approved_at ? `Aprobada ${escapeHtml(ownerOperationalDate(record.control.approved_at))}` : "No aprobada"}</p></div>${ownerIntegrationControlActions(record)}</section>
     <section data-owner-integration-panel="capabilities" hidden><h3>Capacidades</h3><p>Conectar no aprueba; aprobar no activa capacidades. El modo asistido pertenece al flujo conversacional y no tiene un control Owner independiente en este contrato.</p><div class="owner-capability-grid"><label><span>Envío integrado</span><small>${escapeHtml(ownerCapabilityState(record, "integrated_delivery_enabled"))}</small><input type="checkbox" data-owner-capability="delivery" ${record.control.integrated_delivery_enabled ? "checked" : ""} ${canChangeCapabilities ? "" : "disabled"}></label><label><span>Automatización</span><small>${escapeHtml(ownerCapabilityState(record, "automation_enabled"))}</small><input type="checkbox" data-owner-capability="automation" ${record.control.automation_enabled ? "checked" : ""} ${canChangeCapabilities ? "" : "disabled"}></label><p><strong>Modo asistido</strong>Sin interruptor Owner en el backend actual</p></div><button class="button button-primary" type="button" data-owner-integration-capabilities ${canChangeCapabilities ? "" : "disabled"}>Guardar capacidades</button></section>
-    <section data-owner-integration-panel="health" hidden><h3>Salud</h3><div class="owner-integration-detail-grid"><p><strong>Estado</strong>${escapeHtml(ownerIntegrationHealthLabel(record.health?.health_status))}</p><p><strong>Última comprobación</strong>${escapeHtml(ownerOperationalDate(record.health?.last_health_check_at))}</p><p><strong>Próxima comprobación</strong>${escapeHtml(ownerOperationalDate(record.health?.next_health_check_at))}</p><p><strong>Reconexión</strong>${record.health?.reconnection_required ? "Requerida" : "No requerida"}</p><p><strong>Mensaje seguro</strong>${escapeHtml(record.health?.safe_error_message || "Sin avisos seguros")}</p><p><strong>Acción recomendada</strong>${escapeHtml(ownerIntegrationRecommendation(record))}</p></div><button class="button button-secondary" type="button" data-owner-integration-health-check>Comprobar ahora</button></section>
+    <section data-owner-integration-panel="health" hidden aria-busy="${healthChecking}"><h3>Salud de la conexión</h3><div class="owner-integration-detail-grid"><p><strong>Estado</strong>${escapeHtml(ownerIntegrationHealthLabel(record.health?.health_status))}</p><p><strong>Última comprobación</strong>${escapeHtml(ownerOperationalDate(record.health?.last_health_check_at))}</p><p><strong>Próxima comprobación</strong>${escapeHtml(ownerOperationalDate(record.health?.next_health_check_at))}</p><p><strong>Reconexión</strong>${record.health?.reconnection_required ? "Requerida" : "No requerida"}</p><p><strong>Qué ocurre</strong>${escapeHtml(ownerIntegrationHealthDiagnosis(record))}</p><p><strong>Acción recomendada</strong>${escapeHtml(ownerIntegrationRecommendation(record))}</p></div><div class="owner-operation-actions"><button class="button button-secondary" type="button" data-owner-integration-health-check ${healthChecking ? "disabled" : ""}>${healthButtonLabel}</button>${ownerIntegrationHealthActions(record)}</div><p data-owner-integration-health-feedback class="status-text" role="status">${escapeHtml(ownerIntegrationHealthFeedback(record))}</p></section>
     <section data-owner-integration-panel="recovery" hidden><h3>Recuperación</h3><p>Las acciones crean trabajos idempotentes o una nueva conexión. No solicitan credenciales ni sustituyen la integración antes de su revisión.</p><div class="owner-operation-actions">${record.health?.reconnection_required && record.control.channel === "instagram" ? '<button class="button button-primary" type="button" data-owner-integration-reconnect>Solicitar reconexión</button>' : ""}${record.health?.reconnection_required && record.control.channel === "whatsapp" ? `<a class="button button-primary" href="../autonogrow-admin/index.html?b=${encodeURIComponent(record.business.slug)}#channels" target="_blank" rel="noopener">Abrir reconexión en Admin</a>` : ""}${record.health?.subscription_status === "missing" && !subscriptionJobActive ? '<button class="button button-secondary" type="button" data-owner-integration-retry-subscription>Reintentar suscripción</button>' : ""}${record.candidates.length ? '<button class="button button-secondary" type="button" data-owner-integration-candidate>Volver a la candidatura</button>' : ""}</div>${subscriptionJobActive ? '<p class="owner-partial-notice">Ya existe un reintento de suscripción activo para este negocio. Actualiza antes de solicitar otro.</p>' : ""}<div data-owner-integration-feedback class="status-text" role="status"></div></section>
     <section data-owner-integration-panel="candidates" hidden><h3>Candidaturas</h3>${record.candidates.length ? record.candidates.map((candidate) => `<article class="owner-candidate-history"><span class="ag-badge ag-badge--warning">Pendiente</span><p><strong>${channel}</strong> · ${escapeHtml(record.publicAccount)}</p><p>Creada ${escapeHtml(ownerOperationalDate(candidate.created_at))}. La integración anterior se conserva hasta que la candidatura sea revisada.</p><button class="button button-secondary button-small" type="button" data-owner-integration-candidate>Revisar en Altas y aprobaciones</button></article>`).join("") : '<div class="empty-state"><strong>Sin candidaturas pendientes</strong><p>El backend actual no expone historial Owner de candidaturas resueltas; no se inventan estados anteriores.</p></div>'}</section>
     <section data-owner-integration-panel="activity" hidden><h3>Actividad disponible</h3>${jobs.length ? `<ol class="owner-audit-list">${jobs.slice(0, 10).map((entry) => `<li><strong>${escapeHtml(OWNER_META_JOB_LABELS[entry.job.job_type] || "Trabajo de integración")}</strong><span>${escapeHtml(OWNER_QUEUE_STATUS_LABELS[entry.job.status] || entry.job.status)} · ${escapeHtml(ownerOperationalDate(entry.job.created_at))}</span></li>`).join("")}</ol>` : '<div class="empty-state">No hay jobs recientes consultables para esta integración.</div>'}</section>`;
@@ -342,20 +383,40 @@ async function saveOwnerIntegrationCapabilities() {
 
 async function runOwnerIntegrationHealthCheck(button) {
   const record = currentOwnerIntegrationRecord();
-  if (!record || button.disabled) return;
+  if (!record) return;
+  const key = ownerIntegrationHealthCheckKey(record);
+  if (ownerOperationsState.healthChecks.get(key)?.phase === "checking") return;
+  ownerOperationsState.healthChecks.set(key, { phase: "checking", previousStatus: record.health?.health_status || "unknown", previousCheckedAt: record.health?.last_health_check_at || null });
   button.disabled = true;
-  const feedback = byId("owner-integration-detail").querySelector("[data-owner-integration-feedback]") || byId("owner-integrations-status");
-  feedback.textContent = "Solicitando comprobación…";
+  button.textContent = "⟳ Comprobando...";
+  renderOwnerIntegrationDetail();
   try {
     const result = await ownerHubRequest(`/api/owner/businesses/${encodeURIComponent(record.business.id)}/channels/${encodeURIComponent(record.control.channel)}/health-check`, { method: "POST" }, "No se pudo solicitar la comprobación.");
-    const message = result.created ? "Comprobación encolada. Actualiza después para ver el resultado." : "Ya existe una comprobación equivalente en curso.";
+    const jobId = result.job?.id;
+    let terminalJob = result.job || null;
+    for (let attempt = 0; attempt < 20 && !["completed", "failed", "dead_letter"].includes(terminalJob?.status); attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 750));
+      const jobs = await ownerHubRequest(`/api/owner/businesses/${encodeURIComponent(record.business.id)}/channels/jobs`, {}, "No se pudo consultar el resultado de la comprobación.");
+      terminalJob = (jobs.jobs || []).find((job) => String(job.id) === String(jobId)) || terminalJob;
+    }
+    if (terminalJob?.status !== "completed") throw new Error("No se pudo confirmar la comprobación.");
+    const current = ownerOperationsState.healthChecks.get(key) || {};
+    const healthPayload = await ownerHubRequest(`/api/owner/businesses/${encodeURIComponent(record.business.id)}/channels/health`, {}, "No se pudo leer el resultado de la comprobaciÃ³n.");
+    const refreshedHealth = (healthPayload.channels || []).find((health) => health.channel === record.control.channel);
+    if (!refreshedHealth?.last_health_check_at || refreshedHealth.last_health_check_at === current.previousCheckedAt) throw new Error("La comprobaciÃ³n no devolviÃ³ un resultado nuevo.");
+    const snapshot = (ownerDashboardState.channels.data || []).find((item) => String(item.business.id) === String(record.business.id));
+    if (!snapshot) throw new Error("No se pudo actualizar el negocio comprobado.");
+    snapshot.health = (healthPayload.channels || []).slice();
     await loadOwnerMetaJobs();
+    ownerOperationsState.healthChecks.set(key, { ...current, phase: "success" });
+    renderOwnerIntegrationsList();
     renderOwnerIntegrationDetail();
-    const currentFeedback = byId("owner-integration-detail").querySelector("[data-owner-integration-feedback]") || byId("owner-integrations-status");
-    currentFeedback.textContent = message;
+    renderOwnerDashboard();
   } catch (error) {
-    feedback.textContent = error.message || "No se pudo solicitar la comprobación.";
-  } finally { button.disabled = false; }
+    const current = ownerOperationsState.healthChecks.get(key) || {};
+    ownerOperationsState.healthChecks.set(key, { ...current, phase: "error" });
+    renderOwnerIntegrationDetail();
+  }
 }
 
 async function retryOwnerIntegrationSubscription() {

@@ -15,6 +15,11 @@ let queueStatus = null;
 let operationsStatus = null;
 let ownerInstagramSettings = null;
 let ownerInstagramContents = [];
+let ownerInstagramAttention = { count: 0, items: [] };
+let ownerInstagramSummary = { upcoming_scheduled_count: 0, future_gap_count: 0 };
+let ownerInstagramHistory = [];
+let ownerInstagramHistoryLoaded = false;
+let ownerInstagramWorkspaceView = "calendar";
 let ownerInstagramRawAssets = [];
 let ownerSocialIdeaReviews = [];
 let ownerInstagramLoadPromise = null;
@@ -1638,13 +1643,13 @@ function instagramMonthGrid(dateKey) {
 }
 
 function ownerInstagramContentDateKey(item) {
-  return item.planned_publish_at
-    ? instagramCivilDateKey(new Date(item.planned_publish_at), item.business_timezone)
+  return item.calendar_datetime
+    ? instagramCivilDateKey(new Date(item.calendar_datetime), item.business_timezone)
     : "";
 }
 
 function ownerInstagramNeedsAttention(item) {
-  return ownerInstagramPublicationUxState(item).tone === "attention";
+  return item.attention_required ?? ownerInstagramPublicationUxState(item).tone === "attention";
 }
 
 function ownerInstagramStatusIcon(item) {
@@ -1668,7 +1673,7 @@ function ownerInstagramFilteredContents() {
 }
 
 function ownerInstagramCalendarBlock(item) {
-  const local = ownerInstagramLocalInput(item.planned_publish_at, item.business_timezone);
+  const local = ownerInstagramLocalInput(item.calendar_datetime, item.business_timezone);
   const time = local ? local.slice(11, 16) : "Sin hora";
   const format = ownerInstagramFormatLabel(item.current_version?.format);
   const ux = ownerInstagramPublicationUxState(item);
@@ -1697,7 +1702,7 @@ function renderOwnerInstagramCalendar() {
     const key = ownerInstagramContentDateKey(item);
     if (byDate.has(key)) byDate.get(key).push(item);
   });
-  byDate.forEach((items) => items.sort((left, right) => String(left.planned_publish_at).localeCompare(String(right.planned_publish_at))));
+  byDate.forEach((items) => items.sort((left, right) => String(left.calendar_datetime).localeCompare(String(right.calendar_datetime))));
   const longDate = (key, options) => new Intl.DateTimeFormat("es-ES", { timeZone: "UTC", ...options }).format(new Date(`${key}T12:00:00Z`));
   const today = instagramCivilDateKey();
   if (ownerInstagramCalendarView === "today") {
@@ -1716,21 +1721,124 @@ function renderOwnerInstagramCalendar() {
     const activeMonth = cursor.slice(0, 7);
     calendar.innerHTML = `<div class="instagram-calendar-weekdays" aria-hidden="true">${["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map((day) => `<span>${day}</span>`).join("")}</div>${keys.map((key) => { const items = byDate.get(key); const shown = items.slice(0, 3); return `<section class="instagram-month-day${key.startsWith(activeMonth) ? "" : " instagram-month-day--outside"}${key === today ? " instagram-calendar-day--today" : ""}"><header><span>${escapeHtml(longDate(key, { day: "numeric" }))}</span><button class="instagram-calendar-day-create" type="button" data-owner-instagram-create-date="${key}" aria-label="Crear publicación para el ${escapeHtml(longDate(key, { day: "numeric", month: "long" }))}">+</button></header>${shown.map(ownerInstagramCalendarBlock).join("")}${items.length > shown.length ? `<button type="button" class="instagram-calendar-more" data-owner-instagram-day="${key}">+${items.length - shown.length} más</button>` : ""}</section>`; }).join("")}`;
   }
-  const attention = filtered.filter(ownerInstagramNeedsAttention).length;
-  const weekKeys = Array.from({ length: 7 }, (_item, index) => instagramAddDays(instagramWeekStart(today), index));
-  const scheduled = filtered.filter((item) => item.status === "scheduled" && weekKeys.includes(ownerInstagramContentDateKey(item))).length;
-  const filledDays = new Set(filtered.map(ownerInstagramContentDateKey).filter((key) => weekKeys.includes(key))).size;
+  const attention = Number(ownerInstagramAttention.count || 0);
+  const scheduled = Number(ownerInstagramSummary.upcoming_scheduled_count || 0);
+  const gaps = Number(ownerInstagramSummary.future_gap_count || 0);
   const attentionSummary = byId("owner-instagram-attention");
   attentionSummary.innerHTML = attention
-    ? `<strong>${attention} publicación${attention === 1 ? "" : "es"} necesita${attention === 1 ? "" : "n"} tu atención</strong><span>${scheduled} programada${scheduled === 1 ? "" : "s"} esta semana · ${7 - filledDays} hueco${7 - filledDays === 1 ? "" : "s"} sin contenido</span>`
-    : `<strong>Todo preparado para esta semana</strong><span>${scheduled} programada${scheduled === 1 ? "" : "s"} · ${7 - filledDays} hueco${7 - filledDays === 1 ? "" : "s"} sin contenido</span>`;
+    ? `<strong>${attention} publicación${attention === 1 ? "" : "es"} necesita${attention === 1 ? "" : "n"} tu atención</strong><span>${scheduled} próxima${scheduled === 1 ? "" : "s"} publicación${scheduled === 1 ? "" : "es"} esta semana · ${gaps} hueco${gaps === 1 ? "" : "s"} futuro${gaps === 1 ? "" : "s"} sin contenido</span>`
+    : `<strong>Todo preparado para esta semana</strong><span>${scheduled} próxima${scheduled === 1 ? "" : "s"} publicación${scheduled === 1 ? "" : "es"} · ${gaps} hueco${gaps === 1 ? "" : "s"} futuro${gaps === 1 ? "" : "s"} sin contenido</span>`;
   attentionSummary.classList.toggle("instagram-attention-summary--active", attention > 0);
-  const unscheduled = filtered.filter((item) => !item.planned_publish_at && item.status !== "cancelled");
+  attentionSummary.disabled = attention === 0;
+  if (attention < 2) closeOwnerInstagramAttentionPanel();
+  else if (!byId("owner-instagram-attention-panel").hidden) renderOwnerInstagramAttentionPanel();
+  attentionSummary.setAttribute("aria-expanded", String(!byId("owner-instagram-attention-panel").hidden));
+  const unscheduled = filtered.filter((item) => item.calendar_bucket === "unscheduled");
   byId("owner-instagram-unscheduled").innerHTML = unscheduled.length ? `<div><strong>Sin fecha</strong><span>${unscheduled.length} contenido${unscheduled.length === 1 ? "" : "s"} por colocar</span></div><div>${unscheduled.map(ownerInstagramCalendarBlock).join("")}</div>` : "";
   document.querySelectorAll("[data-owner-instagram-view]").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.ownerInstagramView === ownerInstagramCalendarView)));
 }
 
+function closeOwnerInstagramAttentionPanel({ restoreFocus = false } = {}) {
+  const panel = byId("owner-instagram-attention-panel");
+  if (!panel || panel.hidden) return;
+  panel.hidden = true;
+  byId("owner-instagram-attention").setAttribute("aria-expanded", "false");
+  if (restoreFocus) byId("owner-instagram-attention").focus();
+}
+
+function renderOwnerInstagramAttentionPanel() {
+  const panel = byId("owner-instagram-attention-panel");
+  const items = ownerInstagramAttention.items || [];
+  panel.innerHTML = `<div class="instagram-attention-panel__list" role="list">${items.map((item) => {
+    const relevantDate = item.attention_datetime ? formatOwnerDate(item.attention_datetime) : "Sin fecha operativa";
+    return `<button class="instagram-attention-item" type="button" role="listitem" data-owner-instagram-attention-open="${item.id}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(relevantDate)}</span><small>${escapeHtml(item.attention_reason || "Necesita atención")} · ${escapeHtml(ownerInstagramFormatLabel(item.current_version?.format))}</small></button>`;
+  }).join("")}</div>`;
+}
+
+function activateOwnerInstagramAttention() {
+  const items = ownerInstagramAttention.items || [];
+  if (items.length === 1) {
+    openOwnerInstagramContentDetail(items[0].id, { trigger: byId("owner-instagram-attention") });
+    return;
+  }
+  if (items.length < 2) return;
+  const panel = byId("owner-instagram-attention-panel");
+  const opening = panel.hidden;
+  if (opening) renderOwnerInstagramAttentionPanel();
+  panel.hidden = !opening;
+  byId("owner-instagram-attention").setAttribute("aria-expanded", String(opening));
+  if (opening) panel.querySelector("[data-owner-instagram-attention-open]")?.focus();
+}
+
+function ownerInstagramHistoryVisual(item) {
+  const asset = item.current_version?.assets?.[0];
+  if (!asset?.file_url) return '<span aria-hidden="true">Sin miniatura</span>';
+  const source = `${API_BASE_URL}${asset.file_url}`;
+  return asset.media_type?.startsWith("video/")
+    ? `<video src="${escapeHtml(source)}" muted playsinline preload="metadata" aria-label="Vista previa de ${escapeHtml(item.title)}"></video>`
+    : `<img src="${escapeHtml(source)}" alt="Vista previa de ${escapeHtml(item.title)}" loading="lazy">`;
+}
+
+function ownerInstagramHistoryPermalink(item) {
+  const job = item.publish_jobs?.[0];
+  if (item.instagram_remote?.remote_status === "unavailable") return null;
+  return job?.provider_permalink || item.instagram_remote?.permalink || null;
+}
+
+function renderOwnerInstagramHistory() {
+  const list = byId("owner-instagram-history-list");
+  byId("owner-instagram-history-status").textContent = `${ownerInstagramHistory.length} publicación${ownerInstagramHistory.length === 1 ? "" : "es"} publicada${ownerInstagramHistory.length === 1 ? "" : "s"}`;
+  list.innerHTML = ownerInstagramHistory.length ? ownerInstagramHistory.map((item) => {
+    const local = ownerInstagramLocalInput(item.calendar_datetime, item.business_timezone);
+    const date = local ? formatOwnerDate(item.calendar_datetime) : "Fecha no disponible";
+    const permalink = ownerInstagramHistoryPermalink(item);
+    return `<article class="instagram-history-card"><div class="instagram-history-card__visual">${ownerInstagramHistoryVisual(item)}</div><div class="instagram-history-card__body"><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(date)} · ${escapeHtml(ownerInstagramFormatLabel(item.current_version?.format))}</p><small>Publicado${item.archived_at ? " · Archivado internamente" : ""}</small></div><div class="instagram-history-card__actions"><button class="button button-secondary button-small" type="button" data-owner-instagram-history-open="${item.id}">Ver detalle</button>${permalink ? `<a class="button button-primary button-small" href="${escapeHtml(permalink)}" target="_blank" rel="noopener noreferrer">Ver publicación</a>` : ""}</div></article>`;
+  }).join("") : '<div class="instagram-calendar-empty"><strong>Todavía no hay publicaciones realizadas.</strong><p>Las publicaciones completadas aparecerán aquí con su fecha real.</p></div>';
+}
+
+async function loadOwnerInstagramHistory({ force = false } = {}) {
+  if (ownerInstagramHistoryLoaded && !force) { renderOwnerInstagramHistory(); return; }
+  const api = ownerInstagramApi();
+  if (!api) return;
+  byId("owner-instagram-history-status").textContent = "Cargando historial…";
+  try {
+    const payload = await ownerInstagramJson(`${api}/publication-history?limit=200`);
+    ownerInstagramHistory = payload.items || [];
+    ownerInstagramHistoryLoaded = true;
+    renderOwnerInstagramHistory();
+  } catch (error) {
+    byId("owner-instagram-history-status").textContent = error.message;
+  }
+}
+
+function renderOwnerInstagramHistoryDetail(item) {
+  const detail = byId("owner-instagram-history-detail");
+  const permalink = ownerInstagramHistoryPermalink(item);
+  const date = item.calendar_datetime ? formatOwnerDate(item.calendar_datetime) : "Fecha no disponible";
+  detail.innerHTML = `<header><div><p class="eyebrow">Detalle histórico · Solo lectura</p><h4>${escapeHtml(item.title)}</h4></div><button class="button button-ghost button-small" type="button" data-owner-instagram-history-close>Cerrar</button></header><div class="owner-integration-detail-grid"><p><strong>Publicada</strong>${escapeHtml(date)}</p><p><strong>Formato</strong>${escapeHtml(ownerInstagramFormatLabel(item.current_version?.format))}</p><p><strong>Estado</strong>Publicado${item.archived_at ? " · Archivado" : ""}</p><p><strong>Fuente de fecha</strong>${escapeHtml(item.calendar_datetime_source || "No disponible")}</p></div><p>${escapeHtml(item.current_version?.caption || "Sin texto")}</p>${permalink ? `<a class="button button-primary button-small" href="${escapeHtml(permalink)}" target="_blank" rel="noopener noreferrer">Ver publicación en Instagram</a>` : '<p class="helper">El enlace de Instagram no está disponible.</p>'}`;
+  detail.dataset.contentId = item.id;
+  detail.hidden = false;
+  detail.focus();
+}
+
+async function openOwnerInstagramHistoryDetail(contentId) {
+  setOwnerInstagramWorkspaceView("history");
+  await loadOwnerInstagramHistory();
+  const item = ownerInstagramHistory.find((entry) => Number(entry.id) === Number(contentId));
+  if (item) renderOwnerInstagramHistoryDetail(item);
+}
+
+function setOwnerInstagramWorkspaceView(view) {
+  ownerInstagramWorkspaceView = view === "history" ? "history" : "calendar";
+  byId("owner-instagram-calendar-panel").hidden = ownerInstagramWorkspaceView !== "calendar";
+  byId("owner-instagram-history-panel").hidden = ownerInstagramWorkspaceView !== "history";
+  document.querySelectorAll("[data-owner-instagram-workspace-view]").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.ownerInstagramWorkspaceView === ownerInstagramWorkspaceView)));
+  if (ownerInstagramWorkspaceView === "history") loadOwnerInstagramHistory();
+}
+
 async function openOwnerInstagramContentDetail(contentId, options = {}) {
+  const item = ownerInstagramContents.find((entry) => Number(entry.id) === Number(contentId));
+  if (item?.archived_at) return openOwnerInstagramHistoryDetail(contentId);
   return openOwnerInstagramComposer({ contentId, trigger: options.trigger || document.activeElement });
 }
 
@@ -3313,6 +3421,9 @@ async function loadOwnerInstagramWorkspace(api) {
   ]);
   ownerInstagramRawAssets = raw.assets;
   ownerInstagramContents = contentList.contents;
+  ownerInstagramAttention = contentList.attention || { count: 0, items: [] };
+  ownerInstagramSummary = contentList.summary || { upcoming_scheduled_count: 0, future_gap_count: 0 };
+  ownerInstagramHistoryLoaded = false;
   ownerSocialIdeaReviews = ideaReviewList.ideas || [];
   const openContent = ownerInstagramContents.find((item) => item.id === ownerInstagramComposerState?.contentId);
   if (openContent) syncOwnerInstagramComposerLifecycle(openContent);
@@ -3337,10 +3448,13 @@ async function loadOwnerInstagramCalendarPeriod() {
   try {
     const payload = await ownerInstagramJson(`${api}/contents?${range.toString()}`);
     ownerInstagramContents = payload.contents;
+    ownerInstagramAttention = payload.attention || { count: 0, items: [] };
+    ownerInstagramSummary = payload.summary || { upcoming_scheduled_count: 0, future_gap_count: 0 };
     const openContent = ownerInstagramContents.find((item) => item.id === ownerInstagramComposerState?.contentId);
     if (openContent) syncOwnerInstagramComposerLifecycle(openContent);
     renderOwnerInstagramRaw(ownerInstagramRawAssets);
     renderOwnerInstagramContents();
+    if (ownerInstagramHistoryLoaded) await loadOwnerInstagramHistory({ force: true });
   } catch (error) {
     showOwnerInstagramError(error);
   } finally {
@@ -3717,6 +3831,28 @@ document.querySelectorAll("[data-owner-instagram-view]").forEach((button) => but
   ownerInstagramCalendarView = button.dataset.ownerInstagramView;
   loadOwnerInstagramCalendarPeriod();
 }));
+document.querySelectorAll("[data-owner-instagram-workspace-view]").forEach((button) => button.addEventListener("click", () => setOwnerInstagramWorkspaceView(button.dataset.ownerInstagramWorkspaceView)));
+byId("owner-instagram-attention").addEventListener("click", activateOwnerInstagramAttention);
+byId("owner-instagram-attention-panel").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-owner-instagram-attention-open]");
+  if (!button) return;
+  closeOwnerInstagramAttentionPanel();
+  openOwnerInstagramContentDetail(Number(button.dataset.ownerInstagramAttentionOpen), { trigger: button });
+});
+byId("owner-instagram-history-panel").addEventListener("click", (event) => {
+  const open = event.target.closest("[data-owner-instagram-history-open]");
+  if (open) {
+    const item = ownerInstagramHistory.find((entry) => Number(entry.id) === Number(open.dataset.ownerInstagramHistoryOpen));
+    if (item) renderOwnerInstagramHistoryDetail(item);
+    return;
+  }
+  if (event.target.closest("[data-owner-instagram-history-close]")) {
+    const detail = byId("owner-instagram-history-detail");
+    const returnButton = byId("owner-instagram-history-list").querySelector(`[data-owner-instagram-history-open="${detail.dataset.contentId}"]`);
+    detail.hidden = true;
+    returnButton?.focus();
+  }
+});
 document.querySelectorAll("[data-owner-instagram-nav]").forEach((button) => button.addEventListener("click", () => shiftOwnerInstagramCalendar(Number(button.dataset.ownerInstagramNav))));
 byId("owner-instagram-today").addEventListener("click", () => { ownerInstagramCalendarDate = instagramCivilDateKey(); loadOwnerInstagramCalendarPeriod(); });
 byId("owner-instagram-state-filter").addEventListener("change", (event) => { ownerInstagramStateFilter = event.target.value; renderOwnerInstagramContents(); });
@@ -3859,6 +3995,17 @@ byId("owner-instagram-associations-list").addEventListener("click", (event) => {
   if (open) openOwnerInstagramAssociatedContent(Number(open.dataset.ownerInstagramAssociationOpen));
 });
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !byId("owner-instagram-attention-panel").hidden) {
+    closeOwnerInstagramAttentionPanel({ restoreFocus: true });
+    return;
+  }
+  if (event.key === "Escape" && !byId("owner-instagram-history-detail").hidden) {
+    const detail = byId("owner-instagram-history-detail");
+    const returnButton = byId("owner-instagram-history-list").querySelector(`[data-owner-instagram-history-open="${detail.dataset.contentId}"]`);
+    detail.hidden = true;
+    returnButton?.focus();
+    return;
+  }
   const libraryDialog = byId("owner-instagram-library-dialog");
   if (!libraryDialog.hidden) {
     if (event.key === "Escape" && !ownerInstagramLibraryState?.loading) closeOwnerInstagramLibrary();

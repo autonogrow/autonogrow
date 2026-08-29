@@ -9,7 +9,7 @@ from uuid import uuid4
 import requests
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.audit import record_audit
@@ -53,6 +53,13 @@ from app.schemas.instagram_content import (
     InstagramValidationDelegationUpdate,
 )
 from app.services.capability_service import require_module_available
+from app.services.instagram_calendar_service import (
+    calendar_datetime,
+    calendar_semantics,
+    latest_publish_job,
+    load_calendar_contexts,
+    operational_week_summary,
+)
 from app.services.instagram_content_service import (
     active_publication_hold,
     add_admin_comment,
@@ -514,18 +521,53 @@ def _list_content(
         for condition in range_filters[1:]:
             planned_in_range = planned_in_range & condition
         query = query.filter(
-            or_(InstagramContent.planned_publish_at.is_(None), planned_in_range)
-            if include_unscheduled
-            else planned_in_range
+            or_(
+                InstagramContent.status == "published",
+                and_(
+                    InstagramContent.status != "published",
+                    or_(InstagramContent.planned_publish_at.is_(None), planned_in_range),
+                ),
+            )
         )
-    items = (
-        query.order_by(
-            InstagramContent.planned_publish_at.asc(), InstagramContent.updated_at.desc()
+    candidates = query.all()
+    contexts = load_calendar_contexts(db, candidates)
+    for item in candidates:
+        setattr(item, "_calendar_context", contexts.get(item.id))
+
+    def in_requested_range(item: InstagramContent) -> bool:
+        if not range_filters:
+            return True
+        value, _source = calendar_datetime(item, contexts.get(item.id))
+        if value is None:
+            bucket = calendar_semantics(item, contexts.get(item.id))["calendar_bucket"]
+            job = latest_publish_job(item)
+            return (include_unscheduled and bucket == "unscheduled") or (
+                job is not None and job.status in ACTIVE_JOB_STATUSES
+            )
+        normalized_from = (
+            from_datetime.replace(tzinfo=timezone.utc)
+            if from_datetime is not None and from_datetime.tzinfo is None
+            else from_datetime
         )
-        .offset(offset)
-        .limit(limit)
-        .all()
+        normalized_to = (
+            to_datetime.replace(tzinfo=timezone.utc)
+            if to_datetime is not None and to_datetime.tzinfo is None
+            else to_datetime
+        )
+        return (normalized_from is None or value >= normalized_from) and (
+            normalized_to is None or value < normalized_to
+        )
+
+    items = [item for item in candidates if in_requested_range(item)]
+    items.sort(
+        key=lambda item: (
+            calendar_datetime(item, contexts.get(item.id))[0] is None,
+            calendar_datetime(item, contexts.get(item.id))[0]
+            or datetime.max.replace(tzinfo=timezone.utc),
+            -item.id,
+        )
     )
+    items = items[offset : offset + limit]
     contents = []
     for item in items:
         setattr(
@@ -541,6 +583,7 @@ def _list_content(
             owner_technical=owner_technical,
         )
         delattr(item, "_prefetched_current_version")
+        delattr(item, "_calendar_context")
         if not detailed:
             latest_job = max(item.publish_jobs, key=lambda job: job.created_at, default=None)
             payload["publish_jobs"] = (
@@ -549,7 +592,79 @@ def _list_content(
                 else []
             )
         contents.append(payload)
-    return {"contents": contents}
+
+    for candidate in candidates:
+        if hasattr(candidate, "_calendar_context"):
+            delattr(candidate, "_calendar_context")
+
+    attention_query = (
+        db.query(InstagramContent)
+        .options(
+            selectinload(InstagramContent.business),
+            selectinload(InstagramContent.publish_jobs),
+            selectinload(InstagramContent.versions).selectinload(
+                InstagramContentVersion.validation
+            ),
+            selectinload(InstagramContent.versions)
+            .selectinload(InstagramContentVersion.asset_links)
+            .selectinload(InstagramContentVersionAsset.asset),
+        )
+        .filter(
+            InstagramContent.business_id == business_id,
+            InstagramContent.archived_at.is_(None),
+        )
+    )
+    all_operational = attention_query.all()
+    all_contexts = load_calendar_contexts(db, all_operational)
+    attention_rows: list[tuple[InstagramContent, dict]] = []
+    for item in all_operational:
+        semantics = calendar_semantics(item, all_contexts.get(item.id))
+        if semantics["attention_required"]:
+            attention_rows.append((item, semantics))
+    attention_rows.sort(
+        key=lambda row: (
+            row[1]["attention_datetime"] is None,
+            row[1]["attention_datetime"] or "",
+            row[0].created_at,
+        )
+    )
+    attention_items = []
+    for item, _semantics in attention_rows:
+        setattr(
+            item,
+            "_prefetched_current_version",
+            max(item.versions, key=lambda version: version.version_number, default=None),
+        )
+        setattr(item, "_calendar_context", all_contexts.get(item.id))
+        payload = serialize_content(
+            db,
+            item,
+            api_prefix,
+            detailed=False,
+            owner_technical=owner_technical,
+        )
+        latest_job = max(item.publish_jobs, key=lambda job: job.created_at, default=None)
+        payload["publish_jobs"] = (
+            [serialize_publish_job(latest_job, owner_technical=owner_technical)]
+            if latest_job
+            else []
+        )
+        attention_items.append(payload)
+        delattr(item, "_prefetched_current_version")
+        delattr(item, "_calendar_context")
+
+    timezone_name = (
+        all_operational[0].business.timezone.strip()
+        if all_operational and all_operational[0].business.timezone.strip()
+        else get_settings().instagram_default_timezone
+    )
+    return {
+        "contents": contents,
+        "attention": {"count": len(attention_items), "items": attention_items},
+        "summary": operational_week_summary(
+            all_operational, now=utc_now(), timezone_name=timezone_name
+        ),
+    }
 
 
 def _validate_content_range(from_datetime: datetime | None, to_datetime: datetime | None) -> None:
@@ -1322,6 +1437,66 @@ def admin_list_contents(
         limit=limit,
         offset=offset,
     )
+
+
+@owner_router.get("/publication-history")
+def owner_publication_history(
+    business_id: int,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    db: Session = Depends(get_db),
+):
+    _owner_business(db, business_id)
+    require_service_enabled(db, business_id)
+    published = (
+        db.query(InstagramContent)
+        .options(
+            selectinload(InstagramContent.source_asset_links).selectinload(
+                InstagramContentRawAsset.raw_asset
+            ),
+            selectinload(InstagramContent.business),
+            selectinload(InstagramContent.publish_jobs),
+            selectinload(InstagramContent.versions).selectinload(
+                InstagramContentVersion.validation
+            ),
+            selectinload(InstagramContent.versions)
+            .selectinload(InstagramContentVersion.asset_links)
+            .selectinload(InstagramContentVersionAsset.asset),
+        )
+        .filter(
+            InstagramContent.business_id == business_id,
+            InstagramContent.status == "published",
+        )
+        .all()
+    )
+    contexts = load_calendar_contexts(db, published)
+
+    def history_sort_key(item: InstagramContent) -> tuple[bool, float]:
+        value, _source = calendar_datetime(item, contexts.get(item.id))
+        return value is None, -(value.timestamp() if value else 0)
+
+    published.sort(key=history_sort_key)
+    page = published[offset : offset + limit]
+    items = []
+    for item in page:
+        setattr(
+            item,
+            "_prefetched_current_version",
+            max(item.versions, key=lambda version: version.version_number, default=None),
+        )
+        setattr(item, "_calendar_context", contexts.get(item.id))
+        payload = serialize_content(
+            db, item, _owner_prefix(business_id), detailed=False, owner_technical=True
+        )
+        latest_job = max(item.publish_jobs, key=lambda job: job.created_at, default=None)
+        payload["publish_jobs"] = (
+            [serialize_publish_job(latest_job, owner_technical=True)] if latest_job else []
+        )
+        payload["history_read_only"] = True
+        items.append(payload)
+        delattr(item, "_prefetched_current_version")
+        delattr(item, "_calendar_context")
+    return {"items": items, "total": len(published), "limit": limit, "offset": offset}
 
 
 @owner_router.post("/contents", status_code=201)

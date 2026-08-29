@@ -181,9 +181,54 @@ def test_health_check_is_single_action_and_backend_idempotent() -> None:
     _, _, _, _, operations = sources()
     health = function(operations, "runOwnerIntegrationHealthCheck", "retryOwnerIntegrationSubscription")
     assert "button.disabled" in health
+    assert 'button.textContent = "⟳ Comprobando..."' in health
     assert "/health-check" in health
-    assert "result.created" in health
+    assert "healthChecks.get(key)?.phase" in health
+    assert "/channels/jobs" in health
+    assert "/channels/health" in health
+    assert 'terminalJob?.status !== "completed"' in health
+    assert "previousCheckedAt" in health
+    assert "snapshot.health" in health
     assert "loadOwnerMetaJobs" in health
+
+
+def test_health_check_explains_completion_recovery_and_request_failure() -> None:
+    _, _, _, _, operations = sources()
+    for copy in (
+        "Comprobación completada. El problema continúa.",
+        "Conexión funcionando correctamente.",
+        "No hemos podido comprobar la conexión.",
+        "Se conserva el último estado conocido.",
+        "Reintentar",
+    ):
+        assert copy in operations
+    assert "last_health_check_at" in operations
+    assert "previousStatus" in operations
+
+
+def test_health_diagnostics_are_safe_and_only_offer_real_recovery_actions() -> None:
+    _, _, _, _, operations = sources()
+    diagnosis = function(
+        operations,
+        "ownerIntegrationHealthDiagnosis",
+        "ownerIntegrationHealthActions",
+    )
+    actions = function(
+        operations,
+        "ownerIntegrationHealthActions",
+        "ownerIntegrationHealthFeedback",
+    )
+    for marker in ("token_expired", "permission", "subscription_status", "account_suspended"):
+        assert marker in diagnosis
+    assert "safe_error_message" in diagnosis
+    for marker in (
+        "data-owner-integration-reconnect",
+        "data-owner-integration-retry-subscription",
+        "AutonoGrow volverá a comprobarlo automáticamente",
+    ):
+        assert marker in actions
+    for secret in ("access_token", "refresh_token", "signed_url", "stack_trace"):
+        assert secret not in diagnosis
 
 
 def test_reconnection_validates_destination_and_preserves_previous_integration_copy() -> None:
@@ -368,7 +413,8 @@ def test_manual_refresh_single_flight_and_no_new_polling() -> None:
     assert "integrationsInFlight" in operations
     assert "operationsInFlight" in operations
     assert "setInterval(" not in operations
-    assert "setTimeout(" not in operations
+    health = function(operations, "runOwnerIntegrationHealthCheck", "retryOwnerIntegrationSubscription")
+    assert "window.setTimeout(resolve, 750)" in health
 
 
 def test_context_navigation_connects_all_safe_destinations() -> None:

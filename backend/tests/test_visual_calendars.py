@@ -31,6 +31,46 @@ def test_owner_editorial_calendar_has_periods_filters_attention_and_composer() -
     assert "Todo preparado para esta semana" in OWNER_JS
 
 
+def test_owner_calendar_uses_backend_semantics_and_has_read_only_publication_history() -> None:
+    for marker in (
+        'data-owner-instagram-workspace-view="calendar"',
+        'data-owner-instagram-workspace-view="history"',
+        'id="owner-instagram-history-panel"',
+        'id="owner-instagram-history-detail"',
+        'id="owner-instagram-attention-panel"',
+    ):
+        assert marker in OWNER_HTML
+    for marker in (
+        "item.calendar_datetime",
+        'item.calendar_bucket === "unscheduled"',
+        "ownerInstagramAttention.count",
+        "ownerInstagramSummary.upcoming_scheduled_count",
+        "ownerInstagramSummary.future_gap_count",
+        "function loadOwnerInstagramHistory",
+        "Fecha no disponible",
+    ):
+        assert marker in OWNER_JS
+    assert "filtered.filter(ownerInstagramNeedsAttention).length" not in OWNER_JS
+    assert "7 - filledDays" not in OWNER_JS
+
+
+def test_owner_attention_banner_is_fully_actionable_and_keyboard_accessible() -> None:
+    assert '<button id="owner-instagram-attention"' in OWNER_HTML
+    assert 'aria-controls="owner-instagram-attention-panel"' in OWNER_HTML
+    for marker in (
+        "function activateOwnerInstagramAttention",
+        "items.length === 1",
+        "items.length < 2",
+        "attention_datetime",
+        "data-owner-instagram-attention-open",
+        'event.key === "Escape"',
+        "restoreFocus: true",
+    ):
+        assert marker in OWNER_JS
+    assert ".instagram-attention-summary--active:hover" in OWNER_CSS
+    assert ".instagram-attention-summary--active:focus-visible" in OWNER_CSS
+
+
 def test_business_admin_calendar_keeps_editorial_permissions_narrow() -> None:
     for view in ("today", "week", "month"):
         assert f'data-admin-instagram-view="{view}"' in ADMIN_HTML

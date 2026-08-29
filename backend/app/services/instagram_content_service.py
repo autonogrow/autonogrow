@@ -24,6 +24,11 @@ from app.models import (
     User,
 )
 from app.services.capability_service import require_module_available
+from app.services.instagram_calendar_service import (
+    CalendarContext,
+    calendar_semantics,
+    load_calendar_contexts,
+)
 
 _UNSET = object()
 
@@ -1417,6 +1422,16 @@ def serialize_content(
         None,
     )
     publication_hold = active_publication_hold(db, content)
+    calendar_context = getattr(content, "_calendar_context", None)
+    if calendar_context is None:
+        calendar_context = load_calendar_contexts(db, [content]).get(
+            content.id,
+            CalendarContext(
+                provider_timestamp=(
+                    published_remote.provider_timestamp if published_remote else None
+                )
+            ),
+        )
     payload = {
         "id": content.id,
         "business_id": content.business_id,
@@ -1432,6 +1447,7 @@ def serialize_content(
         "current_version": serialize_version(version, api_prefix),
         "created_at": content.created_at.isoformat(),
         "updated_at": content.updated_at.isoformat(),
+        "archived_at": content.archived_at.isoformat() if content.archived_at else None,
         "publication_hold": (
             {
                 "id": publication_hold.id,
@@ -1446,6 +1462,16 @@ def serialize_content(
             {
                 "id": published_remote.id,
                 "remote_status": published_remote.remote_status,
+                "provider_timestamp": (
+                    published_remote.provider_timestamp.isoformat()
+                    if published_remote.provider_timestamp
+                    else None
+                ),
+                "permalink": (
+                    published_remote.permalink
+                    if published_remote.remote_status == "available"
+                    else None
+                ),
                 "last_checked_at": published_remote.last_checked_at.isoformat()
                 if published_remote.last_checked_at
                 else None,
@@ -1467,6 +1493,7 @@ def serialize_content(
             else None
         ),
     }
+    payload.update(calendar_semantics(content, calendar_context))
     if detailed:
         payload["versions"] = [serialize_version(item, api_prefix) for item in content.versions]
         payload["comments"] = [serialize_comment(item) for item in content.comments]
