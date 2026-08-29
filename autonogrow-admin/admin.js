@@ -81,6 +81,19 @@ const customerMemorySummaries = new Map();
 const customerMemoryLoadingIds = new Set();
 let customerMemoryFormState = null;
 const customerMemoryMutationIds = new Set();
+const BOOKING_CUSTOMER_MEMORY_HIDE_MS = 60_000;
+const bookingCustomerMemoryDrafts = new Map();
+let bookingCustomerMemoryTimer = null;
+let bookingCustomerMemoryPanelState = {
+  bookingId: null,
+  customerId: null,
+  open: false,
+  formOpen: false,
+  draft: "",
+  saving: false,
+  feedback: "",
+  feedbackError: false
+};
 let conversationLoadVersion = 0;
 let conversationDetailVersion = 0;
 let conversationAutomationLoadVersion = 0;
@@ -682,6 +695,16 @@ function setupBookingViews() {
     renderBookings();
   });
   document.getElementById("agenda-reset-filters")?.addEventListener("click", () => resetAgendaFilters());
+  const bookingsList = document.getElementById("bookings-list");
+  for (const activity of ["click", "keydown", "input", "focusin"]) {
+    bookingsList?.addEventListener(activity, handleBookingCustomerMemoryActivity);
+  }
+  bookingsList?.addEventListener("scroll", handleBookingCustomerMemoryActivity, true);
+  bookingsList?.addEventListener("submit", (event) => {
+    if (!event.target?.matches?.("[data-booking-customer-memory-form]")) return;
+    event.preventDefault();
+    void submitBookingCustomerMemoryForm(event.target);
+  });
   if (window.matchMedia("(max-width: 639px)").matches) {
     document.getElementById("agenda-filter-panel")?.removeAttribute("open");
   }
@@ -4615,6 +4638,231 @@ function customerMemoryKeyForCategory(category) {
   return ({ availability_preference: "preferred_time", service_interest: "service", preference: "preference", operational_note: "note" })[category] || "note";
 }
 
+function stopBookingCustomerMemoryTimer() {
+  if (bookingCustomerMemoryTimer !== null) window.clearTimeout(bookingCustomerMemoryTimer);
+  bookingCustomerMemoryTimer = null;
+}
+
+function refreshBookingCustomerMemoryPanel({ restoreToggleFocus = false } = {}) {
+  const bookingId = Number(bookingCustomerMemoryPanelState.bookingId);
+  if (!Number.isInteger(bookingId) || bookingId <= 0) return;
+  const booking = allBookings.find((item) => Number(item.id) === bookingId);
+  const current = document.querySelector(`[data-booking-customer-memory-panel="${bookingId}"]`);
+  if (!booking || !current) return;
+  current.outerHTML = renderBookingCustomerMemorySection(booking);
+  if (restoreToggleFocus) {
+    document.querySelector(`[data-booking-customer-memory-toggle="${bookingId}"]`)?.focus({ preventScroll: true });
+  }
+}
+
+function resetBookingCustomerMemoryTimer() {
+  stopBookingCustomerMemoryTimer();
+  if (!bookingCustomerMemoryPanelState.open) return;
+  bookingCustomerMemoryTimer = window.setTimeout(() => {
+    bookingCustomerMemoryTimer = null;
+    if (!bookingCustomerMemoryPanelState.open) return;
+    const panel = document.querySelector(`[data-booking-customer-memory-panel="${Number(bookingCustomerMemoryPanelState.bookingId)}"]`);
+    const textarea = panel?.querySelector("[data-booking-customer-memory-draft]");
+    if (bookingCustomerMemoryPanelState.saving || (textarea && document.activeElement === textarea)) {
+      resetBookingCustomerMemoryTimer();
+      return;
+    }
+    const restoreToggleFocus = Boolean(panel?.contains(document.activeElement));
+    bookingCustomerMemoryPanelState.open = false;
+    refreshBookingCustomerMemoryPanel({ restoreToggleFocus });
+  }, BOOKING_CUSTOMER_MEMORY_HIDE_MS);
+}
+
+function syncBookingCustomerMemorySelection(booking) {
+  const bookingId = Number(booking?.id);
+  const customerId = Number(booking?.customer_id);
+  const normalizedBookingId = Number.isInteger(bookingId) && bookingId > 0 ? bookingId : null;
+  const normalizedCustomerId = Number.isInteger(customerId) && customerId > 0 ? customerId : null;
+  if (
+    bookingCustomerMemoryPanelState.bookingId === normalizedBookingId
+    && bookingCustomerMemoryPanelState.customerId === normalizedCustomerId
+  ) return;
+  stopBookingCustomerMemoryTimer();
+  bookingCustomerMemoryPanelState = {
+    bookingId: normalizedBookingId,
+    customerId: normalizedCustomerId,
+    open: false,
+    formOpen: false,
+    draft: normalizedBookingId ? (bookingCustomerMemoryDrafts.get(normalizedBookingId) || "") : "",
+    saving: false,
+    feedback: "",
+    feedbackError: false
+  };
+}
+
+function bookingCustomerMemoryItemMarkup(item) {
+  const authorName = String(item.created_by_name || "").trim();
+  const author = authorName
+    ? `Autor: ${authorName}`
+    : Number.isInteger(Number(item.created_by_user_id)) && Number(item.created_by_user_id) > 0
+      ? `Autor: usuario #${Number(item.created_by_user_id)}`
+      : "";
+  const created = item.created_at ? formatConversationDate(item.created_at) : "";
+  const metadata = [author, created].filter(Boolean).join(" · ");
+  return `<article class="booking-customer-memory-item${item.is_sensitive ? " booking-customer-memory-item--sensitive" : ""}">
+    <span>${escapeHtml(customerMemoryCategoryLabel(item.category))}${item.is_sensitive ? " · Sensible" : ""}</span>
+    <p>${escapeHtml(item.value)}</p>
+    ${metadata ? `<small>${escapeHtml(metadata)}</small>` : ""}
+  </article>`;
+}
+
+function renderBookingCustomerMemorySection(booking) {
+  const bookingId = Number(booking.id);
+  const customerId = Number(booking.customer_id);
+  const hasCustomer = Number.isInteger(customerId) && customerId > 0;
+  const selected = bookingCustomerMemoryPanelState.bookingId === bookingId
+    && bookingCustomerMemoryPanelState.customerId === (hasCustomer ? customerId : null);
+  const open = Boolean(selected && bookingCustomerMemoryPanelState.open);
+  if (!hasCustomer) {
+    return `<section class="booking-customer-memory" data-booking-customer-memory-panel="${bookingId}">
+      <strong>Notas del cliente</strong>
+      <p class="booking-customer-memory-help">Esta cita no tiene un cliente asociado.</p>
+    </section>`;
+  }
+  const state = customerMemorySummaries.get(customerId);
+  const memories = state?.status === "ready" ? (state.data.explicit || []) : [];
+  const form = selected && bookingCustomerMemoryPanelState.formOpen ? `
+    <form class="booking-customer-memory-form" data-booking-customer-memory-form data-booking-id="${bookingId}" data-customer-id="${customerId}">
+      <label for="booking-customer-memory-value-${bookingId}">Nueva nota</label>
+      <textarea id="booking-customer-memory-value-${bookingId}" class="ag-input" data-booking-customer-memory-draft maxlength="2000" rows="3" required>${escapeHtml(bookingCustomerMemoryPanelState.draft)}</textarea>
+      <div class="booking-customer-memory-form__actions">
+        <button class="ag-button ag-button--primary ag-button--small" type="submit" ${bookingCustomerMemoryPanelState.saving ? "disabled aria-busy=\"true\"" : ""}>${bookingCustomerMemoryPanelState.saving ? "Guardando…" : "Guardar nota"}</button>
+        <button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="close-booking-customer-memory-form" data-id="${bookingId}">Cerrar formulario</button>
+      </div>
+    </form>` : "";
+  let content = "";
+  if (!state || state.status === "loading") {
+    content = `<p class="booking-customer-memory-help" role="status">Cargando notas del cliente…</p>`;
+  } else if (state.status === "error") {
+    content = `<p class="booking-customer-memory-help" role="alert">No se pudieron cargar las notas.</p><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="retry-booking-customer-memory" data-id="${bookingId}" data-customer-id="${customerId}">Reintentar</button>`;
+  } else {
+    content = memories.length
+      ? `<div class="booking-customer-memory-list">${memories.map(bookingCustomerMemoryItemMarkup).join("")}</div>`
+      : `<p class="booking-customer-memory-help">No hay notas guardadas sobre este cliente.</p>`;
+    if (!(selected && bookingCustomerMemoryPanelState.formOpen)) {
+      content += `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="add-booking-customer-memory" data-id="${bookingId}" data-customer-id="${customerId}">+ Añadir nota</button>`;
+    }
+  }
+  const feedback = selected && bookingCustomerMemoryPanelState.feedback
+    ? `<p class="inline-feedback ${bookingCustomerMemoryPanelState.feedbackError ? "error" : "success"}" role="status">${escapeHtml(bookingCustomerMemoryPanelState.feedback)}</p>`
+    : "";
+  return `<section class="booking-customer-memory" data-booking-customer-memory-panel="${bookingId}">
+    <div class="booking-customer-memory-heading">
+      <strong>Notas del cliente</strong>
+      <button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="toggle-booking-customer-memory" data-id="${bookingId}" data-customer-id="${customerId}" data-booking-customer-memory-toggle="${bookingId}" aria-expanded="${open}">${open ? "Ocultar notas del cliente" : "Ver notas del cliente"}</button>
+    </div>
+    ${open ? `<div class="booking-customer-memory-content" aria-label="Notas persistentes del cliente">${content}${form}${feedback}</div>` : ""}
+  </section>`;
+}
+
+function toggleBookingCustomerMemory(bookingId, customerId) {
+  const booking = allBookings.find((item) => Number(item.id) === bookingId && Number(item.customer_id) === customerId);
+  if (!booking) return;
+  syncBookingCustomerMemorySelection(booking);
+  bookingCustomerMemoryPanelState.open = !bookingCustomerMemoryPanelState.open;
+  bookingCustomerMemoryPanelState.feedback = "";
+  bookingCustomerMemoryPanelState.feedbackError = false;
+  refreshBookingCustomerMemoryPanel();
+  if (!bookingCustomerMemoryPanelState.open) {
+    stopBookingCustomerMemoryTimer();
+    return;
+  }
+  resetBookingCustomerMemoryTimer();
+  if (!customerMemorySummaries.has(customerId)) void loadCustomerMemorySummary(customerId);
+}
+
+function openBookingCustomerMemoryForm(bookingId, customerId) {
+  if (
+    bookingCustomerMemoryPanelState.bookingId !== bookingId
+    || bookingCustomerMemoryPanelState.customerId !== customerId
+    || !bookingCustomerMemoryPanelState.open
+  ) return;
+  bookingCustomerMemoryPanelState.formOpen = true;
+  bookingCustomerMemoryPanelState.feedback = "";
+  refreshBookingCustomerMemoryPanel();
+  resetBookingCustomerMemoryTimer();
+  queueMicrotask(() => document.querySelector(`[data-booking-customer-memory-panel="${bookingId}"] [data-booking-customer-memory-draft]`)?.focus());
+}
+
+function closeBookingCustomerMemoryForm(bookingId) {
+  if (bookingCustomerMemoryPanelState.bookingId !== bookingId) return;
+  bookingCustomerMemoryPanelState.formOpen = false;
+  bookingCustomerMemoryPanelState.feedback = bookingCustomerMemoryPanelState.draft.trim()
+    ? "Borrador conservado mientras sigas en esta cita."
+    : "";
+  bookingCustomerMemoryPanelState.feedbackError = false;
+  refreshBookingCustomerMemoryPanel();
+  resetBookingCustomerMemoryTimer();
+}
+
+async function submitBookingCustomerMemoryForm(form) {
+  const bookingId = Number(form.dataset.bookingId);
+  const customerId = Number(form.dataset.customerId);
+  if (
+    bookingCustomerMemoryPanelState.bookingId !== bookingId
+    || bookingCustomerMemoryPanelState.customerId !== customerId
+    || bookingCustomerMemoryPanelState.saving
+  ) return;
+  const draft = String(form.querySelector("[data-booking-customer-memory-draft]")?.value || "").trim();
+  bookingCustomerMemoryPanelState.draft = draft;
+  if (!draft) {
+    bookingCustomerMemoryPanelState.feedback = "Escribe una nota antes de guardarla.";
+    bookingCustomerMemoryPanelState.feedbackError = true;
+    refreshBookingCustomerMemoryPanel();
+    queueMicrotask(() => document.querySelector(`[data-booking-customer-memory-panel="${bookingId}"] [data-booking-customer-memory-draft]`)?.focus());
+    return;
+  }
+  bookingCustomerMemoryPanelState.saving = true;
+  bookingCustomerMemoryPanelState.feedback = "";
+  bookingCustomerMemoryDrafts.set(bookingId, draft);
+  refreshBookingCustomerMemoryPanel();
+  resetBookingCustomerMemoryTimer();
+  try {
+    const response = await customerMemoryRequest(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/customers/${customerId}/memory`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category: "operational_note", key: "note", value: draft, source_type: "manual" })
+    });
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(body.detail || "No se pudo guardar la nota del cliente.");
+    bookingCustomerMemoryDrafts.delete(bookingId);
+    customerMemorySummaries.delete(customerId);
+    if (bookingCustomerMemoryPanelState.bookingId === bookingId) {
+      bookingCustomerMemoryPanelState.draft = "";
+      bookingCustomerMemoryPanelState.formOpen = false;
+      bookingCustomerMemoryPanelState.saving = false;
+      bookingCustomerMemoryPanelState.feedback = "Nota añadida.";
+      bookingCustomerMemoryPanelState.feedbackError = false;
+    }
+    await loadCustomerMemorySummary(customerId, { force: true });
+    if (bookingCustomerMemoryPanelState.bookingId === bookingId) resetBookingCustomerMemoryTimer();
+  } catch (error) {
+    if (bookingCustomerMemoryPanelState.bookingId !== bookingId) return;
+    bookingCustomerMemoryPanelState.saving = false;
+    bookingCustomerMemoryPanelState.feedback = error.message || "No se pudo guardar la nota del cliente.";
+    bookingCustomerMemoryPanelState.feedbackError = true;
+    refreshBookingCustomerMemoryPanel();
+    resetBookingCustomerMemoryTimer();
+    queueMicrotask(() => document.querySelector(`[data-booking-customer-memory-panel="${bookingId}"] [data-booking-customer-memory-draft]`)?.focus());
+  }
+}
+
+function handleBookingCustomerMemoryActivity(event) {
+  if (!(event.target instanceof Element) || !event.target.closest("[data-booking-customer-memory-panel]")) return;
+  if (event.target.matches("[data-booking-customer-memory-draft]")) {
+    const bookingId = Number(bookingCustomerMemoryPanelState.bookingId);
+    bookingCustomerMemoryPanelState.draft = event.target.value;
+    if (event.target.value) bookingCustomerMemoryDrafts.set(bookingId, event.target.value);
+    else bookingCustomerMemoryDrafts.delete(bookingId);
+  }
+  resetBookingCustomerMemoryTimer();
+}
+
 function customerMemoryDateValue(value) {
   const date = value ? new Date(value) : null;
   return date && !Number.isNaN(date.getTime()) ? date.toISOString().slice(0, 10) : "";
@@ -5028,12 +5276,22 @@ async function customerMemoryRequest(input, options = {}) {
   return fetch(input, options);
 }
 
+function refreshCustomerMemoryConsumers(customerId) {
+  if (selectedConversation && customerIdForConversation(selectedConversation) === customerId) {
+    renderConversationCustomerPanel(selectedConversation);
+  }
+  if (
+    bookingCustomerMemoryPanelState.open
+    && bookingCustomerMemoryPanelState.customerId === customerId
+  ) refreshBookingCustomerMemoryPanel();
+}
+
 async function loadCustomerMemorySummary(customerId, { force = false } = {}) {
   if (!Number.isInteger(customerId) || customerId <= 0) return;
   if (!force && (customerMemoryLoadingIds.has(customerId) || customerMemorySummaries.has(customerId))) return;
   customerMemoryLoadingIds.add(customerId);
   customerMemorySummaries.set(customerId, { status: "loading" });
-  if (selectedConversation && customerIdForConversation(selectedConversation) === customerId) renderConversationCustomerPanel(selectedConversation);
+  refreshCustomerMemoryConsumers(customerId);
   try {
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/customers/${customerId}/memory-summary`);
     const body = await readAdminResponseBody(response);
@@ -5044,7 +5302,7 @@ async function loadCustomerMemorySummary(customerId, { force = false } = {}) {
     customerMemorySummaries.set(customerId, { status: "error" });
   } finally {
     customerMemoryLoadingIds.delete(customerId);
-    if (selectedConversation && customerIdForConversation(selectedConversation) === customerId) renderConversationCustomerPanel(selectedConversation);
+    refreshCustomerMemoryConsumers(customerId);
   }
 }
 
@@ -6181,6 +6439,7 @@ function renderBookingCard(booking, nextBookingId) {
             <p><span>Fecha y hora</span><strong>${escapeHtml(formatBookingSlot(booking))}</strong></p>
             <p><span>Profesional</span><strong>${escapeHtml(booking.staff_display_name || "Sin asignar")}</strong></p>
           </div>
+          ${renderBookingCustomerMemorySection(booking)}
           <div class="booking-notes internal-notes-editor">
             <label>Notas internas<textarea data-internal-notes="${bookingId}" rows="2">${escapeHtml(booking.internal_notes || "")}</textarea></label>
             <button class="btn btn-small btn-secondary" type="button" data-admin-action="save-internal-notes" data-id="${bookingId}">Guardar notas</button>
@@ -6287,6 +6546,7 @@ function renderBookings() {
       ? renderAgendaWeekCalendar(bookings)
       : renderAgendaDayCalendar(bookings);
   const selected = allBookings.find((booking) => Number(booking.id) === agendaSelectedBookingId);
+  syncBookingCustomerMemorySelection(selected || null);
   list.innerHTML = `${calendar}${selected ? `<section class="agenda-quick-detail" aria-label="Detalle de la cita">${renderBookingCard(selected, Number(nextBooking?.id))}</section>` : ""}`;
 }
 
@@ -7219,6 +7479,15 @@ function setupAdminDelegatedActions() {
     else if (action === "update-outbox-status" && Number.isInteger(id) && ["sent", "skipped"].includes(button.dataset.status)) updateOutboxStatus(id, button.dataset.status);
     else if (action === "reset-agenda-filters") resetAgendaFilters();
     else if (action === "navigate-agenda-date") navigateAgendaDate(Number(button.dataset.direction));
+    else if (action === "toggle-booking-customer-memory" && Number.isInteger(id)) toggleBookingCustomerMemory(id, Number(button.dataset.customerId));
+    else if (action === "add-booking-customer-memory" && Number.isInteger(id)) openBookingCustomerMemoryForm(id, Number(button.dataset.customerId));
+    else if (action === "close-booking-customer-memory-form" && Number.isInteger(id)) closeBookingCustomerMemoryForm(id);
+    else if (action === "retry-booking-customer-memory" && Number.isInteger(id)) {
+      const customerId = Number(button.dataset.customerId);
+      customerMemorySummaries.delete(customerId);
+      resetBookingCustomerMemoryTimer();
+      void loadCustomerMemorySummary(customerId, { force: true });
+    }
     else if (action === "save-internal-notes" && Number.isInteger(id)) saveInternalNotes(id);
     else if (action === "retry-reschedule-slots") loadRescheduleSlots();
   });

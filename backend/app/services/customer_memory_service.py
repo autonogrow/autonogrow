@@ -74,6 +74,7 @@ def serialize_memory_item(row: CustomerMemoryItem) -> dict[str, Any]:
         "status": row.status,
         "is_sensitive": row.is_sensitive,
         "created_by_user_id": row.created_by_user_id,
+        "created_by_name": row.created_by_user.name if row.created_by_user else None,
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,

@@ -461,4 +461,4 @@ def test_responsive_contracts_cover_phone_tablet_desktop_zoom_and_safe_areas() -
 
 def test_admin_javascript_cachebuster_matches_this_cross_section_pass() -> None:
     html, _, _, _ = sources()
-    assert '<script src="admin.js?v=20260827-p122-a"></script>' in html
+    assert '<script src="admin.js?v=20260829-p14a-a"></script>' in html

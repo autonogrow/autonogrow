@@ -217,6 +217,10 @@ def test_memory_crud_supersede_delete_and_content_safe_audit(
     assert created["source_type"] == "manual"
     assert created["confidence"] == 1.0
     assert created["status"] == "active"
+    assert created["category"] == "availability_preference"
+    assert created["created_by_user_id"] == records["staff"].id
+    assert created["created_by_name"] == records["staff"].name
+    assert created["created_at"]
 
     updated = update_customer_memory(
         "memory-a",
@@ -333,6 +337,45 @@ def test_tenant_permissions_and_cross_ids_are_rejected(db: Session, records: dic
     )
     assert summary["explicit"] == []
     assert summary["derived"]["visit_count"] == 0
+
+
+def test_appointment_note_creation_appends_memory_without_touching_booking_comments(
+    db: Session, records: dict
+) -> None:
+    booking = completed_booking(
+        db,
+        business=records["a"],
+        customer=records["customer_a"],
+        service=records["service_a"],
+        occurred_at=NOW,
+    )
+    booking.notes = "Comentario exclusivo de esta cita"
+    existing = add_memory(db, records, value="Memoria anterior intacta")
+    db.commit()
+
+    created = create_customer_memory(
+        "memory-a",
+        records["customer_a"].id,
+        CustomerMemoryCreate(
+            category="operational_note",
+            key="note",
+            value="Nueva nota añadida desde la cita",
+        ),
+        request(),
+        records["staff"],
+        db,
+    )["memory"]
+
+    db.refresh(booking)
+    db.refresh(existing)
+    assert booking.notes == "Comentario exclusivo de esta cita"
+    assert existing.value == "Memoria anterior intacta"
+    assert existing.status == "active"
+    assert created["customer_id"] == records["customer_a"].id
+    assert created["business_id"] == records["a"].id
+    assert {item["value"] for item in list_customer_memory(
+        "memory-a", records["customer_a"].id, "active", db
+    )["items"]} == {"Memoria anterior intacta", "Nueva nota añadida desde la cita"}
 
 
 def test_secret_card_and_database_constraints(db: Session, records: dict) -> None:

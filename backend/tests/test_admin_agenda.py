@@ -162,6 +162,54 @@ def test_customer_comments_are_visible_before_actions_and_expired_requests_canno
     assert ".booking-customer-comments" in css
 
 
+def test_booking_customer_memory_is_hidden_scoped_and_separate_from_booking_notes() -> None:
+    _, css, js = read_sources()
+    card = function_block(js, "function renderBookingCard", "function bookingStartMinutes")
+    memory = function_block(
+        js,
+        "function stopBookingCustomerMemoryTimer",
+        "function customerMemoryDateValue",
+    )
+    assert "renderBookingCustomerMemorySection(booking)" in card
+    assert card.index("renderCustomerComments(booking.notes)") < card.index(
+        "renderBookingCustomerMemorySection(booking)"
+    )
+    assert 'aria-expanded="${open}"' in memory
+    assert 'open ? `<div class="booking-customer-memory-content"' in memory
+    assert "Ver notas del cliente" in memory
+    assert "No hay notas guardadas sobre este cliente." in memory
+    assert "Esta cita no tiene un cliente asociado." in memory
+    assert 'body: JSON.stringify({ category: "operational_note", key: "note", value: draft' in memory
+    assert "/customers/${customerId}/memory" in memory
+    assert "booking.notes" not in memory
+    assert "internal_notes" not in memory
+    assert ".booking-customer-memory" in css
+
+
+def test_booking_customer_memory_timer_activity_and_draft_lifecycle_are_single() -> None:
+    _, _, js = read_sources()
+    memory = function_block(
+        js,
+        "function stopBookingCustomerMemoryTimer",
+        "function customerMemoryDateValue",
+    )
+    setup = function_block(js, "function setupBookingViews", "function setBookingView")
+    selection = function_block(js, "function renderBookings", "function getViewForBooking")
+    assert "BOOKING_CUSTOMER_MEMORY_HIDE_MS = 60_000" in js
+    assert memory.count("bookingCustomerMemoryTimer = window.setTimeout") == 1
+    assert "stopBookingCustomerMemoryTimer();" in memory
+    assert "document.activeElement === textarea" in memory
+    assert "bookingCustomerMemoryPanelState.open = false" in memory
+    assert "bookingCustomerMemoryDrafts.set" in memory
+    assert "bookingCustomerMemoryDrafts.delete" in memory
+    assert "Borrador conservado mientras sigas en esta cita." in memory
+    for activity in ('"click"', '"keydown"', '"input"', '"focusin"', '"scroll"'):
+        assert activity in setup
+    assert "handleBookingCustomerMemoryActivity" in setup
+    assert "syncBookingCustomerMemorySelection(selected || null)" in selection
+    assert "open: false" in memory
+
+
 def test_dynamic_booking_content_is_escaped() -> None:
     _, _, js = read_sources()
     block = function_block(js, "function renderBookingCard", "function renderBookings")

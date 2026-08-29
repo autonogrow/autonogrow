@@ -1922,6 +1922,20 @@ input {
 .agenda-booking-details__grid span { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
 .agenda-booking-details__grid strong { overflow-wrap: anywhere; }
 .agenda-booking-details .booking-notes { margin-top: var(--ag-space-3); }
+.booking-customer-memory { display: grid; gap: var(--ag-space-3); margin-top: var(--ag-space-3); padding: var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
+.booking-customer-memory-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--ag-space-2); }
+.booking-customer-memory-content,
+.booking-customer-memory-list,
+.booking-customer-memory-form { display: grid; gap: var(--ag-space-2); }
+.booking-customer-memory-item { display: grid; gap: var(--ag-space-1); padding: var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface); }
+.booking-customer-memory-item--sensitive { border-left: 3px solid var(--ag-color-warning); }
+.booking-customer-memory-item > span,
+.booking-customer-memory-item > small,
+.booking-customer-memory-help { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
+.booking-customer-memory-item > p,
+.booking-customer-memory-help { margin: 0; overflow-wrap: anywhere; }
+.booking-customer-memory-form label { font-size: var(--ag-font-size-sm); font-weight: var(--ag-font-weight-semibold); }
+.booking-customer-memory-form__actions { display: flex; flex-wrap: wrap; gap: var(--ag-space-2); }
 
 .agenda-state { display: grid; justify-items: start; gap: var(--ag-space-2); min-height: 10rem; padding: var(--ag-space-6); border: 1px dashed var(--ag-color-border-strong); border-radius: var(--ag-radius-xl); background: var(--ag-color-surface-subtle); }
 .agenda-state strong { font-family: var(--ag-font-heading); font-size: var(--ag-font-size-lg); }
@@ -1940,6 +1954,7 @@ input {
   .agenda-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .agenda-filters .ag-button { width: 100%; }
   .agenda-booking-details__grid { grid-template-columns: 1fr 1fr; }
+  .booking-customer-memory-heading { align-items: stretch; flex-direction: column; }
 }
 
 @media (max-width: 639px) {

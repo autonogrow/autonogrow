@@ -100,6 +100,84 @@ def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> Non
     expect(pending).to_contain_text(re.compile(r"60\s*min"))
 
 
+def test_appointment_customer_memory_is_private_timed_and_append_only(journey) -> None:
+    _session, page = _open_admin(journey)
+    bookings_path = "/api/admin/businesses/salon-e2e/bookings"
+    initial_bookings = page.request.get(bookings_path).json()["bookings"]
+    customer_booking = next(
+        item for item in initial_bookings if item["customer_name"] == "María Cliente E2E"
+    )
+    empty_booking = next(
+        item for item in initial_bookings if item["customer_name"] == "Invitado Fixture"
+    )
+    original_booking_comment = customer_booking["notes"]
+    customer_id = customer_booking["customer_id"]
+    csrf = page.evaluate(
+        """async () => {
+            const options = await AutonoGrowAuth.secureRequestOptions({ method: "POST" });
+            return options.headers.get("X-CSRF-Token");
+        }"""
+    )
+    created = page.request.post(
+        f"/api/admin/businesses/salon-e2e/customers/{customer_id}/memory",
+        headers={"X-CSRF-Token": csrf},
+        data={
+            "category": "preference",
+            "key": "preference",
+            "value": "Memoria histórica visible desde la cita",
+            "source_type": "manual",
+        },
+    )
+    assert created.status == 201
+
+    page.goto(
+        f"/autonogrow-admin/?b=salon-e2e&booking={customer_booking['id']}#bookings",
+        wait_until="domcontentloaded",
+    )
+    card = page.locator(f"#booking-{customer_booking['id']}")
+    expect(card).to_be_visible()
+    card.locator(".agenda-booking-details > summary").click()
+    toggle = card.get_by_role("button", name="Ver notas del cliente")
+    expect(toggle).to_have_attribute("aria-expanded", "false")
+    expect(card.get_by_text("Memoria histórica visible desde la cita")).to_have_count(0)
+
+    page.clock.install()
+    toggle.click()
+    expect(card.get_by_text("Memoria histórica visible desde la cita")).to_be_visible()
+    expect(card.get_by_text("Autor: Admin Salón E2E", exact=False)).to_be_visible()
+    card.get_by_role("button", name="+ Añadir nota").click()
+    draft = card.locator("[data-booking-customer-memory-draft]")
+    draft.fill("Nota nueva exclusiva del cliente")
+    page.clock.fast_forward(61_000)
+    expect(card.get_by_role("button", name="Ocultar notas del cliente")).to_be_visible()
+
+    page.locator("#agenda-customer-search").focus()
+    page.clock.fast_forward(60_001)
+    expect(card.get_by_role("button", name="Ver notas del cliente")).to_be_visible()
+    expect(card.locator(".booking-customer-memory-content")).to_have_count(0)
+
+    card.get_by_role("button", name="Ver notas del cliente").click()
+    expect(card.locator("[data-booking-customer-memory-draft]")).to_have_value(
+        "Nota nueva exclusiva del cliente"
+    )
+    card.get_by_role("button", name="Guardar nota", exact=True).click()
+    expect(card.get_by_text("Nota nueva exclusiva del cliente")).to_be_visible()
+    expect(card.get_by_text("Nota añadida.")).to_be_visible()
+
+    current_bookings = page.request.get(bookings_path).json()["bookings"]
+    current = next(item for item in current_bookings if item["id"] == customer_booking["id"])
+    assert current["notes"] == original_booking_comment
+
+    page.evaluate("bookingId => goToBooking(bookingId)", empty_booking["id"])
+    assert page.evaluate("bookingCustomerMemoryTimer === null")
+    empty_card = page.locator(f"#booking-{empty_booking['id']}")
+    empty_card.locator(".agenda-booking-details > summary").click()
+    empty_toggle = empty_card.get_by_role("button", name="Ver notas del cliente")
+    expect(empty_toggle).to_have_attribute("aria-expanded", "false")
+    empty_toggle.click()
+    expect(empty_card.get_by_text("No hay notas guardadas sobre este cliente.")).to_be_visible()
+
+
 def test_admin_instagram_calendar_editorial_action_and_permissions(journey) -> None:
     _session, page = _open_admin(journey)
     page.locator('[data-section="instagram-content"]').click()
