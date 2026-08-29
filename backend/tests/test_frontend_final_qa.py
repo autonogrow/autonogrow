@@ -112,7 +112,7 @@ def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
             "owner.js?v=20260828-p123-a",
             "owner-onboarding.js?v=5f1",
         ),
-        "autonogrow-landing": ("styles.css?v=10b5", "auth.js?v=10b5", "script.js?v=10b5"),
+        "autonogrow-landing": ("styles.css?v=10b6", "auth.js?v=10b5", "script.js?v=10b6"),
         "autonogrow-customer": ("styles.css?v=10b5", "auth.js?v=10b5", "customer.js?v=10b5"),
     }
     for directory, fragments in expected.items():

@@ -367,6 +367,8 @@ input, select, textarea {
 textarea { min-height: 120px; resize: vertical; }
 input[type="file"] { padding: 10px; }
 [aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 18%, transparent); }
+.field-error { margin: 8px 0 0; color: var(--danger); font-size: .88rem; font-weight: 750; }
+.customer-fields .field-error { margin-top: 0; }
 .form-hint, .privacy-note { color: var(--muted); font-size: .9rem; }
 .privacy-note { margin-top: 18px; padding: 15px; border-left: 4px solid var(--color-primary); background: var(--surface-soft); }
 .error-summary { max-width: 900px; margin: 0 auto 20px; padding: 16px 18px; border: 1px solid #efb3b3; border-radius: var(--radius-sm); background: var(--danger-soft); color: var(--danger); }

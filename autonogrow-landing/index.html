@@ -9,7 +9,7 @@
   <meta property="og:title" content="AutonoGrow | Página de negocio" />
   <meta property="og:description" content="Consulta los servicios y solicita una cita." />
   <title>AutonoGrow | Página de negocio</title>
-  <link rel="stylesheet" href="styles.css?v=10b5" />
+  <link rel="stylesheet" href="styles.css?v=10b6" />
   <link rel="stylesheet" href="../autonogrow-shared/auth.css" />
 </head>
 <body class="template-classic">
@@ -175,7 +175,7 @@
         <div id="booking-error-summary" class="error-summary" role="alert" tabindex="-1" hidden></div>
 
         <form id="booking-form" class="booking-form" novalidate hidden>
-          <fieldset id="booking-step-service" class="booking-step" data-booking-step="service">
+          <fieldset id="booking-step-service" class="booking-step" data-booking-step="service" tabindex="-1">
             <legend>1. Elige un servicio</legend>
             <p>Seleccionar un servicio todavía no crea ninguna reserva.</p>
             <div id="booking-service-options" class="choice-grid"></div>
@@ -183,9 +183,10 @@
             <select id="service-select" class="visually-hidden" required tabindex="-1" aria-hidden="true">
               <option value="">Selecciona un servicio</option>
             </select>
+            <p id="booking-field-error-service" class="field-error" hidden></p>
           </fieldset>
 
-          <fieldset id="booking-step-staff" class="booking-step" data-booking-step="staff" hidden>
+          <fieldset id="booking-step-staff" class="booking-step" data-booking-step="staff" tabindex="-1" hidden>
             <legend>2. Elige profesional</legend>
             <p id="staff-step-help">Puedes elegir a una persona o dejar que el negocio asigne a cualquiera que esté disponible.</p>
             <div id="staff-loading" class="inline-status" role="status"></div>
@@ -194,13 +195,14 @@
               Profesional
               <select id="staff-select"><option value="">Cualquiera disponible</option></select>
             </label>
+            <p id="booking-field-error-staff" class="field-error" hidden></p>
             <div id="online-booking-unavailable" class="online-booking-unavailable" hidden>
               <strong id="online-booking-unavailable-message">Ahora mismo no hay profesionales disponibles para este servicio.</strong>
               <a id="booking-contact-link" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">Contactar con el negocio</a>
             </div>
           </fieldset>
 
-          <fieldset id="booking-step-datetime" class="booking-step" data-booking-step="datetime" hidden>
+          <fieldset id="booking-step-datetime" class="booking-step" data-booking-step="datetime" tabindex="-1" hidden>
             <legend>3. Elige fecha y hora</legend>
             <p>Solo puedes seleccionar fechas y horarios devueltos por la agenda del negocio.</p>
             <input type="hidden" id="preferred-day" />
@@ -222,22 +224,27 @@
               </div>
             </div>
             <div id="selected-slot-summary" class="selected-slot-summary" hidden></div>
+            <p id="booking-field-error-datetime" class="field-error" hidden></p>
           </fieldset>
 
           <fieldset id="booking-step-customer" class="booking-step" data-booking-step="customer" hidden>
             <legend>4. Tus datos</legend>
             <div class="customer-fields">
               <label for="client-name">Nombre <span aria-hidden="true">*</span>
-                <input type="text" id="client-name" required minlength="2" maxlength="200" autocomplete="name" />
+                <input type="text" id="client-name" required minlength="2" maxlength="200" autocomplete="name" aria-describedby="booking-field-error-name" />
+                <span id="booking-field-error-name" class="field-error" hidden></span>
               </label>
               <label for="client-phone">Teléfono o WhatsApp <span class="optional">Opcional</span>
-                <input type="tel" id="client-phone" maxlength="40" autocomplete="tel" inputmode="tel" />
+                <input type="tel" id="client-phone" maxlength="40" autocomplete="tel" inputmode="tel" aria-describedby="booking-field-error-phone" />
+                <span id="booking-field-error-phone" class="field-error" hidden></span>
               </label>
               <label class="wide-field" for="notes">Comentarios <span class="optional">Opcional</span>
-                <textarea id="notes" maxlength="1000"></textarea>
+                <textarea id="notes" maxlength="1000" aria-describedby="booking-field-error-notes"></textarea>
+                <span id="booking-field-error-notes" class="field-error" hidden></span>
               </label>
               <label class="wide-field" for="booking-photos">Fotos de referencia <span class="optional">Opcional</span>
-                <input type="file" id="booking-photos" accept="image/jpeg,image/png,image/webp" multiple aria-describedby="booking-photos-help" />
+                <input type="file" id="booking-photos" accept="image/jpeg,image/png,image/webp" multiple aria-describedby="booking-photos-help booking-field-error-photos" />
+                <span id="booking-field-error-photos" class="field-error" hidden></span>
               </label>
             </div>
             <p id="booking-photos-help" class="form-hint">Hasta 5 imágenes JPG, PNG o WEBP de 5 MB cada una. Solo se usan para gestionar la solicitud y se eliminan tras un máximo de 14 días.</p>
@@ -309,6 +316,6 @@
 
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js?v=10b5"></script>
-  <script src="script.js?v=10b5"></script>
+  <script src="script.js?v=10b6"></script>
 </body>
 </html>

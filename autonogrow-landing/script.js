@@ -20,6 +20,27 @@ const DAY_STATUS = {
   closed: "Cerrado",
   past: "Fecha pasada"
 };
+const BOOKING_FIELD_CONFIG = {
+  service: { step: "service", controlId: "booking-step-service", errorId: "booking-field-error-service" },
+  staff: { step: "staff", controlId: "booking-step-staff", errorId: "booking-field-error-staff" },
+  datetime: { step: "datetime", controlId: "booking-step-datetime", errorId: "booking-field-error-datetime" },
+  name: { step: "customer", controlId: "client-name", errorId: "booking-field-error-name" },
+  phone: { step: "customer", controlId: "client-phone", errorId: "booking-field-error-phone" },
+  notes: { step: "customer", controlId: "notes", errorId: "booking-field-error-notes" },
+  photos: { step: "customer", controlId: "booking-photos", errorId: "booking-field-error-photos" }
+};
+const BOOKING_API_FIELD_MAP = {
+  customer_name: "name",
+  customer_phone: "phone",
+  service_id: "service",
+  service_name: "service",
+  staff_business_user_id: "staff",
+  start_datetime: "datetime",
+  preferred_date: "datetime",
+  preferred_day_label: "datetime",
+  preferred_time: "datetime",
+  notes: "notes"
+};
 const bookingState = {
   business: null,
   service: null,
@@ -127,6 +148,12 @@ function phoneDigits(value) {
   return digits.length >= 7 && digits.length <= 15 ? digits : "";
 }
 
+function isPlausibleBookingPhone(value) {
+  const clean = String(value || "").trim();
+  if (!clean) return true;
+  return /^(?:\+|00)?[\d\s().-]+$/.test(clean) && Boolean(phoneDigits(clean));
+}
+
 function whatsappUrl(phone) {
   const digits = phoneDigits(phone);
   return digits ? `https://wa.me/${digits}` : "";
@@ -179,6 +206,7 @@ async function requestJson(path, options = {}, context = "general") {
       const error = new Error(safeResponseMessage(response.status, code, context));
       error.status = response.status;
       error.code = code;
+      error.details = body.detail;
       throw error;
     }
     return body;
@@ -959,13 +987,13 @@ function collectCustomerData() {
   const name = nameInput.value.trim();
   const phone = phoneInput.value.trim();
   const notes = notesInput.value.trim();
-  if (name.length < 2 || name.length > 200) errors.push([nameInput, "Escribe un nombre de entre 2 y 200 caracteres."]);
-  if (phone.length > 40) errors.push([phoneInput, "El teléfono no puede superar 40 caracteres."]);
-  if (notes.length > 1000) errors.push([notesInput, "Los comentarios no pueden superar 1000 caracteres."]);
-  if (files.length > 5) errors.push([byId("booking-photos"), "Puedes adjuntar como máximo 5 imágenes."]);
+  if (name.length < 2 || name.length > 200) errors.push(["name", "Introduce tu nombre."]);
+  if (phone.length > 40 || !isPlausibleBookingPhone(phone)) errors.push(["phone", "Introduce un número de teléfono válido."]);
+  if (notes.length > 1000) errors.push(["notes", "Los comentarios no pueden superar 1000 caracteres."]);
+  if (files.length > 5) errors.push(["photos", "Puedes adjuntar como máximo 5 imágenes."]);
   files.forEach((file) => {
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) errors.push([byId("booking-photos"), "Solo se admiten imágenes JPG, PNG o WEBP."]);
-    if (file.size > 5 * 1024 * 1024) errors.push([byId("booking-photos"), "Cada imagen debe ocupar 5 MB o menos."]);
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) errors.push(["photos", "Solo se admiten imágenes JPG, PNG o WEBP."]);
+    if (file.size > 5 * 1024 * 1024) errors.push(["photos", "Cada imagen debe ocupar 5 MB o menos."]);
   });
   if (errors.length) {
     showValidationErrors(errors);
@@ -978,30 +1006,108 @@ function collectCustomerData() {
 function clearFieldErrors() {
   document.querySelectorAll("[aria-invalid='true']").forEach((field) => {
     field.removeAttribute("aria-invalid");
-    const descriptions = String(field.getAttribute("aria-describedby") || "").split(/\s+/).filter((id) => id && !id.startsWith("booking-error-"));
-    if (descriptions.length) field.setAttribute("aria-describedby", descriptions.join(" "));
-    else field.removeAttribute("aria-describedby");
+  });
+  document.querySelectorAll(".field-error").forEach((error) => {
+    error.hidden = true;
+    error.textContent = "";
   });
   byId("booking-error-summary").hidden = true;
   byId("booking-error-summary").replaceChildren();
 }
 
+function clearBookingFieldError(fieldName) {
+  const config = BOOKING_FIELD_CONFIG[fieldName];
+  if (!config) return;
+  byId(config.controlId)?.removeAttribute("aria-invalid");
+  const error = byId(config.errorId);
+  if (error) {
+    error.hidden = true;
+    error.textContent = "";
+  }
+  if (!document.querySelector(".field-error:not([hidden])")) {
+    byId("booking-error-summary").hidden = true;
+    byId("booking-error-summary").replaceChildren();
+  }
+}
+
+function bookingValidationFocusTarget(fieldName) {
+  if (fieldName === "service") return byId("booking-service-options").querySelector("button") || byId("booking-step-service");
+  if (fieldName === "staff") return byId("booking-staff-options").querySelector("button") || byId("booking-step-staff");
+  if (fieldName === "datetime") return byId("time-slots").querySelector("button") || byId("calendar-days").querySelector("button") || byId("booking-step-datetime");
+  return byId(BOOKING_FIELD_CONFIG[fieldName]?.controlId);
+}
+
 function showValidationErrors(errors) {
-  const summary = byId("booking-error-summary");
-  summary.replaceChildren(element("strong", { text: "Revisa los datos para continuar" }));
-  const list = element("ul");
-  errors.forEach(([field, message], index) => {
-    field.setAttribute("aria-invalid", "true");
-    const item = element("li", { text: message });
-    item.id = `booking-error-${field.id}-${index}`;
-    list.append(item);
-    const current = String(field.getAttribute("aria-describedby") || "").trim();
-    field.setAttribute("aria-describedby", `${current} ${item.id}`.trim());
+  const uniqueErrors = [];
+  const seen = new Set();
+  errors.forEach(([fieldName, message]) => {
+    if (!BOOKING_FIELD_CONFIG[fieldName] || seen.has(fieldName)) return;
+    seen.add(fieldName);
+    uniqueErrors.push([fieldName, message]);
   });
-  summary.append(list);
+  if (!uniqueErrors.length) return false;
+  const firstConfig = BOOKING_FIELD_CONFIG[uniqueErrors[0][0]];
+  if (landingState.step !== firstConfig.step) showBookingStep(firstConfig.step);
+  clearFieldErrors();
+  const summary = byId("booking-error-summary");
+  summary.replaceChildren(
+    element("strong", { text: "Revisa algunos datos" }),
+    element("p", { text: "Hay campos que necesitan corrección antes de continuar." })
+  );
+  uniqueErrors.forEach(([fieldName, message]) => {
+    const config = BOOKING_FIELD_CONFIG[fieldName];
+    const control = byId(config.controlId);
+    const error = byId(config.errorId);
+    control.setAttribute("aria-invalid", "true");
+    const descriptions = new Set(String(control.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean));
+    descriptions.add(config.errorId);
+    control.setAttribute("aria-describedby", Array.from(descriptions).join(" "));
+    error.textContent = message;
+    error.hidden = false;
+  });
   summary.hidden = false;
-  summary.focus();
-  errors[0][0].focus();
+  const firstField = bookingValidationFocusTarget(uniqueErrors[0][0]);
+  firstField.scrollIntoView({ behavior: "smooth", block: "center" });
+  firstField.focus({ preventScroll: true });
+  return true;
+}
+
+function bookingFieldMessage(fieldName) {
+  const messages = {
+    name: "Introduce tu nombre.",
+    phone: "Introduce un número de teléfono válido.",
+    notes: "Los comentarios no pueden superar 1000 caracteres.",
+    service: "Elige un servicio disponible.",
+    staff: "Elige un profesional disponible.",
+    datetime: "Elige una fecha y una hora disponibles."
+  };
+  return messages[fieldName] || "Revisa este dato.";
+}
+
+function bookingValidationErrorsFromResponse(error) {
+  const fields = [];
+  const codeFields = {
+    invalid_phone: "phone",
+    "El teléfono no es válido para el país del negocio": "phone",
+    "Service not found": "service",
+    "Staff member not found": "staff",
+    no_staff_available_for_service: "staff",
+    staff_not_available_for_service: "staff",
+    no_bookable_staff: "staff",
+    "Missing booking slot": "datetime",
+    "Invalid start_datetime": "datetime",
+    "Ese hueco ya no está disponible": "datetime",
+    slot_unavailable: "datetime"
+  };
+  if (codeFields[error.code]) fields.push(codeFields[error.code]);
+  if (Array.isArray(error.details)) {
+    error.details.forEach((detail) => {
+      const location = Array.isArray(detail?.loc) ? detail.loc : [];
+      const fieldName = BOOKING_API_FIELD_MAP[location[location.length - 1]];
+      if (fieldName) fields.push(fieldName);
+    });
+  }
+  return Array.from(new Set(fields)).map((fieldName) => [fieldName, bookingFieldMessage(fieldName)]);
 }
 
 function renderBookingReview() {
@@ -1105,15 +1211,15 @@ function previousBookingStep() {
 
 function nextBookingStep() {
   if (landingState.step === "service" && !bookingState.service) {
-    showBookingMessage("Elige un servicio para continuar.");
+    showValidationErrors([["service", "Elige un servicio disponible."]]);
     return;
   }
   if (landingState.step === "staff" && !landingState.compatibleStaff.length) {
-    showBookingMessage("No hay profesionales disponibles para este servicio.");
+    showValidationErrors([["staff", "Elige un profesional disponible."]]);
     return;
   }
   if (landingState.step === "datetime" && !bookingState.slot) {
-    showBookingMessage("Elige una fecha y un horario disponibles.");
+    showValidationErrors([["datetime", "Elige una fecha y una hora disponibles."]]);
     return;
   }
   if (landingState.step === "customer" && !collectCustomerData()) return;
@@ -1140,7 +1246,11 @@ async function submitBooking(event) {
   event.preventDefault();
   if (landingState.submitting || landingState.step !== "review") return;
   if (!bookingState.business || !bookingState.service || !bookingState.date || !bookingState.slot || !bookingState.customer.name) {
-    showBookingMessage("La selección ha cambiado. Revisa la solicitud antes de enviarla.");
+    const errors = [];
+    if (!bookingState.service) errors.push(["service", "Elige un servicio disponible."]);
+    if (!bookingState.date || !bookingState.slot) errors.push(["datetime", "Elige una fecha y una hora disponibles."]);
+    if (!bookingState.customer.name) errors.push(["name", "Introduce tu nombre."]);
+    showValidationErrors(errors);
     return;
   }
   const validService = ["ready", "partial"].includes(landingState.serviceVerificationStatus)
@@ -1149,8 +1259,9 @@ async function submitBooking(event) {
     );
   const validStaff = !bookingState.staff || landingState.compatibleStaff.some((member) => String(member.id) === String(bookingState.staff.id));
   if (!validService || !validStaff) {
-    showBookingMessage("El servicio o profesional ya no forma parte de esta solicitud. Vuelve a seleccionarlo.");
-    showBookingStep(validService ? "staff" : "service");
+    showValidationErrors([[validService ? "staff" : "service", validService
+      ? "El profesional seleccionado ya no está disponible. Elige otro."
+      : "El servicio seleccionado ya no está disponible. Elige otro."]]);
     return;
   }
 
@@ -1189,9 +1300,9 @@ async function submitBooking(event) {
     showBookingStep("result");
     byId("booking-confirmation").focus();
   } catch (error) {
+    const validationErrors = bookingValidationErrorsFromResponse(error);
     if (error.status === 409) {
       showBookingStep(error.code?.includes("staff") || error.code === "no_bookable_staff" ? "staff" : "datetime");
-      showBookingMessage(error.message);
       if (landingState.step === "datetime") {
         landingState.slotCache.clear();
         bookingState.slot = null;
@@ -1199,13 +1310,13 @@ async function submitBooking(event) {
       } else if (bookingState.service) {
         await loadStaffForService(bookingState.service.id);
       }
+      if (!showValidationErrors(validationErrors)) showBookingMessage(error.message);
     } else if (error.status === 404) {
       showBookingStep("service");
-      showBookingMessage(error.message);
-    } else {
+      if (!showValidationErrors(validationErrors)) showBookingMessage(error.message);
+    } else if (!showValidationErrors(validationErrors)) {
       showBookingMessage(error.message);
     }
-    byId("booking-error-summary").focus();
   } finally {
     landingState.submitting = false;
     submit.textContent = "Enviar solicitud";
@@ -1404,6 +1515,10 @@ function setupBooking() {
   byId("booking-back").addEventListener("click", previousBookingStep);
   byId("booking-next").addEventListener("click", nextBookingStep);
   byId("booking-form").addEventListener("submit", submitBooking);
+  byId("client-name").addEventListener("input", () => clearBookingFieldError("name"));
+  byId("client-phone").addEventListener("input", () => clearBookingFieldError("phone"));
+  byId("notes").addEventListener("input", () => clearBookingFieldError("notes"));
+  byId("booking-photos").addEventListener("change", () => clearBookingFieldError("photos"));
   byId("calendar-previous").addEventListener("click", () => {
     landingState.calendarOffset = Math.max(0, landingState.calendarOffset - 14);
     bookingState.date = null;

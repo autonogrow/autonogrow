@@ -330,6 +330,64 @@ def test_customer_data_privacy_review_and_requested_result_are_truthful() -> Non
     assert 'requested: { label: "Solicitud enviada"' in js
 
 
+def test_booking_customer_validation_is_inline_and_actionable() -> None:
+    html, js, css, _, _, _ = sources()
+    collect = block(js, "function collectCustomerData", "function clearFieldErrors")
+    for field_name in ("name", "phone", "notes", "photos"):
+        assert f'id="booking-field-error-{field_name}" class="field-error" hidden' in html
+    assert '["name", "Introduce tu nombre."]' in collect
+    assert '["phone", "Introduce un número de teléfono válido."]' in collect
+    assert "!isPlausibleBookingPhone(phone)" in collect
+    assert "digits.length >= 7 && digits.length <= 15" in js
+    assert ".field-error" in css
+
+
+def test_booking_validation_shows_all_errors_with_secondary_summary_and_first_focus() -> None:
+    _, js, _, _, _, _ = sources()
+    validation = block(js, "function showValidationErrors", "function bookingFieldMessage")
+    assert "uniqueErrors.forEach" in validation
+    assert 'text: "Revisa algunos datos"' in validation
+    assert 'text: "Hay campos que necesitan corrección antes de continuar."' in validation
+    assert "error.textContent = message" in validation
+    assert "error.hidden = false" in validation
+    assert 'setAttribute("aria-invalid", "true")' in validation
+    assert 'scrollIntoView({ behavior: "smooth", block: "center" })' in validation
+    assert 'focus({ preventScroll: true })' in validation
+
+
+def test_booking_known_backend_validation_is_mapped_to_its_field() -> None:
+    _, js, _, _, _, _ = sources()
+    request = block(js, "async function requestJson", "function showUnavailable")
+    mapping = block(
+        js,
+        "function bookingValidationErrorsFromResponse",
+        "function renderBookingReview",
+    )
+    submit = block(js, "async function submitBooking", "async function uploadBookingPhotos")
+    assert "error.details = body.detail" in request
+    assert '"El teléfono no es válido para el país del negocio": "phone"' in mapping
+    for api_field, ui_field in (
+        ("customer_name", "name"),
+        ("customer_phone", "phone"),
+        ("notes", "notes"),
+        ("service_id", "service"),
+        ("staff_business_user_id", "staff"),
+        ("start_datetime", "datetime"),
+    ):
+        assert f'{api_field}: "{ui_field}"' in js
+    assert "bookingValidationErrorsFromResponse(error)" in submit
+    assert "showValidationErrors(validationErrors)" in submit
+
+
+def test_booking_validation_preserves_entered_data_until_success() -> None:
+    _, js, _, _, _, _ = sources()
+    submit = block(js, "async function submitBooking", "async function uploadBookingPhotos")
+    failed = submit.split("catch (error)", 1)[1]
+    assert "clearPersonalBookingData" not in failed
+    assert "bookingState.customer =" not in failed
+    assert submit.index("renderBookingResult") < submit.index("clearPersonalBookingData")
+
+
 def test_creation_blocks_double_submit_waits_and_clears_personal_data_only_after_success() -> None:
     _, js, _, _, _, _ = sources()
     submit = block(js, "async function submitBooking", "async function uploadBookingPhotos")
@@ -406,7 +464,7 @@ def test_responsive_and_accessible_structure_covers_required_controls() -> None:
     assert 'aria-label="Navegación del negocio"' in html
     assert 'role="group" aria-label="Horarios disponibles"' in html
     assert 'id="booking-error-summary" class="error-summary" role="alert"' in html
-    assert "booking-error-${field.id}-${index}" in LANDING_JS.read_text(encoding="utf-8")
+    assert 'setAttribute("aria-describedby"' in LANDING_JS.read_text(encoding="utf-8")
     assert 'event.key === "Escape"' in customer_js and 'event.key !== "Tab"' in customer_js
     for source in (css, customer_css):
         assert "@media (max-width: 640px)" in source or "@media (max-width: 680px)" in source
