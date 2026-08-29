@@ -93,7 +93,7 @@ def test_authenticated_home_links_equivalent_phone_and_cross_business_data(journ
     assert profile.json()["phone_normalized"] == "+34612345678"
 
 
-def test_repeat_booking_skips_identity_and_updates_home(journey) -> None:
+def test_repeat_booking_shows_prefilled_details_and_updates_home(journey) -> None:
     session = journey(email="customer@e2e.test")
     page = session.goto("/autonogrow-customer/")
     page.locator("#recent-services").get_by_role("link", name="Repetir").first.click()
@@ -102,7 +102,19 @@ def test_repeat_booking_skips_identity_and_updates_home(journey) -> None:
     expect(page.locator("#booking-step-datetime")).to_be_visible()
     _select_slot(page)
     page.locator("#booking-next").click()
-    expect(page.locator("#booking-step-customer")).to_be_hidden()
+    expect(page.locator("#booking-step-customer")).to_be_visible()
+    expect(page.locator("#client-name")).to_have_value("María")
+    expect(page.locator("#client-phone")).to_have_value("+34612345678")
+    expect(page.locator("#notes")).to_be_visible()
+    expect(page.locator("#notes")).to_have_value("")
+    expect(page.locator("#booking-photos")).to_be_visible()
+    assert page.locator("#booking-photos").evaluate("input => input.files.length") == 0
+    page.locator("#notes").fill("Comentario exclusivo de esta nueva reserva")
+    page.locator("#booking-next").click()
+    expect(page.locator("#booking-step-review")).to_be_visible()
+    expect(page.locator("#booking-review")).to_contain_text(
+        "Comentario exclusivo de esta nueva reserva"
+    )
     page.locator("#booking-submit").click()
     expect(page.locator("#booking-confirmation")).to_be_visible()
     page.get_by_role("link", name="Ir a Mis citas").click()

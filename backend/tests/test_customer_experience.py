@@ -25,13 +25,31 @@ def test_identified_home_prioritizes_greeting_next_repeat_calendar_and_profile()
     assert 'id="customer-day-agenda"' in CUSTOMER_HTML
 
 
-def test_repeat_journey_knows_business_service_and_skips_known_customer_data() -> None:
+def test_repeat_journey_keeps_optimizations_but_always_shows_booking_details() -> None:
     assert 'new URLSearchParams({ b: item.business_slug, repeat: "1" })' in CUSTOMER_JS
     assert 'params.set("service_id", String(item.service_id))' in CUSTOMER_JS
     assert 'new URLSearchParams(window.location.search).get("repeat") === "1"' in LANDING_JS
     assert 'showBookingStep("datetime")' in LANDING_JS
-    assert 'landingState.step === "datetime" && landingState.customerProfile' in LANDING_JS
-    assert 'next = "review"' in LANDING_JS
+    next_step = LANDING_JS.split("function nextBookingStep", 1)[1].split(
+        "async function submitBooking", 1
+    )[0]
+    assert "const next = BOOKING_STEPS[index + 1]" in next_step
+    assert 'landingState.step === "datetime" && landingState.customerProfile' not in next_step
+    assert 'next = "review"' not in next_step
+    assert 'data-booking-step="customer"' in LANDING_HTML
+    assert 'id="notes"' in LANDING_HTML
+    assert 'id="booking-photos"' in LANDING_HTML
+
+
+def test_known_customer_only_prefills_contact_data_for_the_current_booking() -> None:
+    profile = LANDING_JS.split("function applyKnownCustomerProfile", 1)[1].split(
+        "async function claimPendingBooking", 1
+    )[0]
+    assert 'byId("client-name").value = name' in profile
+    assert 'byId("client-phone").value = phone' in profile
+    for historical_value in ("profile.notes", "profile.files", "profile.attachments"):
+        assert historical_value not in profile
+    assert 'customer: { name: "", phone: "", notes: "", files: [] }' in LANDING_JS
 
 
 def test_guest_booking_remains_available_and_login_is_post_value_optional() -> None:

@@ -1224,19 +1224,7 @@ function nextBookingStep() {
   }
   if (landingState.step === "customer" && !collectCustomerData()) return;
   const index = BOOKING_STEPS.indexOf(landingState.step);
-  let next = BOOKING_STEPS[index + 1];
-  if (landingState.step === "datetime" && landingState.customerProfile) {
-    const profile = landingState.customerProfile;
-    const knownName = String(profile.preferred_name || profile.name || "").trim();
-    if (knownName) {
-      bookingState.customer = {
-        ...bookingState.customer,
-        name: knownName,
-        phone: profile.phone || ""
-      };
-      next = "review";
-    }
-  }
+  const next = BOOKING_STEPS[index + 1];
   if (next === "review") renderBookingReview();
   showBookingStep(next);
   byId(`booking-step-${next}`)?.querySelector("legend")?.focus?.();
