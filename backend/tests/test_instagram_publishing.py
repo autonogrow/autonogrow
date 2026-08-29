@@ -32,12 +32,14 @@ from app.models import (
     InstagramPublishJob,
     User,
 )
+from app.services.instagram_calendar_service import attention_details, latest_publish_job
 from app.services.instagram_publish_service import (
     build_publish_claim_statement,
     cancel_business_jobs,
     cancel_publish_job,
     claim_publish_jobs,
     normalize_planned_datetime,
+    publication_capabilities,
     publication_history_events,
     publication_preflight,
     serialize_publish_job,
@@ -656,6 +658,161 @@ def test_material_cancellation_and_executing_claim_require_manual_action(publish
     assert second.status == "action_required"
 
 
+@pytest.mark.parametrize(
+    ("job_status", "provider_status", "expected_retry"),
+    [
+        ("failed", "attempts_exhausted", True),
+        ("failed", "permanent_failure", False),
+        ("action_required", "action_required", True),
+    ],
+)
+def test_problematic_publication_capabilities_are_backend_authoritative(
+    publishing_context,
+    job_status,
+    provider_status,
+    expected_retry,
+):
+    ctx = publishing_context
+    job = queue_now(ctx)
+    job.status = job_status
+    job.provider_status = provider_status
+    ctx["db"].commit()
+    content = ctx["db"].get(InstagramContent, job.content_item_id)
+
+    capabilities = publication_capabilities(ctx["db"], content)
+
+    assert capabilities["can_edit"] is True
+    assert capabilities["can_retry"] is expected_retry
+    assert capabilities["can_remove"] is True
+    assert capabilities["can_archive"] is False
+    assert capabilities["requires_outcome_review"] is False
+    assert capabilities["is_processing"] is False
+
+
+@pytest.mark.parametrize(
+    "provider_status",
+    ["outcome_requires_review", "unknown_result", "unknown_after_claim_expiry"],
+)
+def test_uncertain_publish_outcome_disables_destructive_capabilities(
+    publishing_context,
+    provider_status,
+):
+    ctx = publishing_context
+    job = queue_now(ctx)
+    job.status = "action_required"
+    job.provider_status = provider_status
+    ctx["db"].commit()
+    content = ctx["db"].get(InstagramContent, job.content_item_id)
+
+    capabilities = publication_capabilities(ctx["db"], content)
+
+    assert capabilities["can_edit"] is False
+    assert capabilities["can_retry"] is False
+    assert capabilities["can_remove"] is False
+    assert capabilities["requires_outcome_review"] is True
+    assert capabilities["is_processing"] is False
+
+
+def test_retry_wait_can_be_retried_or_removed_but_not_edited(publishing_context):
+    ctx = publishing_context
+    job = queue_now(ctx)
+    job.status = "retry_wait"
+    job.provider_status = "temporary_failure"
+    job.next_attempt_at = utc_now() + timedelta(minutes=5)
+    ctx["db"].commit()
+    content = ctx["db"].get(InstagramContent, job.content_item_id)
+
+    capabilities = publication_capabilities(ctx["db"], content)
+
+    assert capabilities["can_edit"] is False
+    assert capabilities["can_retry"] is True
+    assert capabilities["can_remove"] is True
+
+
+@pytest.mark.parametrize(
+    "processing_status",
+    ["claimed", "creating_container", "publishing", "simulating_publish"],
+)
+def test_processing_capabilities_are_conservative(publishing_context, processing_status):
+    ctx = publishing_context
+    job = queue_now(ctx)
+    job.status = processing_status
+    job.claimed_by = "capability-worker"
+    job.claimed_at = utc_now()
+    job.claim_expires_at = utc_now() + timedelta(minutes=1)
+    ctx["db"].commit()
+    content = ctx["db"].get(InstagramContent, job.content_item_id)
+
+    capabilities = publication_capabilities(ctx["db"], content)
+
+    assert capabilities["can_edit"] is False
+    assert capabilities["can_publish"] is False
+    assert capabilities["can_retry"] is False
+    assert capabilities["can_remove"] is False
+    assert capabilities["can_archive"] is False
+    assert capabilities["is_processing"] is True
+
+
+def test_publish_capability_reflects_hold_and_integration_health(publishing_context):
+    ctx = publishing_context
+    content = make_validated_content(ctx)
+
+    ready = publication_capabilities(ctx["db"], content)
+    assert ready["can_publish"] is True
+    assert ready["publish_block_reason"] is None
+
+    hold = InstagramContentPublicationHold(
+        business_id=content.business_id,
+        content_id=content.id,
+        reason="Pausa solicitada por el negocio",
+        held_by_user_id=ctx["owner"].id,
+        held_at=utc_now(),
+    )
+    ctx["db"].add(hold)
+    ctx["db"].commit()
+    held = publication_capabilities(ctx["db"], content)
+    assert held["can_edit"] is True
+    assert held["can_publish"] is False
+    assert "pausado" in str(held["publish_block_reason"])
+
+    hold.released_at = utc_now()
+    ctx["integration"].health_status = "action_required"
+    ctx["db"].commit()
+    disconnected = publication_capabilities(ctx["db"], content)
+    assert disconnected["can_edit"] is True
+    assert disconnected["can_publish"] is False
+    assert "Repara la conexión" in str(disconnected["publish_block_reason"])
+
+
+def test_job_from_previous_version_does_not_lock_current_version(publishing_context):
+    ctx = publishing_context
+    content = make_validated_content(ctx)
+    old_version = max(content.versions, key=lambda version: version.version_number)
+    old_job = sync_publish_job(ctx["db"], content, actor=ctx["owner"])
+    old_job.status = "failed"
+    old_job.provider_status = "attempts_exhausted"
+    new_version = InstagramContentVersion(
+        business_id=content.business_id,
+        content_id=content.id,
+        version_number=old_version.version_number + 1,
+        caption="Nueva versión",
+        format="single_image",
+        created_by_user_id=ctx["owner"].id,
+    )
+    ctx["db"].add(new_version)
+    content.status = "draft"
+    ctx["db"].commit()
+    ctx["db"].expire(content, ["versions", "publish_jobs"])
+
+    capabilities = publication_capabilities(ctx["db"], content)
+
+    assert capabilities["can_edit"] is True
+    assert capabilities["can_retry"] is False
+    assert capabilities["can_remove"] is True
+    assert latest_publish_job(content) is None
+    assert attention_details(content)["attention_required"] is False
+
+
 def test_known_success_after_hold_is_recorded_as_published_without_retry(publishing_context):
     ctx = publishing_context
     job = queue_now(ctx)
@@ -863,7 +1020,8 @@ def test_autonogrow_ui_submits_review_and_business_owner_controls_final_publicat
         "/submit-for-review",
         "/publish-now",
         "/schedule",
-        "/cancel",
+        "/publish-job/retry",
+        'method: "DELETE"',
     ):
         assert owner_contract in owner
     assert "/validate`" not in owner

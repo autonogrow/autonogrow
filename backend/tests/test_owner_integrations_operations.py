@@ -244,7 +244,7 @@ def test_subscription_retry_is_hidden_while_an_equivalent_business_job_is_active
     _, _, _, _, operations = sources()
     detail = function(operations, "ownerIntegrationDetailMarkup", "renderOwnerIntegrationDetail")
     assert "subscriptionJobActive" in detail
-    assert "Ya existe un reintento de suscripción activo" in detail
+    assert "Ya estamos reparando la conexión" in detail
     assert "retry-subscription" in operations
 
 
@@ -357,7 +357,7 @@ def test_integration_jobs_are_translated_and_have_no_manual_retry() -> None:
     _, _, _, _, operations = sources()
     for raw, label in (
         ("health_check", "Comprobación de salud"),
-        ("retry_subscription", "Reintento de suscripción"),
+        ("retry_subscription", "Reparación de conexión"),
         ("attempt_cleanup", "Limpieza de intentos caducados"),
     ):
         assert f'{raw}: "{label}"' in operations
@@ -365,6 +365,34 @@ def test_integration_jobs_are_translated_and_have_no_manual_retry() -> None:
     assert "No existe un endpoint Owner seguro para reintentar este job manualmente" in jobs
     assert "entry.job.id" not in jobs
     assert "safe_error_code" not in jobs
+
+
+def test_health_repair_copy_is_human_while_backend_operation_is_unchanged() -> None:
+    _, _, owner, _, operations = sources()
+    retry = function(
+        operations,
+        "retryOwnerIntegrationSubscription",
+        "requestOwnerIntegrationReconnection",
+    )
+
+    for copy in (
+        "Reparar conexión",
+        "Volveremos a configurar la conexión necesaria para recibir correctamente las actualizaciones",
+    ):
+        assert copy in owner + operations
+    assert "Reparar conexión con ${" in operations
+    assert 'channelName = record.control.channel === "instagram" ? "Instagram" : "WhatsApp"' in retry
+    for obsolete in (
+        "Reintentar la suscripción",
+        "Reintentar suscripción",
+        "Reintento de suscripción",
+        "Suscripción ausente",
+        "Reintentar webhook",
+    ):
+        assert obsolete not in owner + operations
+    assert "/retry-subscription`" in retry
+    assert 'method: "POST"' in retry
+    assert "retry_subscription" in operations
 
 
 def test_maintenance_is_contextual_confirmed_and_non_optimistic() -> None:

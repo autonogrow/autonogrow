@@ -134,10 +134,14 @@ def test_owner_instagram_mutations_reject_duplicate_submissions_and_avoid_full_r
         ),
         (
             "async function publishOwnerInstagramComposer",
-            "async function cancelOwnerInstagramComposerContent",
+            "async function retryOwnerInstagramComposerContent",
         ),
         (
-            "async function cancelOwnerInstagramComposerContent",
+            "async function retryOwnerInstagramComposerContent",
+            "async function removeOwnerInstagramComposerContent",
+        ),
+        (
+            "async function removeOwnerInstagramComposerContent",
             "function ownerInstagramRetryAfterSeconds",
         ),
     ):
@@ -160,26 +164,26 @@ def test_owner_instagram_mutations_reject_duplicate_submissions_and_avoid_full_r
 
 def test_owner_instagram_removal_is_confirmed_reactive_and_conflict_safe() -> None:
     js = OWNER_JS.read_text(encoding="utf-8")
-    cancel = source_block(
+    removal = source_block(
         js,
-        "async function cancelOwnerInstagramComposerContent",
+        "async function removeOwnerInstagramComposerContent",
         "function ownerInstagramRetryAfterSeconds",
     )
-    reconcile = source_block(
+    retry = source_block(
         js,
-        "async function reconcileOwnerInstagramContent",
-        "function setOwnerInstagramFormBusy",
+        "async function retryOwnerInstagramComposerContent",
+        "async function removeOwnerInstagramComposerContent",
     )
 
-    for status in ("ready_for_review", "validated", "scheduled", "published"):
-        assert f'item.status === "{status}"' in js
-    assert "window.confirm(ownerInstagramRemovalConfirmation(state.content))" in cancel
-    assert "/cancel`" in cancel
-    assert "upsertOwnerInstagramContent(content)" in cancel
-    assert "closeOwnerInstagramComposer" in cancel
-    assert "await loadOwnerInstagramPanel()" not in cancel
-    assert "error.status !== 404" in reconcile
-    assert '"Cancelando publicación…"' in cancel
+    assert "confirmOwnerCriticalAction" in removal
+    assert 'title: archive ? "Archivar publicación" : "Eliminar publicación"' in removal
+    assert r"Se eliminará este contenido de AutonoGrow.\n\nLos archivos originales de tu biblioteca no se eliminarán." in removal
+    assert 'confirmLabel: archive ? "Archivar publicación" : "Eliminar publicación"' in removal
+    assert 'method: "DELETE"' in removal
+    assert "await loadOwnerInstagramPanel()" in removal
+    assert "publication-history" not in removal
+    assert "/publish-job/retry`" in retry
+    assert 'method: "POST"' in retry
 
 
 def test_owner_instagram_raw_removal_and_busy_copy_are_guarded() -> None:
@@ -198,7 +202,7 @@ def test_owner_instagram_raw_removal_and_busy_copy_are_guarded() -> None:
     for label in (
         "Subiendo…",
         "Guardando…",
-        "Cancelando publicación…",
+        "Preparando reintento…",
         "Preparando la programación…",
         "Preparando la publicación…",
     ):
@@ -399,7 +403,7 @@ def test_owner_instagram_async_lifecycle_is_centralized_polled_and_action_safe()
         assert status in lifecycle
     for label in (
         "Preparando publicación",
-        "Procesando en Instagram",
+        "Reintento programado",
         "Publicando en Instagram",
         "Publicado",
         "Publicación fallida",
@@ -411,8 +415,15 @@ def test_owner_instagram_async_lifecycle_is_centralized_polled_and_action_safe()
     assert 'status === "retry_wait"' in lifecycle
     assert "ownerInstagramPublicationUxState(item)" in js
     assert "ownerInstagramPublicationUxState(state.content)" in composer
-    assert "lifecycle.actionLocked" in composer
+    assert "ownerInstagramPublicationCapabilities(state.content)" in composer
+    assert "capabilities.can_edit" in composer
+    assert "capabilities.can_publish" in composer
+    assert "capabilities.can_retry" in composer
+    assert "capabilities.can_remove" in composer
+    assert "capabilities.can_archive" in composer
+    assert "actionLocked" not in js
     assert "owner-instagram-composer-primary" in composer
+    assert "ownerInstagramCurrentVersionJob(item)" in lifecycle
 
     assert "window.setTimeout" in polling
     assert "10_000" in polling

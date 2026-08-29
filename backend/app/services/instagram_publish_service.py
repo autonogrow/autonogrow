@@ -48,6 +48,12 @@ ACTIVE_JOB_STATUSES = {
     "simulating_publish",
     "retry_wait",
 }
+PROCESSING_JOB_STATUSES = {
+    "claimed",
+    "creating_container",
+    "publishing",
+    "simulating_publish",
+}
 EXECUTING_JOB_STATUSES = {
     "claimed",
     "creating_container",
@@ -60,7 +66,57 @@ UNCERTAIN_PROVIDER_STATUSES = {
     "unknown_result",
     "unknown_after_claim_expiry",
     "outcome_requires_review",
+    "publish_result_unknown",
 }
+
+
+def publish_outcome_requires_review(job: InstagramPublishJob | None) -> bool:
+    return bool(
+        job is not None
+        and job.status == "action_required"
+        and job.provider_status in UNCERTAIN_PROVIDER_STATUSES
+    )
+
+
+def unresolved_publish_outcome_job(
+    db: Session,
+    content: InstagramContent,
+    *,
+    for_update: bool = False,
+) -> InstagramPublishJob | None:
+    query = (
+        db.query(InstagramPublishJob)
+        .filter(
+            InstagramPublishJob.business_id == content.business_id,
+            InstagramPublishJob.content_item_id == content.id,
+            InstagramPublishJob.status == "action_required",
+            InstagramPublishJob.provider_status.in_(UNCERTAIN_PROVIDER_STATUSES),
+        )
+        .order_by(InstagramPublishJob.created_at.desc(), InstagramPublishJob.id.desc())
+    )
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
+
+
+def active_processing_publish_job(
+    db: Session,
+    content: InstagramContent,
+    *,
+    for_update: bool = False,
+) -> InstagramPublishJob | None:
+    query = (
+        db.query(InstagramPublishJob)
+        .filter(
+            InstagramPublishJob.business_id == content.business_id,
+            InstagramPublishJob.content_item_id == content.id,
+            InstagramPublishJob.status.in_(PROCESSING_JOB_STATUSES),
+        )
+        .order_by(InstagramPublishJob.created_at.desc(), InstagramPublishJob.id.desc())
+    )
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
 
 
 @dataclass(frozen=True)
@@ -500,6 +556,122 @@ def _active_validation(
         )
         .first()
     )
+
+
+def publication_capabilities(
+    db: Session,
+    content: InstagramContent,
+    *,
+    version: InstagramContentVersion | None = None,
+) -> dict[str, bool | str | None]:
+    current = version or _current_version(db, content)
+    jobs = list(content.publish_jobs)
+    current_job = (
+        max(
+            (job for job in jobs if current is not None and job.content_version_id == current.id),
+            key=lambda job: job.id,
+            default=None,
+        )
+        if current is not None
+        else None
+    )
+    unresolved_outcome = max(
+        (job for job in jobs if publish_outcome_requires_review(job)),
+        key=lambda job: job.id,
+        default=None,
+    )
+    requires_outcome_review = unresolved_outcome is not None
+    published = content.status == "published" or any(
+        job.status == "published" for job in jobs
+    )
+    archived = content.archived_at is not None
+    is_processing = any(job.status in PROCESSING_JOB_STATUSES for job in jobs)
+    retry_wait = bool(current_job is not None and current_job.status == "retry_wait")
+
+    can_edit = bool(
+        current is not None
+        and not archived
+        and not published
+        and content.status != "cancelled"
+        and not is_processing
+        and not retry_wait
+        and not requires_outcome_review
+    )
+    can_remove = bool(
+        not archived
+        and not published
+        and not is_processing
+        and not requires_outcome_review
+    )
+    can_archive = bool(not archived and published)
+
+    publish_block_reason: str | None = None
+    if current is not None and not archived and not published:
+        hold = (
+            db.query(InstagramContentPublicationHold.id)
+            .filter(
+                InstagramContentPublicationHold.business_id == content.business_id,
+                InstagramContentPublicationHold.content_id == content.id,
+                InstagramContentPublicationHold.released_at.is_(None),
+            )
+            .first()
+        )
+        review_blocker = (
+            db.query(InstagramContentEditorialReview.id)
+            .filter(
+                InstagramContentEditorialReview.business_id == content.business_id,
+                InstagramContentEditorialReview.content_id == content.id,
+                InstagramContentEditorialReview.version_id == current.id,
+                InstagramContentEditorialReview.status.in_({"changes_requested", "rejected"}),
+            )
+            .first()
+        )
+        _integration, integration_issue = integration_eligibility(db, content.business_id)
+        if hold is not None:
+            publish_block_reason = "El negocio ha pausado esta publicación."
+        elif review_blocker is not None:
+            publish_block_reason = "Guarda una nueva versión para resolver los cambios solicitados."
+        elif integration_issue is not None:
+            publish_block_reason = "Repara la conexión con Instagram antes de publicar."
+
+    can_retry = False
+    if (
+        current is not None
+        and current_job is not None
+        and current_job.status in {"failed", "action_required", "retry_wait"}
+        and not requires_outcome_review
+        and not (
+            current_job.status == "failed"
+            and current_job.provider_status != "attempts_exhausted"
+        )
+        and _active_validation(db, content, current.id) is not None
+    ):
+        can_retry = publication_preflight(
+            db,
+            content,
+            version=current,
+            validate_files=get_settings().instagram_publishing_mode == "meta",
+            publication_at=utc_now(),
+        ).ok
+
+    can_publish = bool(
+        can_edit
+        and publish_block_reason is None
+        and (
+            current_job is None
+            or current_job.status not in {"failed", "action_required", "retry_wait"}
+        )
+    )
+    return {
+        "can_edit": can_edit,
+        "can_publish": can_publish,
+        "can_retry": can_retry,
+        "can_remove": can_remove,
+        "can_archive": can_archive,
+        "requires_outcome_review": requires_outcome_review,
+        "is_processing": is_processing,
+        "publish_block_reason": publish_block_reason,
+    }
 
 
 def _audit_job(

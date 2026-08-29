@@ -883,7 +883,7 @@ function ownerIntegrationHealthTone(status) {
 
 function ownerWhatsAppCandidate(candidate) {
   const setupReady = candidate.app_subscription_status === "subscribed" && candidate.phone_registration_status === "registered";
-  return `<section class="owner-integration-warning"><h5>Cuenta de WhatsApp pendiente de revisión</h5><p><strong>${escapeHtml(candidate.candidate_verified_name || "WhatsApp Business")}</strong> · ${escapeHtml(candidate.candidate_display_phone_number_redacted || "número verificado")}</p><p>Finalidad: ${escapeHtml(candidate.purpose || "No indicada")} · Expira: ${escapeHtml(formatAutomationDate(candidate.expires_at))}</p><p>Suscripción: ${escapeHtml(ownerIntegrationHealthLabel("subscription", candidate.app_subscription_status))} · Registro: ${escapeHtml(ownerIntegrationHealthLabel("asset", candidate.phone_registration_status))}</p>${candidate.safe_error_message ? `<p>${escapeHtml(candidate.safe_error_message)}</p>` : ""}<div class="owner-integration-actions"><button class="button button-secondary button-small" type="button" data-owner-channel-action="whatsapp-retry" data-channel="whatsapp" data-attempt-id="${candidate.id}">Reintentar verificación</button><button class="button button-primary button-small" type="button" data-owner-channel-action="whatsapp-approve" data-channel="whatsapp" data-attempt-id="${candidate.id}" ${setupReady ? "" : "disabled"}>Aprobar cuenta</button><button class="button button-danger button-small" type="button" data-owner-channel-action="whatsapp-reject" data-channel="whatsapp" data-attempt-id="${candidate.id}">Rechazar cuenta</button></div></section>`;
+  return `<section class="owner-integration-warning"><h5>Cuenta de WhatsApp pendiente de revisión</h5><p><strong>${escapeHtml(candidate.candidate_verified_name || "WhatsApp Business")}</strong> · ${escapeHtml(candidate.candidate_display_phone_number_redacted || "número verificado")}</p><p>Finalidad: ${escapeHtml(candidate.purpose || "No indicada")} · Expira: ${escapeHtml(formatAutomationDate(candidate.expires_at))}</p><p>Recepción de actualizaciones: ${escapeHtml(ownerIntegrationHealthLabel("subscription", candidate.app_subscription_status))} · Registro: ${escapeHtml(ownerIntegrationHealthLabel("asset", candidate.phone_registration_status))}</p>${candidate.safe_error_message ? `<p>${escapeHtml(candidate.safe_error_message)}</p>` : ""}<div class="owner-integration-actions"><button class="button button-secondary button-small" type="button" data-owner-channel-action="whatsapp-retry" data-channel="whatsapp" data-attempt-id="${candidate.id}">Reintentar verificación</button><button class="button button-primary button-small" type="button" data-owner-channel-action="whatsapp-approve" data-channel="whatsapp" data-attempt-id="${candidate.id}" ${setupReady ? "" : "disabled"}>Aprobar cuenta</button><button class="button button-danger button-small" type="button" data-owner-channel-action="whatsapp-reject" data-channel="whatsapp" data-attempt-id="${candidate.id}">Rechazar cuenta</button></div></section>`;
 }
 
 function renderOwnerChannelControls(panel, data) {
@@ -897,9 +897,9 @@ function renderOwnerChannelControls(panel, data) {
     if (channel.status === "pending_approval" && channel.connection_mode === "simulated" && channel.channel !== "instagram") actions += `<button class="button button-primary button-small" type="button" data-owner-channel-action="approve" data-channel="${escapeHtml(channel.channel)}">Aprobar uso</button>`;
     if (channel.status === "approved") actions += `<label class="checkbox-row"><input type="checkbox" data-owner-channel-delivery="${escapeHtml(channel.channel)}" ${channel.integrated_delivery_enabled ? "checked" : ""}> Envío integrado</label><label class="checkbox-row"><input type="checkbox" data-owner-channel-automation="${escapeHtml(channel.channel)}" ${channel.automation_enabled ? "checked" : ""}> Automatización</label><button class="button button-primary button-small" type="button" data-owner-channel-action="capabilities" data-channel="${escapeHtml(channel.channel)}">Guardar activaciones</button>`;
     if (!["not_allowed", "revoked"].includes(channel.status)) actions += `<button class="button button-danger button-small" type="button" data-owner-channel-action="suspend" data-channel="${escapeHtml(channel.channel)}">Suspender</button><button class="button button-danger button-small" type="button" data-owner-channel-action="revoke" data-channel="${escapeHtml(channel.channel)}">Revocar</button>`;
-    if (health) actions += `<button class="button button-secondary button-small" type="button" data-owner-channel-action="health-check" data-channel="${escapeHtml(channel.channel)}">Comprobar ahora</button>${health.subscription_status === "missing" ? `<button class="button button-secondary button-small" type="button" data-owner-channel-action="retry-subscription" data-channel="${escapeHtml(channel.channel)}">Reintentar suscripción</button>` : ""}${health.reconnection_required && channel.channel === "instagram" ? `<button class="button button-primary button-small" type="button" data-owner-channel-action="health-reconnect" data-channel="instagram">Reconectar</button>` : ""}${health.reconnection_required && channel.channel === "whatsapp" ? `<a class="button button-primary button-small" href="../autonogrow-admin/index.html?b=${escapeHtml(data.business.slug)}#channels">Abrir onboarding</a>` : ""}`;
+    if (health) actions += `<button class="button button-secondary button-small" type="button" data-owner-channel-action="health-check" data-channel="${escapeHtml(channel.channel)}">Comprobar ahora</button>${health.subscription_status === "missing" ? `<button class="button button-secondary button-small" type="button" data-owner-channel-action="retry-subscription" data-channel="${escapeHtml(channel.channel)}">Reparar conexión</button>` : ""}${health.reconnection_required && channel.channel === "instagram" ? `<button class="button button-primary button-small" type="button" data-owner-channel-action="health-reconnect" data-channel="instagram">Reconectar</button>` : ""}${health.reconnection_required && channel.channel === "whatsapp" ? `<a class="button button-primary button-small" href="../autonogrow-admin/index.html?b=${escapeHtml(data.business.slug)}#channels">Abrir onboarding</a>` : ""}`;
     const candidates = channel.channel === "whatsapp" ? (data.whatsapp_candidates || []).map(ownerWhatsAppCandidate).join("") : "";
-    const healthPanel = health ? `<div class="owner-integration-health state-${ownerIntegrationHealthTone(health.health_status)}"><p><strong>Salud: ${escapeHtml(ownerIntegrationHealthLabel("health", health.health_status))}</strong></p><p>Última: ${escapeHtml(formatAutomationDate(health.last_health_check_at))} · Próxima: ${escapeHtml(formatAutomationDate(health.next_health_check_at))}</p><p>Token: ${escapeHtml(ownerIntegrationHealthLabel("token", health.token_expiry_status))} · Suscripción: ${escapeHtml(ownerIntegrationHealthLabel("subscription", health.subscription_status))} · Activo: ${escapeHtml(ownerIntegrationHealthLabel("asset", health.asset_status))}</p><p>Fallos consecutivos: ${Number(health.consecutive_health_failures || 0)}</p>${health.safe_error_message ? `<p>${escapeHtml(health.safe_error_message)}</p>` : ""}</div>` : `<p class="helper">Sin integración operativa.</p>`;
+    const healthPanel = health ? `<div class="owner-integration-health state-${ownerIntegrationHealthTone(health.health_status)}"><p><strong>Salud: ${escapeHtml(ownerIntegrationHealthLabel("health", health.health_status))}</strong></p><p>Última: ${escapeHtml(formatAutomationDate(health.last_health_check_at))} · Próxima: ${escapeHtml(formatAutomationDate(health.next_health_check_at))}</p><p>Autorización: ${escapeHtml(ownerIntegrationHealthLabel("token", health.token_expiry_status))} · Recepción de actualizaciones: ${escapeHtml(ownerIntegrationHealthLabel("subscription", health.subscription_status))} · Activo: ${escapeHtml(ownerIntegrationHealthLabel("asset", health.asset_status))}</p><p>Fallos consecutivos: ${Number(health.consecutive_health_failures || 0)}</p>${health.subscription_status === "missing" ? `<p>Volveremos a configurar la conexión necesaria para recibir correctamente las actualizaciones de ${channel.channel === "instagram" ? "Instagram" : "WhatsApp"}.</p>` : health.safe_error_message ? `<p>${escapeHtml(health.safe_error_message)}</p>` : ""}</div>` : `<p class="helper">Sin integración operativa.</p>`;
     return `<article class="owner-channel-control-card"><div class="owner-integration-heading"><h4>${escapeHtml(names[channel.channel])}</h4><span class="state-badge ag-badge ${channel.status === "approved" ? "active ag-badge--success" : "inactive ag-badge--neutral"}">${escapeHtml(ownerChannelControlStatusLabel(channel.status))}</span></div>${healthPanel}${candidates}<div class="owner-channel-control-actions">${actions}</div></article>`;
   }).join("")}</div><p data-owner-channel-feedback class="status-text"></p>`;
 }
@@ -1006,8 +1006,8 @@ function ownerInstagramCredentialForm(mode) {
 }
 
 function ownerInstagramCandidate(candidate) {
-  const webhookRetry = candidate.webhook_subscription_status === "failed" ? `<button class="button button-secondary button-small" type="button" data-owner-integration-action="candidate-retry-webhook" data-attempt-id="${candidate.id}">Reintentar webhook</button>` : "";
-  return `<section class="owner-integration-warning"><h5>Cuenta pendiente de revisión</h5><p><strong>${escapeHtml(candidate.candidate_external_account_name || "Cuenta profesional sin nombre público")}</strong> · ${escapeHtml(candidate.candidate_account_type || "Profesional")} · ${escapeHtml(candidate.purpose)}</p><p>Autorizada: ${escapeHtml(formatAutomationDate(candidate.created_at))} · Expira: ${escapeHtml(formatAutomationDate(candidate.candidate_token_expires_at))}</p><p>Webhook: ${escapeHtml(candidate.webhook_subscription_status || "pendiente")} · Permisos técnicos validados por el servidor</p>${candidate.safe_error_message ? `<p>${escapeHtml(candidate.safe_error_message)}</p>` : ""}<div class="owner-integration-actions">${webhookRetry}<button class="button button-primary button-small" type="button" data-owner-integration-action="candidate-approve" data-attempt-id="${candidate.id}" ${candidate.webhook_subscription_status !== "subscribed" ? "disabled" : ""}>Aprobar cuenta</button><button class="button button-danger button-small" type="button" data-owner-integration-action="candidate-reject" data-attempt-id="${candidate.id}">Rechazar cuenta</button></div></section>`;
+  const webhookRetry = candidate.webhook_subscription_status === "failed" ? `<button class="button button-secondary button-small" type="button" data-owner-integration-action="candidate-retry-webhook" data-attempt-id="${candidate.id}">Reparar recepción</button>` : "";
+  return `<section class="owner-integration-warning"><h5>Cuenta pendiente de revisión</h5><p><strong>${escapeHtml(candidate.candidate_external_account_name || "Cuenta profesional sin nombre público")}</strong> · ${escapeHtml(candidate.candidate_account_type || "Profesional")} · ${escapeHtml(candidate.purpose)}</p><p>Autorizada: ${escapeHtml(formatAutomationDate(candidate.created_at))} · Expira: ${escapeHtml(formatAutomationDate(candidate.candidate_token_expires_at))}</p><p>Recepción de actualizaciones: ${escapeHtml(ownerIntegrationHealthLabel("subscription", candidate.webhook_subscription_status))} · Permisos de conexión validados</p>${candidate.safe_error_message ? `<p>${escapeHtml(candidate.safe_error_message)}</p>` : ""}<div class="owner-integration-actions">${webhookRetry}<button class="button button-primary button-small" type="button" data-owner-integration-action="candidate-approve" data-attempt-id="${candidate.id}" ${candidate.webhook_subscription_status !== "subscribed" ? "disabled" : ""}>Aprobar cuenta</button><button class="button button-danger button-small" type="button" data-owner-integration-action="candidate-reject" data-attempt-id="${candidate.id}">Rechazar cuenta</button></div></section>`;
 }
 
 function renderOwnerIntegration(panel, integration, candidates = []) {
@@ -1072,7 +1072,7 @@ async function handleOwnerIntegrationAction(button) {
   if (action === "candidate-retry-webhook") {
     const response = await fetch(`${base}/oauth/candidates/${encodeURIComponent(button.dataset.attemptId)}/webhook/retry`, { method: "POST" });
     const body = await readResponseBody(response);
-    if (!response.ok) throw new Error(body.detail || "No se pudo reintentar el webhook");
+    if (!response.ok) throw new Error(body.detail || "No se pudo reparar la recepción de actualizaciones");
     await loadOwnerIntegration(panel);
     return;
   }
@@ -1547,43 +1547,56 @@ const OWNER_INSTAGRAM_ACTIVE_JOB_STATUSES = new Set([
   "retry_wait",
 ]);
 
+function ownerInstagramCurrentVersionJob(item) {
+  const versionId = Number(item?.current_version?.id);
+  if (!versionId) return null;
+  return (item.publish_jobs || []).find((job) => Number(job.content_version_id) === versionId) || null;
+}
+
+function ownerInstagramPublicationCapabilities(item) {
+  if (!item) {
+    return { can_edit: true, can_publish: true, can_retry: false, can_remove: false, can_archive: false, requires_outcome_review: false, is_processing: false, publish_block_reason: null };
+  }
+  return item.publication_capabilities || { can_edit: false, can_publish: false, can_retry: false, can_remove: false, can_archive: false, requires_outcome_review: false, is_processing: true, publish_block_reason: "Actualiza la publicación para comprobar las acciones disponibles." };
+}
+
 function ownerInstagramPublicationUxState(item) {
-  const job = item?.publish_jobs?.[0] || null;
+  const job = ownerInstagramCurrentVersionJob(item);
   const status = job?.status;
   const carousel = item?.current_version?.format === "carousel";
+  const capabilities = ownerInstagramPublicationCapabilities(item);
   if (status === "published" || item?.status === "published") {
-    return { key: "published", label: "Publicado", detail: "La publicación está disponible en Instagram.", tone: "published", icon: "✓", transient: false, actionLocked: true };
+    return { key: "published", label: "Publicado", detail: "La publicación está disponible en Instagram.", tone: "published", icon: "✓", transient: false };
   }
   if (status === "queued") {
     const dueSoon = !job.scheduled_for || new Date(job.scheduled_for).getTime() <= Date.now() + 60_000;
     return dueSoon
-      ? { key: "preparing", label: "Preparando publicación", detail: carousel ? "Preparando el carrusel antes de enviarlo a Instagram." : "La publicación está en cola y comenzará en breve.", tone: "scheduled", icon: "…", transient: true, actionLocked: true }
-      : { key: "scheduled", label: "Programado", detail: `Se publicará ${formatOwnerDate(job.scheduled_for)}.`, tone: "scheduled", icon: "●", transient: false, actionLocked: false };
+      ? { key: "preparing", label: "Preparando publicación", detail: carousel ? "Preparando el carrusel antes de enviarlo a Instagram." : "La publicación está en cola y comenzará en breve.", tone: "scheduled", icon: "…", transient: true }
+      : { key: "scheduled", label: "Programado", detail: `Se publicará ${formatOwnerDate(job.scheduled_for)}.`, tone: "scheduled", icon: "●", transient: false };
   }
   if (["claimed", "creating_container"].includes(status)) {
-    return { key: "preparing", label: "Preparando publicación", detail: carousel ? "Instagram está preparando los elementos del carrusel." : "Instagram está preparando el contenido.", tone: "scheduled", icon: "…", transient: true, actionLocked: true };
+    return { key: "preparing", label: "Preparando publicación", detail: carousel ? "Instagram está preparando los elementos del carrusel." : "Instagram está preparando el contenido.", tone: "scheduled", icon: "…", transient: true };
   }
   if (["publishing", "simulating_publish"].includes(status)) {
-    return { key: "publishing", label: "Publicando en Instagram", detail: "El envío está en curso. No es necesario volver a pulsar Publicar.", tone: "scheduled", icon: "…", transient: true, actionLocked: true };
+    return { key: "publishing", label: "Publicando en Instagram", detail: "El envío está en curso. No es necesario volver a pulsar Publicar.", tone: "scheduled", icon: "…", transient: true };
   }
   if (status === "retry_wait") {
     const exhausted = Number(job.attempt_count || 0) >= Number(job.max_attempts || 0);
     if (!exhausted) {
-      return { key: "processing", label: "Procesando en Instagram", detail: carousel ? "Instagram sigue procesando el carrusel; se comprobará de nuevo automáticamente." : "Instagram sigue procesando el contenido; se reintentará automáticamente.", tone: "scheduled", icon: "…", transient: true, actionLocked: true };
+      return { key: "processing", label: "Reintento programado", detail: carousel ? "Instagram volverá a comprobar el carrusel automáticamente." : "AutonoGrow volverá a intentar la publicación automáticamente.", tone: "scheduled", icon: "…", transient: true };
     }
   }
   if (status === "action_required") {
     const code = String(job.provider_error_code || "");
-    const uncertain = ["outcome_requires_review", "unknown_after_claim_expiry", "publish_result_unknown"].includes(job.provider_status) || code.includes("unknown");
-    if (uncertain) return { key: "verify", label: "Verificar publicación", detail: "El resultado no es concluyente. Comprueba Instagram antes de intentar otra acción.", tone: "attention", icon: "!", transient: false, actionLocked: true };
-    if (code.includes("authentication") || code.includes("token") || code.includes("permission")) return { key: "reconnect", label: "Reconectar Instagram", detail: "La conexión o los permisos de Instagram requieren atención.", tone: "attention", icon: "!", transient: false, actionLocked: true };
-    return { key: "attention", label: "Necesita atención", detail: job.safe_error_message || "Revisa el detalle técnico antes de continuar.", tone: "attention", icon: "!", transient: false, actionLocked: true };
+    if (capabilities.requires_outcome_review) return { key: "verify", label: "Verificar publicación", detail: "El resultado no es concluyente. Comprueba Instagram antes de intentar otra acción.", tone: "attention", icon: "!", transient: false };
+    if (code.includes("authentication") || code.includes("token") || code.includes("permission")) return { key: "reconnect", label: "Reconectar Instagram", detail: "La conexión o los permisos de Instagram requieren atención.", tone: "attention", icon: "!", transient: false };
+    return { key: "attention", label: "Necesita atención", detail: job.safe_error_message || "Revisa el detalle antes de continuar.", tone: "attention", icon: "!", transient: false };
   }
   if (status === "failed" || status === "retry_wait") {
-    return { key: "failed", label: "Publicación fallida", detail: job?.safe_error_message || "No se pudo completar la publicación.", tone: "attention", icon: "!", transient: false, actionLocked: true };
+    return { key: "failed", label: "Publicación fallida", detail: job?.safe_error_message || "No se pudo completar la publicación.", tone: "attention", icon: "!", transient: false };
   }
   const attention = ["ready_for_review", "changes_requested"].includes(item?.status);
-  return { key: item?.status || "draft", label: ownerInstagramStateLabel(item?.status), detail: "", tone: attention ? "attention" : item?.status || "draft", icon: attention ? "!" : ["validated", "scheduled"].includes(item?.status) ? "●" : "○", transient: false, actionLocked: false };
+  return { key: item?.status || "draft", label: ownerInstagramStateLabel(item?.status), detail: "", tone: attention ? "attention" : item?.status || "draft", icon: attention ? "!" : ["validated", "scheduled"].includes(item?.status) ? "●" : "○", transient: false };
 }
 
 function ownerInstagramFormatLabel(format) {
@@ -1861,14 +1874,6 @@ function renderOwnerInstagramRaw(assets) {
     : `<p class="helper">Todavía no hay material bruto.</p>`;
 }
 
-function ownerInstagramRemovalConfirmation(item) {
-  if (item.status === "ready_for_review") return "Este contenido está en revisión. Se cancelará la revisión y se eliminará. ¿Quieres continuar?";
-  if (item.status === "validated") return "Este contenido ya está validado técnicamente. ¿Quieres eliminarlo?";
-  if (item.status === "scheduled") return "Este contenido está programado. Se cancelará la publicación programada antes de retirarlo. ¿Quieres continuar?";
-  if (item.status === "published") return "Este contenido ya está publicado. Se archivará en el Owner y se conservará su historial. ¿Quieres continuar?";
-  return "¿Eliminar este contenido?";
-}
-
 function renderOwnerInstagramContents() {
   renderOwnerInstagramCalendar();
   renderOwnerBusinessSupervision();
@@ -2134,7 +2139,7 @@ function closeOwnerInstagramComposer({ force = false } = {}) {
 function ownerInstagramComposerAdvanced(content) {
   if (!content) return `<p class="helper">Al guardar se conservarán internamente versiones, validaciones, jobs y auditoría.</p>`;
   const version = content.current_version;
-  const job = content.publish_jobs?.[0];
+  const job = ownerInstagramCurrentVersionJob(content);
   const rows = [
     ["Estado", ownerInstagramPublicationUxState(content).label],
     ["Versión", version?.version_number],
@@ -2168,7 +2173,7 @@ function ownerInstagramComposerAdvanced(content) {
 
 function ownerInstagramComposerMediaMarkup(media, index, state) {
   const isVideo = ownerInstagramComposerMediaType(media) === "video/mp4";
-  const controlsLocked = state.busy || ownerInstagramPublicationUxState(state.content).actionLocked;
+  const controlsLocked = state.busy || !ownerInstagramPublicationCapabilities(state.content).can_edit;
   const disabled = controlsLocked ? "disabled" : "";
   const visual = media.loading
     ? `<div class="instagram-phone__empty"><p>Cargando…</p></div>`
@@ -2213,7 +2218,7 @@ function ownerInstagramApplyStoryPreview() {
     cursor: "grab",
   });
   image.onpointerdown = (event) => {
-    if (ownerInstagramPublicationUxState(state.content).actionLocked || state.busy) return;
+    if (!ownerInstagramPublicationCapabilities(state.content).can_edit || state.busy) return;
     event.preventDefault();
     image.setPointerCapture(event.pointerId);
     image.style.cursor = "grabbing";
@@ -2279,12 +2284,13 @@ function renderOwnerInstagramComposer() {
   const state = ownerInstagramComposerState;
   if (!state) return;
   const config = OWNER_INSTAGRAM_COMPOSER_FORMATS[state.format];
-  const terminal = ["published", "cancelled"].includes(state.content?.status);
   const lifecycle = ownerInstagramPublicationUxState(state.content);
-  const lifecycleLocked = Boolean(state.content && lifecycle.actionLocked);
-  const locked = terminal || lifecycleLocked;
-  byId("owner-instagram-composer-title").textContent = lifecycleLocked && !terminal ? "Supervisar publicación" : state.content ? "Editar publicación" : "Crear publicación";
+  const capabilities = ownerInstagramPublicationCapabilities(state.content);
+  const locked = Boolean(state.content && !capabilities.can_edit);
+  const supervising = capabilities.is_processing || capabilities.requires_outcome_review;
+  byId("owner-instagram-composer-title").textContent = supervising ? "Supervisar publicación" : capabilities.can_archive ? "Consultar publicación" : state.content ? "Editar publicación" : "Crear publicación";
   byId("owner-instagram-composer-kicker").textContent = state.content ? `${lifecycle.label} · Instagram` : "Nueva publicación · Instagram";
+  byId("owner-instagram-composer-description").textContent = capabilities.publish_block_reason || lifecycle.detail || "Prepara el contenido y comprueba cómo se verá antes de publicarlo.";
   document.querySelectorAll('[name="composer_format"]').forEach((input) => { input.checked = input.value === state.format; input.disabled = locked || state.busy; });
   document.querySelectorAll('[name="composer_publication"]').forEach((input) => { input.checked = input.value === state.publication; input.disabled = locked || state.busy; });
   const fileInput = byId("owner-instagram-composer-file");
@@ -2343,9 +2349,19 @@ function renderOwnerInstagramComposer() {
   byId("owner-instagram-composer-timezone").textContent = state.timezone;
   byId("owner-instagram-composer-advanced-content").innerHTML = ownerInstagramComposerAdvanced(state.content);
   byId("owner-instagram-composer-save").disabled = locked || state.busy;
-  byId("owner-instagram-composer-primary").disabled = locked || state.busy;
-  byId("owner-instagram-composer-primary").textContent = lifecycleLocked && !terminal ? lifecycle.label : state.publication === "now" ? "Publicar ahora" : state.content?.status === "scheduled" ? "Reprogramar" : "Programar";
-  byId("owner-instagram-composer-cancel-content").hidden = !state.content || locked;
+  const verificationUrl = capabilities.requires_outcome_review ? ownerInstagramHistoryPermalink(state.content) : null;
+  const canVerify = Boolean(verificationUrl);
+  const canPublish = !state.content || capabilities.can_publish;
+  byId("owner-instagram-composer-primary").disabled = state.busy || (!canPublish && !canVerify);
+  byId("owner-instagram-composer-primary").textContent = canVerify ? "Verificar publicación" : !canPublish && state.content ? lifecycle.label : state.publication === "now" ? "Publicar ahora" : state.content?.status === "scheduled" ? "Reprogramar" : "Programar";
+  const retryButton = byId("owner-instagram-composer-retry");
+  retryButton.hidden = !state.content || !capabilities.can_retry;
+  retryButton.disabled = state.busy;
+  const removalButton = byId("owner-instagram-composer-cancel-content");
+  removalButton.hidden = !state.content || (!capabilities.can_remove && !capabilities.can_archive);
+  removalButton.disabled = state.busy;
+  removalButton.textContent = capabilities.can_archive ? "Archivar publicación" : "Eliminar publicación";
+  removalButton.className = `button ${capabilities.can_archive ? "button-ghost" : "button-danger"}`;
   byId("owner-instagram-composer-close").disabled = state.busy;
   byId("owner-instagram-composer").querySelector(".instagram-composer").setAttribute("aria-busy", String(state.busy));
   renderOwnerInstagramComposerPreview(state);
@@ -2833,6 +2849,10 @@ async function ownerInstagramComposerEnsureValidated(content) {
 async function saveOwnerInstagramComposerDraft() {
   const state = ownerInstagramComposerState;
   if (!state || state.busy || !ownerInstagramComposerValidate()) return;
+  if (state.content && !ownerInstagramPublicationCapabilities(state.content).can_edit) {
+    byId("owner-instagram-composer-error").textContent = ownerInstagramPublicationUxState(state.content).detail;
+    return;
+  }
   const mutationKey = state.contentId ? `content:${state.contentId}` : "content-create";
   if (!beginOwnerInstagramMutation(mutationKey)) return;
   setOwnerInstagramComposerBusy(true, "Guardando borrador…");
@@ -2856,8 +2876,19 @@ async function publishOwnerInstagramComposer() {
   const state = ownerInstagramComposerState;
   if (!state || state.busy) return;
   const lifecycle = ownerInstagramPublicationUxState(state.content);
-  if (state.content && lifecycle.actionLocked) {
-    byId("owner-instagram-composer-error").textContent = lifecycle.detail;
+  const capabilities = ownerInstagramPublicationCapabilities(state.content);
+  if (capabilities.requires_outcome_review) {
+    const verificationUrl = ownerInstagramHistoryPermalink(state.content);
+    if (verificationUrl) {
+      const opened = window.open(verificationUrl, "_blank", "noopener,noreferrer");
+      if (opened) opened.opener = null;
+    } else {
+      byId("owner-instagram-composer-error").textContent = lifecycle.detail;
+    }
+    return;
+  }
+  if (state.content && !capabilities.can_publish) {
+    byId("owner-instagram-composer-error").textContent = capabilities.publish_block_reason || lifecycle.detail;
     renderOwnerInstagramComposer();
     return;
   }
@@ -2903,24 +2934,59 @@ async function publishOwnerInstagramComposer() {
   }
 }
 
-async function cancelOwnerInstagramComposerContent() {
+async function retryOwnerInstagramComposerContent() {
   const state = ownerInstagramComposerState;
-  if (!state?.contentId || state.busy || !window.confirm(ownerInstagramRemovalConfirmation(state.content))) return;
+  if (!state?.contentId || state.busy || !ownerInstagramPublicationCapabilities(state.content).can_retry) return;
   const mutationKey = `content:${state.contentId}`;
   if (!beginOwnerInstagramMutation(mutationKey)) return;
-  setOwnerInstagramComposerBusy(true, "Cancelando publicación…");
+  setOwnerInstagramComposerBusy(true, "Preparando reintento…");
   try {
-    const content = await ownerInstagramJson(`${ownerInstagramApi()}/contents/${state.contentId}/cancel`, { method: "POST" });
+    await ownerInstagramJson(`${ownerInstagramApi()}/contents/${state.contentId}/publish-job/retry`, { method: "POST" });
+    const content = await ownerInstagramJson(`${ownerInstagramApi()}/contents/${state.contentId}`);
     upsertOwnerInstagramContent(content);
     state.dirty = false;
     closeOwnerInstagramComposer({ force: true });
-    byId("owner-instagram-status").textContent = "Publicación cancelada.";
+    byId("owner-instagram-status").textContent = "Reintento preparado.";
   } catch (error) {
     byId("owner-instagram-composer-error").textContent = error.message;
   } finally {
     endOwnerInstagramMutation(mutationKey);
     if (ownerInstagramComposerState) setOwnerInstagramComposerBusy(false);
   }
+}
+
+async function removeOwnerInstagramComposerContent() {
+  const state = ownerInstagramComposerState;
+  if (!state?.contentId || state.busy) return;
+  const capabilities = ownerInstagramPublicationCapabilities(state.content);
+  const archive = capabilities.can_archive;
+  if (!capabilities.can_remove && !archive) return;
+  const mutationKey = `content:${state.contentId}`;
+  const confirmed = await confirmOwnerCriticalAction({
+    kicker: archive ? "Archivo operativo" : "Confirmar eliminación",
+    title: archive ? "Archivar publicación" : "Eliminar publicación",
+    resource: state.content.title,
+    current: ownerInstagramPublicationUxState(state.content).label,
+    next: archive ? "Archivada y disponible en Historial" : "Eliminada de AutonoGrow",
+    consequence: archive
+      ? "La publicación desaparecerá del espacio operativo y permanecerá en Historial de publicaciones. El post publicado en Instagram no se eliminará."
+      : "Se eliminará este contenido de AutonoGrow.\n\nLos archivos originales de tu biblioteca no se eliminarán.",
+    confirmLabel: archive ? "Archivar publicación" : "Eliminar publicación",
+    requiresReason: false,
+    action: async () => {
+      if (!beginOwnerInstagramMutation(mutationKey)) throw new Error("Ya hay una actualización en curso para este contenido.");
+      try {
+        await ownerInstagramJson(`${ownerInstagramApi()}/contents/${state.contentId}`, { method: "DELETE" });
+      } finally {
+        endOwnerInstagramMutation(mutationKey);
+      }
+    },
+  });
+  if (!confirmed) return;
+  state.dirty = false;
+  closeOwnerInstagramComposer({ force: true });
+  await loadOwnerInstagramPanel();
+  byId("owner-instagram-status").textContent = archive ? "Publicación archivada." : "Publicación eliminada.";
 }
 
 function ownerInstagramRetryAfterSeconds(response) {
@@ -3301,7 +3367,7 @@ function stopOwnerInstagramLifecyclePolling() {
 
 function ownerInstagramHasTransientPublications() {
   return ownerInstagramContents.some((item) => {
-    const jobStatus = item.publish_jobs?.[0]?.status;
+    const jobStatus = ownerInstagramCurrentVersionJob(item)?.status;
     return OWNER_INSTAGRAM_ACTIVE_JOB_STATUSES.has(jobStatus)
       && ownerInstagramPublicationUxState(item).transient;
   });
@@ -3932,7 +3998,8 @@ byId("owner-instagram-preview-carousel").addEventListener("click", (event) => {
 });
 byId("owner-instagram-composer-save").addEventListener("click", saveOwnerInstagramComposerDraft);
 byId("owner-instagram-composer-primary").addEventListener("click", publishOwnerInstagramComposer);
-byId("owner-instagram-composer-cancel-content").addEventListener("click", cancelOwnerInstagramComposerContent);
+byId("owner-instagram-composer-retry").addEventListener("click", retryOwnerInstagramComposerContent);
+byId("owner-instagram-composer-cancel-content").addEventListener("click", removeOwnerInstagramComposerContent);
 byId("owner-instagram-composer").addEventListener("click", (event) => { if (event.target === event.currentTarget) closeOwnerInstagramComposer(); });
 byId("owner-instagram-library-close").addEventListener("click", closeOwnerInstagramLibrary);
 byId("owner-instagram-library-done").addEventListener("click", closeOwnerInstagramLibrary);

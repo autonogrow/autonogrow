@@ -253,6 +253,21 @@ def update_material(
     content = content_or_404(db, business_id, content_id, for_update=True)
     if content.status in {"cancelled", "published"}:
         raise HTTPException(status_code=409, detail="Terminal content cannot be edited")
+    from app.services.instagram_publish_service import (
+        active_processing_publish_job,
+        unresolved_publish_outcome_job,
+    )
+
+    if unresolved_publish_outcome_job(db, content, for_update=True) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Comprueba primero si Instagram llegó a publicar este contenido.",
+        )
+    if active_processing_publish_job(db, content, for_update=True) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Espera a que termine el intento de publicación antes de modificarlo.",
+        )
     if format == "single_image" and len(asset_ids) > 1:
         raise HTTPException(status_code=422, detail="single_image accepts at most one asset")
     if format == "carousel" and len(asset_ids) == 1:
@@ -291,6 +306,20 @@ def update_material(
     if not changed:
         return content, previous, False
 
+    from app.services.instagram_publish_service import cancel_publish_job
+    cancelled_job = cancel_publish_job(
+        db,
+        content,
+        reason="material_content_changed",
+        actor=actor,
+    )
+    if cancelled_job is not None and cancelled_job.status != "cancelled":
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Comprueba primero si Instagram llegó a publicar este contenido.",
+        )
+
     version = InstagramContentVersion(
         business_id=business_id,
         content_id=content.id,
@@ -321,9 +350,6 @@ def update_material(
             )
         )
     invalidate_validation(db, content, "material_content_changed")
-    from app.services.instagram_publish_service import cancel_publish_job
-
-    cancelled_job = cancel_publish_job(db, content, reason="material_content_changed", actor=actor)
     if cancelled_job is not None:
         from app.core.audit import record_audit
 
@@ -567,10 +593,35 @@ def cancel_content(
         raise HTTPException(status_code=409, detail="Content is already cancelled")
     if content.status == "published":
         raise HTTPException(status_code=409, detail="Published content cannot be cancelled")
-    content.status = "cancelled"
-    from app.services.instagram_publish_service import cancel_publish_job
+    from app.services.instagram_publish_service import (
+        active_processing_publish_job,
+        cancel_publish_job,
+        unresolved_publish_outcome_job,
+    )
 
-    cancel_publish_job(db, content, reason="editorial_content_cancelled", actor=actor)
+    if unresolved_publish_outcome_job(db, content, for_update=True) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Comprueba primero si Instagram llegó a publicar este contenido.",
+        )
+    if active_processing_publish_job(db, content, for_update=True) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Espera a que termine el intento de publicación antes de cancelarlo.",
+        )
+    cancelled_job = cancel_publish_job(
+        db,
+        content,
+        reason="editorial_content_cancelled",
+        actor=actor,
+    )
+    if cancelled_job is not None and cancelled_job.status != "cancelled":
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="La publicación ya había comenzado. Espera a que termine el intento.",
+        )
+    content.status = "cancelled"
     db.flush()
     return content
 
@@ -1055,9 +1106,34 @@ def prepare_content_removal(
     content = content_or_404(db, business_id, content_id, for_update=True)
     previous_status = content.status
     cancelled_job_id: int | None = None
+    successful_publish_job = (
+        db.query(InstagramPublishJob.id)
+        .filter(
+            InstagramPublishJob.business_id == business_id,
+            InstagramPublishJob.content_item_id == content.id,
+            InstagramPublishJob.status == "published",
+        )
+        .first()
+    )
+    historically_published = previous_status == "published" or successful_publish_job is not None
 
-    if previous_status != "published":
-        from app.services.instagram_publish_service import cancel_publish_job
+    if not historically_published:
+        from app.services.instagram_publish_service import (
+            active_processing_publish_job,
+            cancel_publish_job,
+            unresolved_publish_outcome_job,
+        )
+
+        if unresolved_publish_outcome_job(db, content, for_update=True) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Comprueba primero si Instagram llegó a publicar este contenido.",
+            )
+        if active_processing_publish_job(db, content, for_update=True) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Espera a que termine el intento de publicación antes de eliminarlo.",
+            )
 
         cancelled_job = cancel_publish_job(
             db,
@@ -1088,13 +1164,18 @@ def prepare_content_removal(
     )
     has_cross_references = content_has_cross_content_asset_references(db, content)
     must_archive = (
-        previous_status in {"scheduled", "published"} or has_publish_history or has_cross_references
+        previous_status == "scheduled"
+        or historically_published
+        or has_publish_history
+        or has_cross_references
     )
 
     storage_keys: list[str] = []
     if must_archive:
         content.archived_at = utc_now()
-        if previous_status != "published":
+        if historically_published:
+            content.status = "published"
+        else:
             content.status = "cancelled"
         db.flush()
         disposition = "archived"
@@ -1108,6 +1189,7 @@ def prepare_content_removal(
         "id": content_id,
         "disposition": disposition,
         "previous_status": previous_status,
+        "historically_published": historically_published,
         "cancelled_job_id": cancelled_job_id,
         "storage_keys": storage_keys,
         "shared_asset_references": has_cross_references,
@@ -1402,6 +1484,8 @@ def serialize_content(
     owner_technical: bool = True,
 ) -> dict:
     version = current_version(db, content)
+    from app.services.instagram_publish_service import publication_capabilities
+
     published_remote = (
         db.query(InstagramRemoteMedia)
         .filter(
@@ -1448,6 +1532,7 @@ def serialize_content(
         "created_at": content.created_at.isoformat(),
         "updated_at": content.updated_at.isoformat(),
         "archived_at": content.archived_at.isoformat() if content.archived_at else None,
+        "publication_capabilities": publication_capabilities(db, content, version=version),
         "publication_hold": (
             {
                 "id": publication_hold.id,

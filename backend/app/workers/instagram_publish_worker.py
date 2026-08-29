@@ -885,6 +885,15 @@ class InstagramPublishWorker:
 
     def _finish_success(self, job_id: int, result: InstagramPublishResult) -> None:
         with self.session_factory() as db:
+            seed = db.get(InstagramPublishJob, job_id)
+            if seed is None:
+                return
+            content = (
+                db.query(InstagramContent)
+                .filter(InstagramContent.id == seed.content_item_id)
+                .with_for_update()
+                .first()
+            )
             job = db.query(InstagramPublishJob).filter_by(id=job_id).with_for_update().first()
             normal_completion = bool(
                 job is not None
@@ -924,7 +933,6 @@ class InstagramPublishWorker:
             )
             job.published_at = utc_now()
             _clear_claim(job)
-            content = db.get(InstagramContent, job.content_item_id)
             if content is not None and content.business_id == job.business_id:
                 content.status = "published"
             record_audit(

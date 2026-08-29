@@ -45,6 +45,7 @@ from app.services.instagram_calendar_service import (
 )
 from app.services.instagram_content_service import raw_asset_association_manager
 from app.services.instagram_meta_client import InstagramRemoteMediaItem
+from app.services.instagram_publish_service import claim_publish_jobs
 from app.services.instagram_remote_asset_service import DownloadedImage
 
 
@@ -1284,10 +1285,177 @@ def test_owner_archives_historical_content_and_preserves_publish_identity(
         assert stored_job.provider_media_id == "provider-media-preserved"
     assert ctx["db"].query(AuditLog).filter_by(action=expected_action).count() == 1
     assert ctx["client"].get(f"{owner_base(ctx)}/contents/{content_id}").status_code == 404
+    workspace = ctx["client"].get(f"{owner_base(ctx)}/contents").json()
+    assert workspace["contents"] == []
+    assert workspace["attention"] == {"count": 0, "items": []}
+    history_ids = {
+        item["id"]
+        for item in ctx["client"].get(f"{owner_base(ctx)}/publication-history").json()["items"]
+    }
+    assert (content_id in history_ids) is (status == "published")
+
+
+def test_successful_publish_job_is_archived_as_history_even_if_content_status_drifted(
+    editorial_context,
+):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "scheduled"
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status="published",
+        scheduled_for=datetime.now(timezone.utc),
+        published_at=datetime.now(timezone.utc),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"published-drift-{content_id}",
+        provider_media_id="published-drift-media",
+        provider_permalink="https://instagram.example/p/published-drift",
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+
+    response = ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}")
+
+    assert response.status_code == 200
+    assert response.json()["disposition"] == "archived"
+    ctx["db"].expire_all()
+    stored = ctx["db"].get(InstagramContent, content_id)
+    assert stored.status == "published"
+    assert stored.archived_at is not None
+    history_ids = {
+        item["id"]
+        for item in ctx["client"].get(f"{owner_base(ctx)}/publication-history").json()["items"]
+    }
+    assert content_id in history_ids
+    assert ctx["db"].query(AuditLog).filter_by(action="content_archived").count() == 1
+
+
+@pytest.mark.parametrize(
+    "provider_status",
+    ["outcome_requires_review", "unknown_result", "unknown_after_claim_expiry"],
+)
+def test_owner_cannot_remove_content_with_uncertain_publish_outcome(
+    editorial_context,
+    provider_status,
+):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "scheduled"
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status="action_required",
+        provider_status=provider_status,
+        scheduled_for=datetime.now(timezone.utc),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"uncertain-delete-{provider_status}-{content_id}",
+        provider_container_id="uncertain-container",
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+
+    response = ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}")
+
+    assert response.status_code == 409
+    assert "Comprueba primero" in response.json()["detail"]
+    ctx["db"].expire_all()
+    stored_content = ctx["db"].get(InstagramContent, content_id)
+    stored_job = ctx["db"].get(InstagramPublishJob, job.id)
+    assert stored_content.archived_at is None
+    assert stored_job.status == "action_required"
+    assert stored_job.provider_status == provider_status
+    assert stored_job.provider_container_id == "uncertain-container"
+
+
+def test_owner_removal_cancels_retry_wait_before_worker_can_reclaim(editorial_context):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "scheduled"
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status="retry_wait",
+        provider_status="temporary_failure",
+        scheduled_for=datetime.now(timezone.utc),
+        next_attempt_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"retry-wait-delete-{content_id}",
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+
+    response = ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}")
+
+    assert response.status_code == 200
+    assert response.json()["disposition"] == "archived"
+    ctx["db"].expire_all()
+    assert ctx["db"].get(InstagramPublishJob, job.id).status == "cancelled"
+    claimed = claim_publish_jobs(
+        ctx["db"],
+        worker_id="after-owner-delete",
+        limit=10,
+        claim_ttl_seconds=30,
+        now=datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    assert claimed == []
     assert ctx["client"].get(f"{owner_base(ctx)}/contents").json()["contents"] == []
+    assert ctx["client"].get(f"{owner_base(ctx)}/publication-history").json()["items"] == []
 
 
-def test_owner_removal_returns_conflict_when_publication_has_started(editorial_context):
+@pytest.mark.parametrize(
+    ("job_status", "provider_status"),
+    [
+        ("failed", "attempts_exhausted"),
+        ("action_required", "prerequisites_action_required"),
+    ],
+)
+def test_owner_removal_clears_problematic_content_from_attention(
+    editorial_context,
+    job_status,
+    provider_status,
+):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "scheduled"
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status=job_status,
+        provider_status=provider_status,
+        provider_error_code="instagram_integration_health_blocking",
+        safe_error_message="La conexión requiere atención.",
+        scheduled_for=datetime.now(timezone.utc),
+        attempt_count=3,
+        max_attempts=3,
+        idempotency_key=f"attention-delete-{job_status}-{content_id}",
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+    before = ctx["client"].get(f"{owner_base(ctx)}/contents").json()
+    assert [item["id"] for item in before["attention"]["items"]] == [content_id]
+
+    response = ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}")
+
+    assert response.status_code == 200
+    after = ctx["client"].get(f"{owner_base(ctx)}/contents").json()
+    assert after["contents"] == []
+    assert after["attention"] == {"count": 0, "items": []}
+    assert ctx["client"].get(f"{owner_base(ctx)}/publication-history").json()["items"] == []
+
+
+def test_cancel_content_rolls_back_when_publication_is_processing(editorial_context):
     ctx = editorial_context
     content_id, _asset_id, version_id = create_content_with_asset(ctx)
     content = ctx["db"].get(InstagramContent, content_id)
@@ -1300,7 +1468,83 @@ def test_owner_removal_returns_conflict_when_publication_has_started(editorial_c
         scheduled_for=datetime.now(timezone.utc),
         attempt_count=1,
         max_attempts=3,
-        idempotency_key=f"publishing-{content_id}",
+        idempotency_key=f"cancel-processing-{content_id}",
+        provider_container_id="processing-container",
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+
+    response = ctx["client"].post(f"{owner_base(ctx)}/contents/{content_id}/cancel")
+
+    assert response.status_code == 409
+    assert "Espera a que termine" in response.json()["detail"]
+    ctx["db"].expire_all()
+    assert ctx["db"].get(InstagramContent, content_id).status == "scheduled"
+    assert ctx["db"].get(InstagramPublishJob, job.id).status == "publishing"
+
+
+def test_update_material_rejects_uncertain_outcome_without_creating_version(editorial_context):
+    ctx = editorial_context
+    content_id, asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "scheduled"
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status="action_required",
+        provider_status="outcome_requires_review",
+        scheduled_for=datetime.now(timezone.utc),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"uncertain-edit-{content_id}",
+        provider_container_id="uncertain-edit-container",
+    )
+    ctx["db"].add(job)
+    ctx["db"].commit()
+    version_count = ctx["db"].query(InstagramContentVersion).filter_by(content_id=content_id).count()
+
+    response = ctx["client"].put(
+        f"{owner_base(ctx)}/contents/{content_id}/material",
+        json={
+            "caption": "No debe crear una versión",
+            "format": "single_image",
+            "asset_ids": [asset_id],
+            "cover_asset_id": asset_id,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "Comprueba primero" in response.json()["detail"]
+    ctx["db"].expire_all()
+    assert (
+        ctx["db"].query(InstagramContentVersion).filter_by(content_id=content_id).count()
+        == version_count
+    )
+    assert ctx["db"].get(InstagramPublishJob, job.id).status == "action_required"
+
+
+@pytest.mark.parametrize(
+    "processing_status",
+    ["claimed", "creating_container", "publishing", "simulating_publish"],
+)
+def test_owner_removal_returns_conflict_when_publication_has_started(
+    editorial_context,
+    processing_status,
+):
+    ctx = editorial_context
+    content_id, _asset_id, version_id = create_content_with_asset(ctx)
+    content = ctx["db"].get(InstagramContent, content_id)
+    content.status = "scheduled"
+    job = InstagramPublishJob(
+        business_id=ctx["business"].id,
+        content_item_id=content_id,
+        content_version_id=version_id,
+        status=processing_status,
+        scheduled_for=datetime.now(timezone.utc),
+        attempt_count=1,
+        max_attempts=3,
+        idempotency_key=f"processing-{processing_status}-{content_id}",
         provider_container_id="in-flight-container",
     )
     ctx["db"].add(job)
@@ -1309,10 +1553,10 @@ def test_owner_removal_returns_conflict_when_publication_has_started(editorial_c
     response = ctx["client"].delete(f"{owner_base(ctx)}/contents/{content_id}")
 
     assert response.status_code == 409
-    assert "publicación ya había comenzado" in response.json()["detail"]
+    assert "Espera a que termine" in response.json()["detail"]
     ctx["db"].expire_all()
     assert ctx["db"].get(InstagramContent, content_id).archived_at is None
-    assert ctx["db"].get(InstagramPublishJob, job.id).status == "publishing"
+    assert ctx["db"].get(InstagramPublishJob, job.id).status == processing_status
     assert ctx["db"].query(AuditLog).filter_by(action="scheduled_content_removed").count() == 0
 
 

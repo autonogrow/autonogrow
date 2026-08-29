@@ -565,7 +565,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .owner-dialog-context div { padding: var(--ag-space-3); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
 .owner-dialog-context dt { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); }
 .owner-dialog-context dd { margin: var(--ag-space-1) 0 0; font-weight: var(--ag-font-weight-bold); overflow-wrap: anywhere; }
-.owner-dialog-consequence { padding: var(--ag-space-3); border-left: 3px solid var(--ag-color-warning); background: var(--ag-color-warning-bg); }
+.owner-dialog-consequence { padding: var(--ag-space-3); border-left: 3px solid var(--ag-color-warning); background: var(--ag-color-warning-bg); white-space: pre-line; }
 .owner-dialog-error { min-height: 1.5em; margin: var(--ag-space-2) 0 0; color: var(--ag-color-danger); font-size: var(--ag-font-size-sm); }
 
 @media (max-width: 1199px) {

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, InstagramContent, InstagramPublishJob, InstagramRemoteMedia
+from app.services.instagram_publish_service import publish_outcome_requires_review
 
 PREPUBLICATION_STATUSES = frozenset(
     {"draft", "ready_for_review", "changes_requested", "validated"}
@@ -41,8 +42,11 @@ def _as_utc(value: datetime | None) -> datetime | None:
 
 
 def latest_publish_job(content: InstagramContent) -> InstagramPublishJob | None:
+    current = max(content.versions, key=lambda version: version.version_number, default=None)
+    if current is None:
+        return None
     return max(
-        content.publish_jobs,
+        (job for job in content.publish_jobs if job.content_version_id == current.id),
         key=lambda job: (_as_utc(job.created_at) or datetime.min.replace(tzinfo=timezone.utc), job.id),
         default=None,
     )
@@ -147,12 +151,7 @@ def attention_details(content: InstagramContent) -> dict:
     reason: str | None = None
     if status == "action_required" and job is not None:
         code = str(job.provider_error_code or "")
-        uncertain = job.provider_status in {
-            "outcome_requires_review",
-            "unknown_after_claim_expiry",
-            "publish_result_unknown",
-        } or "unknown" in code
-        if uncertain:
+        if publish_outcome_requires_review(job):
             reason_key = "verify"
             reason = "Verifica en Instagram si la publicación llegó a completarse."
         elif any(part in code for part in ("authentication", "token", "permission")):

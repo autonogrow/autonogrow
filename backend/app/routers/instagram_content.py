@@ -585,7 +585,7 @@ def _list_content(
         delattr(item, "_prefetched_current_version")
         delattr(item, "_calendar_context")
         if not detailed:
-            latest_job = max(item.publish_jobs, key=lambda job: job.created_at, default=None)
+            latest_job = latest_publish_job(item)
             payload["publish_jobs"] = (
                 [serialize_publish_job(latest_job, owner_technical=owner_technical)]
                 if latest_job
@@ -643,7 +643,7 @@ def _list_content(
             detailed=False,
             owner_technical=owner_technical,
         )
-        latest_job = max(item.publish_jobs, key=lambda job: job.created_at, default=None)
+        latest_job = latest_publish_job(item)
         payload["publish_jobs"] = (
             [serialize_publish_job(latest_job, owner_technical=owner_technical)]
             if latest_job
@@ -1603,10 +1603,10 @@ def owner_remove_content(
             metadata={"content_id": content_id},
         )
     previous_status = result["previous_status"]
-    if previous_status == "scheduled":
-        action = "scheduled_content_removed"
-    elif previous_status == "published":
+    if result["historically_published"]:
         action = "content_archived"
+    elif previous_status == "scheduled":
+        action = "scheduled_content_removed"
     elif result["disposition"] == "archived":
         action = "content_removed"
     else:
