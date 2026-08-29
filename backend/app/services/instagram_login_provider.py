@@ -284,10 +284,13 @@ def instagram_messages_subscription_active(
     settings: Settings | None = None,
     timeout_seconds: float = 10.0,
 ) -> bool:
-    """Return whether this app is subscribed to the messages field.
+    """Return whether the authenticated app is subscribed to the messages field.
 
-    Only the bounded subscription fields are interpreted; the provider response
-    is never returned to callers or persisted.
+    The Instagram Login edge is queried with the account access token and returns
+    the subscriptions visible to that authenticated app. The item ``id`` has no
+    documented equality to the Instagram Login OAuth client ID, so only the
+    bounded subscription fields are interpreted; the provider response is never
+    returned or persisted.
     """
     settings = settings or get_settings()
     if not re.fullmatch(r"[A-Za-z0-9_-]+", external_account_id):
@@ -323,11 +326,8 @@ def instagram_messages_subscription_active(
         raise InstagramLoginProviderError(
             "webhook_inspection_rejected", "Instagram webhook status could not be checked"
         )
-    expected_app_id = settings.instagram_login_client_id.strip()
     for item in data:
         if not isinstance(item, dict):
-            continue
-        if expected_app_id and str(item.get("id") or "") != expected_app_id:
             continue
         fields = item.get("subscribed_fields")
         if isinstance(fields, list) and "messages" in fields:

@@ -34,6 +34,7 @@ from app.services.instagram_login_provider import (
     exchange_instagram_authorization_code,
     exchange_instagram_long_lived_token,
     get_instagram_account_profile,
+    instagram_messages_subscription_active,
     subscribe_instagram_messages_webhook,
 )
 from app.services.instagram_oauth_service import (
@@ -554,6 +555,58 @@ def test_provider_contract_uses_only_minimum_scopes_and_configured_version():
     with patch("app.services.instagram_login_provider.requests.post", return_value=subscribed) as post:
         subscribe_instagram_messages_webhook("routing-id", "long-token", settings=settings)
     assert post.call_args.kwargs["params"] == {"subscribed_fields": "messages"}
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ([{"id": "not-the-instagram-client-id", "subscribed_fields": ["messages"]}], True),
+        ([], False),
+        ([{"id": "any-app-id", "subscribed_fields": ["comments"]}], False),
+        (
+            [
+                {"id": "first-app", "subscribed_fields": ["comments"]},
+                {"id": "second-app", "subscribed_fields": ["messages"]},
+            ],
+            True,
+        ),
+    ],
+)
+def test_instagram_message_subscription_uses_subscribed_fields(data, expected):
+    settings = oauth_settings()
+    response = SimpleNamespace(ok=True, status_code=200, json=lambda: {"data": data})
+
+    with patch("app.services.instagram_login_provider.requests.get", return_value=response) as get:
+        active = instagram_messages_subscription_active(
+            "routing-id",
+            "long-token",
+            settings=settings,
+        )
+
+    assert active is expected
+    assert get.call_args.args[0] == "https://graph.instagram.com/v23.0/routing-id/subscribed_apps"
+    assert get.call_args.kwargs["headers"] == {"Authorization": "Bearer long-token"}
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        SimpleNamespace(ok=False, status_code=400, json=lambda: {"data": []}),
+        SimpleNamespace(ok=True, status_code=200, json=lambda: {"unexpected": []}),
+    ],
+)
+def test_instagram_message_subscription_rejects_invalid_responses(response):
+    with (
+        patch("app.services.instagram_login_provider.requests.get", return_value=response),
+        pytest.raises(InstagramLoginProviderError) as denied,
+    ):
+        instagram_messages_subscription_active(
+            "routing-id",
+            "long-token",
+            settings=oauth_settings(),
+        )
+
+    assert denied.value.safe_code == "webhook_inspection_rejected"
 
 
 def test_partial_permissions_and_non_professional_account_are_rejected():

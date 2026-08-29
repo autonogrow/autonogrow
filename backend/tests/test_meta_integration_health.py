@@ -167,6 +167,44 @@ def test_instagram_health_checks_identity_scopes_subscription_and_expiry(health_
     assert expired.reconnection_required is True
 
 
+def test_instagram_health_accepts_message_subscription_with_different_item_id(health_db):
+    db, _ = health_db
+    settings = health_settings(instagram_login_client_id="instagram-oauth-client-id")
+    _, _, integration, _ = integration_context(db, settings)
+    profile = SimpleNamespace(
+        external_account_id=integration.external_account_id,
+        account_type="BUSINESS",
+    )
+    response = SimpleNamespace(
+        ok=True,
+        status_code=200,
+        json=lambda: {
+            "data": [
+                {
+                    "id": "different-subscription-item-id",
+                    "subscribed_fields": ["messages"],
+                }
+            ]
+        },
+    )
+
+    with (
+        patch(
+            "app.services.meta_integration_health_checkers.get_instagram_account_profile",
+            return_value=profile,
+        ),
+        patch("app.services.instagram_login_provider.requests.get", return_value=response),
+    ):
+        result = check_instagram_integration_health(
+            integration,
+            access_token="not-logged",
+            settings=settings,
+        )
+
+    assert result.health_status == "healthy"
+    assert result.subscription_status == "active"
+
+
 def test_instagram_missing_subscription_is_repairable(health_db):
     db, _ = health_db
     settings = health_settings()
@@ -528,3 +566,62 @@ def test_worker_retries_subscription_when_repair_does_not_recover(health_db):
     assert refreshed_job.status == "retry"
     assert refreshed_job.attempt_count == 1
     assert refreshed_job.next_retry_at is not None
+
+
+def test_worker_completes_retry_when_message_subscription_is_already_active(health_db):
+    db, factory = health_db
+    settings = health_settings(
+        instagram_login_client_id="instagram-oauth-client-id",
+        worker_id="healthy-subscription-retry-worker",
+        meta_integration_health_check_enabled=False,
+    )
+    business, _, integration, _ = integration_context(db, settings)
+    job, _ = enqueue_meta_integration_job(
+        db,
+        business_id=business.id,
+        integration_id=integration.id,
+        job_type="retry_subscription",
+        origin="system",
+    )
+    db.commit()
+    profile = SimpleNamespace(
+        external_account_id=integration.external_account_id,
+        account_type="BUSINESS",
+    )
+    response = SimpleNamespace(
+        ok=True,
+        status_code=200,
+        json=lambda: {
+            "data": [
+                {
+                    "id": "different-subscription-item-id",
+                    "subscribed_fields": ["messages"],
+                }
+            ]
+        },
+    )
+
+    worker = ChannelWorker(settings=settings, session_factory=factory, sleep=lambda _: None)
+    with (
+        patch(
+            "app.services.meta_integration_health_checkers.get_instagram_account_profile",
+            return_value=profile,
+        ),
+        patch("app.services.instagram_login_provider.requests.get", return_value=response),
+        patch(
+            "app.services.meta_integration_health_checkers.subscribe_instagram_messages_webhook"
+        ) as subscribe,
+    ):
+        assert worker.run_once() == 1
+
+    db.expire_all()
+    refreshed_integration = db.get(BusinessChannelIntegration, integration.id)
+    refreshed_job = db.get(MetaIntegrationJob, job.id)
+    assert refreshed_integration.health_status == "healthy"
+    assert (
+        json.loads(refreshed_integration.health_metadata_json)["subscription_status"] == "active"
+    )
+    assert refreshed_job.status == "completed"
+    assert refreshed_job.next_retry_at is None
+    assert refreshed_job.last_error_code is None
+    subscribe.assert_not_called()
