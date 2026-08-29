@@ -21,6 +21,7 @@ let pilotReadiness = null;
 let pilotValueSummary = null;
 let adminAuthUser = null;
 let allBookings = [];
+let bookingCloseTasks = [];
 let reviewRequestsByBooking = new Map();
 let messageOutbox = [];
 let adminServices = [];
@@ -90,6 +91,7 @@ let conversationListFingerprint = "";
 let conversationDetailFingerprint = "";
 let bookingsFingerprint = "";
 let bookingsLoadVersion = 0;
+let bookingCloseTasksLoadVersion = 0;
 let rescheduleSlotsLoadVersion = 0;
 let rescheduleReturnFocus = null;
 let rescheduleSubmitting = false;
@@ -121,6 +123,7 @@ const growthLoadState = { reviews: "loading", outbox: "loading", opportunities: 
 const dashboardDataState = {
   business: "loading",
   bookings: "loading",
+  closeTasks: "loading",
   conversations: "loading",
   services: "loading",
   availability: "loading",
@@ -1084,6 +1087,9 @@ function renderNextBooking() {
 
 function getDashboardAttentionItems() {
   const items = [];
+  if (dashboardDataState.closeTasks === "error") {
+    items.push({ severity: "danger", title: "No pudimos comprobar las citas por cerrar", description: "Reintenta para revisar los cierres pendientes.", retry: "closeTasks", action: "Reintentar" });
+  }
   if (dashboardDataState.bookings === "ready") {
     const pending = getDashboardPendingBookings().length;
     if (pending) items.push({ severity: "warning", title: `${pending} reserva${pending === 1 ? "" : "s"} necesita${pending === 1 ? "" : "n"} confirmación`, description: "Revisa las solicitudes que esperan respuesta.", section: "bookings", view: "pending", action: "Revisar" });
@@ -1139,21 +1145,40 @@ function renderAttentionItems() {
   const container = document.getElementById("dashboard-attention-list");
   if (!container) return;
   const relevantStates = isBusinessStaff()
-    ? [dashboardDataState.bookings, dashboardDataState.conversations]
-    : [dashboardDataState.bookings, dashboardDataState.conversations, dashboardDataState.services, dashboardDataState.availability, dashboardDataState.channels, growthLoadState.reviews, growthLoadState.outbox];
+    ? [dashboardDataState.bookings, dashboardDataState.closeTasks, dashboardDataState.conversations]
+    : [dashboardDataState.bookings, dashboardDataState.closeTasks, dashboardDataState.conversations, dashboardDataState.services, dashboardDataState.availability, dashboardDataState.channels, growthLoadState.reviews, growthLoadState.outbox];
   const items = getDashboardAttentionItems();
-  if (!items.length && relevantStates.some((state) => state === "loading")) return;
-  if (!items.length) {
+  const closeTasksReady = dashboardDataState.closeTasks === "ready";
+  if (!items.length && !bookingCloseTasks.length && relevantStates.some((state) => state === "loading")) return;
+  if (!items.length && (!closeTasksReady || !bookingCloseTasks.length)) {
     renderDashboardEmptyState(container, "Todo está al día", "No hay tareas urgentes en este momento.");
     return;
   }
   container.setAttribute("aria-busy", "false");
-  container.innerHTML = items.slice(0, 5).map((item) => `
+  const closeTaskItems = closeTasksReady && bookingCloseTasks.length ? `
+    <section class="dashboard-close-tasks" aria-labelledby="dashboard-close-tasks-title">
+      <h4 id="dashboard-close-tasks-title">Citas pendientes de cerrar</h4>
+      ${bookingCloseTasks.map((booking) => `
+        <article class="dashboard-attention-item dashboard-attention-item--warning dashboard-close-task" data-close-task-booking-id="${Number(booking.id)}">
+          <span class="dashboard-attention-item__mark" aria-hidden="true">!</span>
+          <div>
+            <h5>${escapeHtml(booking.customer_name || "Cliente sin nombre")}</h5>
+            <p>${escapeHtml(booking.service_name || "Servicio sin indicar")} · ${escapeHtml(formatBookingSlot(booking))}</p>
+            <p>${escapeHtml(booking.staff_display_name || "Profesional sin asignar")} · ${escapeHtml(getStatusLabel(booking.status))}</p>
+          </div>
+          <div class="dashboard-close-task__actions">
+            <button class="ag-button ag-button--primary ag-button--small" type="button" data-booking-action="completed" data-booking-id="${Number(booking.id)}">Marcar completada</button>
+            <button class="ag-button ag-button--ghost ag-button--small" type="button" data-booking-action="no_show" data-booking-id="${Number(booking.id)}">No se presentó</button>
+          </div>
+        </article>`).join("")}
+    </section>` : "";
+  const attentionItems = items.slice(0, Math.max(0, 5 - bookingCloseTasks.length)).map((item) => `
     <article class="dashboard-attention-item dashboard-attention-item--${escapeHtml(item.severity)}">
       <span class="dashboard-attention-item__mark" aria-hidden="true">${item.severity === "danger" ? "!" : "•"}</span>
       <div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(item.description)}</p></div>
       <button class="ag-button ag-button--ghost ag-button--small" type="button" ${item.retry ? `data-dashboard-retry="${escapeHtml(item.retry)}"` : `data-dashboard-section="${escapeHtml(item.section)}"${item.view ? ` data-dashboard-booking-view="${escapeHtml(item.view)}"` : ""}`}>${escapeHtml(item.action)}</button>
     </article>`).join("");
+  container.innerHTML = `${closeTaskItems}${attentionItems}`;
 }
 
 function renderMessageSummary() {
@@ -1223,8 +1248,8 @@ function announceDashboardUpdate() {
     dashboardAnnouncementFingerprint = errorFingerprint;
     return;
   }
-  if (dashboardDataState.bookings !== "ready" || dashboardDataState.conversations !== "ready") return;
-  const fingerprint = `${getDashboardTodayBookings().length}:${getDashboardPendingBookings().length}:${getDashboardPendingConversations().length}`;
+  if (dashboardDataState.bookings !== "ready" || dashboardDataState.closeTasks !== "ready" || dashboardDataState.conversations !== "ready") return;
+  const fingerprint = `${getDashboardTodayBookings().length}:${getDashboardPendingBookings().length}:${bookingCloseTasks.length}:${getDashboardPendingConversations().length}`;
   if (fingerprint === dashboardAnnouncementFingerprint) return;
   if (liveRegion && dashboardAnnouncementFingerprint) liveRegion.textContent = "La información de Inicio se ha actualizado.";
   dashboardAnnouncementFingerprint = fingerprint;
@@ -1265,6 +1290,7 @@ async function retryDashboardSource(source, button) {
   if (dashboardRetryInFlight.has(source)) return;
   const loaders = {
     bookings: () => loadBookings(),
+    closeTasks: () => loadBookingCloseTasks(),
     conversations: () => loadConversations(),
     services: () => loadAdminServices(),
     availability: () => loadAvailabilitySettings(),
@@ -1937,6 +1963,7 @@ async function loadAdminPanel() {
       applyRoleVisibility();
       const staffLoads = [
         loadBookings(),
+        loadBookingCloseTasks(),
         loadMyStaffAvailability(),
         loadConversationTemplates(),
         loadConversations()
@@ -1981,6 +2008,7 @@ async function loadAdminPanel() {
       loadAvailabilitySettings(),
       loadAvailabilityExceptions(),
       loadBookings(),
+      loadBookingCloseTasks(),
       loadMessageOutbox(),
       loadAdminGallery(),
       loadConversationAutomation(),
@@ -3978,6 +4006,26 @@ async function loadBookings({ background = false } = {}) {
   }
 }
 
+async function loadBookingCloseTasks({ background = false } = {}) {
+  const loadVersion = ++bookingCloseTasksLoadVersion;
+  if (!background && !bookingCloseTasks.length) {
+    setDashboardDataState("closeTasks", "loading");
+  }
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/booking-close-tasks`);
+    if (!response.ok) throw new Error("No se pudieron cargar las citas pendientes de cerrar.");
+    const data = await response.json();
+    if (loadVersion !== bookingCloseTasksLoadVersion) return;
+    bookingCloseTasks = data.tasks || [];
+    setDashboardDataState("closeTasks", "ready");
+  } catch (error) {
+    if (loadVersion !== bookingCloseTasksLoadVersion) return;
+    console.error(error);
+    if (!background || !bookingCloseTasks.length) setDashboardDataState("closeTasks", "error");
+    if (background) throw error;
+  }
+}
+
 async function loadReviewRequests({ background = false } = {}) {
   const requestVersion = ++reviewRequestsLoadVersion;
   if (!reviewRequestsByBooking.size) growthLoadState.reviews = "loading";
@@ -5640,7 +5688,10 @@ function ensureAdminPollingTasks() {
   });
   adminPollingTasks.set("operations", {
     run: async () => {
-      const requests = [loadBookings({ background: true })];
+      const requests = [
+        loadBookings({ background: true }),
+        loadBookingCloseTasks({ background: true })
+      ];
       requests.push(loadCustomerOpportunities({ background: true }), loadGrowthActionMetrics({ background: true }), loadBusinessGrowthSignals({ background: true }));
       if (!isBusinessStaff()) requests.push(loadMessageOutbox({ background: true }), loadReviewRequests({ background: true }));
       await Promise.all(requests);
@@ -6097,10 +6148,11 @@ function renderBookingCard(booking, nextBookingId) {
   const bookingId = Number(booking.id);
   if (!Number.isInteger(bookingId) || bookingId <= 0) return "";
   const isPending = ["requested", "pending"].includes(booking.status);
+  const isExpiredRequest = isPending && booking.request_expired === true;
   const isStarted = bookingHasStarted(booking) && !["completed", "rejected", "cancelled", "no_show"].includes(booking.status);
   const isNext = bookingId === nextBookingId;
   const emphasis = isPending ? " booking-card--attention" : isStarted ? " booking-card--started" : isNext ? " booking-card--next" : "";
-  const marker = isPending ? "Requiere decisión" : isStarted ? "En curso" : isNext ? "Próxima cita" : "";
+  const marker = isExpiredRequest ? "Solicitud vencida" : isPending ? "Requiere decisión" : isStarted ? "En curso" : isNext ? "Próxima cita" : "";
   const requestAge = currentBookingView === "pending" ? formatRequestAge(booking.created_at) : "";
   const duration = booking.duration_minutes ? `${Number(booking.duration_minutes)} min` : "Duración no indicada";
   const contact = booking.customer_phone ? `<p><span>Contacto</span><strong>${escapeHtml(booking.customer_phone)}</strong></p>` : "";
@@ -6118,8 +6170,9 @@ function renderBookingCard(booking, nextBookingId) {
             <p>${escapeHtml(booking.service_name || "Servicio sin indicar")} · ${escapeHtml(duration)}</p>
             <p class="agenda-booking-staff">Con ${escapeHtml(booking.staff_display_name || "profesional sin asignar")}${requestAge ? ` · ${escapeHtml(requestAge)}` : ""}</p>
           </div>
-          <span class="status-pill ${getStatusClass(booking.status)}">${escapeHtml(getStatusLabel(booking.status))}</span>
+          <span class="status-pill ${getStatusClass(booking.status)}">${escapeHtml(isExpiredRequest ? "Solicitud vencida" : getStatusLabel(booking.status))}</span>
         </div>
+        ${renderCustomerComments(booking.notes)}
         ${renderBookingActions(booking)}
         <details class="agenda-booking-details">
           <summary>Contacto y notas</summary>
@@ -6128,7 +6181,6 @@ function renderBookingCard(booking, nextBookingId) {
             <p><span>Fecha y hora</span><strong>${escapeHtml(formatBookingSlot(booking))}</strong></p>
             <p><span>Profesional</span><strong>${escapeHtml(booking.staff_display_name || "Sin asignar")}</strong></p>
           </div>
-          ${renderNotes(booking.notes)}
           <div class="booking-notes internal-notes-editor">
             <label>Notas internas<textarea data-internal-notes="${bookingId}" rows="2">${escapeHtml(booking.internal_notes || "")}</textarea></label>
             <button class="btn btn-small btn-secondary" type="button" data-admin-action="save-internal-notes" data-id="${bookingId}">Guardar notas</button>
@@ -6512,12 +6564,12 @@ function formatBookingSlot(booking) {
   return `${booking.preferred_day_label || ""} · ${booking.preferred_time || ""}`.trim();
 }
 
-function renderNotes(notes) {
-  if (!notes) {
-    return `<div class="booking-notes">Sin comentarios adicionales.</div>`;
-  }
-
-  return `<div class="booking-notes">${escapeHtml(notes)}</div>`;
+function renderCustomerComments(notes) {
+  return `
+    <section class="booking-customer-comments" aria-label="Comentarios del cliente">
+      <strong>Comentarios del cliente:</strong>
+      <p>${notes ? escapeHtml(notes) : "Sin comentarios."}</p>
+    </section>`;
 }
 
 function renderAttachments(attachments) {
@@ -6556,7 +6608,7 @@ function renderBookingActions(booking) {
 
   if (["requested", "pending"].includes(booking.status)) {
     actions = [
-      button("Confirmar", "confirmed", "ag-button--primary"),
+      ...(booking.request_expired ? [] : [button("Confirmar", "confirmed", "ag-button--primary")]),
       ...(booking.service_id ? [button("Reagendar", "reschedule", "ag-button--secondary", "Muestra únicamente huecos disponibles")] : []),
       button("Rechazar", "rejected", "ag-button--danger-ghost")
     ];
@@ -6911,7 +6963,8 @@ function trapModalFocus(event, modal) {
 async function updateBookingStatus(bookingId, status) {
   if (bookingMutationIds.has(bookingId)) return;
   const slug = getBusinessSlug();
-  const booking = allBookings.find((item) => item.id === bookingId);
+  const booking = allBookings.find((item) => item.id === bookingId)
+    || bookingCloseTasks.find((item) => item.id === bookingId);
   if (!booking) return alert("No se encontró la reserva.");
   const bookingDescription = `${booking.customer_name} · ${booking.service_name}\n${formatBookingSlot(booking)}`;
   const confirmMessages = {
@@ -6945,7 +6998,14 @@ async function updateBookingStatus(bookingId, status) {
       throw new Error(safeConfigurationError(result, "No se pudo cambiar el estado de la cita."));
     }
 
-    if (shouldOpenWhatsApp) {
+    if (["completed", "no_show", "cancelled", "rejected"].includes(status)) {
+      bookingCloseTasks = bookingCloseTasks.filter((item) => item.id !== bookingId);
+      renderDashboard();
+    }
+
+    if (result?.already_in_status) {
+      whatsappWindow?.close();
+    } else if (shouldOpenWhatsApp) {
       if (result?.outbox_message) {
         await openPreparedWhatsAppMessage(result.outbox_message, whatsappWindow);
       } else {

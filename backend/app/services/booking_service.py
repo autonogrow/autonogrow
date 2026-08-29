@@ -16,7 +16,11 @@ from app.models import (
     User,
 )
 from app.schemas.booking import BookingRequestCreate
-from app.services.availability_service import get_available_slots, get_public_bookable_staff
+from app.services.availability_service import (
+    get_available_slots,
+    get_booking_interval,
+    get_public_bookable_staff,
+)
 from app.services.booking_attribution_service import attribute_new_booking
 from app.services.customer_identity_service import (
     link_customer_account,
@@ -333,7 +337,11 @@ def ensure_slot_available(
     return min(candidate_ids, key=lambda candidate_id: (counts[candidate_id], candidate_id))
 
 
-def serialize_booking(booking: Booking) -> dict[str, Any]:
+def serialize_booking(
+    booking: Booking,
+    *,
+    operational_now: datetime | None = None,
+) -> dict[str, Any]:
     staff_display_name = None
     if booking.staff_business_user:
         staff_display_name = (
@@ -341,6 +349,13 @@ def serialize_booking(booking: Booking) -> dict[str, Any]:
             or booking.staff_business_user.user.preferred_name
             or booking.staff_business_user.user.name
         )
+    interval = get_booking_interval(booking)
+    request_expired = bool(
+        operational_now is not None
+        and booking.status in {"requested", "pending"}
+        and interval is not None
+        and interval[1] < operational_now
+    )
     return {
         "id": booking.id,
         "customer_id": booking.customer_id,
@@ -365,6 +380,7 @@ def serialize_booking(booking: Booking) -> dict[str, Any]:
         "notes": booking.notes,
         "internal_notes": booking.internal_notes,
         "status": booking.status,
+        "request_expired": request_expired,
         "google_sync_status": booking.google_sync_status,
         "created_at": booking.created_at.isoformat() if booking.created_at else None,
     }
@@ -416,7 +432,7 @@ def create_booking_request(
         business_id=business.id,
         name=payload.customer_name,
         phone=payload.customer_phone,
-        notes=payload.notes,
+        notes=None,
         region=business.country_code,
         current_user=current_user if current_user and current_user.is_active else None,
     )
@@ -574,6 +590,7 @@ def list_bookings_for_business(
     staff_business_user_id: int | None = None,
     from_date: date | None = None,
     to_date: date | None = None,
+    operational_now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     business = get_business_by_slug(db, business_slug)
 
@@ -607,4 +624,6 @@ def list_bookings_for_business(
         )
     bookings = query.order_by(Booking.start_datetime.asc(), Booking.created_at.desc()).all()
 
-    return [serialize_booking(booking) for booking in bookings]
+    return [
+        serialize_booking(booking, operational_now=operational_now) for booking in bookings
+    ]

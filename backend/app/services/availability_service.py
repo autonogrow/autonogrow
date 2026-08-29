@@ -1,6 +1,7 @@
 import json
 from datetime import date as date_cls
 from datetime import datetime, time, timedelta
+from datetime import timezone as datetime_timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -98,6 +99,27 @@ def get_timezone(name: str | None) -> ZoneInfo | None:
         return ZoneInfo(name or DEFAULT_TIMEZONE)
     except ZoneInfoNotFoundError:
         return None
+
+
+def get_operational_business_now(
+    db: Session,
+    business_id: int,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Return the business civil time used by booking availability rules."""
+    settings = (
+        db.query(AvailabilitySettings)
+        .filter(AvailabilitySettings.business_id == business_id)
+        .first()
+    )
+    timezone = get_timezone(settings.timezone if settings else DEFAULT_TIMEZONE)
+    if timezone is None:
+        return datetime.now() if now is None else now.replace(tzinfo=None)
+    if now is None:
+        return datetime.now(timezone).replace(tzinfo=None)
+    aware_now = now if now.tzinfo is not None else now.replace(tzinfo=datetime_timezone.utc)
+    return aware_now.astimezone(timezone).replace(tzinfo=None)
 
 
 def parse_windows(value: Any) -> list[dict[str, str]]:
@@ -349,16 +371,17 @@ def serialize_exception(exception: AvailabilityException, business: Business) ->
 
 
 def get_booking_interval(booking: Booking) -> tuple[datetime, datetime] | None:
-    if booking.start_datetime and booking.end_datetime:
-        return booking.start_datetime, booking.end_datetime
-
-    if not booking.preferred_date or not booking.preferred_time:
-        return None
-
-    try:
-        start = datetime.fromisoformat(f"{booking.preferred_date}T{booking.preferred_time}:00")
-    except ValueError:
-        return None
+    if booking.start_datetime:
+        start = booking.start_datetime
+        if booking.end_datetime:
+            return start, booking.end_datetime
+    else:
+        if not booking.preferred_date or not booking.preferred_time:
+            return None
+        try:
+            start = datetime.fromisoformat(f"{booking.preferred_date}T{booking.preferred_time}:00")
+        except ValueError:
+            return None
 
     duration = booking.duration_minutes
 
@@ -560,8 +583,7 @@ def get_available_slots(
         .first()
     )
 
-    timezone = get_timezone(settings.timezone if settings else DEFAULT_TIMEZONE)
-    now = datetime.now(timezone).replace(tzinfo=None) if timezone else datetime.now()
+    now = get_operational_business_now(db, business.id)
     today = now.date()
     max_days_ahead = settings.max_days_ahead if settings else DEFAULT_MAX_DAYS_AHEAD
 
@@ -687,8 +709,7 @@ def build_calendar_days(
         .filter(AvailabilitySettings.business_id == business.id)
         .first()
     )
-    timezone = get_timezone(settings.timezone if settings else DEFAULT_TIMEZONE)
-    now = datetime.now(timezone).replace(tzinfo=None) if timezone else datetime.now()
+    now = get_operational_business_now(db, business.id)
     today = now.date()
     days = []
     current_day = start_date

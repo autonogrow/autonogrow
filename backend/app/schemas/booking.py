@@ -33,6 +33,7 @@ class BookingOut(BaseModel):
     notes: str | None
     internal_notes: str | None = None
     status: str
+    request_expired: bool = False
     google_sync_status: str
     created_at: str | None = None
 

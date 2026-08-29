@@ -46,7 +46,9 @@ from app.models import (
     ConversationAutomationSettings,
     ConversationMessage,
     Customer,
+    MessageOutbox,
     OperationalState,
+    ReviewRequest,
     SystemIncident,
     User,
     WebhookInboxEvent,
@@ -56,6 +58,10 @@ from app.routers.owner_onboarding import activate_business
 from app.schemas.onboarding import ActivationRequest
 from app.services.automation_credit_service import consume_automation_credit, lock_credit_wallet
 from app.services.booking_service import ensure_no_booking_overlap, lock_business_schedule
+from app.services.booking_status_service import (
+    BookingStatusTransitionError,
+    transition_booking_status,
+)
 from app.services.business_readiness_service import evaluate_business_readiness
 from app.services.database_error_service import classify_database_error
 from app.services.inbox_queue_service import claim_inbox_jobs
@@ -343,6 +349,114 @@ def test_concurrent_booking_writes_are_serialized_per_business(
     assert sorted(results) == [False, True]
     with factory() as db:
         assert db.query(Booking).count() == 1
+
+
+def test_concurrent_booking_closure_consolidates_one_terminal_state(
+    postgresql_engine: Engine,
+) -> None:
+    factory = sessionmaker(postgresql_engine, expire_on_commit=False)
+    with factory.begin() as db:
+        owner = User(email="postgres-booking-close-owner@test.local", is_owner=True)
+        staff_user = User(email="postgres-booking-close-staff@test.local")
+        business = Business(
+            slug="booking-close-lock",
+            name="Booking close lock",
+            reviews_url="https://reviews.example.test/postgresql",
+        )
+        db.add_all([owner, staff_user, business])
+        db.flush()
+        staff = BusinessUser(
+            business_id=business.id,
+            user_id=staff_user.id,
+            role="business_staff",
+            active=True,
+        )
+        customer = Customer(
+            business_id=business.id,
+            name="Customer",
+            phone="600000000",
+            phone_normalized="+34600000000",
+        )
+        service = BusinessService(
+            business_id=business.id,
+            name="Service",
+            duration_minutes=30,
+        )
+        db.add_all([staff, customer, service])
+        db.flush()
+        booking = Booking(
+            business_id=business.id,
+            customer_id=customer.id,
+            service_id=service.id,
+            staff_business_user_id=staff.id,
+            service_name=service.name,
+            duration_minutes=30,
+            start_datetime=datetime(2026, 8, 1, 10),
+            end_datetime=datetime(2026, 8, 1, 10, 30),
+            preferred_time="10:00",
+            status="confirmed",
+        )
+        db.add(booking)
+        db.flush()
+        owner_id = owner.id
+        business_slug = business.slug
+        booking_id = booking.id
+
+    start = Barrier(2)
+
+    def close_once(target_status: str) -> str:
+        with factory() as db:
+            actor = db.get(User, owner_id)
+            assert actor is not None
+            start.wait(timeout=5)
+            try:
+                transition_booking_status(
+                    db,
+                    business_slug=business_slug,
+                    booking_id=booking_id,
+                    target_status=target_status,
+                    actor=actor,
+                    request=Request(
+                        {
+                            "type": "http",
+                            "method": "PATCH",
+                            "path": f"/bookings/{booking_id}/status",
+                            "headers": [(b"x-request-id", b"postgres-booking-close")],
+                            "query_string": b"",
+                            "scheme": "http",
+                            "server": ("test", 80),
+                            "client": ("test", 123),
+                        }
+                    ),
+                )
+                return target_status
+            except BookingStatusTransitionError as exc:
+                return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(close_once, ["completed", "no_show"]))
+    assert results.count("invalid_transition") == 1
+    winner = next(result for result in results if result != "invalid_transition")
+    assert winner in {"completed", "no_show"}
+
+    with factory() as db:
+        booking = db.get(Booking, booking_id)
+        assert booking is not None
+        assert booking.status == winner
+        assert (
+            db.query(AuditLog)
+            .filter(AuditLog.business_id == booking.business_id, AuditLog.resource_id == str(booking_id))
+            .count()
+            == 1
+        )
+        expected_completed_effects = 1 if winner == "completed" else 0
+        assert db.query(ReviewRequest).filter_by(booking_id=booking_id).count() == expected_completed_effects
+        assert (
+            db.query(MessageOutbox)
+            .filter_by(booking_id=booking_id, message_type="booking_completed_review")
+            .count()
+            == expected_completed_effects
+        )
 
 
 def test_sqlite_to_postgresql_copy_preserves_ids_ciphertext_and_sequences(

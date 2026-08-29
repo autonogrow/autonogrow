@@ -173,3 +173,37 @@ def test_dashboard_css_covers_desktop_tablet_and_mobile() -> None:
     mobile = css.split("@media (max-width: 639px)", 1)[1]
     for area in ('"attention"', '"next"', '"agenda"', '"messages"', '"activity"'):
         assert area in mobile
+
+
+def test_dashboard_renders_derived_booking_close_tasks_with_closure_actions() -> None:
+    _, css, js = read_sources()
+    dashboard = dashboard_javascript(js)
+    assert "Citas pendientes de cerrar" in dashboard
+    assert "bookingCloseTasks.map" in dashboard
+    assert 'data-booking-action="completed"' in dashboard
+    assert 'data-booking-action="no_show"' in dashboard
+    assert "Marcar completada" in dashboard
+    assert "No se presentó" in dashboard
+    assert "booking.customer_name" in dashboard
+    assert "booking.service_name" in dashboard
+    assert "booking.staff_display_name" in dashboard
+    assert "formatBookingSlot(booking)" in dashboard
+    assert ".dashboard-close-task__actions" in css
+
+
+def test_close_tasks_load_independently_from_bounded_agenda_and_refresh_after_closure() -> None:
+    _, _, js = read_sources()
+    loader = js.split("async function loadBookingCloseTasks", 1)[1].split(
+        "async function loadReviewRequests", 1
+    )[0]
+    assert "/booking-close-tasks" in loader
+    assert "from:" not in loader
+    assert "to:" not in loader
+    assert 'setDashboardDataState("closeTasks", "ready")' in loader
+    status_update = js.split("async function updateBookingStatus", 1)[1].split(
+        "function getStatusClass", 1
+    )[0]
+    assert 'bookingCloseTasks.find((item) => item.id === bookingId)' in status_update
+    assert "bookingCloseTasks = bookingCloseTasks.filter" in status_update
+    assert '["completed", "no_show", "cancelled", "rejected"]' in status_update
+    assert "loadBookingCloseTasks({ background: true })" in js

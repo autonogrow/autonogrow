@@ -144,6 +144,24 @@ def test_booking_actions_follow_real_state_matrix_and_block_double_submit() -> N
     assert "setBookingMutationBusy(bookingId, false)" in js
 
 
+def test_customer_comments_are_visible_before_actions_and_expired_requests_cannot_confirm() -> None:
+    _, css, js = read_sources()
+    card = function_block(js, "function renderBookingCard", "function bookingStartMinutes")
+    assert "renderCustomerComments(booking.notes)" in card
+    assert card.index("renderCustomerComments(booking.notes)") < card.index(
+        "renderBookingActions(booking)"
+    )
+    comments = function_block(js, "function renderCustomerComments", "function renderAttachments")
+    assert "Comentarios del cliente:" in comments
+    assert "Sin comentarios." in comments
+    assert "escapeHtml(notes)" in comments
+    actions = function_block(js, "function renderBookingActions", "async function saveInternalNotes")
+    assert "booking.request_expired" in actions
+    assert 'button("Confirmar", "confirmed"' in actions
+    assert 'const marker = isExpiredRequest ? "Solicitud vencida"' in card
+    assert ".booking-customer-comments" in css
+
+
 def test_dynamic_booking_content_is_escaped() -> None:
     _, _, js = read_sources()
     block = function_block(js, "function renderBookingCard", "function renderBookings")

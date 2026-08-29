@@ -30,19 +30,18 @@ from app.schemas.business import BusinessSettingsUpdate
 from app.schemas.message_outbox import MessageOutboxStatusUpdate
 from app.schemas.review_request import ReviewRequestStatusUpdate
 from app.schemas.service import AdminServiceCreate, AdminServiceUpdate
-from app.services.booking_attribution_service import sync_attributed_booking_status
+from app.services.availability_service import get_operational_business_now
 from app.services.booking_service import (
     list_bookings_for_business,
     reschedule_existing_booking,
     serialize_booking,
 )
-from app.services.growth_opportunity_service import (
-    GrowthOpportunityService,
-    snapshot_booking_follow_up,
+from app.services.booking_status_service import (
+    BookingStatusTransitionError,
+    list_booking_close_tasks,
+    transition_booking_status,
 )
 from app.services.message_outbox_service import (
-    create_booking_confirmed_message,
-    create_booking_rejected_message,
     create_review_request_message,
     mark_opened,
     mark_sent,
@@ -328,6 +327,9 @@ def admin_list_bookings(
     to_date = to_date if isinstance(to_date, date) else None
     if from_date and to_date and (to_date <= from_date or (to_date - from_date).days > 62):
         raise HTTPException(status_code=422, detail="Booking range must span between 1 and 62 days")
+    business = db.query(Business).filter(Business.slug == business_slug).first()
+    if business is None:
+        raise HTTPException(status_code=404, detail="Business not found")
     membership = (
         None
         if actor.is_owner
@@ -341,17 +343,41 @@ def admin_list_bookings(
             staff_business_user_id=staff_id,
             from_date=from_date,
             to_date=to_date,
+            operational_now=get_operational_business_now(db, business.id),
         )
     except ValueError as exc:
         if str(exc) == "business_not_found":
             raise HTTPException(status_code=404, detail="Business not found") from exc
         raise
-    business = db.query(Business).filter(Business.slug == business_slug).first()
-
     return {
         "business_slug": business_slug,
         "business_timezone": business.timezone if business else None,
         "bookings": bookings,
+    }
+
+
+@router.get("/booking-close-tasks")
+def admin_list_booking_close_tasks(
+    business_slug: str,
+    actor: User = Depends(require_business_access),
+    db: Session = Depends(get_db),
+):
+    business = db.query(Business).filter(Business.slug == business_slug).first()
+    if business is None:
+        raise HTTPException(status_code=404, detail="Business not found")
+    membership = (
+        None
+        if actor.is_owner
+        else get_business_membership(db, business_slug=business_slug, user_id=actor.id)
+    )
+    staff_id = membership.id if membership and membership.role == "business_staff" else None
+    return {
+        "business_slug": business_slug,
+        "tasks": list_booking_close_tasks(
+            db,
+            business=business,
+            staff_business_user_id=staff_id,
+        ),
     }
 
 
@@ -484,96 +510,41 @@ def update_booking_status(
     actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
 ):
-    allowed_statuses = {
-        "requested",
-        "pending",
-        "confirmed",
-        "rejected",
-        "completed",
-        "cancelled",
-        "no_show",
+    errors = {
+        "invalid_status": (400, "Invalid booking status"),
+        "business_not_found": (404, "Business not found"),
+        "booking_not_found": (404, "Booking not found"),
+        "invalid_transition": (409, "La cita ya no admite ese cambio de estado."),
+        "booking_without_staff": (409, "Asigna un profesional antes de confirmar la cita."),
+        "booking_request_expired": (
+            409,
+            "La hora de esta solicitud ya pas\u00f3. Reagenda o rechaza la solicitud.",
+        ),
     }
-
-    if payload.status not in allowed_statuses:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid booking status",
-        )
-
-    business = db.query(Business).filter(Business.slug == business_slug).first()
-
-    if business is None:
-        raise HTTPException(status_code=404, detail="Business not found")
-
-    booking = (
-        db.query(Booking)
-        .filter(
-            Booking.id == booking_id,
-            Booking.business_id == business.id,
-        )
-        .first()
-    )
-
-    if booking is None:
-        raise HTTPException(status_code=404, detail="Booking not found")
-
-    ensure_can_manage_booking(db, business_slug=business_slug, booking=booking, user=actor)
-
-    booking.status = payload.status
-    review_request = None
-    outbox_message = None
-
-    if payload.status == "confirmed":
-        outbox_message = create_booking_confirmed_message(db, business=business, booking=booking)
-    elif payload.status == "rejected":
-        outbox_message = create_booking_rejected_message(db, business=business, booking=booking)
-
-    if payload.status == "completed":
-        snapshot_booking_follow_up(booking, booking.service)
-        sync_attributed_booking_status(db, booking=booking)
-        review_request = get_or_create_review_request(
+    try:
+        transition = transition_booking_status(
             db,
-            business=business,
-            booking=booking,
+            business_slug=business_slug,
+            booking_id=booking_id,
+            target_status=payload.status,
+            actor=actor,
+            request=request,
         )
-        if review_request is not None:
-            outbox_message = create_review_request_message(
-                db,
-                business=business,
-                booking=booking,
-                review_request=review_request,
-            )
+    except BookingStatusTransitionError as exc:
+        status_code, detail = errors.get(str(exc), (409, "Booking status transition failed"))
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
-    growth_engine = GrowthOpportunityService(db)
-    if payload.status in {"requested", "pending", "confirmed"}:
-        growth_engine.resolve_for_rebooking(booking)
-    else:
-        growth_engine.evaluate_business(business.id)
-
-    db.commit()
-    action = {
-        "confirmed": "booking_confirmed",
-        "rejected": "booking_rejected",
-        "cancelled": "booking_cancelled",
-        "completed": "booking_completed",
-    }.get(payload.status, "booking_status_changed")
-    record_audit(
-        db,
-        action=action,
-        request=request,
-        actor=actor,
-        business_id=business.id,
-        resource_type="booking",
-        resource_id=booking.id,
-        metadata={"status": payload.status},
-    )
+    booking = transition.booking
+    review_request = transition.review_request
+    outbox_message = transition.outbox_message
 
     return {
         "ok": True,
         "message": "Booking status updated",
+        "already_in_status": not transition.changed,
         "booking": {
             "id": booking.id,
-            "business_slug": business.slug,
+            "business_slug": business_slug,
             "status": booking.status,
         },
         "review_request": (
@@ -581,7 +552,9 @@ def update_booking_status(
         ),
         "review_request_warning": (
             None
-            if review_request is not None or payload.status != "completed"
+            if review_request is not None
+            or payload.status != "completed"
+            or not transition.changed
             else "Este negocio todav\u00eda no tiene enlace de rese\u00f1as configurado."
         ),
         "outbox_message": (
