@@ -87,7 +87,8 @@ def test_conversations_prioritize_attention_without_reordering_each_group() -> N
     _, _, js = read_sources()
     block = function_block(js, "function prioritizeConversations", "function updateConversationFilterSummary")
     assert "conversationNeedsReply(left.item)" in block
-    assert "conversationNeedsFollowUp(left.item)" in block
+    assert "conversationNeedsGrowthFollowUp(left.item)" in block
+    assert "conversationIsManualPending(left.item)" in block
     assert "leftPriority - rightPriority || left.index - right.index" in block
 
 
@@ -95,7 +96,7 @@ def test_conversation_filters_are_remote_debounced_and_resettable() -> None:
     html, _, js = read_sources()
     for value in ("needs_reply", "whatsapp", "instagram"):
         assert f'data-conversation-quick-filter="{value}"' in html
-    assert '<option value="pending">Requieren seguimiento</option>' in html
+    assert '<option value="pending">Pendientes</option>' in html
     assert 'params.set("attention", status)' in js
     assert "function resetConversationFilters" in js
     assert "function applyConversationQuickFilter" in js
@@ -189,7 +190,7 @@ def test_conversation_composer_precedes_collapsed_secondary_controls() -> None:
     assert ".conversation-secondary-controls" in css
 
 
-def test_conversation_header_groups_actions_and_customer_action_is_visible() -> None:
+def test_conversation_header_removes_redundant_customer_action() -> None:
     _, css, js = read_sources()
     render = function_block(js, "function renderConversationDetail", "function customerMemoryCategoryLabel")
     header = render.split('<header class="conversation-detail-header">', 1)[1].split("</header>", 1)[0]
@@ -197,9 +198,9 @@ def test_conversation_header_groups_actions_and_customer_action_is_visible() -> 
     open_search = function_block(js, "function openConversationCustomerSearch", "async function updateConversationCustomer")
 
     assert "conversation.customer_id" in render
-    assert "Ver cliente" in render
+    assert "Ver cliente" not in render
     assert "Asociar cliente" in render
-    assert 'isBusinessStaff() ? ""' in render
+    assert "!isBusinessStaff()" in render
     assert header.index("${customerHeaderAction}") < header.index("conversationAttentionBadges(conversation)")
     assert header.index("Marcar pendiente") < header.index("Cerrar")
     assert "scrollIntoView" in open_panel
@@ -215,11 +216,12 @@ def test_conversation_attention_copy_uses_derived_reply_and_follow_up_states() -
     attention = function_block(js, "function conversationNeedsReply", "function conversationFilterLabel")
     inbox = function_block(js, "function updateConversationInboxSummary", "async function loadConversations")
 
-    assert 'item.status === "closed"' in attention
     assert "item.needs_reply === true" in attention
-    assert "item.follow_up === true" in attention
+    assert "item.growth_follow_up === true" in attention
+    assert "item.manual_pending === true" in attention
     assert "Necesita respuesta" in attention
     assert "Requiere seguimiento" in attention
+    assert "Pendiente" in attention
     assert "dashboardConversations.filter(conversationNeedsReply)" in inbox
 
 
@@ -273,6 +275,15 @@ def test_customer_context_uses_persisted_backend_association() -> None:
     assert "Asociar cliente" in block
     assert "Cambiar cliente" in block
     assert "Desasociar" in block
+
+
+def test_selecting_conversation_loads_customer_panel_directly() -> None:
+    _, _, js = read_sources()
+    block = function_block(js, "async function selectConversation", "function conversationMessageKind")
+
+    assert "selectedConversation = body.conversation" in block
+    assert "renderConversationDetail(body.conversation, uiState)" in block
+    assert "renderConversationCustomerPanel(body.conversation)" in block
 
 
 def test_conversation_identity_is_honest_and_staff_controls_remain_hidden() -> None:

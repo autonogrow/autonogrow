@@ -8,7 +8,7 @@
 
 ## Peluquería
 
-1. Abrir “Clientes y mensajes”, elegir una conversación de un cliente con varias visitas y pulsar “Ver cliente”.
+1. Abrir “Clientes y mensajes” y elegir una conversación de un cliente con varias visitas; la ficha se carga directamente en el panel derecho.
 2. En Memoria, añadir tipo Horario: “Prefiere citas por la tarde”.
 3. Añadir Preferencia: “Suele pedir tonos naturales”.
 4. Confirmar que Actividad muestra solo completadas, última visita, “Servicio más frecuente” e intervalo observado cuando hay cuatro visitas.

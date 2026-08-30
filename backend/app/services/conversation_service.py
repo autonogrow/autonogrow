@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import Session, aliased, joinedload
 
 from app.core.config import Settings, get_settings
 from app.models import (
@@ -18,6 +18,7 @@ from app.models import (
     ConversationTemplate,
     Customer,
     CustomerAccountLink,
+    CustomerOpportunity,
     User,
 )
 from app.services.channel_control_service import integrated_delivery_is_authorized
@@ -122,6 +123,7 @@ DEFAULT_TEMPLATES = (
     ),
 )
 WHATSAPP_WINDOW_MESSAGE_SCAN_LIMIT = 100
+INVALID_REPLY_OUTBOUND_STATUSES = ("failed", "blocked", "cancelled")
 
 
 def conversation_has_manual_customer_decision(
@@ -230,14 +232,61 @@ def serialize_message(message: ConversationMessage) -> dict[str, Any]:
     }
 
 
-def unread_count(db: Session, conversation: Conversation) -> int:
-    query = db.query(ConversationMessage).filter(
-        ConversationMessage.conversation_id == conversation.id,
-        ConversationMessage.direction == "inbound",
+def _valid_outbound(message):
+    return and_(
+        message.direction == "outbound",
+        or_(
+            message.delivery_status.is_(None),
+            message.delivery_status.notin_(INVALID_REPLY_OUTBOUND_STATUSES),
+        ),
     )
-    if conversation.last_outbound_at is not None:
-        query = query.filter(ConversationMessage.created_at > conversation.last_outbound_at)
-    return query.count()
+
+
+def _unanswered_inbound_filter(db: Session, inbound, outbound):
+    later_valid_outbound = (
+        db.query(outbound.id)
+        .filter(
+            outbound.conversation_id == inbound.conversation_id,
+            _valid_outbound(outbound),
+            or_(
+                outbound.created_at > inbound.created_at,
+                and_(
+                    outbound.created_at == inbound.created_at,
+                    outbound.id > inbound.id,
+                ),
+            ),
+        )
+        .exists()
+    )
+    return and_(inbound.direction == "inbound", ~later_valid_outbound)
+
+
+def unread_count(db: Session, conversation: Conversation) -> int:
+    inbound = aliased(ConversationMessage)
+    outbound = aliased(ConversationMessage)
+    return (
+        db.query(inbound.id)
+        .filter(
+            inbound.conversation_id == conversation.id,
+            _unanswered_inbound_filter(db, inbound, outbound),
+        )
+        .count()
+    )
+
+
+def conversation_has_growth_follow_up(db: Session, conversation: Conversation) -> bool:
+    if conversation.customer_id is None:
+        return False
+    return (
+        db.query(CustomerOpportunity.id)
+        .filter(
+            CustomerOpportunity.business_id == conversation.business_id,
+            CustomerOpportunity.customer_id == conversation.customer_id,
+            CustomerOpportunity.status == "pending",
+        )
+        .first()
+        is not None
+    )
 
 
 def serialize_conversation(
@@ -247,6 +296,7 @@ def serialize_conversation(
     include_messages: bool = False,
     capabilities: ConversationDeliveryCapabilities | None = None,
     unread_count_value: int | None = None,
+    growth_follow_up_value: bool | None = None,
 ) -> dict[str, Any]:
     try:
         matched_patterns = json.loads(conversation.matched_patterns_json or "[]")
@@ -274,20 +324,23 @@ def serialize_conversation(
         if unread_count_value is not None
         else unread_count(db, conversation)
     )
-    needs_reply = conversation.status != "closed" and unanswered_count > 0
-    follow_up = conversation.status == "pending"
-    if conversation.status == "closed":
-        attention_state = "closed"
-        visible_unanswered_count = 0
-    elif needs_reply:
+    needs_reply = unanswered_count > 0
+    manual_pending = conversation.status == "pending"
+    growth_follow_up = (
+        growth_follow_up_value
+        if growth_follow_up_value is not None
+        else conversation_has_growth_follow_up(db, conversation)
+    )
+    if needs_reply:
         attention_state = "needs_reply"
-        visible_unanswered_count = unanswered_count
-    elif follow_up:
-        attention_state = "follow_up"
-        visible_unanswered_count = 0
+    elif growth_follow_up:
+        attention_state = "growth_follow_up"
+    elif manual_pending:
+        attention_state = "pending"
+    elif conversation.status == "closed":
+        attention_state = "closed"
     else:
         attention_state = "none"
-        visible_unanswered_count = 0
     result = {
         "id": conversation.id,
         "business_id": conversation.business_id,
@@ -309,7 +362,9 @@ def serialize_conversation(
         "customer_username": conversation.customer_username,
         "status": conversation.status,
         "needs_reply": needs_reply,
-        "follow_up": follow_up,
+        "manual_pending": manual_pending,
+        "follow_up": manual_pending,
+        "growth_follow_up": growth_follow_up,
         "attention_state": attention_state,
         "last_message_text": conversation.last_message_text,
         "last_message_at": (
@@ -342,7 +397,7 @@ def serialize_conversation(
         "instagram_provider_configured": (
             provider_is_configured if conversation.channel == "instagram" else None
         ),
-        "unread_count": visible_unanswered_count,
+        "unread_count": unanswered_count,
         "created_at": conversation.created_at.isoformat(),
         "updated_at": conversation.updated_at.isoformat(),
     }
@@ -390,24 +445,41 @@ def serialize_conversation_list(
         )
         .all()
     }
+    inbound = aliased(ConversationMessage)
+    outbound = aliased(ConversationMessage)
     unread_counts = {
         conversation_id: count
         for conversation_id, count in db.query(
-            ConversationMessage.conversation_id,
-            func.count(ConversationMessage.id),
+            inbound.conversation_id,
+            func.count(inbound.id),
         )
-        .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
         .filter(
-            ConversationMessage.conversation_id.in_(conversation_ids),
-            ConversationMessage.direction == "inbound",
-            or_(
-                Conversation.last_outbound_at.is_(None),
-                ConversationMessage.created_at > Conversation.last_outbound_at,
-            ),
+            inbound.conversation_id.in_(conversation_ids),
+            _unanswered_inbound_filter(db, inbound, outbound),
         )
-        .group_by(ConversationMessage.conversation_id)
+        .group_by(inbound.conversation_id)
         .all()
     }
+    customer_ids = {
+        conversation.customer_id
+        for conversation in conversations
+        if conversation.customer_id is not None
+    }
+    growth_follow_up_customer_ids = (
+        {
+            customer_id
+            for (customer_id,) in db.query(CustomerOpportunity.customer_id)
+            .filter(
+                CustomerOpportunity.business_id.in_(business_ids),
+                CustomerOpportunity.customer_id.in_(customer_ids),
+                CustomerOpportunity.status == "pending",
+            )
+            .distinct()
+            .all()
+        }
+        if customer_ids
+        else set()
+    )
     whatsapp_ids = [
         conversation.id for conversation in conversations if conversation.channel == "whatsapp"
     ]
@@ -532,6 +604,9 @@ def serialize_conversation_list(
                 conversation,
                 capabilities=capabilities,
                 unread_count_value=unread_counts.get(conversation.id, 0),
+                growth_follow_up_value=(
+                    conversation.customer_id in growth_follow_up_customer_ids
+                ),
             )
         )
     return results
@@ -572,20 +647,18 @@ def list_conversations(
     if status:
         query = query.filter(Conversation.status == status)
     if attention:
+        inbound = aliased(ConversationMessage)
+        outbound = aliased(ConversationMessage)
         unanswered_inbound = (
-            db.query(ConversationMessage.id)
+            db.query(inbound.id)
             .filter(
-                ConversationMessage.conversation_id == Conversation.id,
-                ConversationMessage.direction == "inbound",
-                or_(
-                    Conversation.last_outbound_at.is_(None),
-                    ConversationMessage.created_at > Conversation.last_outbound_at,
-                ),
+                inbound.conversation_id == Conversation.id,
+                _unanswered_inbound_filter(db, inbound, outbound),
             )
             .exists()
         )
         if attention == "needs_reply":
-            query = query.filter(Conversation.status != "closed", unanswered_inbound)
+            query = query.filter(unanswered_inbound)
     if channel:
         query = query.filter(Conversation.channel == channel)
     if q and q.strip():

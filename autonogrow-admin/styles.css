@@ -1592,8 +1592,10 @@ input {
 .dashboard-attention-item h4 { margin: 0 0 var(--ag-space-1); font-size: var(--ag-font-size-md); }
 .dashboard-attention-item h5 { margin: 0 0 var(--ag-space-1); font-size: var(--ag-font-size-md); }
 .dashboard-attention-item p { margin: 0; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
-.dashboard-close-tasks { display: grid; gap: var(--ag-space-3); }
-.dashboard-close-tasks > h4 { margin: 0; font-size: var(--ag-font-size-md); }
+.dashboard-close-tasks,
+.dashboard-growth-tasks { display: grid; gap: var(--ag-space-3); }
+.dashboard-close-tasks > h4,
+.dashboard-growth-tasks > h4 { margin: 0; font-size: var(--ag-font-size-md); }
 .dashboard-close-task__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--ag-space-2); }
 
 .dashboard-next-booking { display: grid; gap: var(--ag-space-4); }

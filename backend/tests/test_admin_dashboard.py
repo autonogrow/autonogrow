@@ -191,6 +191,30 @@ def test_dashboard_renders_derived_booking_close_tasks_with_closure_actions() ->
     assert ".dashboard-close-task__actions" in css
 
 
+def test_dashboard_renders_deduplicated_growth_follow_ups_with_useful_access() -> None:
+    _, _, js = read_sources()
+    dashboard = dashboard_javascript(js)
+
+    assert "function getDashboardGrowthFollowUps" in dashboard
+    assert "const byCustomer = new Map()" in dashboard
+    assert "opportunity.customer.id" in dashboard
+    assert 'opportunity.status === "pending"' in dashboard
+    assert "Seguimientos Growth pendientes" in dashboard
+    assert "opportunity.reason_text" in dashboard
+    assert "formatDateTime(opportunity.due_at)" in dashboard
+    assert "data-dashboard-opportunity-id" in dashboard
+    assert "opportunity.channel?.conversation_id" in dashboard
+    assert "dashboardConversations.find" in dashboard
+    assert "conversation.customer_id === customerId" in dashboard
+    assert 'showAdminSection("growth-opportunities")' in dashboard
+    assert 'showAdminSection("conversations")' in dashboard
+    mutation = js.split("async function updateCustomerOpportunity", 1)[1].split(
+        "function renderGrowth", 1
+    )[0]
+    assert "customerOpportunities = customerOpportunities.filter" in mutation
+    assert "renderDashboard()" in mutation
+
+
 def test_close_tasks_load_independently_from_bounded_agenda_and_refresh_after_closure() -> None:
     _, _, js = read_sources()
     loader = js.split("async function loadBookingCloseTasks", 1)[1].split(

@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -16,6 +17,8 @@ from app.models import (
     ChannelOutboxMessage,
     Conversation,
     ConversationMessage,
+    Customer,
+    CustomerOpportunity,
     User,
 )
 from app.routers.conversations import (
@@ -385,7 +388,7 @@ class ConversationsTest(unittest.TestCase):
         manual_reply_state = serialize_conversation(self.db, conversation)
         self.assertFalse(manual_reply_state["needs_reply"])
         self.assertTrue(manual_reply_state["follow_up"])
-        self.assertEqual(manual_reply_state["attention_state"], "follow_up")
+        self.assertEqual(manual_reply_state["attention_state"], "pending")
 
         add_message(
             self.db,
@@ -412,6 +415,52 @@ class ConversationsTest(unittest.TestCase):
         self.assertFalse(automatic_reply_state["needs_reply"])
         self.assertTrue(automatic_reply_state["follow_up"])
 
+        customer = Customer(
+            business_id=self.business_a.id,
+            name="Cliente Growth",
+            phone="+34600000123",
+        )
+        self.db.add(customer)
+        self.db.flush()
+        conversation.customer_id = customer.id
+        now = datetime.now(timezone.utc)
+        cross_business_opportunity = CustomerOpportunity(
+            business_id=self.business_b.id,
+            customer_id=customer.id,
+            type="lead_not_converted",
+            status="pending",
+            priority="normal",
+            detected_at=now,
+            due_at=now,
+            reason_code="cross_business",
+            reason_text="No debe filtrarse desde otro negocio.",
+            dedupe_key=f"cross-business:{conversation.id}",
+        )
+        self.db.add(cross_business_opportunity)
+        self.db.commit()
+        self.assertFalse(serialize_conversation(self.db, conversation)["growth_follow_up"])
+
+        opportunity = CustomerOpportunity(
+            business_id=self.business_a.id,
+            customer_id=customer.id,
+            type="lead_not_converted",
+            status="pending",
+            priority="normal",
+            detected_at=now,
+            due_at=now,
+            expires_at=now + timedelta(days=30),
+            source_conversation_id=conversation.id,
+            reason_code="lead_waiting",
+            reason_text="Conviene retomar el contacto.",
+            dedupe_key=f"test-growth:{conversation.id}",
+        )
+        self.db.add(opportunity)
+        self.db.commit()
+        growth_while_replied = serialize_conversation(self.db, conversation)
+        self.assertFalse(growth_while_replied["needs_reply"])
+        self.assertTrue(growth_while_replied["growth_follow_up"])
+        self.assertEqual(growth_while_replied["attention_state"], "growth_follow_up")
+
         add_message(
             self.db,
             conversation=conversation,
@@ -422,6 +471,19 @@ class ConversationsTest(unittest.TestCase):
         self.db.commit()
         self.assertTrue(serialize_conversation(self.db, conversation)["needs_reply"])
 
+        add_message(
+            self.db,
+            conversation=conversation,
+            direction="outbound",
+            sender_type="automation",
+            body="Respuesta fallida",
+            delivery_status="failed",
+        )
+        self.db.commit()
+        failed_outbound = serialize_conversation(self.db, conversation)
+        self.assertTrue(failed_outbound["needs_reply"])
+        self.assertTrue(failed_outbound["growth_follow_up"])
+
         closed = admin_update_conversation_status(
             self.business_a.slug,
             conversation.id,
@@ -430,10 +492,42 @@ class ConversationsTest(unittest.TestCase):
             actor=self.staff_user,
             db=self.db,
         )["conversation"]
-        self.assertFalse(closed["needs_reply"])
+        self.assertTrue(closed["needs_reply"])
         self.assertFalse(closed["follow_up"])
-        self.assertEqual(closed["attention_state"], "closed")
-        self.assertEqual(closed["unread_count"], 0)
+        self.assertTrue(closed["growth_follow_up"])
+        self.assertEqual(closed["attention_state"], "needs_reply")
+        self.assertEqual(closed["unread_count"], 1)
+        needs_reply_list = admin_list_conversations(
+            self.business_a.slug,
+            status=None,
+            attention="needs_reply",
+            channel=None,
+            q=None,
+            limit=50,
+            offset=0,
+            db=self.db,
+        )["conversations"]
+        listed = next(item for item in needs_reply_list if item["id"] == conversation.id)
+        self.assertTrue(listed["needs_reply"])
+        self.assertTrue(listed["growth_follow_up"])
+
+        reopened = admin_update_conversation_status(
+            self.business_a.slug,
+            conversation.id,
+            ConversationStatusUpdate(status="replied"),
+            self.request("PATCH"),
+            actor=self.staff_user,
+            db=self.db,
+        )["conversation"]
+        self.assertTrue(reopened["needs_reply"])
+        self.assertTrue(reopened["growth_follow_up"])
+
+        opportunity.status = "dismissed"
+        opportunity.dismissed_at = now
+        self.db.commit()
+        resolved_growth = serialize_conversation(self.db, conversation)
+        self.assertTrue(resolved_growth["needs_reply"])
+        self.assertFalse(resolved_growth["growth_follow_up"])
 
     def test_templates_seed_render_and_admin_creation(self):
         listed = admin_list_conversation_templates(self.business_a.slug, db=self.db)["templates"]

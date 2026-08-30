@@ -23,15 +23,17 @@ La autorización continúa en el backend. El frontend siempre construye las ruta
 
 ## Jerarquía y priorización
 
-La bandeja mantiene el máximo de 100 resultados y los filtros remotos ya existentes. Dentro de la respuesta recibida se hace una ordenación estable: primero conversaciones `pending` o con `unread_count`, y dentro de cada grupo se conserva el orden reciente del backend. La búsqueda espera 350 ms después de escribir para evitar una petición por pulsación.
+La bandeja mantiene el máximo de 100 resultados y los filtros remotos ya existentes. Dentro de la respuesta recibida se hace una ordenación estable: primero conversaciones con `needs_reply`, después las que tienen un seguimiento Growth y después las marcadas manualmente como `pending`; dentro de cada grupo se conserva el orden reciente del backend. La búsqueda espera 350 ms después de escribir para evitar una petición por pulsación.
 
 Cada fila muestra nombre disponible, canal, estado amable, vista previa, última actividad y recuento pendiente. Los estados internos se traducen así:
 
 | Estado interno | Texto visible |
 | --- | --- |
-| `pending` | Necesita respuesta |
+| `pending` | Pendiente |
 | `replied` | Respondida |
 | `closed` | Cerrada |
+
+`Necesita respuesta` se deriva exclusivamente del orden del historial entre inbound y outbound válidos. `Requiere seguimiento` se deriva de una `CustomerOpportunity` pendiente del Customer asociado. Ambos estados son independientes del lifecycle `pending`/`closed` de Conversation.
 
 ## Historial y entrega
 
@@ -63,9 +65,9 @@ Los envíos manuales, integrados, asistidos y los cambios de estado se protegen 
 
 ## Contexto de cliente y reservas
 
-El tercer panel utiliza los datos ya incluidos en la conversación y `allBookings`, que ya carga la agenda. No crea endpoints ni peticiones por cliente. Para evitar asociaciones incorrectas solo relaciona reservas cuando el teléfono normalizado tiene al menos siete dígitos y coincide exactamente. No se infieren vínculos por nombre.
+El tercer panel utiliza exclusivamente la asociación persistente `Conversation.customer_id`. Al seleccionar una conversación, la ficha del Customer asociado se carga directamente; no hay una acción adicional “Ver cliente” ni heurísticas frontend basadas en reservas.
 
-Cuando hay coincidencia se muestra el total, próxima reserva, última reserva y un enlace a la agenda existente mediante `goToBooking`. Si no la hay, se explica que no existe más información fiable. No se muestran notas ni datos que el contrato de conversación no proporcione.
+Cuando hay Customer se muestran su información y Customer Memory. Sin Customer, Admin puede asociarlo o cambiar la asociación; Staff conserva acceso de lectura sin controles muertos.
 
 ## Concurrencia, polling y estados parciales
 

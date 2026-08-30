@@ -852,6 +852,26 @@ function getDashboardPendingConversations() {
   return dashboardConversations.filter(conversationNeedsReply);
 }
 
+function getDashboardGrowthFollowUps() {
+  const byCustomer = new Map();
+  customerOpportunities
+    .filter((opportunity) => opportunity.status === "pending" && opportunity.customer?.id)
+    .sort((first, second) => String(first.due_at || "").localeCompare(String(second.due_at || "")))
+    .forEach((opportunity) => {
+      if (!byCustomer.has(opportunity.customer.id)) byCustomer.set(opportunity.customer.id, opportunity);
+    });
+  return Array.from(byCustomer.values());
+}
+
+function growthOpportunityConversationId(opportunity) {
+  const resolvedConversationId = Number(opportunity.channel?.conversation_id);
+  if (Number.isInteger(resolvedConversationId) && resolvedConversationId > 0) {
+    return resolvedConversationId;
+  }
+  const customerId = Number(opportunity.customer?.id);
+  return dashboardConversations.find((conversation) => conversation.customer_id === customerId)?.id || null;
+}
+
 function dashboardBookingSortKey(booking) {
   if (booking.start_datetime) return booking.start_datetime;
   return `${booking.preferred_date || "9999-12-31"}T${booking.preferred_time || "23:59"}`;
@@ -1167,17 +1187,34 @@ function getDashboardAttentionItems() {
 function renderAttentionItems() {
   const container = document.getElementById("dashboard-attention-list");
   if (!container) return;
+  const growthAvailable = moduleAvailable("growth");
   const relevantStates = isBusinessStaff()
     ? [dashboardDataState.bookings, dashboardDataState.closeTasks, dashboardDataState.conversations]
     : [dashboardDataState.bookings, dashboardDataState.closeTasks, dashboardDataState.conversations, dashboardDataState.services, dashboardDataState.availability, dashboardDataState.channels, growthLoadState.reviews, growthLoadState.outbox];
+  if (growthAvailable) relevantStates.push(growthLoadState.opportunities);
   const items = getDashboardAttentionItems();
   const closeTasksReady = dashboardDataState.closeTasks === "ready";
-  if (!items.length && !bookingCloseTasks.length && relevantStates.some((state) => state === "loading")) return;
-  if (!items.length && (!closeTasksReady || !bookingCloseTasks.length)) {
+  const growthFollowUps = growthLoadState.opportunities === "ready" ? getDashboardGrowthFollowUps() : [];
+  if (!items.length && !bookingCloseTasks.length && !growthFollowUps.length && relevantStates.some((state) => state === "loading")) return;
+  if (!items.length && !growthFollowUps.length && (!closeTasksReady || !bookingCloseTasks.length)) {
     renderDashboardEmptyState(container, "Todo está al día", "No hay tareas urgentes en este momento.");
     return;
   }
   container.setAttribute("aria-busy", "false");
+  const growthTaskItems = growthFollowUps.length ? `
+    <section class="dashboard-growth-tasks" aria-labelledby="dashboard-growth-tasks-title">
+      <h4 id="dashboard-growth-tasks-title">Seguimientos Growth pendientes</h4>
+      ${growthFollowUps.slice(0, 5).map((opportunity) => `
+        <article class="dashboard-attention-item dashboard-attention-item--info dashboard-growth-task">
+          <span class="dashboard-attention-item__mark" aria-hidden="true">•</span>
+          <div>
+            <h5>${escapeHtml(opportunity.customer?.name || "Cliente sin nombre")}</h5>
+            <p>${escapeHtml(opportunity.reason_text || "Seguimiento comercial pendiente.")}</p>
+            <p>Fecha relevante: ${escapeHtml(formatDateTime(opportunity.due_at))}</p>
+          </div>
+          <button class="ag-button ag-button--ghost ag-button--small" type="button" data-dashboard-opportunity-id="${Number(opportunity.id)}">${growthOpportunityConversationId(opportunity) ? "Abrir conversación" : "Ver oportunidad"}</button>
+        </article>`).join("")}
+    </section>` : "";
   const closeTaskItems = closeTasksReady && bookingCloseTasks.length ? `
     <section class="dashboard-close-tasks" aria-labelledby="dashboard-close-tasks-title">
       <h4 id="dashboard-close-tasks-title">Citas pendientes de cerrar</h4>
@@ -1201,7 +1238,7 @@ function renderAttentionItems() {
       <div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(item.description)}</p></div>
       <button class="ag-button ag-button--ghost ag-button--small" type="button" ${item.retry ? `data-dashboard-retry="${escapeHtml(item.retry)}"` : `data-dashboard-section="${escapeHtml(item.section)}"${item.view ? ` data-dashboard-booking-view="${escapeHtml(item.view)}"` : ""}`}>${escapeHtml(item.action)}</button>
     </article>`).join("");
-  container.innerHTML = `${closeTaskItems}${attentionItems}`;
+  container.innerHTML = `${growthTaskItems}${closeTaskItems}${attentionItems}`;
 }
 
 function renderMessageSummary() {
@@ -1290,7 +1327,24 @@ function renderDashboard() {
   announceDashboardUpdate();
 }
 
-function navigateFromDashboard(button) {
+async function navigateFromDashboard(button) {
+  const opportunityId = Number(button.dataset.dashboardOpportunityId);
+  if (Number.isInteger(opportunityId) && opportunityId > 0) {
+    const opportunity = customerOpportunities.find((item) => item.id === opportunityId);
+    const conversationId = Number(growthOpportunityConversationId(opportunity || {}));
+    if (Number.isInteger(conversationId) && conversationId > 0) {
+      showAdminSection("conversations");
+      await selectConversation(conversationId);
+      return;
+    }
+    showAdminSection("growth-opportunities");
+    window.requestAnimationFrame(() => {
+      const card = document.querySelector(`[data-customer-opportunity="${opportunityId}"]`);
+      card?.scrollIntoView?.({ block: "center" });
+      card?.querySelector("button")?.focus?.({ preventScroll: true });
+    });
+    return;
+  }
   const bookingId = Number(button.dataset.dashboardBookingId);
   if (Number.isInteger(bookingId) && bookingId > 0) {
     goToBooking(bookingId);
@@ -1345,7 +1399,7 @@ function setupDashboardInteractions() {
       retryDashboardSource(button.dataset.dashboardRetry, button);
       return;
     }
-    if (button.dataset.dashboardSection || button.dataset.dashboardBookingId) navigateFromDashboard(button);
+    if (button.dataset.dashboardSection || button.dataset.dashboardBookingId || button.dataset.dashboardOpportunityId) void navigateFromDashboard(button);
   });
 }
 
@@ -1712,11 +1766,13 @@ async function loadCustomerOpportunities({ background = false } = {}) {
     customerOpportunities = data.opportunities || [];
     growthLoadState.opportunities = "ready";
     renderGrowth();
+    renderDashboard();
   } catch (error) {
     console.error(error);
     growthLoadState.opportunities = "error";
     if (!background) customerOpportunities = [];
     renderGrowth();
+    renderDashboard();
   }
 }
 
@@ -1936,6 +1992,7 @@ async function updateCustomerOpportunity(opportunityId, status) {
     customerOpportunities = customerOpportunities.filter((item) => item.id !== opportunityId);
     loadGrowthActionMetrics({ background: true });
     renderGrowth();
+    renderDashboard();
   } catch (error) {
     console.error(error);
     alert(error.message || "No se pudo actualizar la oportunidad.");
@@ -4151,28 +4208,34 @@ function conversationAssociationLabel(item) {
 }
 
 function conversationStatusLabel(status) {
-  return { pending: "Requiere seguimiento", replied: "Respondida", closed: "Cerrada" }[status] || "Estado sin identificar";
+  return { pending: "Pendiente", replied: "Respondida", closed: "Cerrada" }[status] || "Estado sin identificar";
 }
 
 function conversationNeedsReply(item) {
-  if (item.status === "closed") return false;
   return item.needs_reply === true || (item.needs_reply == null && Number(item.unread_count || 0) > 0);
 }
 
-function conversationNeedsFollowUp(item) {
-  return item.status !== "closed" && (item.follow_up === true || (item.follow_up == null && item.status === "pending"));
+function conversationNeedsGrowthFollowUp(item) {
+  return item.growth_follow_up === true;
+}
+
+function conversationIsManualPending(item) {
+  return item.manual_pending === true || (item.manual_pending == null && item.status === "pending");
 }
 
 function conversationAttentionBadges(item) {
-  if (item.status === "closed") {
-    return `<span class="conversation-status conversation-status-closed">Cerrada</span>`;
-  }
   const states = [];
   if (conversationNeedsReply(item)) {
     states.push(`<span class="conversation-status conversation-status-needs-reply">Necesita respuesta</span>`);
   }
-  if (conversationNeedsFollowUp(item)) {
+  if (conversationNeedsGrowthFollowUp(item)) {
     states.push(`<span class="conversation-status conversation-status-follow-up">Requiere seguimiento</span>`);
+  }
+  if (conversationIsManualPending(item)) {
+    states.push(`<span class="conversation-status conversation-status-pending">Pendiente</span>`);
+  }
+  if (item.status === "closed") {
+    states.push(`<span class="conversation-status conversation-status-closed">Cerrada</span>`);
   }
   if (!states.length) {
     states.push(`<span class="conversation-status conversation-status-replied">Respondida</span>`);
@@ -4275,8 +4338,8 @@ function prioritizeConversations(items) {
   return items
     .map((item, index) => ({ item, index }))
     .sort((left, right) => {
-      const leftPriority = conversationNeedsReply(left.item) ? 0 : conversationNeedsFollowUp(left.item) ? 1 : 2;
-      const rightPriority = conversationNeedsReply(right.item) ? 0 : conversationNeedsFollowUp(right.item) ? 1 : 2;
+      const leftPriority = conversationNeedsReply(left.item) ? 0 : conversationNeedsGrowthFollowUp(left.item) ? 1 : conversationIsManualPending(left.item) ? 2 : 3;
+      const rightPriority = conversationNeedsReply(right.item) ? 0 : conversationNeedsGrowthFollowUp(right.item) ? 1 : conversationIsManualPending(right.item) ? 2 : 3;
       return leftPriority - rightPriority || left.index - right.index;
     })
     .map(({ item }) => item);
@@ -4629,9 +4692,9 @@ function renderConversationDetail(conversation, uiState = null) {
   const automation = conversation.automation || { mode: "automatic", is_active: true };
   const automationDuration = uiState?.automationDuration || "60";
   const automationReason = conversationAutomationReason(automation);
-  const customerHeaderAction = conversation.customer_id
-    ? `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-panel" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Ver cliente</button>`
-    : isBusinessStaff() ? "" : `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-search" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Asociar cliente</button>`;
+  const customerHeaderAction = !conversation.customer_id && !isBusinessStaff()
+    ? `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-search" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Asociar cliente</button>`
+    : "";
   const suggestionsMarkup = pendingSuggestions.length || conversationSuggestionNotice ? `
     <div class="conversation-suggestions">
       ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
