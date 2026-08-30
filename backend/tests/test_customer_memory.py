@@ -19,6 +19,7 @@ from app.models import (
     BusinessService,
     BusinessUser,
     Customer,
+    CustomerAccountLink,
     CustomerMemoryItem,
     CustomerOpportunity,
     User,
@@ -68,7 +69,22 @@ def records(db: Session) -> dict:
     admin = User(email="memory-admin@test.local")
     staff = User(email="memory-staff@test.local")
     outsider = User(email="memory-outsider@test.local")
-    db.add_all((business_a, business_b, owner, admin, staff, outsider))
+    customer_user_a = User(email="memory-customer-a@test.local")
+    customer_user_empty = User(email="memory-customer-empty@test.local")
+    customer_user_b = User(email="memory-customer-b@test.local")
+    db.add_all(
+        (
+            business_a,
+            business_b,
+            owner,
+            admin,
+            staff,
+            outsider,
+            customer_user_a,
+            customer_user_empty,
+            customer_user_b,
+        )
+    )
     db.flush()
     db.add_all(
         (
@@ -116,6 +132,29 @@ def records(db: Session) -> dict:
         follow_up_enabled=False,
     )
     db.add_all((customer_a, customer_empty, customer_b, service_a, service_a2, service_b))
+    db.flush()
+    db.add_all(
+        (
+            CustomerAccountLink(
+                user_id=customer_user_a.id,
+                customer_id=customer_a.id,
+                business_id=business_a.id,
+                link_method="test_fixture",
+            ),
+            CustomerAccountLink(
+                user_id=customer_user_empty.id,
+                customer_id=customer_empty.id,
+                business_id=business_a.id,
+                link_method="test_fixture",
+            ),
+            CustomerAccountLink(
+                user_id=customer_user_b.id,
+                customer_id=customer_b.id,
+                business_id=business_b.id,
+                link_method="test_fixture",
+            ),
+        )
+    )
     db.commit()
     return {
         "a": business_a,
@@ -337,6 +376,86 @@ def test_tenant_permissions_and_cross_ids_are_rejected(db: Session, records: dic
     )
     assert summary["explicit"] == []
     assert summary["derived"]["visit_count"] == 0
+
+
+def test_guest_customer_cannot_have_customer_memory(db: Session, records: dict) -> None:
+    guest = Customer(
+        business_id=records["a"].id,
+        name="Invitado sin cuenta",
+        phone="+34600999999",
+    )
+    db.add(guest)
+    db.commit()
+
+    with pytest.raises(ValueError, match="customer_memory_requires_registered_customer"):
+        CustomerMemoryService(db).create_manual(
+            business_id=records["a"].id,
+            customer_id=guest.id,
+            category="operational_note",
+            key="note",
+            value="No debe persistirse",
+            created_by_user_id=records["admin"].id,
+        )
+    with pytest.raises(HTTPException) as create_error:
+        create_customer_memory(
+            "memory-a",
+            guest.id,
+            CustomerMemoryCreate(
+                category="operational_note",
+                key="note",
+                value="Tampoco por endpoint",
+            ),
+            request(),
+            records["admin"],
+            db,
+        )
+    assert create_error.value.status_code == 404
+    with pytest.raises(HTTPException) as list_error:
+        list_customer_memory("memory-a", guest.id, "active", db)
+    assert list_error.value.status_code == 404
+    with pytest.raises(HTTPException) as summary_error:
+        get_customer_memory_summary("memory-a", guest.id, db)
+    assert summary_error.value.status_code == 404
+    assert db.query(CustomerMemoryItem).filter_by(customer_id=guest.id).count() == 0
+
+
+def test_historical_guest_memory_is_not_exposed_or_mutable(
+    db: Session, records: dict
+) -> None:
+    guest = Customer(business_id=records["a"].id, name="Invitado histórico")
+    db.add(guest)
+    db.flush()
+    historical = CustomerMemoryItem(
+        business_id=records["a"].id,
+        customer_id=guest.id,
+        category="operational_note",
+        key="note",
+        value="Fila histórica inválida",
+        source_type="manual",
+        created_by_user_id=records["admin"].id,
+    )
+    db.add(historical)
+    db.commit()
+
+    with pytest.raises(HTTPException) as update_error:
+        update_customer_memory(
+            "memory-a",
+            historical.id,
+            CustomerMemoryUpdate(value="No modificar"),
+            request(),
+            records["admin"],
+            db,
+        )
+    assert update_error.value.status_code == 404
+    db.refresh(historical)
+    assert historical.value == "Fila histórica inválida"
+    assert CustomerMemoryService(db).list_items(
+        business_id=records["a"].id,
+        customer_id=guest.id,
+        status="active",
+    ) == []
+    with pytest.raises(ValueError, match="customer_memory_requires_registered_customer"):
+        CustomerMemoryService(db).update_manual(historical, value="No modificar tampoco")
 
 
 def test_appointment_note_creation_appends_memory_without_touching_booking_comments(

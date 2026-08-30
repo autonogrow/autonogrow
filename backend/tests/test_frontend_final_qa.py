@@ -100,10 +100,10 @@ def test_all_real_frontend_surfaces_and_local_assets_are_present() -> None:
 def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
     expected = {
         "autonogrow-admin": (
-            "styles.css?v=20260829-p14a-a",
+            "styles.css?v=20260830-p14b-a",
             "responsive.css?v=5f1",
             "auth.js?v=10b5",
-            "admin.js?v=20260829-p14a-a",
+            "admin.js?v=20260830-p14b-a",
         ),
         "autonogrow-owner": (
             "styles.css?v=20260825-p12-b",

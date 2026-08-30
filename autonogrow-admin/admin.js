@@ -4626,7 +4626,10 @@ function customerBookingsForConversation(conversation) {
 }
 
 function customerIdForConversation(conversation) {
-  const ids = new Set(customerBookingsForConversation(conversation).map((booking) => Number(booking.customer_id)).filter((id) => Number.isInteger(id) && id > 0));
+  const ids = new Set(customerBookingsForConversation(conversation)
+    .filter((booking) => booking.customer_memory_eligible)
+    .map((booking) => Number(booking.customer_id))
+    .filter((id) => Number.isInteger(id) && id > 0));
   return ids.size === 1 ? [...ids][0] : null;
 }
 
@@ -4712,6 +4715,7 @@ function bookingCustomerMemoryItemMarkup(item) {
 }
 
 function renderBookingCustomerMemorySection(booking) {
+  if (!booking.customer_memory_eligible) return "";
   const bookingId = Number(booking.id);
   const customerId = Number(booking.customer_id);
   const hasCustomer = Number.isInteger(customerId) && customerId > 0;

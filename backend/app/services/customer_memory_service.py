@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models import Booking, CustomerMemoryItem
+from app.models import Booking, CustomerAccountLink, CustomerMemoryItem
 
 FORBIDDEN_SECRET_PATTERN = re.compile(
     r"\b(password|passwd|contrase(?:ñ|n)a|api[ _-]?key|token|bearer|"
@@ -89,7 +89,33 @@ class CustomerMemoryService:
         self.db = db
         self.now = as_utc(now or utc_now())
 
+    def customer_is_registered(self, *, business_id: int, customer_id: int) -> bool:
+        return (
+            self.db.query(CustomerAccountLink.id)
+            .filter(
+                CustomerAccountLink.business_id == business_id,
+                CustomerAccountLink.customer_id == customer_id,
+            )
+            .first()
+            is not None
+        )
+
+    def require_registered_customer(self, *, business_id: int, customer_id: int) -> None:
+        if not self.customer_is_registered(
+            business_id=business_id, customer_id=customer_id
+        ):
+            raise ValueError("customer_memory_requires_registered_customer")
+
+    def require_registered_memory(self, row: CustomerMemoryItem) -> None:
+        self.require_registered_customer(
+            business_id=row.business_id, customer_id=row.customer_id
+        )
+
     def expire_customer(self, *, business_id: int, customer_id: int) -> int:
+        if not self.customer_is_registered(
+            business_id=business_id, customer_id=customer_id
+        ):
+            return 0
         rows = (
             self.db.query(CustomerMemoryItem)
             .filter(
@@ -115,6 +141,10 @@ class CustomerMemoryService:
         customer_id: int,
         status: str | None = "active",
     ) -> list[CustomerMemoryItem]:
+        if not self.customer_is_registered(
+            business_id=business_id, customer_id=customer_id
+        ):
+            return []
         self.expire_customer(business_id=business_id, customer_id=customer_id)
         query = self.db.query(CustomerMemoryItem).filter(
             CustomerMemoryItem.business_id == business_id,
@@ -141,6 +171,9 @@ class CustomerMemoryService:
         expires_at: datetime | None = None,
         supersedes_id: int | None = None,
     ) -> tuple[CustomerMemoryItem, CustomerMemoryItem | None]:
+        self.require_registered_customer(
+            business_id=business_id, customer_id=customer_id
+        )
         clean_value = validate_memory_content(value)
         clean_expiration = as_utc(expires_at) if expires_at else None
         if clean_expiration is not None and clean_expiration <= self.now:
@@ -199,6 +232,7 @@ class CustomerMemoryService:
         expires_at: datetime | None = None,
         expires_at_set: bool = False,
     ) -> CustomerMemoryItem:
+        self.require_registered_memory(row)
         if row.status != "active":
             raise ValueError("memory_not_active")
         if value is not None:
@@ -215,6 +249,7 @@ class CustomerMemoryService:
         return row
 
     def mark_obsolete(self, row: CustomerMemoryItem) -> CustomerMemoryItem:
+        self.require_registered_memory(row)
         if row.status != "active":
             raise ValueError("memory_not_active")
         row.status = "superseded"
@@ -224,6 +259,7 @@ class CustomerMemoryService:
         return row
 
     def soft_delete(self, row: CustomerMemoryItem) -> CustomerMemoryItem:
+        self.require_registered_memory(row)
         if row.status == "deleted":
             raise ValueError("memory_already_deleted")
         row.status = "deleted"
@@ -355,8 +391,13 @@ def group_active_memories_by_customer(
     current = as_utc(now or utc_now())
     rows = (
         db.query(CustomerMemoryItem)
+        .join(
+            CustomerAccountLink,
+            CustomerAccountLink.customer_id == CustomerMemoryItem.customer_id,
+        )
         .filter(
             CustomerMemoryItem.business_id == business_id,
+            CustomerAccountLink.business_id == business_id,
             CustomerMemoryItem.customer_id.in_(customer_ids),
             CustomerMemoryItem.status == "active",
             CustomerMemoryItem.is_sensitive.is_(False),

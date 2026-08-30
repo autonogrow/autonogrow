@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models import Booking, CustomerAccountLink, User
+from app.models import Booking, Customer, CustomerAccountLink, User
 from app.services.customer_identity_service import (
     link_customer_account,
     normalize_instagram_username,
@@ -133,6 +133,32 @@ def update_customer_profile(
             user.instagram_verified = False
             user.instagram_provider_user_id = None
         user.instagram_username = normalized_instagram
+    if {"preferred_name", "phone"} & changes.keys():
+        linked_customers = (
+            db.query(Customer)
+            .join(CustomerAccountLink, CustomerAccountLink.customer_id == Customer.id)
+            .filter(CustomerAccountLink.user_id == user.id)
+            .all()
+        )
+        for customer in linked_customers:
+            if "preferred_name" in changes:
+                customer.name = user.preferred_name or user.name or customer.name
+            if "phone" in changes:
+                raw_collision = (
+                    db.query(Customer.id)
+                    .filter(
+                        Customer.business_id == customer.business_id,
+                        Customer.id != customer.id,
+                        Customer.phone == user.phone,
+                    )
+                    .first()
+                    if user.phone
+                    else None
+                )
+                customer.phone = None if raw_collision else user.phone
+                customer.phone_normalized = user.phone_normalized
+            customer.email = user.email
+            customer.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(user)
     return {"ok": True, "profile": serialize_profile(user)}

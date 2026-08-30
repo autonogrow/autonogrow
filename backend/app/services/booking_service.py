@@ -4,7 +4,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import and_, or_, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
     Booking,
@@ -161,8 +161,10 @@ def get_or_create_customer(
                 .filter(CustomerAccountLink.customer_id == candidate.id)
                 .first()
             )
-            if candidate_link is None or (
-                current_user is not None and candidate_link.user_id == current_user.id
+            if (
+                candidate_link is None
+                or current_user is None
+                or candidate_link.user_id == current_user.id
             ):
                 existing = candidate
 
@@ -359,6 +361,7 @@ def serialize_booking(
     return {
         "id": booking.id,
         "customer_id": booking.customer_id,
+        "customer_memory_eligible": bool(booking.customer.account_link),
         "customer_name": booking.customer.name,
         "customer_phone": booking.customer.phone,
         "service_id": booking.service_id,
@@ -597,7 +600,11 @@ def list_bookings_for_business(
     if business is None:
         raise ValueError("business_not_found")
 
-    query = db.query(Booking).filter(Booking.business_id == business.id)
+    query = (
+        db.query(Booking)
+        .options(joinedload(Booking.customer).joinedload(Customer.account_link))
+        .filter(Booking.business_id == business.id)
+    )
     if staff_business_user_id is not None:
         query = query.filter(Booking.staff_business_user_id == staff_business_user_id)
     if from_date is not None:

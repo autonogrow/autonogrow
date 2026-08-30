@@ -18,12 +18,13 @@ from app.routers.customer import (
     customer_home,
     update_customer_profile,
 )
-from app.services.booking_service import get_or_create_customer
+from app.services.booking_service import get_or_create_customer, serialize_booking
 from app.services.customer_identity_service import (
     link_customer_account,
     normalize_instagram_username,
     normalize_phone,
 )
+from app.services.customer_memory_service import CustomerMemoryService
 
 
 @pytest.fixture
@@ -134,6 +135,190 @@ def test_phone_matching_reuses_customer_but_name_and_instagram_do_not_link(db: S
     assert resolved.id == existing.id
     assert resolved.phone_normalized == "+34612345678"
     assert db.query(Customer).filter(Customer.business_id == business.id).count() == 2
+
+
+def test_name_only_and_ambiguous_phone_never_merge_customers(db: Session) -> None:
+    business = seed_business(db, "ambiguous-match")
+    same_name = Customer(business_id=business.id, name="María", phone=None)
+    first_phone = Customer(
+        business_id=business.id,
+        name="Primera",
+        phone="612 345 678",
+        phone_normalized="+34612345678",
+    )
+    second_phone = Customer(
+        business_id=business.id,
+        name="Segunda",
+        phone=None,
+        phone_normalized="+34612345678",
+    )
+    db.add_all((same_name, first_phone, second_phone))
+    db.flush()
+
+    name_only = get_or_create_customer(
+        db,
+        business_id=business.id,
+        name="María",
+        phone=None,
+        notes=None,
+    )
+    ambiguous_phone = get_or_create_customer(
+        db,
+        business_id=business.id,
+        name="Otra persona",
+        phone="+34 612 345 678",
+        notes=None,
+    )
+
+    assert name_only.id not in {same_name.id, first_phone.id, second_phone.id}
+    assert ambiguous_phone.id not in {same_name.id, first_phone.id, second_phone.id}
+    assert name_only.id != ambiguous_phone.id
+
+
+def test_registered_customer_stays_stable_when_booking_contact_changes(db: Session) -> None:
+    business = seed_business(db, "stable-account")
+    user = User(email="stable@example.test", name="Nombre de cuenta", email_verified=True)
+    db.add(user)
+    db.flush()
+    customer = get_or_create_customer(
+        db,
+        business_id=business.id,
+        name="Nombre inicial",
+        phone="612345678",
+        notes=None,
+        current_user=user,
+    )
+    first_booking = seed_booking(
+        db,
+        business=business,
+        customer=customer,
+        start=datetime.now(),
+        user=user,
+    )
+    memory, _ = CustomerMemoryService(db).create_manual(
+        business_id=business.id,
+        customer_id=customer.id,
+        category="operational_note",
+        key="note",
+        value="Historial estable",
+        created_by_user_id=user.id,
+    )
+
+    resolved = get_or_create_customer(
+        db,
+        business_id=business.id,
+        name="Nombre actualizado",
+        phone="611222333",
+        notes=None,
+        current_user=user,
+    )
+    second_booking = seed_booking(
+        db,
+        business=business,
+        customer=resolved,
+        start=datetime.now() + timedelta(days=1),
+        user=user,
+        token="second-stable-booking-token-long-enough",
+    )
+    db.commit()
+
+    assert resolved.id == customer.id
+    assert first_booking.customer_id == second_booking.customer_id == customer.id
+    assert resolved.name == "Nombre actualizado"
+    assert resolved.phone_normalized == "+34611222333"
+    assert db.query(Customer).filter_by(business_id=business.id).count() == 1
+    assert serialize_booking(first_booking)["customer_memory_eligible"] is True
+    assert serialize_booking(second_booking)["customer_memory_eligible"] is True
+    assert CustomerMemoryService(db).list_items(
+        business_id=business.id,
+        customer_id=resolved.id,
+        status="active",
+    ) == [memory]
+
+
+def test_unique_phone_reuses_registered_customer_without_replacing_account_link(
+    db: Session,
+) -> None:
+    business = seed_business(db, "registered-phone")
+    user = User(email="owner-of-phone@example.test")
+    registered = Customer(
+        business_id=business.id,
+        name="Cliente registrado",
+        phone="612345678",
+        phone_normalized="+34612345678",
+    )
+    db.add_all((user, registered))
+    db.flush()
+    link_customer_account(db, user=user, customer=registered, method="explicit")
+
+    recognized = get_or_create_customer(
+        db,
+        business_id=business.id,
+        name="Reserva sin sesión",
+        phone="612 345 678",
+        notes=None,
+    )
+    recognized_booking = seed_booking(
+        db,
+        business=business,
+        customer=recognized,
+        start=datetime.now(),
+    )
+
+    assert recognized.id == registered.id
+    assert registered.account_link.user_id == user.id
+    assert db.query(CustomerAccountLink).filter_by(customer_id=registered.id).count() == 1
+    assert serialize_booking(recognized_booking)["customer_memory_eligible"] is True
+
+    other_user = User(email="different-account@example.test")
+    db.add(other_user)
+    db.flush()
+    other_customer = get_or_create_customer(
+        db,
+        business_id=business.id,
+        name="Otra cuenta autenticada",
+        phone="612345678",
+        notes=None,
+        current_user=other_user,
+    )
+    assert other_customer.id != registered.id
+    assert other_customer.account_link.user_id == other_user.id
+    assert registered.account_link.user_id == user.id
+
+
+def test_profile_contact_edit_updates_linked_customer_without_replacing_it(db: Session) -> None:
+    business = seed_business(db, "profile-sync")
+    user = User(
+        email="profile-sync@example.test",
+        name="Nombre legal",
+        preferred_name="Antes",
+        phone="612345678",
+        phone_normalized="+34612345678",
+    )
+    customer = Customer(
+        business_id=business.id,
+        name="Antes",
+        phone="612345678",
+        phone_normalized="+34612345678",
+    )
+    db.add_all((user, customer))
+    db.flush()
+    link_customer_account(db, user=user, customer=customer, method="explicit")
+    customer_id = customer.id
+
+    result = update_customer_profile(
+        CustomerProfileUpdate(preferred_name="Después", phone="611222333"),
+        user=user,
+        db=db,
+    )
+
+    db.refresh(customer)
+    assert result["profile"]["phone_normalized"] == "+34611222333"
+    assert customer.id == customer_id
+    assert customer.name == "Después"
+    assert customer.phone_normalized == "+34611222333"
+    assert customer.email == user.email
+    assert db.query(Customer).filter_by(business_id=business.id).count() == 1
 
 
 def test_links_are_one_customer_per_account_and_business_and_reject_conflicts(db: Session) -> None:

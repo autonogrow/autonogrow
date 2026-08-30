@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.security import require_business_access
-from app.models import Business, Customer, CustomerMemoryItem, User
+from app.models import Business, Customer, CustomerAccountLink, CustomerMemoryItem, User
 from app.models.customer_memory import MEMORY_STATUSES
 from app.schemas.customer_memory import (
     CustomerMemoryCreate,
@@ -29,14 +29,21 @@ def business_or_404(db: Session, business_slug: str) -> Business:
     return business
 
 
-def customer_or_404(db: Session, *, business_id: int, customer_id: int) -> Customer:
+def registered_customer_or_404(
+    db: Session, *, business_id: int, customer_id: int
+) -> Customer:
     customer = (
         db.query(Customer)
-        .filter(Customer.id == customer_id, Customer.business_id == business_id)
+        .join(CustomerAccountLink, CustomerAccountLink.customer_id == Customer.id)
+        .filter(
+            Customer.id == customer_id,
+            Customer.business_id == business_id,
+            CustomerAccountLink.business_id == business_id,
+        )
         .first()
     )
     if customer is None:
-        raise HTTPException(status_code=404, detail="Customer not found")
+        raise HTTPException(status_code=404, detail="Customer memory not available")
     return customer
 
 
@@ -45,9 +52,14 @@ def memory_or_404(
 ) -> CustomerMemoryItem:
     row = (
         db.query(CustomerMemoryItem)
+        .join(
+            CustomerAccountLink,
+            CustomerAccountLink.customer_id == CustomerMemoryItem.customer_id,
+        )
         .filter(
             CustomerMemoryItem.id == memory_id,
             CustomerMemoryItem.business_id == business_id,
+            CustomerAccountLink.business_id == business_id,
         )
         .first()
     )
@@ -76,6 +88,10 @@ def memory_error(error: ValueError) -> HTTPException:
         ),
         "memory_not_active": (409, "Only active memory can be modified"),
         "memory_already_deleted": (409, "Memory is already deleted"),
+        "customer_memory_requires_registered_customer": (
+            409,
+            "Customer memory requires a registered customer",
+        ),
     }
     status_code, detail = messages.get(str(error), (422, "Invalid customer memory"))
     return HTTPException(status_code=status_code, detail=detail)
@@ -119,7 +135,7 @@ def list_customer_memory(
     db: Session = Depends(get_db),
 ):
     business = business_or_404(db, business_slug)
-    customer_or_404(db, business_id=business.id, customer_id=customer_id)
+    registered_customer_or_404(db, business_id=business.id, customer_id=customer_id)
     if status != "all" and status not in MEMORY_STATUSES:
         raise HTTPException(status_code=422, detail="Invalid memory status")
     rows = CustomerMemoryService(db).list_items(
@@ -147,7 +163,7 @@ def create_customer_memory(
     db: Session = Depends(get_db),
 ):
     business = business_or_404(db, business_slug)
-    customer_or_404(db, business_id=business.id, customer_id=customer_id)
+    registered_customer_or_404(db, business_id=business.id, customer_id=customer_id)
     try:
         row, superseded = CustomerMemoryService(db).create_manual(
             business_id=business.id,
@@ -190,7 +206,9 @@ def get_customer_memory_summary(
     db: Session = Depends(get_db),
 ):
     business = business_or_404(db, business_slug)
-    customer = customer_or_404(db, business_id=business.id, customer_id=customer_id)
+    customer = registered_customer_or_404(
+        db, business_id=business.id, customer_id=customer_id
+    )
     summary = CustomerMemoryService(db).summary(
         business_id=business.id, customer_id=customer_id
     )

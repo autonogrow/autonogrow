@@ -172,10 +172,8 @@ def test_appointment_customer_memory_is_private_timed_and_append_only(journey) -
     assert page.evaluate("bookingCustomerMemoryTimer === null")
     empty_card = page.locator(f"#booking-{empty_booking['id']}")
     empty_card.locator(".agenda-booking-details > summary").click()
-    empty_toggle = empty_card.get_by_role("button", name="Ver notas del cliente")
-    expect(empty_toggle).to_have_attribute("aria-expanded", "false")
-    empty_toggle.click()
-    expect(empty_card.get_by_text("No hay notas guardadas sobre este cliente.")).to_be_visible()
+    expect(empty_card.get_by_role("button", name="Ver notas del cliente")).to_have_count(0)
+    expect(empty_card.locator(".booking-customer-memory")).to_have_count(0)
 
 
 def test_admin_instagram_calendar_editorial_action_and_permissions(journey) -> None:
