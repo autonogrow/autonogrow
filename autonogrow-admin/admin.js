@@ -4400,6 +4400,8 @@ function captureConversationUiState(conversationId) {
     lastMessageId: thread?.dataset.lastMessageId || "",
     messageCount: Number(thread?.dataset.messageCount || 0),
     newMessagesVisible: Boolean(newMessagesIndicator && !newMessagesIndicator.hidden),
+    templatesOpen: Boolean(document.getElementById("conversation-templates-control")?.open),
+    automationOpen: Boolean(document.getElementById("conversation-automation-control")?.open),
     automationDuration: document.getElementById("conversation-automation-duration")?.value || "60",
     automationControlFocusId: document.activeElement?.closest?.(".conversation-automation-controls")
       ? document.activeElement.id
@@ -4556,21 +4558,32 @@ function conversationComposerModel(conversation) {
   };
 }
 
-function renderConversationComposer(conversation, quickReplies) {
+function resizeConversationReplyTextarea(textarea = document.getElementById("conversation-reply-body")) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  const maximumHeight = Number.parseFloat(window.getComputedStyle(textarea).maxHeight);
+  const nextHeight = Number.isFinite(maximumHeight)
+    ? Math.min(textarea.scrollHeight, maximumHeight)
+    : textarea.scrollHeight;
+  textarea.style.height = `${nextHeight}px`;
+  textarea.style.overflowY = Number.isFinite(maximumHeight) && textarea.scrollHeight > maximumHeight ? "auto" : "hidden";
+}
+
+function renderConversationComposer(conversation) {
   const model = conversationComposerModel(conversation);
   if (!model.canCompose) {
     return `<div class="conversation-reply conversation-reply--unavailable" role="status"><strong>Respuesta no disponible</strong><p>${escapeHtml(model.notice)}</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="navigate-section" data-section="channels">Revisar canal</button></div>`;
   }
-  return `<div class="conversation-reply" aria-label="Responder a la conversación">
-    <div class="conversation-quick-replies">${quickReplies || `<small>No hay respuestas rápidas activas.</small>`}</div>
+  return `<div class="conversation-reply" role="group" aria-label="Responder a la conversación">
     <label class="ag-visually-hidden" for="conversation-reply-body">Respuesta</label>
-    <textarea id="conversation-reply-body" placeholder="Escribe una respuesta…" maxlength="4000"></textarea>
-    <div class="conversation-composer-actions">
-      <small>${escapeHtml(model.notice)}</small>
-      <div>
-        ${model.canSend ? `<button id="conversation-send-button" class="ag-button ag-button--primary" type="button" data-admin-action="send-conversation-reply">${escapeHtml(model.action)}</button>` : ""}
-        ${model.assisted ? `<button id="conversation-whatsapp-button" class="btn btn-whatsapp" type="button" data-admin-action="open-conversation-whatsapp">${escapeHtml(model.assistedAction || model.action)}</button>` : ""}
-      </div>
+    <div class="conversation-composer-shell">
+      <textarea id="conversation-reply-body" rows="1" placeholder="Escribe una respuesta…" maxlength="4000" aria-describedby="conversation-reply-notice"></textarea>
+      ${model.canSend ? `<button id="conversation-send-button" class="conversation-composer-send" type="button" data-admin-action="send-conversation-reply" aria-label="${escapeHtml(model.action)}" title="${escapeHtml(model.action)}"><span aria-hidden="true">➤</span><span class="ag-visually-hidden">${escapeHtml(model.action)}</span></button>` : ""}
+      ${!model.canSend && model.assisted ? `<button id="conversation-whatsapp-button" class="conversation-composer-send conversation-composer-send--whatsapp" type="button" data-admin-action="open-conversation-whatsapp" aria-label="${escapeHtml(model.assistedAction || model.action)}" title="${escapeHtml(model.assistedAction || model.action)}"><span aria-hidden="true">↗</span><span class="ag-visually-hidden">${escapeHtml(model.assistedAction || model.action)}</span></button>` : ""}
+    </div>
+    <div class="conversation-composer-meta">
+      <small id="conversation-reply-notice">${escapeHtml(model.notice)}</small>
+      ${model.canSend && model.assisted ? `<button id="conversation-whatsapp-button" class="btn btn-whatsapp btn-small" type="button" data-admin-action="open-conversation-whatsapp">${escapeHtml(model.assistedAction || model.action)}</button>` : ""}
     </div>
   </div>`;
 }
@@ -4619,19 +4632,34 @@ function renderConversationDetail(conversation, uiState = null) {
           ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="pending">Reabrir</button>`
           : `<button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="pending">Marcar pendiente</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="closed">Cerrar</button>`}
       </div>
-      <div class="conversation-automation-controls">
-        <div class="conversation-automation-state-copy"><span class="conversation-automation-state ${automation.is_active ? "is-active" : "is-paused"}">${escapeHtml(conversationAutomationLabel(automation))}</span>${automationReason ? `<small>${escapeHtml(automationReason)}</small>` : ""}</div>
-        <select id="conversation-automation-duration" aria-label="Duración de la pausa"><option value="15" ${automationDuration === "15" ? "selected" : ""}>15 min</option><option value="60" ${automationDuration === "60" ? "selected" : ""}>1 h</option><option value="240" ${automationDuration === "240" ? "selected" : ""}>4 h</option><option value="-1" ${automationDuration === "-1" ? "selected" : ""}>Hasta reactivarla</option></select>
-        <button id="conversation-automation-toggle" class="ag-button ag-button--small ${automation.is_active ? "ag-button--secondary" : "ag-button--primary"}" type="button" data-admin-action="toggle-conversation-automation" data-active="${automation.is_active ? "true" : "false"}">${automation.is_active ? "Pausar automatización" : "Activar automatización"}</button>
-        <small class="conversation-automation-suggestion-note">Las sugerencias pueden seguir apareciendo durante la pausa.</small>
-      </div>
     </header>
     <div id="conversation-thread" class="conversation-thread" data-last-message-id="${messages.at(-1)?.id || ""}" data-message-count="${messages.length}">
       ${messages.length ? renderConversationMessages(messages) : `<div class="conversation-state conversation-state--compact"><p>Todavía no hay mensajes.</p></div>`}
       <button id="conversation-new-messages" class="ag-button ag-button--primary ag-button--small conversation-new-messages" type="button" data-admin-action="scroll-conversation-bottom" hidden>Hay mensajes nuevos</button>
     </div>
-    ${suggestionsMarkup}
-    ${renderConversationComposer(conversation, quickReplies)}
+    <div class="conversation-footer">
+      ${renderConversationComposer(conversation)}
+      <div class="conversation-secondary-controls" role="group" aria-label="Controles secundarios de la conversación">
+        <details id="conversation-templates-control" class="conversation-secondary-control"${uiState?.templatesOpen ? " open" : ""}>
+          <summary><span>Plantillas</span><span class="conversation-secondary-chevron" aria-hidden="true">⌄</span></summary>
+          <div class="conversation-secondary-panel">
+            <div class="conversation-quick-replies">${quickReplies || `<small>No hay respuestas rápidas activas.</small>`}</div>
+          </div>
+        </details>
+        <details id="conversation-automation-control" class="conversation-secondary-control"${uiState?.automationOpen ? " open" : ""}>
+          <summary><span>Automatización · ${automation.is_active ? "Activa" : "Pausada"}</span><span class="conversation-secondary-chevron" aria-hidden="true">⌄</span></summary>
+          <div class="conversation-secondary-panel conversation-automation-panel-inline">
+            <div class="conversation-automation-controls">
+              <div class="conversation-automation-state-copy"><span class="conversation-automation-state ${automation.is_active ? "is-active" : "is-paused"}">${escapeHtml(conversationAutomationLabel(automation))}</span>${automationReason ? `<small>${escapeHtml(automationReason)}</small>` : ""}</div>
+              <select id="conversation-automation-duration" aria-label="Duración de la pausa"><option value="15" ${automationDuration === "15" ? "selected" : ""}>15 min</option><option value="60" ${automationDuration === "60" ? "selected" : ""}>1 h</option><option value="240" ${automationDuration === "240" ? "selected" : ""}>4 h</option><option value="-1" ${automationDuration === "-1" ? "selected" : ""}>Hasta reactivarla</option></select>
+              <button id="conversation-automation-toggle" class="ag-button ag-button--small ${automation.is_active ? "ag-button--secondary" : "ag-button--primary"}" type="button" data-admin-action="toggle-conversation-automation" data-active="${automation.is_active ? "true" : "false"}">${automation.is_active ? "Pausar automatización" : "Activar automatización"}</button>
+              <small class="conversation-automation-suggestion-note">Las sugerencias pueden seguir apareciendo durante la pausa.</small>
+            </div>
+            ${suggestionsMarkup}
+          </div>
+        </details>
+      </div>
+    </div>
   `;
   const thread = document.getElementById("conversation-thread");
   const textarea = document.getElementById("conversation-reply-body");
@@ -4642,6 +4670,7 @@ function renderConversationDetail(conversation, uiState = null) {
       textarea.setSelectionRange(uiState.selectionStart, uiState.selectionEnd);
     }
   }
+  resizeConversationReplyTextarea(textarea);
   if (uiState?.automationControlFocusId) document.getElementById(uiState.automationControlFocusId)?.focus({ preventScroll: true });
   if (thread) {
     const lastMessageId = String(messages.at(-1)?.id || "");
@@ -5168,6 +5197,8 @@ function fillConversationReply(templateId) {
   if (!template || !textarea) return;
   selectedConversationSuggestionId = null;
   textarea.value = template.rendered_body || template.body;
+  resizeConversationReplyTextarea(textarea);
+  document.getElementById("conversation-templates-control")?.removeAttribute("open");
   textarea.focus();
 }
 
@@ -5181,7 +5212,9 @@ async function sendConversationReply() {
   if (button) {
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
-    button.textContent = "Enviando…";
+    button.setAttribute("aria-label", "Enviando…");
+    button.setAttribute("title", "Enviando…");
+    button.innerHTML = `<span aria-hidden="true">…</span><span class="ag-visually-hidden">Enviando…</span>`;
   }
   try {
     const response = await fetch(
@@ -5196,7 +5229,10 @@ async function sendConversationReply() {
     if (response.status === 429) throw new Error(adminRateLimitMessage(response));
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo enviar el mensaje."));
     selectedConversationSuggestionId = null;
-    if (textarea) textarea.value = "";
+    if (textarea) {
+      textarea.value = "";
+      resizeConversationReplyTextarea(textarea);
+    }
     showConversationFeedback(body.message?.delivery_status === "queued" ? "Respuesta en preparación." : "Respuesta registrada correctamente.");
     await requestAdminRefresh(["conversationList", "conversationThread", "operations"]);
   } catch (error) {
@@ -5207,7 +5243,10 @@ async function sendConversationReply() {
     if (button?.isConnected) {
       button.disabled = false;
       button.removeAttribute("aria-busy");
-      button.textContent = selectedConversation ? conversationComposerModel(selectedConversation).action : "Enviar respuesta";
+      const action = selectedConversation ? conversationComposerModel(selectedConversation).action : "Enviar respuesta";
+      button.setAttribute("aria-label", action);
+      button.setAttribute("title", action);
+      button.innerHTML = `<span aria-hidden="true">➤</span><span class="ag-visually-hidden">${escapeHtml(action)}</span>`;
     }
   }
 }
@@ -5288,6 +5327,7 @@ function modifyConversationSuggestion(suggestionId) {
   if (!suggestion || !textarea) return;
   selectedConversationSuggestionId = suggestion.id;
   textarea.value = suggestion.body;
+  resizeConversationReplyTextarea(textarea);
   textarea.focus();
   showConversationFeedback("Puedes modificar la sugerencia. Se marcará como usada al enviar.");
 }
@@ -7518,6 +7558,7 @@ function syncConversationCustomerPanelMode() {
 }
 
 function setupConversationInterface() {
+  const detail = document.getElementById("conversation-detail");
   document.querySelectorAll("[data-conversation-quick-filter]").forEach((button) => {
     button.addEventListener("click", () => applyConversationQuickFilter(button.dataset.conversationQuickFilter));
   });
@@ -7529,7 +7570,10 @@ function setupConversationInterface() {
     event.preventDefault();
     void submitCustomerMemoryForm(event.target);
   });
-  document.getElementById("conversation-detail").addEventListener("scroll", (event) => {
+  detail.addEventListener("input", (event) => {
+    if (event.target.id === "conversation-reply-body") resizeConversationReplyTextarea(event.target);
+  });
+  detail.addEventListener("scroll", (event) => {
     if (event.target.id !== "conversation-thread") return;
     const distanceFromBottom = event.target.scrollHeight - event.target.scrollTop - event.target.clientHeight;
     if (distanceFromBottom <= 80) document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");

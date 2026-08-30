@@ -172,6 +172,50 @@ def test_integrated_whatsapp_keeps_assisted_as_a_permanent_alternative() -> None
     assert "conversation-whatsapp-button" in render
 
 
+def test_conversation_composer_precedes_collapsed_secondary_controls() -> None:
+    _, css, js = read_sources()
+    render = function_block(js, "function renderConversationDetail", "function customerMemoryCategoryLabel")
+    header = render.split('<header class="conversation-detail-header">', 1)[1].split("</header>", 1)[0]
+
+    assert render.index('id="conversation-thread"') < render.index('class="conversation-footer"')
+    assert render.index("renderConversationComposer(conversation)") < render.index("conversation-secondary-controls")
+    assert render.index('id="conversation-templates-control"') < render.index('id="conversation-automation-control"')
+    assert "conversation-automation-controls" not in header
+    assert '${uiState?.templatesOpen ? " open" : ""}' in render
+    assert '${uiState?.automationOpen ? " open" : ""}' in render
+    assert "grid-template-rows: auto minmax(0, 1fr) auto" in css
+    assert ".conversation-secondary-controls" in css
+
+
+def test_conversation_composer_integrates_send_and_autogrows_accessibly() -> None:
+    _, css, js = read_sources()
+    composer = function_block(js, "function renderConversationComposer", "function renderConversationDetail")
+    resize = function_block(js, "function resizeConversationReplyTextarea", "function renderConversationComposer")
+    setup = function_block(js, "function setupConversationInterface", "function setupAdminDelegatedActions")
+
+    assert composer.index('id="conversation-reply-body"') < composer.index('id="conversation-send-button"')
+    assert 'class="conversation-composer-shell"' in composer
+    assert 'rows="1"' in composer
+    assert 'aria-describedby="conversation-reply-notice"' in composer
+    assert 'aria-label="${escapeHtml(model.action)}"' in composer
+    assert '<span aria-hidden="true">➤</span>' in composer
+    assert "textarea.style.height = \"auto\"" in resize
+    assert "Math.min(textarea.scrollHeight, maximumHeight)" in resize
+    assert 'event.target.id === "conversation-reply-body"' in setup
+    assert "resize: none" in css
+    assert "max-height: 9rem" in css
+
+
+def test_template_selection_only_fills_and_resizes_composer() -> None:
+    _, _, js = read_sources()
+    fill = function_block(js, "function fillConversationReply", "async function sendConversationReply")
+
+    assert "textarea.value = template.rendered_body || template.body" in fill
+    assert "resizeConversationReplyTextarea(textarea)" in fill
+    assert 'getElementById("conversation-templates-control")?.removeAttribute("open")' in fill
+    assert "sendConversationReply" not in fill
+
+
 def test_whatsapp_assisted_url_is_restricted_to_safe_wa_me_https() -> None:
     _, _, js = read_sources()
     block = function_block(js, "function isSafeWhatsAppUrl", "async function openConversationWhatsApp")
