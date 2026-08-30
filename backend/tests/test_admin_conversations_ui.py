@@ -86,15 +86,17 @@ def test_conversations_has_three_panel_architecture_and_preserves_contracts() ->
 def test_conversations_prioritize_attention_without_reordering_each_group() -> None:
     _, _, js = read_sources()
     block = function_block(js, "function prioritizeConversations", "function updateConversationFilterSummary")
-    assert 'item.status === "pending"' in block
-    assert "Number(left.item.unread_count) > 0" in block
+    assert "conversationNeedsReply(left.item)" in block
+    assert "conversationNeedsFollowUp(left.item)" in block
     assert "leftPriority - rightPriority || left.index - right.index" in block
 
 
 def test_conversation_filters_are_remote_debounced_and_resettable() -> None:
     html, _, js = read_sources()
-    for value in ("pending", "whatsapp", "instagram"):
+    for value in ("needs_reply", "whatsapp", "instagram"):
         assert f'data-conversation-quick-filter="{value}"' in html
+    assert '<option value="pending">Requieren seguimiento</option>' in html
+    assert 'params.set("attention", status)' in js
     assert "function resetConversationFilters" in js
     assert "function applyConversationQuickFilter" in js
     assert "clearTimeout(conversationSearchTimer)" in js
@@ -185,6 +187,40 @@ def test_conversation_composer_precedes_collapsed_secondary_controls() -> None:
     assert '${uiState?.automationOpen ? " open" : ""}' in render
     assert "grid-template-rows: auto minmax(0, 1fr) auto" in css
     assert ".conversation-secondary-controls" in css
+
+
+def test_conversation_header_groups_actions_and_customer_action_is_visible() -> None:
+    _, css, js = read_sources()
+    render = function_block(js, "function renderConversationDetail", "function customerMemoryCategoryLabel")
+    header = render.split('<header class="conversation-detail-header">', 1)[1].split("</header>", 1)[0]
+    open_panel = function_block(js, "function openConversationCustomerPanel", "function closeConversationCustomerPanel")
+    open_search = function_block(js, "function openConversationCustomerSearch", "async function updateConversationCustomer")
+
+    assert "conversation.customer_id" in render
+    assert "Ver cliente" in render
+    assert "Asociar cliente" in render
+    assert 'isBusinessStaff() ? ""' in render
+    assert header.index("${customerHeaderAction}") < header.index("conversationAttentionBadges(conversation)")
+    assert header.index("Marcar pendiente") < header.index("Cerrar")
+    assert "scrollIntoView" in open_panel
+    assert "title?.focus" in open_panel
+    assert "openConversationCustomerPanel(document.activeElement)" in open_search
+    assert ".conversation-customer-open { display: inline-flex; }" in css
+    assert ".conversation-detail-actions" in css
+    assert "flex-wrap: wrap" in css
+
+
+def test_conversation_attention_copy_uses_derived_reply_and_follow_up_states() -> None:
+    _, _, js = read_sources()
+    attention = function_block(js, "function conversationNeedsReply", "function conversationFilterLabel")
+    inbox = function_block(js, "function updateConversationInboxSummary", "async function loadConversations")
+
+    assert 'item.status === "closed"' in attention
+    assert "item.needs_reply === true" in attention
+    assert "item.follow_up === true" in attention
+    assert "Necesita respuesta" in attention
+    assert "Requiere seguimiento" in attention
+    assert "dashboardConversations.filter(conversationNeedsReply)" in inbox
 
 
 def test_conversation_composer_integrates_send_and_autogrows_accessibly() -> None:

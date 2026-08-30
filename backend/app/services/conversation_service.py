@@ -269,6 +269,25 @@ def serialize_conversation(
         conversation.customer_phone,
         region=conversation.business.country_code,
     )
+    unanswered_count = (
+        unread_count_value
+        if unread_count_value is not None
+        else unread_count(db, conversation)
+    )
+    needs_reply = conversation.status != "closed" and unanswered_count > 0
+    follow_up = conversation.status == "pending"
+    if conversation.status == "closed":
+        attention_state = "closed"
+        visible_unanswered_count = 0
+    elif needs_reply:
+        attention_state = "needs_reply"
+        visible_unanswered_count = unanswered_count
+    elif follow_up:
+        attention_state = "follow_up"
+        visible_unanswered_count = 0
+    else:
+        attention_state = "none"
+        visible_unanswered_count = 0
     result = {
         "id": conversation.id,
         "business_id": conversation.business_id,
@@ -289,6 +308,9 @@ def serialize_conversation(
         "customer_phone": conversation.customer_phone,
         "customer_username": conversation.customer_username,
         "status": conversation.status,
+        "needs_reply": needs_reply,
+        "follow_up": follow_up,
+        "attention_state": attention_state,
         "last_message_text": conversation.last_message_text,
         "last_message_at": (
             conversation.last_message_at.isoformat() if conversation.last_message_at else None
@@ -320,11 +342,7 @@ def serialize_conversation(
         "instagram_provider_configured": (
             provider_is_configured if conversation.channel == "instagram" else None
         ),
-        "unread_count": (
-            unread_count_value
-            if unread_count_value is not None
-            else unread_count(db, conversation)
-        ),
+        "unread_count": visible_unanswered_count,
         "created_at": conversation.created_at.isoformat(),
         "updated_at": conversation.updated_at.isoformat(),
     }
@@ -537,6 +555,7 @@ def list_conversations(
     *,
     business_id: int,
     status: str | None = None,
+    attention: str | None = None,
     channel: str | None = None,
     q: str | None = None,
     limit: int = 50,
@@ -552,6 +571,21 @@ def list_conversations(
     )
     if status:
         query = query.filter(Conversation.status == status)
+    if attention:
+        unanswered_inbound = (
+            db.query(ConversationMessage.id)
+            .filter(
+                ConversationMessage.conversation_id == Conversation.id,
+                ConversationMessage.direction == "inbound",
+                or_(
+                    Conversation.last_outbound_at.is_(None),
+                    ConversationMessage.created_at > Conversation.last_outbound_at,
+                ),
+            )
+            .exists()
+        )
+        if attention == "needs_reply":
+            query = query.filter(Conversation.status != "closed", unanswered_inbound)
     if channel:
         query = query.filter(Conversation.channel == channel)
     if q and q.strip():
@@ -625,7 +659,7 @@ def create_or_get_conversation(
             customer_name=customer_name,
             customer_phone=customer_phone,
             customer_username=customer_username,
-            status="pending",
+            status="replied",
         )
         db.add(conversation)
         db.flush()
@@ -671,10 +705,10 @@ def add_message(
     conversation.updated_at = now
     if direction == "inbound":
         conversation.last_inbound_at = now
-        conversation.status = "pending"
+        if conversation.status == "closed":
+            conversation.status = "replied"
     elif direction == "outbound":
         conversation.last_outbound_at = now
-        conversation.status = "replied"
     db.flush()
     return message
 
@@ -1009,7 +1043,6 @@ def send_outbound_message(
         delivery_status=delivery_status,
     )
     if delivery_status in {"failed", "blocked"}:
-        conversation.status = "pending"
         conversation.last_outbound_at = previous_last_outbound_at
         return OutboundMessageResult(
             message=message,
@@ -1060,7 +1093,7 @@ def close_conversation(conversation: Conversation) -> None:
 
 
 def reopen_conversation(conversation: Conversation) -> None:
-    update_status(conversation, "pending")
+    update_status(conversation, "replied")
 
 
 def list_messages(conversation: Conversation) -> list[ConversationMessage]:

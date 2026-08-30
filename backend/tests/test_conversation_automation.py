@@ -49,7 +49,10 @@ from app.services.conversation_automation_service import (
     ensure_automation_configuration,
 )
 from app.services.conversation_intent_service import detect_intent, normalize_text
-from app.services.conversation_service import send_outbound_message as service_send_outbound_message
+from app.services.conversation_service import (
+    send_outbound_message as service_send_outbound_message,
+)
+from app.services.conversation_service import serialize_conversation
 
 
 class ConversationAutomationTest(unittest.TestCase):
@@ -398,6 +401,9 @@ class ConversationAutomationTest(unittest.TestCase):
         )
         conversation = self.db.get(Conversation, result["conversation_id"])
         self.assertEqual(conversation.status, "pending")
+        attention = serialize_conversation(self.db, conversation)
+        self.assertFalse(attention["needs_reply"])
+        self.assertTrue(attention["follow_up"])
 
     def test_semi_automatic_creates_suggestion_without_credit(self):
         settings, _ = self.configure(self.business_a, mode="semi_automatic")
@@ -409,7 +415,8 @@ class ConversationAutomationTest(unittest.TestCase):
         self.assertEqual(suggestion.status, "pending")
         self.assertIn("autonogrow-landing", suggestion.body)
         self.assertEqual(settings.auto_used_current_period, 0)
-        self.assertEqual(conversation.status, "pending")
+        self.assertEqual(conversation.status, "replied")
+        self.assertTrue(serialize_conversation(self.db, conversation)["needs_reply"])
         self.assertEqual(len(conversation.messages), 1)
 
     def test_fifteen_minute_pause_skips_automatic_send_without_credit(self):
@@ -723,7 +730,8 @@ class ConversationAutomationTest(unittest.TestCase):
         self.assertEqual(result["automation"]["action"], "suggestion")
         self.assertTrue(result["automation"]["limit_reached"])
         self.assertEqual(settings.auto_used_current_period, 1)
-        self.assertEqual(conversation.status, "pending")
+        self.assertEqual(conversation.status, "replied")
+        self.assertTrue(serialize_conversation(self.db, conversation)["needs_reply"])
         self.assertEqual(
             self.db.query(ConversationMessage)
             .filter(ConversationMessage.direction == "outbound")
@@ -939,7 +947,8 @@ class ConversationAutomationTest(unittest.TestCase):
         persisted_suggestion = self.db.get(ConversationSuggestion, suggestion.id)
         conversation = self.db.get(Conversation, inbound["conversation_id"])
         self.assertEqual(persisted_suggestion.status, "pending")
-        self.assertEqual(conversation.status, "pending")
+        self.assertEqual(conversation.status, "replied")
+        self.assertTrue(serialize_conversation(self.db, conversation)["needs_reply"])
         self.assertEqual(
             self.db.query(ConversationMessage)
             .filter(

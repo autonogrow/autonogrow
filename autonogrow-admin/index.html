@@ -470,7 +470,7 @@
 
       <div class="conversation-quick-filters" role="group" aria-label="Filtros rápidos">
         <button class="conversation-filter-chip is-active" type="button" data-conversation-quick-filter="all" aria-pressed="true">Todas</button>
-        <button class="conversation-filter-chip" type="button" data-conversation-quick-filter="pending" aria-pressed="false">Necesitan respuesta</button>
+        <button class="conversation-filter-chip" type="button" data-conversation-quick-filter="needs_reply" aria-pressed="false">Necesitan respuesta</button>
         <button class="conversation-filter-chip" type="button" data-conversation-quick-filter="whatsapp" aria-pressed="false">WhatsApp</button>
         <button class="conversation-filter-chip" type="button" data-conversation-quick-filter="instagram" aria-pressed="false">Instagram</button>
       </div>
@@ -479,7 +479,7 @@
         <summary>Buscar y filtrar <span id="conversation-filter-summary">Sin filtros adicionales</span></summary>
         <div class="conversation-filters">
           <label class="ag-field conversation-search">Buscar<input id="conversation-search" type="search" placeholder="Nombre, teléfono, usuario o mensaje" autocomplete="off" /></label>
-          <label class="ag-field">Estado<select id="conversation-status-filter"><option value="">Todas</option><option value="pending">Necesitan respuesta</option><option value="replied">Respondidas</option><option value="closed">Cerradas</option></select></label>
+          <label class="ag-field">Estado<select id="conversation-status-filter"><option value="">Todas</option><option value="needs_reply">Necesitan respuesta</option><option value="pending">Requieren seguimiento</option><option value="replied">Respondidas</option><option value="closed">Cerradas</option></select></label>
           <label class="ag-field">Canal<select id="conversation-channel-filter"><option value="">Todos</option><option value="manual">Manual</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option></select></label>
           <button id="conversation-reset-filters" class="ag-button ag-button--ghost ag-button--small" type="button">Limpiar filtros</button>
         </div>

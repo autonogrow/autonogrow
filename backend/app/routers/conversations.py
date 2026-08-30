@@ -18,6 +18,7 @@ from app.models import (
 )
 from app.schemas.conversation import (
     CHANNELS,
+    CONVERSATION_ATTENTION_FILTERS,
     CONVERSATION_STATUSES,
     AssistedDeliveryCreate,
     AutomationCreditReadOnlyResponse,
@@ -138,6 +139,7 @@ def get_conversation_or_404(db: Session, *, business_id: int, conversation_id: i
 def admin_list_conversations(
     business_slug: str,
     status: str | None = Query(default=None),
+    attention: str | None = None,
     channel: str | None = Query(default=None),
     q: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=50, ge=1, le=100),
@@ -146,6 +148,8 @@ def admin_list_conversations(
 ):
     if status is not None and status not in CONVERSATION_STATUSES:
         raise HTTPException(status_code=422, detail="Invalid conversation status")
+    if attention is not None and attention not in CONVERSATION_ATTENTION_FILTERS:
+        raise HTTPException(status_code=422, detail="Invalid conversation attention filter")
     if channel is not None and channel not in CHANNELS:
         raise HTTPException(status_code=422, detail="Invalid channel")
     business = get_business_or_404(db, business_slug)
@@ -153,6 +157,7 @@ def admin_list_conversations(
         db,
         business_id=business.id,
         status=status,
+        attention=attention,
         channel=channel,
         q=q,
         limit=limit,

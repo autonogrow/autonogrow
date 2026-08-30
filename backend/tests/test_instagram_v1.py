@@ -747,7 +747,9 @@ class InstagramV1Test(unittest.TestCase):
             .one()
         )
         self.assertEqual(failed_message.delivery_status, "queued")
-        self.assertEqual(failed_conversation.status, "replied")
+        self.assertEqual(failed_conversation.status, "pending")
+        self.assertTrue(queued["conversation"]["follow_up"])
+        self.assertFalse(queued["conversation"]["needs_reply"])
         self.assertIsNotNone(failed_conversation.automation_paused_until)
         self.assertEqual(self.db.query(ChannelOutboxMessage).count(), 2)
 

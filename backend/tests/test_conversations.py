@@ -41,7 +41,7 @@ from app.schemas.conversation import (
     ConversationTemplateUpdate,
     TestInboundMessageCreate,
 )
-from app.services.conversation_service import render_template
+from app.services.conversation_service import add_message, render_template, serialize_conversation
 
 
 class ConversationsTest(unittest.TestCase):
@@ -144,7 +144,8 @@ class ConversationsTest(unittest.TestCase):
         )
         result = admin_list_conversations(
             self.business_a.slug,
-            status="pending",
+            status=None,
+            attention="needs_reply",
             channel="manual",
             q="Ana",
             limit=50,
@@ -330,8 +331,109 @@ class ConversationsTest(unittest.TestCase):
             .raw_payload_json
         )
         conversation = self.db.get(Conversation, first["conversation_id"])
-        self.assertEqual(conversation.status, "pending")
+        self.assertEqual(conversation.status, "replied")
+        detail = serialize_conversation(self.db, conversation)
+        self.assertTrue(detail["needs_reply"])
+        self.assertFalse(detail["follow_up"])
         self.assertEqual(conversation.last_message_text, "Quería una cita")
+
+    def test_reply_attention_and_follow_up_are_independent(self):
+        conversation = Conversation(
+            business_id=self.business_a.id,
+            channel="manual",
+            external_user_id="attention-semantics",
+            status="replied",
+        )
+        self.db.add(conversation)
+        self.db.flush()
+
+        add_message(
+            self.db,
+            conversation=conversation,
+            direction="inbound",
+            sender_type="customer",
+            body="Hola",
+        )
+        self.db.commit()
+        inbound_state = serialize_conversation(self.db, conversation)
+        self.assertEqual(conversation.status, "replied")
+        self.assertTrue(inbound_state["needs_reply"])
+        self.assertFalse(inbound_state["follow_up"])
+        self.assertEqual(inbound_state["attention_state"], "needs_reply")
+
+        admin_update_conversation_status(
+            self.business_a.slug,
+            conversation.id,
+            ConversationStatusUpdate(status="pending"),
+            self.request("PATCH"),
+            actor=self.staff_user,
+            db=self.db,
+        )
+        pending_with_inbound = serialize_conversation(self.db, conversation)
+        self.assertTrue(pending_with_inbound["needs_reply"])
+        self.assertTrue(pending_with_inbound["follow_up"])
+
+        add_message(
+            self.db,
+            conversation=conversation,
+            direction="outbound",
+            sender_type="business",
+            body="Respuesta manual",
+            delivery_status="sent",
+        )
+        self.db.commit()
+        manual_reply_state = serialize_conversation(self.db, conversation)
+        self.assertFalse(manual_reply_state["needs_reply"])
+        self.assertTrue(manual_reply_state["follow_up"])
+        self.assertEqual(manual_reply_state["attention_state"], "follow_up")
+
+        add_message(
+            self.db,
+            conversation=conversation,
+            direction="inbound",
+            sender_type="customer",
+            body="Otra pregunta",
+        )
+        self.db.commit()
+        next_inbound_state = serialize_conversation(self.db, conversation)
+        self.assertTrue(next_inbound_state["needs_reply"])
+        self.assertTrue(next_inbound_state["follow_up"])
+
+        add_message(
+            self.db,
+            conversation=conversation,
+            direction="outbound",
+            sender_type="automation",
+            body="Respuesta automática",
+            delivery_status="sent",
+        )
+        self.db.commit()
+        automatic_reply_state = serialize_conversation(self.db, conversation)
+        self.assertFalse(automatic_reply_state["needs_reply"])
+        self.assertTrue(automatic_reply_state["follow_up"])
+
+        add_message(
+            self.db,
+            conversation=conversation,
+            direction="inbound",
+            sender_type="customer",
+            body="Pendiente antes de cerrar",
+        )
+        self.db.commit()
+        self.assertTrue(serialize_conversation(self.db, conversation)["needs_reply"])
+
+        closed = admin_update_conversation_status(
+            self.business_a.slug,
+            conversation.id,
+            ConversationStatusUpdate(status="closed"),
+            self.request("PATCH"),
+            actor=self.staff_user,
+            db=self.db,
+        )["conversation"]
+        self.assertFalse(closed["needs_reply"])
+        self.assertFalse(closed["follow_up"])
+        self.assertEqual(closed["attention_state"], "closed")
+        self.assertEqual(closed["unread_count"], 0)
 
     def test_templates_seed_render_and_admin_creation(self):
         listed = admin_list_conversation_templates(self.business_a.slug, db=self.db)["templates"]

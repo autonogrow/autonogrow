@@ -849,9 +849,7 @@ function getDashboardPendingBookings() {
 }
 
 function getDashboardPendingConversations() {
-  return dashboardConversations.filter((conversation) =>
-    conversation.status === "pending" || Number(conversation.unread_count || 0) > 0
-  );
+  return dashboardConversations.filter(conversationNeedsReply);
 }
 
 function dashboardBookingSortKey(booking) {
@@ -4153,7 +4151,37 @@ function conversationAssociationLabel(item) {
 }
 
 function conversationStatusLabel(status) {
-  return { pending: "Necesita respuesta", replied: "Respondida", closed: "Cerrada" }[status] || "Estado sin identificar";
+  return { pending: "Requiere seguimiento", replied: "Respondida", closed: "Cerrada" }[status] || "Estado sin identificar";
+}
+
+function conversationNeedsReply(item) {
+  if (item.status === "closed") return false;
+  return item.needs_reply === true || (item.needs_reply == null && Number(item.unread_count || 0) > 0);
+}
+
+function conversationNeedsFollowUp(item) {
+  return item.status !== "closed" && (item.follow_up === true || (item.follow_up == null && item.status === "pending"));
+}
+
+function conversationAttentionBadges(item) {
+  if (item.status === "closed") {
+    return `<span class="conversation-status conversation-status-closed">Cerrada</span>`;
+  }
+  const states = [];
+  if (conversationNeedsReply(item)) {
+    states.push(`<span class="conversation-status conversation-status-needs-reply">Necesita respuesta</span>`);
+  }
+  if (conversationNeedsFollowUp(item)) {
+    states.push(`<span class="conversation-status conversation-status-follow-up">Requiere seguimiento</span>`);
+  }
+  if (!states.length) {
+    states.push(`<span class="conversation-status conversation-status-replied">Respondida</span>`);
+  }
+  return `<span class="conversation-attention-states">${states.join("")}</span>`;
+}
+
+function conversationFilterLabel(value) {
+  return value === "needs_reply" ? "Necesitan respuesta" : conversationStatusLabel(value);
 }
 
 function conversationChannelLabel(channel) {
@@ -4247,8 +4275,8 @@ function prioritizeConversations(items) {
   return items
     .map((item, index) => ({ item, index }))
     .sort((left, right) => {
-      const leftPriority = left.item.status === "pending" || Number(left.item.unread_count) > 0 ? 0 : 1;
-      const rightPriority = right.item.status === "pending" || Number(right.item.unread_count) > 0 ? 0 : 1;
+      const leftPriority = conversationNeedsReply(left.item) ? 0 : conversationNeedsFollowUp(left.item) ? 1 : 2;
+      const rightPriority = conversationNeedsReply(right.item) ? 0 : conversationNeedsFollowUp(right.item) ? 1 : 2;
       return leftPriority - rightPriority || left.index - right.index;
     })
     .map(({ item }) => item);
@@ -4259,7 +4287,7 @@ function updateConversationFilterSummary() {
   const channel = document.getElementById("conversation-channel-filter")?.value || "";
   const query = document.getElementById("conversation-search")?.value.trim() || "";
   const parts = [];
-  if (status) parts.push(conversationStatusLabel(status));
+  if (status) parts.push(conversationFilterLabel(status));
   if (channel) parts.push(conversationChannelLabel(channel));
   if (query) parts.push(`“${query}”`);
   const summary = document.getElementById("conversation-filter-summary");
@@ -4275,7 +4303,7 @@ function updateConversationFilterSummary() {
 }
 
 function updateConversationInboxSummary() {
-  const pending = dashboardConversations.filter((item) => item.status === "pending" || Number(item.unread_count) > 0).length;
+  const pending = dashboardConversations.filter(conversationNeedsReply).length;
   const summary = document.getElementById("conversation-inbox-summary");
   if (summary) {
     summary.textContent = pending
@@ -4291,7 +4319,8 @@ async function loadConversations({ background = false, refreshDetail = true } = 
   const status = document.getElementById("conversation-status-filter")?.value;
   const channel = document.getElementById("conversation-channel-filter")?.value;
   const query = document.getElementById("conversation-search")?.value.trim();
-  if (status) params.set("status", status);
+  if (status === "needs_reply") params.set("attention", status);
+  else if (status) params.set("status", status);
   if (channel) params.set("channel", channel);
   if (query) params.set("q", query);
   if (!background && !conversations.length) {
@@ -4367,7 +4396,7 @@ function renderConversationList() {
     <button id="conversation-list-item-${item.id}" class="conversation-list-item ${item.id === selectedConversationId ? "active" : ""}" type="button" role="option" aria-selected="${item.id === selectedConversationId}" data-admin-action="select-conversation" data-id="${item.id}">
       <span class="conversation-list-head">
         <strong>${escapeHtml(conversationDisplayName(item))}</strong>
-        <span class="conversation-status conversation-status-${escapeHtml(item.status)}">${escapeHtml(conversationStatusLabel(item.status))}</span>
+        ${conversationAttentionBadges(item)}
       </span>
       <span class="conversation-channel">${escapeHtml(conversationChannelLabel(item.channel))}</span>
       <span class="conversation-channel-identity">${escapeHtml(conversationChannelIdentity(item))}</span>
@@ -4600,6 +4629,9 @@ function renderConversationDetail(conversation, uiState = null) {
   const automation = conversation.automation || { mode: "automatic", is_active: true };
   const automationDuration = uiState?.automationDuration || "60";
   const automationReason = conversationAutomationReason(automation);
+  const customerHeaderAction = conversation.customer_id
+    ? `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-panel" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Ver cliente</button>`
+    : isBusinessStaff() ? "" : `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-search" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Asociar cliente</button>`;
   const suggestionsMarkup = pendingSuggestions.length || conversationSuggestionNotice ? `
     <div class="conversation-suggestions">
       ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
@@ -4621,15 +4653,14 @@ function renderConversationDetail(conversation, uiState = null) {
     <header class="conversation-detail-header">
       <button class="conversation-mobile-back ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="close-conversation-mobile-detail">← Conversaciones</button>
       <div class="conversation-detail-header-copy">
-        <h3 id="conversation-detail-title" tabindex="-1">${escapeHtml(conversationDisplayName(conversation))}</h3>
+        <div class="conversation-detail-heading-row"><h3 id="conversation-detail-title" tabindex="-1">${escapeHtml(conversationDisplayName(conversation))}</h3><div class="conversation-detail-badges"><span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>${conversationProviderBadge(conversation)}${conversationIntentBadge(conversation)}</div></div>
         <span>${escapeHtml(channelIdentity)} · ${escapeHtml(conversationAssociationLabel(conversation))}</span>
-        <div class="conversation-detail-badges"><span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>${conversationProviderBadge(conversation)}${conversationIntentBadge(conversation)}</div>
       </div>
       <div class="conversation-detail-actions">
-        <button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-panel" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Ver cliente</button>
-        <span class="conversation-status conversation-status-${escapeHtml(conversation.status)}">${escapeHtml(conversationStatusLabel(conversation.status))}</span>
+        ${customerHeaderAction}
+        ${conversationAttentionBadges(conversation)}
         ${conversation.status === "closed"
-          ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="pending">Reabrir</button>`
+          ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="replied">Reabrir</button>`
           : `<button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="pending">Marcar pendiente</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="closed">Cerrar</button>`}
       </div>
     </header>
@@ -4991,6 +5022,7 @@ async function searchConversationCustomers() {
 
 function openConversationCustomerSearch() {
   if (isBusinessStaff()) return;
+  openConversationCustomerPanel(document.activeElement);
   conversationCustomerSearchState = { open: true, loading: false, query: "", results: [] };
   if (selectedConversation) renderConversationCustomerPanel(selectedConversation);
   queueMicrotask(() => document.getElementById("conversation-customer-search-input")?.focus());
@@ -5131,8 +5163,10 @@ function openConversationCustomerPanel(trigger) {
   if (window.matchMedia("(max-width: 1199px)").matches) {
     backdrop?.removeAttribute("hidden");
     document.body.classList.add("conversation-drawer-open");
-    document.getElementById("conversation-customer-title")?.focus?.({ preventScroll: true });
   }
+  const title = document.getElementById("conversation-customer-title");
+  title?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  title?.focus?.({ preventScroll: true });
 }
 
 function closeConversationCustomerPanel({ restoreFocus = true } = {}) {
@@ -5161,7 +5195,7 @@ function resetConversationFilters() {
 }
 
 function applyConversationQuickFilter(value) {
-  document.getElementById("conversation-status-filter").value = value === "pending" ? "pending" : "";
+  document.getElementById("conversation-status-filter").value = value === "needs_reply" ? "needs_reply" : "";
   document.getElementById("conversation-channel-filter").value = ["whatsapp", "instagram"].includes(value) ? value : "";
   updateConversationFilterSummary();
   loadConversations({ background: false });
@@ -7670,7 +7704,7 @@ function setupAdminDelegatedActions() {
     else if (action === "supersede-customer-memory" && Number.isInteger(id)) openCustomerMemoryForm("supersede", Number(button.dataset.customerId), id);
     else if (action === "obsolete-customer-memory" && Number.isInteger(id)) void mutateCustomerMemory("obsolete", Number(button.dataset.customerId), id);
     else if (action === "delete-customer-memory" && Number.isInteger(id)) void mutateCustomerMemory("delete", Number(button.dataset.customerId), id);
-    else if (action === "change-conversation-status" && ["pending", "closed"].includes(button.dataset.status)) changeConversationStatus(button.dataset.status);
+    else if (action === "change-conversation-status" && ["pending", "replied", "closed"].includes(button.dataset.status)) changeConversationStatus(button.dataset.status);
     else if (action === "toggle-conversation-automation") toggleConversationAutomation(button.dataset.active === "true");
     else if (action === "scroll-conversation-bottom") scrollConversationThreadToBottom();
     else if (action === "save-conversation-template" && Number.isInteger(id)) saveConversationTemplate(id);

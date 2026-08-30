@@ -43,7 +43,7 @@ class Conversation(Base):
     customer_name: Mapped[str | None] = mapped_column(String(200))
     customer_phone: Mapped[str | None] = mapped_column(String(40))
     customer_username: Mapped[str | None] = mapped_column(String(200))
-    status: Mapped[str] = mapped_column(String(30), default="pending", index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="replied", index=True, nullable=False)
     last_message_text: Mapped[str | None] = mapped_column(Text)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime)

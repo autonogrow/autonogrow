@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 CHANNELS = {"manual", "whatsapp", "instagram"}
 CONVERSATION_STATUSES = {"pending", "replied", "closed"}
+CONVERSATION_ATTENTION_FILTERS = {"needs_reply"}
 AUTOMATION_RULE_MODES = {"disabled", "semi_automatic", "automatic"}
 HUMAN_REPLY_PAUSE_MINUTES = {0, 15, 60, 240, -1}
 CONVERSATION_AUTOMATION_ACTIONS = {"pause", "manual", "resume"}
