@@ -3933,6 +3933,8 @@ function captureBookingEditorState() {
     : null;
   return {
     drafts,
+    openBookingDetails: new Set([...document.querySelectorAll(".agenda-booking-details[open]")].map((details) => String(details.closest("[data-booking-id]")?.dataset.bookingId || ""))),
+    openInternalNotes: new Set([...document.querySelectorAll("[data-internal-notes-details][open]")].map((details) => String(details.dataset.internalNotesDetails))),
     focusedBookingId: active ? String(active.dataset.internalNotes) : null,
     selectionStart: active?.selectionStart,
     selectionEnd: active?.selectionEnd,
@@ -3943,6 +3945,12 @@ function captureBookingEditorState() {
 
 function restoreBookingEditorState(state) {
   if (!state) return;
+  state.openBookingDetails?.forEach((bookingId) => {
+    document.querySelector(`[data-booking-id="${bookingId}"] .agenda-booking-details`)?.setAttribute("open", "");
+  });
+  state.openInternalNotes?.forEach((bookingId) => {
+    document.querySelector(`[data-internal-notes-details="${bookingId}"]`)?.setAttribute("open", "");
+  });
   state.drafts.forEach((value, bookingId) => {
     const field = document.querySelector(`[data-internal-notes="${bookingId}"]`);
     if (field) field.value = value;
@@ -6444,10 +6452,16 @@ function renderBookingCard(booking, nextBookingId) {
             <p><span>Profesional</span><strong>${escapeHtml(booking.staff_display_name || "Sin asignar")}</strong></p>
           </div>
           ${renderBookingCustomerMemorySection(booking)}
-          <div class="booking-notes internal-notes-editor">
-            <label>Notas internas<textarea data-internal-notes="${bookingId}" rows="2">${escapeHtml(booking.internal_notes || "")}</textarea></label>
-            <button class="btn btn-small btn-secondary" type="button" data-admin-action="save-internal-notes" data-id="${bookingId}">Guardar notas</button>
-          </div>
+          <details class="booking-notes internal-notes-editor" data-internal-notes-details="${bookingId}">
+            <summary>Nota interna de esta cita</summary>
+            <div class="internal-notes-editor__body">
+              <label>Contenido de la nota<textarea data-internal-notes="${bookingId}" rows="2">${escapeHtml(booking.internal_notes || "")}</textarea></label>
+              <div class="internal-notes-editor__actions">
+                <button class="btn btn-small btn-secondary" type="button" data-admin-action="save-internal-notes" data-internal-notes-action data-id="${bookingId}">Guardar nota de esta cita</button>
+                ${booking.customer_memory_eligible ? `<button class="btn btn-small btn-secondary" type="button" data-admin-action="save-internal-notes-to-customer" data-internal-notes-action data-id="${bookingId}">Guardar también en notas del cliente</button>` : ""}
+              </div>
+            </div>
+          </details>
           ${renderAttachments(booking.attachments || [])}
         </details>
         ${renderReviewRequest(booking)}
@@ -6897,18 +6911,68 @@ function setBookingMutationBusy(bookingId, busy) {
   });
 }
 
-async function saveInternalNotes(bookingId) {
-  const field = document.querySelector(`[data-internal-notes="${bookingId}"]`);
-  const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/bookings/${bookingId}/internal-notes`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ internal_notes: field.value.trim() || null })
+function setInternalNotesBusy(bookingId, busy) {
+  document.querySelectorAll(`[data-internal-notes-action][data-id="${bookingId}"]`).forEach((button) => {
+    button.disabled = busy;
+    button.toggleAttribute("aria-busy", busy);
   });
-  const result = await response.json().catch(() => null);
-  if (!response.ok) return alert(safeConfigurationError(result, "No se pudieron guardar las notas."));
-  const index = allBookings.findIndex((item) => item.id === bookingId);
-  if (index >= 0) allBookings[index] = { ...allBookings[index], ...result.booking };
-  alert("Notas internas guardadas.");
+}
+
+async function saveInternalNotes(bookingId, { copyToCustomerMemory = false } = {}) {
+  const field = document.querySelector(`[data-internal-notes="${bookingId}"]`);
+  const booking = allBookings.find((item) => Number(item.id) === bookingId);
+  if (!field || !booking) return alert("No se encontró la cita.");
+  const note = field.value.trim();
+  if (copyToCustomerMemory && (!booking.customer_memory_eligible || !Number(booking.customer_id))) {
+    return alert("Esta cita no pertenece a un cliente registrado.");
+  }
+  if (copyToCustomerMemory && !note) {
+    return alert("Escribe una nota antes de guardarla también en las notas del cliente.");
+  }
+  setInternalNotesBusy(bookingId, true);
+  let bookingSaved = false;
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/bookings/${bookingId}/internal-notes`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ internal_notes: note || null })
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) return alert(safeConfigurationError(result, "No se pudo guardar la nota interna de esta cita."));
+    const index = allBookings.findIndex((item) => item.id === bookingId);
+    if (index >= 0) allBookings[index] = { ...allBookings[index], ...result.booking };
+    bookingSaved = true;
+    if (!copyToCustomerMemory) {
+      alert("Nota interna de esta cita guardada.");
+      return;
+    }
+    const customerId = Number(booking.customer_id);
+    const memoryResponse = await customerMemoryRequest(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/customers/${customerId}/memory`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category: "operational_note", key: "note", value: note, source_type: "manual" })
+    });
+    const memoryResult = await readAdminResponseBody(memoryResponse);
+    if (!memoryResponse.ok) {
+      return alert(safeConfigurationError(memoryResult, "La nota interna se guardó en la cita, pero no se pudo copiar a las notas del cliente."));
+    }
+    customerMemorySummaries.delete(customerId);
+    const conversationMemoryVisible = selectedConversation
+      && customerIdForConversation(selectedConversation) === customerId;
+    if (
+      (bookingCustomerMemoryPanelState.open && bookingCustomerMemoryPanelState.customerId === customerId)
+      || conversationMemoryVisible
+    ) {
+      await loadCustomerMemorySummary(customerId, { force: true });
+    }
+    alert("Nota interna guardada en esta cita y también en las notas del cliente.");
+  } catch (_error) {
+    alert(bookingSaved
+      ? "La nota interna se guardó en la cita, pero no se pudo copiar a las notas del cliente."
+      : "No se pudo guardar la nota interna de esta cita.");
+  } finally {
+    setInternalNotesBusy(bookingId, false);
+  }
 }
 
 function rescheduleBooking(bookingId) {
@@ -7493,6 +7557,7 @@ function setupAdminDelegatedActions() {
       void loadCustomerMemorySummary(customerId, { force: true });
     }
     else if (action === "save-internal-notes" && Number.isInteger(id)) saveInternalNotes(id);
+    else if (action === "save-internal-notes-to-customer" && Number.isInteger(id)) saveInternalNotes(id, { copyToCustomerMemory: true });
     else if (action === "retry-reschedule-slots") loadRescheduleSlots();
   });
 

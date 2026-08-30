@@ -212,6 +212,31 @@ def test_booking_customer_memory_timer_activity_and_draft_lifecycle_are_single()
     assert "open: false" in memory
 
 
+def test_internal_booking_note_is_folded_and_only_copies_to_eligible_customer_explicitly() -> None:
+    _, css, js = read_sources()
+    card = function_block(js, "function renderBookingCard", "function bookingStartMinutes")
+    save = function_block(js, "async function saveInternalNotes", "function rescheduleBooking")
+    assert '<details class="booking-notes internal-notes-editor"' in card
+    assert "Nota interna de esta cita" in card
+    assert "Notas internas" not in card
+    assert "data-internal-notes-details" in card
+    assert "Guardar nota de esta cita" in card
+    assert "Guardar también en notas del cliente" in card
+    assert "booking.customer_memory_eligible ?" in card
+    assert "copyToCustomerMemory = false" in save
+    assert "if (!copyToCustomerMemory)" in save
+    assert save.index("if (!copyToCustomerMemory)") < save.index(
+        "/customers/${customerId}/memory"
+    )
+    assert 'body: JSON.stringify({ internal_notes: note || null })' in save
+    assert 'category: "operational_note", key: "note", value: note' in save
+    assert "booking.notes" not in save
+    assert "customer_memory_eligible" in save
+    assert "save-internal-notes-to-customer" in js
+    assert "openInternalNotes" in js
+    assert ".internal-notes-editor > summary" in css
+
+
 def test_dynamic_booking_content_is_escaped() -> None:
     _, _, js = read_sources()
     block = function_block(js, "function renderBookingCard", "function renderBookings")

@@ -24,6 +24,7 @@ from app.models import (
     CustomerOpportunity,
     User,
 )
+from app.routers.admin import BookingInternalNotesUpdate, update_booking_internal_notes
 from app.routers.customer_memory import (
     create_customer_memory,
     delete_customer_memory,
@@ -495,6 +496,39 @@ def test_appointment_note_creation_appends_memory_without_touching_booking_comme
     assert {item["value"] for item in list_customer_memory(
         "memory-a", records["customer_a"].id, "active", db
     )["items"]} == {"Memoria anterior intacta", "Nueva nota añadida desde la cita"}
+
+
+def test_internal_booking_note_does_not_modify_customer_memory(
+    db: Session, records: dict
+) -> None:
+    booking = completed_booking(
+        db,
+        business=records["a"],
+        customer=records["customer_a"],
+        service=records["service_a"],
+        occurred_at=NOW,
+    )
+    existing = add_memory(db, records, value="Memoria independiente")
+
+    response = update_booking_internal_notes(
+        "memory-a",
+        booking.id,
+        BookingInternalNotesUpdate(internal_notes="Solo para esta cita"),
+        request(
+            f"/api/admin/businesses/memory-a/bookings/{booking.id}/internal-notes"
+        ),
+        records["admin"],
+        db,
+    )
+
+    db.refresh(booking)
+    db.refresh(existing)
+    assert response["booking"]["internal_notes"] == "Solo para esta cita"
+    assert booking.internal_notes == "Solo para esta cita"
+    assert existing.value == "Memoria independiente"
+    assert [item["value"] for item in list_customer_memory(
+        "memory-a", records["customer_a"].id, "active", db
+    )["items"]] == ["Memoria independiente"]
 
 
 def test_secret_card_and_database_constraints(db: Session, records: dict) -> None:

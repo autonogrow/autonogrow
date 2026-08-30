@@ -168,12 +168,51 @@ def test_appointment_customer_memory_is_private_timed_and_append_only(journey) -
     current = next(item for item in current_bookings if item["id"] == customer_booking["id"])
     assert current["notes"] == original_booking_comment
 
+    memory_path = f"/api/admin/businesses/salon-e2e/customers/{customer_id}/memory"
+    memory_before_internal_save = page.request.get(memory_path).json()["items"]
+    internal_details = card.locator("[data-internal-notes-details]")
+    assert internal_details.get_attribute("open") is None
+    expect(internal_details.locator("summary")).to_have_text("Nota interna de esta cita")
+    expect(internal_details.locator("[data-internal-notes]")).to_be_hidden()
+    internal_details.locator("summary").click()
+    internal_note = card.locator("[data-internal-notes]")
+    expect(internal_note).to_be_visible()
+    internal_note.fill("Nota exclusiva de la Booking")
+    save_booking_note = card.get_by_role("button", name="Guardar nota de esta cita")
+    page.once("dialog", lambda dialog: dialog.accept())
+    save_booking_note.click()
+    expect(save_booking_note).to_be_enabled()
+    memory_after_internal_save = page.request.get(memory_path).json()["items"]
+    assert len(memory_after_internal_save) == len(memory_before_internal_save)
+
+    internal_note.fill("Nota copiada de forma explícita")
+    copy_to_customer = card.get_by_role(
+        "button", name="Guardar también en notas del cliente"
+    )
+    page.once("dialog", lambda dialog: dialog.accept())
+    copy_to_customer.click()
+    expect(copy_to_customer).to_be_enabled()
+    expect(card.get_by_text("Nota copiada de forma explícita")).to_be_visible()
+    memory_after_copy = page.request.get(memory_path).json()["items"]
+    assert len(memory_after_copy) == len(memory_before_internal_save) + 1
+    assert "Nota copiada de forma explícita" in {
+        item["value"] for item in memory_after_copy
+    }
+    current_bookings = page.request.get(bookings_path).json()["bookings"]
+    current = next(item for item in current_bookings if item["id"] == customer_booking["id"])
+    assert current["internal_notes"] == "Nota copiada de forma explícita"
+    assert current["notes"] == original_booking_comment
+
     page.evaluate("bookingId => goToBooking(bookingId)", empty_booking["id"])
     assert page.evaluate("bookingCustomerMemoryTimer === null")
     empty_card = page.locator(f"#booking-{empty_booking['id']}")
     empty_card.locator(".agenda-booking-details > summary").click()
     expect(empty_card.get_by_role("button", name="Ver notas del cliente")).to_have_count(0)
     expect(empty_card.locator(".booking-customer-memory")).to_have_count(0)
+    empty_card.locator("[data-internal-notes-details] > summary").click()
+    expect(
+        empty_card.get_by_role("button", name="Guardar también en notas del cliente")
+    ).to_have_count(0)
 
 
 def test_admin_instagram_calendar_editorial_action_and_permissions(journey) -> None:

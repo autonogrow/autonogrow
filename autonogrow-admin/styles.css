@@ -1388,7 +1388,10 @@ input {
   .conversation-message { max-width: 92%; }
 }
 .internal-notes-editor { display: grid; gap: 10px; margin-top: 14px; }
+.internal-notes-editor > summary { cursor: pointer; font-weight: 700; }
+.internal-notes-editor__body { display: grid; gap: 10px; padding-top: 10px; }
 .internal-notes-editor textarea { width: 100%; margin-top: 6px; }
+.internal-notes-editor__actions { display: flex; flex-wrap: wrap; gap: 8px; }
 #booking-staff-filter-field { display: grid; gap: 6px; min-width: 220px; }
 .my-schedule-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 10px; }
 .my-schedule-grid span { display: grid; gap: 3px; }
