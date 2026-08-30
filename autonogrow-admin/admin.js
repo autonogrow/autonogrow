@@ -77,6 +77,8 @@ let conversationAssistedOpening = false;
 let conversationStatusUpdating = false;
 let conversationCustomerPanelOpen = false;
 let conversationCustomerReturnFocus = null;
+let conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
+let conversationCustomerAssociationUpdating = false;
 const customerMemorySummaries = new Map();
 const customerMemoryLoadingIds = new Set();
 let customerMemoryFormState = null;
@@ -4118,7 +4120,36 @@ function showConversationFeedback(message, isError = false) {
 }
 
 function conversationDisplayName(item) {
-  return item.customer_name || item.customer_username || item.customer_phone || "Cliente sin nombre";
+  const identity = item.channel_identity || {};
+  if (item.customer?.name) return item.customer.name;
+  if (identity.display_name) return identity.display_name;
+  if (item.channel === "instagram" && identity.username) return `@${identity.username}`;
+  if (item.channel === "whatsapp" && (identity.phone_normalized || identity.phone)) {
+    return formatConversationPhone(identity.phone_normalized || identity.phone);
+  }
+  return item.channel === "instagram" ? "Contacto de Instagram" : "Cliente sin asociar";
+}
+
+function formatConversationPhone(value) {
+  const phone = String(value || "").trim();
+  const spanish = phone.match(/^\+34(\d{3})(\d{3})(\d{3})$/);
+  return spanish ? `+34 ${spanish[1]} ${spanish[2]} ${spanish[3]}` : phone;
+}
+
+function conversationChannelIdentity(item) {
+  const identity = item.channel_identity || {};
+  if (item.channel === "whatsapp") {
+    const phone = identity.phone_normalized || identity.phone;
+    return phone ? formatConversationPhone(phone) : "Número de WhatsApp no disponible";
+  }
+  if (item.channel === "instagram") {
+    return identity.username ? `@${identity.username}` : "Usuario de Instagram no disponible";
+  }
+  return identity.phone || identity.username || "Identidad de canal no disponible";
+}
+
+function conversationAssociationLabel(item) {
+  return item.association_status === "associated" ? "Cliente asociado" : "Cliente sin asociar";
 }
 
 function conversationStatusLabel(status) {
@@ -4339,6 +4370,8 @@ function renderConversationList() {
         <span class="conversation-status conversation-status-${escapeHtml(item.status)}">${escapeHtml(conversationStatusLabel(item.status))}</span>
       </span>
       <span class="conversation-channel">${escapeHtml(conversationChannelLabel(item.channel))}</span>
+      <span class="conversation-channel-identity">${escapeHtml(conversationChannelIdentity(item))}</span>
+      <span class="conversation-association-status">${escapeHtml(conversationAssociationLabel(item))}</span>
       ${conversationProviderBadge(item)}
       ${conversationIntentBadge(item)}
       <p>${escapeHtml(item.last_message_text || "Sin mensajes")}</p>
@@ -4388,6 +4421,7 @@ async function selectConversation(conversationId, showLoading = true, { backgrou
   if (selectionChanged) {
     selectedConversationSuggestionId = null;
     conversationDetailFingerprint = "";
+    conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
   }
   selectedConversationId = Number(conversationId);
   if (focusDetail && !background) {
@@ -4543,7 +4577,7 @@ function renderConversationComposer(conversation, quickReplies) {
 
 function renderConversationDetail(conversation, uiState = null) {
   const detail = document.getElementById("conversation-detail");
-  const contactParts = [conversation.customer_username ? `@${conversation.customer_username}` : null, conversation.customer_phone].filter(Boolean);
+  const channelIdentity = conversationChannelIdentity(conversation);
   const messages = conversation.messages || [];
   const composer = conversationComposerModel(conversation);
   const quickReplies = conversationTemplates.filter((item) => item.active).map((template) => `
@@ -4575,7 +4609,7 @@ function renderConversationDetail(conversation, uiState = null) {
       <button class="conversation-mobile-back ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="close-conversation-mobile-detail">← Conversaciones</button>
       <div class="conversation-detail-header-copy">
         <h3 id="conversation-detail-title" tabindex="-1">${escapeHtml(conversationDisplayName(conversation))}</h3>
-        <span>${escapeHtml(contactParts.join(" · ") || "Sin datos de contacto adicionales")}</span>
+        <span>${escapeHtml(channelIdentity)} · ${escapeHtml(conversationAssociationLabel(conversation))}</span>
         <div class="conversation-detail-badges"><span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>${conversationProviderBadge(conversation)}${conversationIntentBadge(conversation)}</div>
       </div>
       <div class="conversation-detail-actions">
@@ -4618,27 +4652,6 @@ function renderConversationDetail(conversation, uiState = null) {
       if (hasNewMessages || uiState.newMessagesVisible) document.getElementById("conversation-new-messages")?.removeAttribute("hidden");
     }
   }
-}
-
-function normalizedConversationPhone(value) {
-  const digits = String(value || "").replace(/\D/g, "");
-  return digits.length >= 7 ? digits : "";
-}
-
-function customerBookingsForConversation(conversation) {
-  const phone = normalizedConversationPhone(conversation?.customer_phone);
-  if (!phone) return [];
-  return allBookings
-    .filter((booking) => normalizedConversationPhone(booking.customer_phone) === phone)
-    .sort((left, right) => new Date(right.start_datetime || right.created_at) - new Date(left.start_datetime || left.created_at));
-}
-
-function customerIdForConversation(conversation) {
-  const ids = new Set(customerBookingsForConversation(conversation)
-    .filter((booking) => booking.customer_memory_eligible)
-    .map((booking) => Number(booking.customer_id))
-    .filter((id) => Number.isInteger(id) && id > 0));
-  return ids.size === 1 ? [...ids][0] : null;
 }
 
 function customerMemoryCategoryLabel(category) {
@@ -4898,7 +4911,7 @@ function renderCustomerMemoryForm(customerId, summary) {
 }
 
 function renderCustomerMemorySection(customerId) {
-  if (!customerId) return `<section class="customer-memory"><div class="customer-memory-heading"><h4>Memoria</h4></div><p class="customer-memory-help">Hace falta un único cliente vinculado por sus reservas para mostrar contexto privado.</p></section>`;
+  if (!customerId) return "";
   const state = customerMemorySummaries.get(customerId);
   if (!state || state.status === "loading") return `<section class="customer-memory" aria-busy="true"><div class="customer-memory-heading"><h4>Memoria</h4></div><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div></section>`;
   if (state.status === "error") return `<section class="customer-memory"><div class="customer-memory-heading"><h4>Memoria</h4><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="retry-customer-memory" data-id="${customerId}">Reintentar</button></div><p class="customer-memory-help">No se pudo cargar el contexto. Las reservas siguen disponibles.</p></section>`;
@@ -4911,6 +4924,77 @@ function renderCustomerMemorySection(customerId) {
     <section class="customer-memory customer-memory--activity"><div class="customer-memory-heading"><div><h4>Actividad</h4><p>Datos observados, no preferencias declaradas</p></div></div><dl class="conversation-customer-stats"><div><dt>Visitas completadas</dt><dd>${Number(derived.visit_count || 0)}</dd></div><div><dt>Última visita</dt><dd>${derived.last_visit_at ? escapeHtml(formatConversationDate(derived.last_visit_at)) : "Sin visitas"}</dd></div><div><dt>Servicio más frecuente</dt><dd>${escapeHtml(frequent?.name || "Sin evidencia")}</dd></div><div><dt>Comportamiento observado</dt><dd>${derived.observed_return_interval_days ? `~${Number(derived.observed_return_interval_days)} días` : "Evidencia insuficiente"}</dd></div></dl>${derived.configured_recurrence ? `<p class="customer-memory-help">La recurrencia configurada (${Number(derived.configured_recurrence.interval_days)} días) tiene prioridad sobre el intervalo observado.</p>` : ""}</section>`;
 }
 
+function renderConversationCustomerSearch() {
+  if (!conversationCustomerSearchState.open || isBusinessStaff()) return "";
+  const results = conversationCustomerSearchState.results.map((customer) => `
+    <button class="conversation-customer-search-result" type="button" data-admin-action="associate-conversation-customer" data-id="${Number(customer.customer_id)}">
+      <strong>${escapeHtml(customer.name)}</strong>
+      <span>${escapeHtml(formatConversationPhone(customer.phone_normalized || customer.phone) || "Sin teléfono")}</span>
+      <small>${customer.memory_eligible ? "Cliente registrado" : "Sin memoria persistente"}</small>
+    </button>
+  `).join("");
+  return `<section class="conversation-customer-search" aria-busy="${conversationCustomerSearchState.loading}">
+    <label for="conversation-customer-search-input">Buscar cliente</label>
+    <div><input id="conversation-customer-search-input" class="ag-input" type="search" maxlength="200" value="${escapeHtml(conversationCustomerSearchState.query)}" placeholder="Nombre o teléfono" /><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="search-conversation-customers">Buscar</button></div>
+    ${conversationCustomerSearchState.loading ? `<p>Buscando clientes…</p>` : (results || `<p>No hay clientes que coincidan.</p>`)}
+  </section>`;
+}
+
+async function searchConversationCustomers() {
+  if (isBusinessStaff() || !selectedConversation) return;
+  const input = document.getElementById("conversation-customer-search-input");
+  const query = input?.value.trim() || conversationCustomerSearchState.query;
+  conversationCustomerSearchState = { ...conversationCustomerSearchState, open: true, loading: true, query };
+  renderConversationCustomerPanel(selectedConversation);
+  try {
+    const params = new URLSearchParams({ limit: "20" });
+    if (query) params.set("q", query);
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/customers?${params.toString()}`);
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudieron buscar clientes."));
+    conversationCustomerSearchState = { ...conversationCustomerSearchState, loading: false, results: Array.isArray(body) ? body : [] };
+  } catch (error) {
+    conversationCustomerSearchState = { ...conversationCustomerSearchState, loading: false, results: [] };
+    showConversationFeedback(error.message, true);
+  }
+  if (selectedConversation) renderConversationCustomerPanel(selectedConversation);
+}
+
+function openConversationCustomerSearch() {
+  if (isBusinessStaff()) return;
+  conversationCustomerSearchState = { open: true, loading: false, query: "", results: [] };
+  if (selectedConversation) renderConversationCustomerPanel(selectedConversation);
+  queueMicrotask(() => document.getElementById("conversation-customer-search-input")?.focus());
+  void searchConversationCustomers();
+}
+
+async function updateConversationCustomer(customerId) {
+  if (isBusinessStaff() || !selectedConversationId || conversationCustomerAssociationUpdating) return;
+  if (customerId === null && !window.confirm("¿Desasociar este cliente de la conversación? La conversación y sus mensajes se conservarán.")) return;
+  conversationCustomerAssociationUpdating = true;
+  const uiState = captureConversationUiState(selectedConversationId);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}/customer`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customer_id: customerId })
+    });
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo actualizar la asociación."));
+    selectedConversation = body.conversation;
+    conversations = conversations.map((item) => item.id === body.conversation.id ? body.conversation : item);
+    conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
+    renderConversationList();
+    renderConversationDetail(body.conversation, uiState);
+    renderConversationCustomerPanel(body.conversation);
+    showConversationFeedback(customerId === null ? "Cliente desasociado." : "Cliente asociado.");
+  } catch (error) {
+    showConversationFeedback(error.message, true);
+  } finally {
+    conversationCustomerAssociationUpdating = false;
+  }
+}
+
 function renderConversationCustomerPanel(conversation) {
   const content = document.getElementById("conversation-customer-content");
   if (!content) return;
@@ -4918,30 +5002,32 @@ function renderConversationCustomerPanel(conversation) {
     content.innerHTML = `<div class="conversation-state conversation-state--compact"><p>Selecciona una conversación para ver la información disponible.</p></div>`;
     return;
   }
-  const bookings = customerBookingsForConversation(conversation);
-  const customerId = customerIdForConversation(conversation);
-  const now = new Date();
-  const upcoming = [...bookings].reverse().find((booking) => booking.start_datetime && new Date(booking.start_datetime) >= now && !["cancelled", "rejected", "completed", "no_show"].includes(booking.status));
-  const previous = bookings.find((booking) => booking !== upcoming && booking.start_datetime && new Date(booking.start_datetime) < now);
-  const contact = [conversation.customer_phone, conversation.customer_username ? `@${conversation.customer_username}` : null].filter(Boolean);
-  const bookingCard = (booking, label) => booking ? `<article class="conversation-customer-booking"><span>${label}</span><strong>${escapeHtml(booking.service_name || "Servicio sin indicar")}</strong><p>${escapeHtml(formatBookingSlot(booking))}</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="go-to-booking" data-id="${Number(booking.id)}">Ver en agenda</button></article>` : "";
+  const customer = conversation.customer || null;
+  const customerId = Number(conversation.customer_id);
+  const associated = Number.isInteger(customerId) && customerId > 0 && customer;
+  const contact = associated
+    ? [formatConversationPhone(customer.phone_normalized || customer.phone), customer.email].filter(Boolean)
+    : [conversationChannelIdentity(conversation)].filter(Boolean);
+  const controls = isBusinessStaff() ? "" : (associated
+    ? `<div class="conversation-customer-actions"><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-search">Cambiar cliente</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="detach-conversation-customer">Desasociar</button></div>`
+    : `<button class="ag-button ag-button--primary ag-button--small" type="button" data-admin-action="open-conversation-customer-search">Asociar cliente</button>`);
   content.innerHTML = `
     <section class="conversation-customer-summary">
       <div class="conversation-customer-avatar" aria-hidden="true">${escapeHtml(conversationDisplayName(conversation).charAt(0).toUpperCase())}</div>
       <h4>${escapeHtml(conversationDisplayName(conversation))}</h4>
       <p>${escapeHtml(contact.join(" · ") || "Sin más datos de contacto")}</p>
       <span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>
+      <strong class="conversation-association-status">${escapeHtml(conversationAssociationLabel(conversation))}</strong>
+      ${controls}
     </section>
     <dl class="conversation-customer-stats">
-      <div><dt>Reservas vinculadas</dt><dd>${bookings.length}</dd></div>
+      ${associated ? `<div><dt>Nombre</dt><dd>${escapeHtml(customer.name)}</dd></div><div><dt>Teléfono</dt><dd>${escapeHtml(formatConversationPhone(customer.phone_normalized || customer.phone) || "No disponible")}</dd></div><div><dt>Email</dt><dd>${escapeHtml(customer.email || "No disponible")}</dd></div>` : ""}
       <div><dt>Última actividad</dt><dd>${escapeHtml(formatConversationDate(conversation.last_message_at))}</dd></div>
     </dl>
-    ${bookingCard(upcoming, "Próxima reserva")}
-    ${bookingCard(previous, "Última reserva")}
-    ${bookings.length ? "" : `<div class="conversation-state conversation-state--compact"><p>No hay reservas vinculadas de forma fiable. Solo se relacionan teléfonos coincidentes.</p></div>`}
-    ${renderCustomerMemorySection(customerId)}
+    ${renderConversationCustomerSearch()}
+    ${associated && conversation.customer_memory_eligible ? renderCustomerMemorySection(customerId) : ""}
   `;
-  if (customerId && !customerMemorySummaries.has(customerId)) void loadCustomerMemorySummary(customerId);
+  if (associated && conversation.customer_memory_eligible && !customerMemorySummaries.has(customerId)) void loadCustomerMemorySummary(customerId);
 }
 
 function openCustomerMemoryForm(mode, customerId, memoryId = null) {
@@ -5289,7 +5375,7 @@ async function customerMemoryRequest(input, options = {}) {
 }
 
 function refreshCustomerMemoryConsumers(customerId) {
-  if (selectedConversation && customerIdForConversation(selectedConversation) === customerId) {
+  if (selectedConversation && Number(selectedConversation.customer_id) === customerId) {
     renderConversationCustomerPanel(selectedConversation);
   }
   if (
@@ -6958,7 +7044,7 @@ async function saveInternalNotes(bookingId, { copyToCustomerMemory = false } = {
     }
     customerMemorySummaries.delete(customerId);
     const conversationMemoryVisible = selectedConversation
-      && customerIdForConversation(selectedConversation) === customerId;
+      && Number(selectedConversation.customer_id) === customerId;
     if (
       (bookingCustomerMemoryPanelState.open && bookingCustomerMemoryPanelState.customerId === customerId)
       || conversationMemoryVisible
@@ -7523,6 +7609,10 @@ function setupAdminDelegatedActions() {
     else if (action === "dismiss-conversation-suggestion" && Number.isInteger(id)) dismissConversationSuggestion(id);
     else if (action === "close-conversation-mobile-detail") closeConversationMobileDetail();
     else if (action === "open-conversation-customer-panel") openConversationCustomerPanel(button);
+    else if (action === "open-conversation-customer-search") openConversationCustomerSearch();
+    else if (action === "search-conversation-customers") void searchConversationCustomers();
+    else if (action === "associate-conversation-customer" && Number.isInteger(id)) void updateConversationCustomer(id);
+    else if (action === "detach-conversation-customer") void updateConversationCustomer(null);
     else if (action === "add-customer-memory" && Number.isInteger(id)) openCustomerMemoryForm("create", id);
     else if (action === "retry-customer-memory" && Number.isInteger(id)) {
       customerMemorySummaries.delete(id);

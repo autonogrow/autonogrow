@@ -4,10 +4,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import Settings, get_settings
 from app.models import (
+    AuditLog,
     Business,
     BusinessChannelControl,
     BusinessChannelIntegration,
@@ -15,6 +16,9 @@ from app.models import (
     ConversationAutomationSettings,
     ConversationMessage,
     ConversationTemplate,
+    Customer,
+    CustomerAccountLink,
+    User,
 )
 from app.services.channel_control_service import integrated_delivery_is_authorized
 from app.services.channel_provider_service import (
@@ -26,6 +30,7 @@ from app.services.channel_provider_service import (
 from app.services.conversation_automation_state_service import (
     serialize_conversation_automation_state,
 )
+from app.services.customer_identity_service import normalize_phone
 from app.services.idempotent_insert_service import insert_rows_ignore_conflicts
 from app.services.incident_service import INSTAGRAM_AUTH_CLIENT_MESSAGE
 from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
@@ -119,6 +124,87 @@ DEFAULT_TEMPLATES = (
 WHATSAPP_WINDOW_MESSAGE_SCAN_LIMIT = 100
 
 
+def conversation_has_manual_customer_decision(
+    db: Session, *, conversation: Conversation
+) -> bool:
+    return (
+        db.query(AuditLog.id)
+        .filter(
+            AuditLog.business_id == conversation.business_id,
+            AuditLog.action == "conversation_customer_association_changed",
+            AuditLog.resource_type == "conversation",
+            AuditLog.resource_id == str(conversation.id),
+        )
+        .first()
+        is not None
+    )
+
+
+def auto_associate_conversation_customer(
+    db: Session,
+    *,
+    business: Business,
+    conversation: Conversation,
+) -> Customer | None:
+    """Use one strong candidate and never override a manual identity decision."""
+
+    if conversation.customer_id is not None or conversation_has_manual_customer_decision(
+        db, conversation=conversation
+    ):
+        return conversation.customer
+
+    customer: Customer | None = None
+    if conversation.channel == "whatsapp":
+        normalized_phone = normalize_phone(
+            conversation.customer_phone,
+            region=business.country_code,
+        )
+        if normalized_phone:
+            candidates = (
+                db.query(Customer)
+                .filter(
+                    Customer.business_id == business.id,
+                    Customer.phone_normalized == normalized_phone,
+                )
+                .limit(2)
+                .all()
+            )
+            if len(candidates) == 1:
+                customer = candidates[0]
+    elif conversation.channel == "instagram" and conversation.external_user_id:
+        customer = (
+            db.query(Customer)
+            .join(CustomerAccountLink, CustomerAccountLink.customer_id == Customer.id)
+            .join(User, User.id == CustomerAccountLink.user_id)
+            .filter(
+                Customer.business_id == business.id,
+                CustomerAccountLink.business_id == business.id,
+                User.is_active.is_(True),
+                User.instagram_verified.is_(True),
+                User.instagram_provider_user_id == conversation.external_user_id,
+            )
+            .first()
+        )
+
+    if customer is not None:
+        conversation.customer = customer
+        db.flush()
+    return customer
+
+
+def serialize_conversation_customer(customer: Customer | None) -> dict[str, Any] | None:
+    if customer is None:
+        return None
+    return {
+        "customer_id": customer.id,
+        "name": customer.name,
+        "phone": customer.phone,
+        "phone_normalized": customer.phone_normalized,
+        "email": customer.email,
+        "status": customer.status,
+    }
+
+
 def serialize_message(message: ConversationMessage) -> dict[str, Any]:
     labels = {
         "queued": "En cola",
@@ -178,9 +264,24 @@ def serialize_conversation(
         integration_status = "expired"
     else:
         integration_status = integration.integration_status
+    customer = conversation.customer
+    phone_normalized = normalize_phone(
+        conversation.customer_phone,
+        region=conversation.business.country_code,
+    )
     result = {
         "id": conversation.id,
         "business_id": conversation.business_id,
+        "customer_id": conversation.customer_id,
+        "customer": serialize_conversation_customer(customer),
+        "customer_memory_eligible": bool(customer and customer.account_link),
+        "association_status": "associated" if customer else "unassociated",
+        "channel_identity": {
+            "display_name": conversation.customer_name,
+            "username": conversation.customer_username,
+            "phone": conversation.customer_phone,
+            "phone_normalized": phone_normalized,
+        },
         "channel": conversation.channel,
         "external_conversation_id": conversation.external_conversation_id,
         "external_user_id": conversation.external_user_id,
@@ -441,7 +542,14 @@ def list_conversations(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[Conversation], int]:
-    query = db.query(Conversation).filter(Conversation.business_id == business_id)
+    query = (
+        db.query(Conversation)
+        .options(
+            joinedload(Conversation.business),
+            joinedload(Conversation.customer).joinedload(Customer.account_link),
+        )
+        .filter(Conversation.business_id == business_id)
+    )
     if status:
         query = query.filter(Conversation.status == status)
     if channel:
@@ -473,6 +581,10 @@ def list_conversations(
 def get_conversation(db: Session, *, business_id: int, conversation_id: int) -> Conversation | None:
     return (
         db.query(Conversation)
+        .options(
+            joinedload(Conversation.business),
+            joinedload(Conversation.customer).joinedload(Customer.account_link),
+        )
         .filter(
             Conversation.id == conversation_id,
             Conversation.business_id == business_id,

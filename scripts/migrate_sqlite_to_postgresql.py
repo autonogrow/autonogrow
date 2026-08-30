@@ -159,6 +159,9 @@ DESTINATION_ONLY_TABLES = ("alembic_version",)
 # Values are safe expected values after PostgreSQL applies its explicit default,
 # or None when omission is intentionally represented as SQL NULL.
 ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
+    "conversations": {
+        "customer_id": {"action": "omit_as_null", "expected_value": None},
+    },
     "users": {
         "phone_normalized": {"action": "omit_as_null", "expected_value": None},
         "phone_verified": {"action": "use_destination_default", "expected_value": False},

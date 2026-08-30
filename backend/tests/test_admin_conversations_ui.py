@@ -181,22 +181,31 @@ def test_whatsapp_assisted_url_is_restricted_to_safe_wa_me_https() -> None:
     assert "!url.password" in block
 
 
-def test_customer_context_reuses_loaded_bookings_without_n_plus_one() -> None:
+def test_customer_context_uses_persisted_backend_association() -> None:
     _, _, js = read_sources()
-    block = function_block(js, "function customerBookingsForConversation", "function openConversationCustomerPanel")
-    assert "allBookings" in block
-    assert "normalizedConversationPhone" in block
-    assert "fetch(" not in block
-    assert "Próxima reserva" in block
-    assert "Última reserva" in block
-    assert 'data-admin-action="go-to-booking"' in block
-    delegated = function_block(
-        js,
-        "function setupAdminDelegatedActions",
-        'document.addEventListener("DOMContentLoaded"',
-    )
-    assert "goToBooking(id)" in delegated
-    assert "Solo se relacionan teléfonos coincidentes" in block
+    block = function_block(js, "function renderConversationCustomerPanel", "function openCustomerMemoryForm")
+    assert "conversation.customer_id" in block
+    assert "conversation.customer" in block
+    assert "conversation.customer_memory_eligible" in block
+    assert "allBookings" not in block
+    assert "customerBookingsForConversation" not in js
+    assert "customerIdForConversation" not in js
+    assert "Asociar cliente" in block
+    assert "Cambiar cliente" in block
+    assert "Desasociar" in block
+
+
+def test_conversation_identity_is_honest_and_staff_controls_remain_hidden() -> None:
+    _, _, js = read_sources()
+    display = function_block(js, "function conversationDisplayName", "function conversationStatusLabel")
+    panel = function_block(js, "function renderConversationCustomerPanel", "function openCustomerMemoryForm")
+    assert "item.customer?.name" in display
+    assert "Usuario de Instagram no disponible" in display
+    assert "external_user_id" not in display
+    assert "@${identity.username}" in display
+    assert "+34 ${spanish[1]} ${spanish[2]} ${spanish[3]}" in display
+    assert 'if (isBusinessStaff()) return;' in js
+    assert 'isBusinessStaff() ? ""' in panel
 
 
 def test_conversation_drawer_has_focus_escape_and_responsive_modes() -> None:

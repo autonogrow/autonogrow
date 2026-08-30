@@ -29,6 +29,14 @@ class Conversation(Base):
     business_id: Mapped[int] = mapped_column(
         ForeignKey("businesses.id", ondelete="CASCADE"), index=True
     )
+    customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "customers.id",
+            name="fk_conversations_customer_id_customers",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
     channel: Mapped[str] = mapped_column(String(30), index=True, nullable=False)
     external_conversation_id: Mapped[str | None] = mapped_column(String(255))
     external_user_id: Mapped[str | None] = mapped_column(String(255), index=True)
@@ -57,6 +65,7 @@ class Conversation(Base):
     )
 
     business = relationship("Business", back_populates="conversations")
+    customer = relationship("Customer", back_populates="conversations")
     assigned_business_user = relationship("BusinessUser")
     messages = relationship(
         "ConversationMessage",

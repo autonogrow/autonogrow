@@ -12,6 +12,7 @@ from app.models import (
     Business,
     ConversationSuggestion,
     ConversationTemplate,
+    Customer,
     SystemIncident,
     User,
 )
@@ -25,6 +26,7 @@ from app.schemas.conversation import (
     ConversationAutomationControlUpdate,
     ConversationAutomationRuleUpdate,
     ConversationCreate,
+    ConversationCustomerAssociationUpdate,
     ConversationMessageCreate,
     ConversationStatusUpdate,
     ConversationSuggestionUpdate,
@@ -59,6 +61,7 @@ from app.services.conversation_intent_service import (
 from app.services.conversation_service import (
     ConversationDeliveryUnavailable,
     add_message,
+    auto_associate_conversation_customer,
     build_conversation_assisted_whatsapp_url,
     conversation_delivery_capabilities,
     create_or_get_conversation,
@@ -180,6 +183,61 @@ def admin_get_conversation(
     }
 
 
+@admin_router.patch("/conversations/{conversation_id}/customer")
+def admin_update_conversation_customer(
+    business_slug: str,
+    conversation_id: int,
+    payload: ConversationCustomerAssociationUpdate,
+    request: Request,
+    actor: User = Depends(require_business_admin),
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    conversation = get_conversation_or_404(
+        db, business_id=business.id, conversation_id=conversation_id
+    )
+    customer = None
+    if payload.customer_id is not None:
+        customer = (
+            db.query(Customer)
+            .filter(
+                Customer.id == payload.customer_id,
+                Customer.business_id == business.id,
+            )
+            .first()
+        )
+        if customer is None:
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+    previous_customer_id = conversation.customer_id
+    conversation.customer = customer
+    record_audit(
+        db,
+        action="conversation_customer_association_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="conversation",
+        resource_id=conversation.id,
+        metadata={
+            "conversation_id": conversation.id,
+            "previous_customer_id": previous_customer_id,
+            "new_customer_id": customer.id if customer else None,
+            "method": "manual",
+            "actor_user_id": actor.id,
+        },
+        commit=False,
+    )
+    db.commit()
+    conversation = get_conversation_or_404(
+        db, business_id=business.id, conversation_id=conversation_id
+    )
+    return {
+        "ok": True,
+        "conversation": serialize_conversation(db, conversation, include_messages=True),
+    }
+
+
 @admin_router.post("/conversations", status_code=201)
 def admin_create_conversation(
     business_slug: str,
@@ -198,6 +256,7 @@ def admin_create_conversation(
         customer_phone=payload.customer_phone,
         customer_username=payload.customer_username,
     )
+    auto_associate_conversation_customer(db, business=business, conversation=conversation)
     if payload.initial_message:
         add_message(
             db,
@@ -971,6 +1030,7 @@ def test_inbound_message(
         customer_phone=payload.customer_phone,
         customer_username=payload.customer_username,
     )
+    auto_associate_conversation_customer(db, business=business, conversation=conversation)
     message = add_message(
         db,
         conversation=conversation,

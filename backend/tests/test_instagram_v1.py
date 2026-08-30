@@ -25,6 +25,8 @@ from app.models import (
     Conversation,
     ConversationMessage,
     ConversationSuggestion,
+    Customer,
+    CustomerAccountLink,
     User,
 )
 from app.routers.conversations import (
@@ -294,6 +296,20 @@ class InstagramV1Test(unittest.TestCase):
         self.assertEqual(invalid.exception.status_code, 403)
 
     def test_local_webhook_accepts_no_signature_and_saves_text(self):
+        customer = Customer(business=self.business_a, name="Linked Instagram customer")
+        self.customer_user.instagram_provider_user_id = "ig-customer-1"
+        self.customer_user.instagram_verified = True
+        self.db.add(customer)
+        self.db.flush()
+        self.db.add(
+            CustomerAccountLink(
+                user=self.customer_user,
+                customer=customer,
+                business_id=self.business_a.id,
+                link_method="verified_instagram",
+            )
+        )
+        self.db.commit()
         result = self.post_webhook(self.payload(), self.settings())
         message = self.db.query(ConversationMessage).one()
         conversation = self.db.query(Conversation).one()
@@ -305,6 +321,7 @@ class InstagramV1Test(unittest.TestCase):
         self.assertEqual(conversation.channel, "instagram")
         self.assertEqual(conversation.external_user_id, "ig-customer-1")
         self.assertEqual(conversation.business_id, self.business_a.id)
+        self.assertEqual(conversation.customer_id, customer.id)
 
     def test_attachment_is_saved_and_non_message_events_are_ignored(self):
         attachment_payload = self.payload(

@@ -172,7 +172,8 @@ def test_booking_customer_memory_is_hidden_scoped_and_separate_from_booking_note
     )
     assert "renderBookingCustomerMemorySection(booking)" in card
     assert 'if (!booking.customer_memory_eligible) return "";' in memory
-    assert ".filter((booking) => booking.customer_memory_eligible)" in js
+    assert "conversation.customer_memory_eligible" in js
+    assert "customerBookingsForConversation" not in js
     assert card.index("renderCustomerComments(booking.notes)") < card.index(
         "renderBookingCustomerMemorySection(booking)"
     )

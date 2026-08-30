@@ -17,7 +17,11 @@ from app.services.channel_provider_contracts import (
     InvalidChannelInboxPayload,
 )
 from app.services.conversation_automation_service import process_inbound_automation
-from app.services.conversation_service import add_message, create_or_get_conversation
+from app.services.conversation_service import (
+    add_message,
+    auto_associate_conversation_customer,
+    create_or_get_conversation,
+)
 from app.services.inbox_queue_service import finish_inbox_job
 from app.services.whatsapp_provider import whatsapp_status_is_supported
 
@@ -266,6 +270,7 @@ def process_whatsapp_inbox_event(db: Session, inbox_id: int) -> InboxProcessResu
         customer_name=safe_contact_name,
         customer_phone=sender_id,
     )
+    auto_associate_conversation_customer(db, business=business, conversation=conversation)
     message = add_message(
         db,
         conversation=conversation,

@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session
 from app.models import Business, Conversation, ConversationMessage, WebhookInboxEvent
 from app.services.channel_provider_contracts import InboxProcessResult, InvalidChannelInboxPayload
 from app.services.conversation_automation_service import process_inbound_automation
-from app.services.conversation_service import add_message, create_or_get_conversation
+from app.services.conversation_service import (
+    add_message,
+    auto_associate_conversation_customer,
+    create_or_get_conversation,
+)
 from app.services.inbox_queue_service import finish_inbox_job
 from app.services.incident_service import report_incident
 from app.services.instagram_echo_service import process_instagram_echo
@@ -99,6 +103,7 @@ def process_instagram_inbox_event(db: Session, inbox_id: int) -> InboxProcessRes
         external_user_id=event.sender_id,
         external_conversation_id=event.sender_id,
     )
+    auto_associate_conversation_customer(db, business=business, conversation=conversation)
     message = add_message(
         db,
         conversation=conversation,

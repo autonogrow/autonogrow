@@ -21,6 +21,7 @@ from app.models import (
     Conversation,
     ConversationMessage,
     ConversationSuggestion,
+    Customer,
     WebhookInboxEvent,
 )
 from app.routers.whatsapp_webhook import (
@@ -333,6 +334,14 @@ def test_inbox_idempotency_multiple_messages_and_partial_duplicates(database):
 def test_processor_resolves_business_creates_and_reuses_conversation_without_token(database):
     db, _ = database
     business, integration = add_integration(db)
+    customer = Customer(
+        business=business,
+        name="Matched WhatsApp customer",
+        phone="+34600000001",
+        phone_normalized="+34600000001",
+    )
+    db.add(customer)
+    db.commit()
     first = whatsapp_payload(messages=[message("wamid-first", text="Hola")])
     second = whatsapp_payload(messages=[message("wamid-second", text="Otra consulta")])
 
@@ -350,6 +359,7 @@ def test_processor_resolves_business_creates_and_reuses_conversation_without_tok
     assert conversations[0].external_user_id == "34600000001"
     assert conversations[0].customer_name == "Cliente WhatsApp"
     assert conversations[0].customer_phone == "34600000001"
+    assert conversations[0].customer_id == customer.id
     assert [item.provider_message_id for item in messages] == ["wamid-first", "wamid-second"]
     assert integration.encrypted_access_token is None
     assert db.query(ChannelOutboxMessage).count() == 0

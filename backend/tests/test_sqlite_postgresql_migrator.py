@@ -325,9 +325,10 @@ def test_exact_30_table_staging_baseline_is_valid(tmp_path: Path) -> None:
         "business_channel_integrations",
         "businesses",
         "services",
-        "bookings",
-        "business_gallery_images",
-        "users",
+            "bookings",
+            "business_gallery_images",
+            "conversations",
+            "users",
         "customers",
     }
     report = safe_source_database_report(source, source_tables)
@@ -546,4 +547,4 @@ def test_partial_destination_schema_is_rejected(tmp_path: Path) -> None:
 
 
 def test_alembic_has_expected_single_head() -> None:
-    assert head_revisions() == ("20260827_27",)
+    assert head_revisions() == ("20260830_28",)

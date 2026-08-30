@@ -25,6 +25,10 @@ class ConversationCreate(BaseModel):
         return value
 
 
+class ConversationCustomerAssociationUpdate(BaseModel):
+    customer_id: int | None = Field(default=None, ge=1)
+
+
 class ConversationMessageCreate(BaseModel):
     body: str = Field(min_length=1, max_length=10000)
     suggestion_id: int | None = Field(default=None, ge=1)
