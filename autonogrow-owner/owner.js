@@ -1,10 +1,34 @@
 const API_BASE_URL = AutonoGrowAuth.API_BASE_URL;
 const browserFetch = window.fetch.bind(window);
+let ownerAuthorizationRevalidation = null;
+
+async function revalidateOwnerAfterForbidden() {
+  if (ownerAuthorizationRevalidation) return ownerAuthorizationRevalidation;
+  ownerAuthorizationRevalidation = (async () => {
+    try {
+      const current = await AutonoGrowAuth.getMe();
+      if (!current?.is_owner) {
+        await showOwnerLogin("No tienes permiso para acceder al panel interno.", true);
+      }
+    } catch (error) {
+      if ([401, 403].includes(error.status)) {
+        await showOwnerLogin(
+          error.status === 401 ? "La sesión Owner ha caducado." : "No tienes permiso para acceder al panel interno.",
+          error.status === 403
+        );
+      }
+    } finally {
+      ownerAuthorizationRevalidation = null;
+    }
+  })();
+  return ownerAuthorizationRevalidation;
+}
+
 const fetch = async (input, options = {}) => {
   const securedOptions = await AutonoGrowAuth.secureRequestOptions(options);
   const response = await browserFetch(input, securedOptions);
   if (response.status === 401) queueMicrotask(() => showOwnerLogin());
-  if (response.status === 403) queueMicrotask(() => showOwnerLogin("No tienes permiso para acceder al panel interno.", true));
+  if (response.status === 403) queueMicrotask(() => revalidateOwnerAfterForbidden());
   return response;
 };
 let businesses = [];

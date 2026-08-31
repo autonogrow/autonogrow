@@ -2,12 +2,35 @@ from fastapi import Depends, HTTPException, Request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
+from app.core.config import get_owner_allowed_emails, get_settings
 from app.core.database import get_db
 from app.models import Booking, Business, BusinessUser, User
 
 SESSION_COOKIE = "autonogrow_session"
 SESSION_MAX_AGE = 7 * 24 * 60 * 60
+
+
+def has_owner_access(user: User) -> bool:
+    """Return the effective global Owner permission for the current configuration.
+
+    Staging and production always require a non-empty OWNER_ALLOWED_EMAILS value, so the
+    allowlist is authoritative there.  The database flag remains a compatibility fallback only
+    for local/test fixtures that intentionally run without an allowlist.
+    """
+
+    if user.is_active is False:
+        return False
+    allowed_emails = get_owner_allowed_emails()
+    if allowed_emails:
+        return user.email.strip().lower() in allowed_emails
+    return get_settings().app_env in {"local", "test"} and bool(user.is_owner)
+
+
+def sync_effective_owner_access(user: User) -> User:
+    """Expose the effective permission to downstream code that still reads ``is_owner``."""
+
+    user.is_owner = has_owner_access(user)
+    return user
 
 
 def _serializer() -> URLSafeTimedSerializer:
@@ -37,6 +60,8 @@ def get_optional_current_user(request: Request, db: Session = Depends(get_db)) -
     if user_id is None:
         return None
     user = db.query(User).filter(User.id == user_id).first()
+    if user is not None:
+        sync_effective_owner_access(user)
     request.state.current_user = user
     return user
 
@@ -46,10 +71,12 @@ def get_current_user(user: User | None = Depends(get_optional_current_user)) -> 
         raise HTTPException(status_code=401, detail="Authentication required")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="User is inactive")
+    sync_effective_owner_access(user)
     return user
 
 
 def require_owner(user: User = Depends(get_current_user)) -> User:
+    sync_effective_owner_access(user)
     if not user.is_owner:
         raise HTTPException(status_code=403, detail="Owner access required")
     return user
@@ -60,6 +87,7 @@ def require_business_access(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
+    sync_effective_owner_access(user)
     if user.is_owner:
         return user
     membership = (
@@ -102,6 +130,7 @@ def require_business_admin(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
+    sync_effective_owner_access(user)
     if user.is_owner:
         return user
     membership = get_business_membership(db, business_slug=business_slug, user_id=user.id)
@@ -118,6 +147,7 @@ def require_tenant_business_admin(
     db: Session = Depends(get_db),
 ) -> User:
     """Require the tenant Business Owner, never the global AutonoGrow operator."""
+    sync_effective_owner_access(user)
     if user.is_owner:
         raise HTTPException(status_code=403, detail="Business owner access required")
     membership = get_business_membership(db, business_slug=business_slug, user_id=user.id)
@@ -138,6 +168,7 @@ def ensure_can_manage_booking(
     booking: Booking,
     user: User,
 ) -> BusinessUser | None:
+    sync_effective_owner_access(user)
     if user.is_owner:
         return None
     membership = get_business_membership(db, business_slug=business_slug, user_id=user.id)

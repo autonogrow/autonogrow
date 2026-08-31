@@ -5,7 +5,7 @@ from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
-from app.core.config import get_owner_allowed_emails, get_settings
+from app.core.config import get_settings
 from app.core.csrf import CSRF_COOKIE, CSRF_MAX_AGE, create_csrf_token
 from app.core.database import get_db
 from app.core.security import (
@@ -13,6 +13,8 @@ from app.core.security import (
     SESSION_MAX_AGE,
     create_session_token,
     get_current_user,
+    has_owner_access,
+    sync_effective_owner_access,
 )
 from app.models import BusinessUser, User
 
@@ -31,6 +33,7 @@ class GoogleLoginRequest(BaseModel):
 
 
 def serialize_user(db: Session, user: User) -> dict:
+    effective_owner = has_owner_access(user)
     memberships = (
         db.query(BusinessUser)
         .filter(BusinessUser.user_id == user.id, BusinessUser.active.is_(True))
@@ -55,9 +58,9 @@ def serialize_user(db: Session, user: User) -> dict:
         "name": user.name,
         "preferred_name": user.preferred_name,
         "picture_url": user.picture_url,
-        "is_owner": user.is_owner,
+        "is_owner": effective_owner,
         "businesses": businesses,
-        "can_access_owner": user.is_owner,
+        "can_access_owner": effective_owner,
         "can_access_customer_portal": True,
     }
 
@@ -98,7 +101,7 @@ def google_login(
     elif email_user is not None and email_user.id != user.id:
         raise HTTPException(status_code=409, detail="El email ya está vinculado a otra cuenta")
     if user is None:
-        user = User(email=email)
+        user = User(email=email, is_active=True)
         db.add(user)
     elif not user.is_active:
         raise HTTPException(status_code=403, detail="El usuario está desactivado")
@@ -113,7 +116,7 @@ def google_login(
         user.name = claims.get("name") or user.name
     user.picture_url = claims.get("picture") or user.picture_url
     user.email_verified = True
-    user.is_owner = email in get_owner_allowed_emails()
+    user.is_owner = has_owner_access(user)
     user.last_login_at = datetime.utcnow()
     db.commit()
     db.refresh(user)
@@ -140,6 +143,7 @@ def google_login(
 
 @router.get("/me")
 def auth_me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    sync_effective_owner_access(user)
     return serialize_user(db, user)
 
 
