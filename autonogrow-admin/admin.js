@@ -577,6 +577,9 @@ function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = fal
   availableSections.forEach((section) => {
     section.classList.toggle("admin-section-active", section.dataset.adminSection === targetSection);
   });
+  if (targetSection === "conversations" && window.matchMedia("(max-width: 639px)").matches) {
+    closeConversationMobileDetail();
+  }
 
   const primarySection = CONFIGURATION_SECTIONS.has(targetSection) ? "configuration"
     : CHANNEL_HUB_SECTIONS.has(targetSection) ? "channels"
@@ -4695,6 +4698,9 @@ function renderConversationDetail(conversation, uiState = null) {
   const customerHeaderAction = !conversation.customer_id && !isBusinessStaff()
     ? `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-search" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Asociar cliente</button>`
     : "";
+  const customerAssociationMarkup = conversation.customer_id
+    ? `<button class="conversation-customer-open conversation-association-trigger" type="button" data-admin-action="open-conversation-customer-panel" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">${escapeHtml(conversationAssociationLabel(conversation))}</button>`
+    : `<span>${escapeHtml(conversationAssociationLabel(conversation))}</span>`;
   const suggestionsMarkup = pendingSuggestions.length || conversationSuggestionNotice ? `
     <div class="conversation-suggestions">
       ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
@@ -4714,17 +4720,22 @@ function renderConversationDetail(conversation, uiState = null) {
   ` : "";
   detail.innerHTML = `
     <header class="conversation-detail-header">
-      <button class="conversation-mobile-back ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="close-conversation-mobile-detail">← Conversaciones</button>
       <div class="conversation-detail-header-copy">
-        <div class="conversation-detail-heading-row"><h3 id="conversation-detail-title" tabindex="-1">${escapeHtml(conversationDisplayName(conversation))}</h3><div class="conversation-detail-badges"><span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>${conversationProviderBadge(conversation)}${conversationIntentBadge(conversation)}</div></div>
-        <span>${escapeHtml(channelIdentity)} · ${escapeHtml(conversationAssociationLabel(conversation))}</span>
+        <div class="conversation-detail-heading-row">
+          <h3 id="conversation-detail-title" tabindex="-1">${escapeHtml(conversationDisplayName(conversation))}</h3>
+          <div class="conversation-detail-badges"><span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>${conversationProviderBadge(conversation)}${conversationIntentBadge(conversation)}${conversationAttentionBadges(conversation)}</div>
+        </div>
       </div>
-      <div class="conversation-detail-actions">
-        ${customerHeaderAction}
-        ${conversationAttentionBadges(conversation)}
-        ${conversation.status === "closed"
-          ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="replied">Reabrir</button>`
-          : `<button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="pending">Marcar pendiente</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="closed">Cerrar</button>`}
+      <div class="conversation-detail-header-lower">
+        <div class="conversation-detail-meta"><span>${escapeHtml(channelIdentity)}</span><span aria-hidden="true">·</span>${customerAssociationMarkup}</div>
+        <div class="conversation-detail-actions">
+          ${customerHeaderAction}
+          <div class="conversation-operational-actions">
+            ${conversation.status === "closed"
+              ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="replied">Reabrir</button>`
+              : `<button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="pending">Marcar pendiente</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="closed">Cerrar</button>`}
+          </div>
+        </div>
       </div>
     </header>
     <div id="conversation-thread" class="conversation-thread" data-last-message-id="${messages.at(-1)?.id || ""}" data-message-count="${messages.length}">
@@ -5223,7 +5234,7 @@ function openConversationCustomerPanel(trigger) {
   panel?.classList.add("is-open");
   panel?.setAttribute("aria-hidden", "false");
   document.querySelectorAll(".conversation-customer-open").forEach((button) => button.setAttribute("aria-expanded", "true"));
-  if (window.matchMedia("(max-width: 1199px)").matches) {
+  if (window.matchMedia("(max-width: 1599px)").matches) {
     backdrop?.removeAttribute("hidden");
     document.body.classList.add("conversation-drawer-open");
   }
@@ -7643,7 +7654,7 @@ function syncConversationCustomerPanelMode() {
   const panel = document.getElementById("conversation-customer-panel");
   const backdrop = document.getElementById("conversation-customer-backdrop");
   if (!panel) return;
-  const drawerMode = window.matchMedia("(max-width: 1199px)").matches;
+  const drawerMode = window.matchMedia("(max-width: 1599px)").matches;
   panel.setAttribute("aria-hidden", String(drawerMode && !conversationCustomerPanelOpen));
   if (!drawerMode) {
     backdrop?.setAttribute("hidden", "");
@@ -7681,7 +7692,7 @@ function setupConversationInterface() {
       closeConversationCustomerPanel();
       return;
     }
-    if (event.key !== "Tab" || !conversationCustomerPanelOpen || !window.matchMedia("(max-width: 1199px)").matches) return;
+    if (event.key !== "Tab" || !conversationCustomerPanelOpen || !window.matchMedia("(max-width: 1599px)").matches) return;
     const panel = document.getElementById("conversation-customer-panel");
     const focusable = [...panel.querySelectorAll("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")];
     if (!focusable.length) return;
@@ -7748,7 +7759,6 @@ function setupAdminDelegatedActions() {
     else if (action === "send-conversation-suggestion" && Number.isInteger(id)) sendConversationSuggestion(id);
     else if (action === "modify-conversation-suggestion" && Number.isInteger(id)) modifyConversationSuggestion(id);
     else if (action === "dismiss-conversation-suggestion" && Number.isInteger(id)) dismissConversationSuggestion(id);
-    else if (action === "close-conversation-mobile-detail") closeConversationMobileDetail();
     else if (action === "open-conversation-customer-panel") openConversationCustomerPanel(button);
     else if (action === "open-conversation-customer-search") openConversationCustomerSearch();
     else if (action === "search-conversation-customers") void searchConversationCustomers();

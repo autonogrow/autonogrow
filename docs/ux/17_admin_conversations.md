@@ -6,7 +6,7 @@ Fecha: 4 de agosto de 2026.
 
 La sección `conversations` se presenta como **Clientes y mensajes**, una bandeja operativa para revisar consultas, responder por el canal realmente disponible y consultar el contexto fiable del cliente. El cambio mantiene HTML, CSS y JavaScript vanilla, todos los endpoints, el polling existente, los permisos y los contratos DOM documentados.
 
-En escritorio la pantalla usa tres paneles independientes: lista, conversación activa e información del cliente. En tablet conserva lista y conversación y abre el cliente en un drawer. En móvil el recorrido es secuencial: lista → conversación → detalle del cliente.
+En escritorio amplio la pantalla usa tres paneles independientes: lista, conversación activa e información del cliente. En desktop medio y tablet conserva lista y conversación y abre el cliente en un drawer para evitar que el hilo se comprima. En móvil el recorrido es secuencial: lista → conversación → detalle del cliente; la navegación principal **Mensajes** devuelve a la lista sin añadir un breadcrumb dentro del hilo.
 
 ## Contratos preservados
 
@@ -36,6 +36,8 @@ Cada fila muestra nombre disponible, canal, estado amable, vista previa, última
 `Necesita respuesta` se deriva exclusivamente del orden del historial entre inbound y outbound válidos. `Requiere seguimiento` se deriva de una `CustomerOpportunity` pendiente del Customer asociado. Ambos estados son independientes del lifecycle `pending`/`closed` de Conversation.
 
 ## Historial y entrega
+
+La cabecera del hilo agrupa el nombre, canal, identidad, asociación y estados en bloques con wrap. Las acciones operativas **Marcar pendiente** y **Cerrar** comparten una fila en desktop y solo pueden envolver en pantallas estrechas. El enlace redundante **Conversaciones** ya no forma parte de la cabecera. La columna central no impone un ancho mínimo rígido y el espacio vertical recuperado pertenece al historial con scroll propio.
 
 Los mensajes se ordenan cronológicamente de forma defensiva, se agrupan por día y distinguen:
 
@@ -77,8 +79,8 @@ Un fallo de sugerencias ya no oculta el historial: se muestra un aviso parcial y
 
 ## Responsive y accesibilidad
 
-- Desktop, desde 1200 px: tres paneles con scroll independiente.
-- Tablet, hasta 1199 px: dos paneles y drawer de cliente con backdrop.
+- Desktop amplio, desde 1600 px: tres paneles con scroll independiente.
+- Desktop medio y tablet, hasta 1599 px: dos paneles y drawer de cliente con backdrop.
 - Móvil, hasta 639 px: lista o detalle, nunca ambos comprimidos; el compositor respeta `safe-area-inset-bottom`.
 - La lista usa `role="listbox"`, selección con `aria-selected`, estados de carga con `aria-busy` y feedback `aria-live`.
 - El drawer devuelve el foco al disparador, se cierra con Escape y mantiene el foco con Tab/Shift+Tab.

@@ -190,7 +190,7 @@ def test_conversation_composer_precedes_collapsed_secondary_controls() -> None:
     assert ".conversation-secondary-controls" in css
 
 
-def test_conversation_header_removes_redundant_customer_action() -> None:
+def test_conversation_header_is_compact_without_redundant_breadcrumb() -> None:
     _, css, js = read_sources()
     render = function_block(js, "function renderConversationDetail", "function customerMemoryCategoryLabel")
     header = render.split('<header class="conversation-detail-header">', 1)[1].split("</header>", 1)[0]
@@ -200,15 +200,35 @@ def test_conversation_header_removes_redundant_customer_action() -> None:
     assert "conversation.customer_id" in render
     assert "Ver cliente" not in render
     assert "Asociar cliente" in render
+    assert "conversation-association-trigger" in render
+    assert "open-conversation-customer-panel" in render
     assert "!isBusinessStaff()" in render
-    assert header.index("${customerHeaderAction}") < header.index("conversationAttentionBadges(conversation)")
+    assert "Conversaciones" not in header
+    assert "conversation-mobile-back" not in header
+    assert header.index("conversationAttentionBadges(conversation)") < header.index("${customerHeaderAction}")
+    assert 'class="conversation-detail-meta"' in header
+    assert 'class="conversation-detail-header-lower"' in header
+    assert 'class="conversation-operational-actions"' in header
     assert header.index("Marcar pendiente") < header.index("Cerrar")
     assert "scrollIntoView" in open_panel
     assert "title?.focus" in open_panel
     assert "openConversationCustomerPanel(document.activeElement)" in open_search
     assert ".conversation-customer-open { display: inline-flex; }" in css
-    assert ".conversation-detail-actions" in css
-    assert "flex-wrap: wrap" in css
+    assert ".conversations-section .conversation-detail-header { display: grid;" in css
+    assert ".conversation-operational-actions { display: flex;" in css
+    assert "flex-wrap: nowrap" in css
+
+
+def test_conversation_badges_wrap_without_clipping_and_history_keeps_flexible_height() -> None:
+    _, css, _ = read_sources()
+
+    assert ".conversation-detail-badges { display: flex; min-width: 0;" in css
+    assert ".conversation-attention-states { display: inline-flex; min-width: 0;" in css
+    assert "min-height: 1.5rem; white-space: normal; overflow-wrap: anywhere;" in css
+    assert ".conversation-detail-header-copy { min-width: 0;" in css
+    assert "grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr)" in css
+    assert "grid-template-rows: auto minmax(0, 1fr) auto" in css
+    assert ".conversations-section .conversation-thread { min-height: 0; max-height: none;" in css
 
 
 def test_conversation_attention_copy_uses_derived_reply_and_follow_up_states() -> None:
@@ -307,9 +327,13 @@ def test_conversation_drawer_has_focus_escape_and_responsive_modes() -> None:
     assert 'event.key === "Escape"' in js
     assert 'event.key !== "Tab"' in js
     assert "conversationCustomerReturnFocus" in js
-    assert "@media (max-width: 1199px)" in css
+    assert "@media (max-width: 1599px)" in css
     assert "@media (max-width: 639px)" in css
-    assert ".conversation-mobile-back" in css
+    assert ".conversation-mobile-back" not in css
+    navigation = function_block(js, "function showAdminSection", "function setupAdminNavigation")
+    assert 'targetSection === "conversations"' in navigation
+    assert 'window.matchMedia("(max-width: 639px)").matches' in navigation
+    assert "closeConversationMobileDetail()" in navigation
     assert "env(safe-area-inset-bottom)" in css
 
 
