@@ -24,6 +24,12 @@ def install_google_mock(app_env: str) -> None:
             "email_verified": True,
             "name": "María E2E",
         },
+        "e2e-claim": {
+            "sub": "google-claim-e2e",
+            "email": "claim@e2e.test",
+            "email_verified": True,
+            "name": "Claim E2E",
+        },
         "e2e-admin-a": {
             "sub": "google-admin-a-e2e",
             "email": "admin-a@e2e.test",

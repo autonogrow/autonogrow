@@ -1,5 +1,5 @@
 import json
-import secrets
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
@@ -22,6 +22,10 @@ from app.services.availability_service import (
     get_public_bookable_staff,
 )
 from app.services.booking_attribution_service import attribute_new_booking
+from app.services.booking_manage_token_service import (
+    create_booking_manage_token,
+    refresh_booking_manage_token_expiry,
+)
 from app.services.customer_identity_service import (
     link_customer_account,
     linked_customer_for_business,
@@ -103,9 +107,7 @@ def get_or_create_customer(
         raise ValueError("invalid_phone")
 
     if current_user is not None:
-        linked = linked_customer_for_business(
-            db, user_id=current_user.id, business_id=business_id
-        )
+        linked = linked_customer_for_business(db, user_id=current_user.id, business_id=business_id)
         if linked is not None:
             linked.name = name
             if clean_phone:
@@ -389,13 +391,19 @@ def serialize_booking(
     }
 
 
-def create_booking_request(
+@dataclass(frozen=True)
+class BookingCreationResult:
+    booking: Booking
+    manage_token: str | None
+
+
+def create_booking_request_with_token(
     db: Session,
     *,
     business_slug: str,
     payload: BookingRequestCreate,
     current_user: User | None = None,
-) -> Booking:
+) -> BookingCreationResult:
     begin_serialized_booking_write(db)
     business = get_business_by_slug(db, business_slug)
 
@@ -440,13 +448,13 @@ def create_booking_request(
         current_user=current_user if current_user and current_user.is_active else None,
     )
 
+    account_user = current_user if current_user and current_user.is_active else None
     booking = Booking(
         business_id=business.id,
         customer_id=customer.id,
-        customer_user_id=current_user.id if current_user and current_user.is_active else None,
-        customer_email=current_user.email if current_user and current_user.is_active else None,
-        public_manage_token=secrets.token_urlsafe(32),
-        created_by_user=bool(current_user and current_user.is_active),
+        customer_user_id=account_user.id if account_user else None,
+        customer_email=account_user.email if account_user else None,
+        created_by_user=account_user is not None,
         service_id=service.id,
         staff_business_user_id=selected_staff_id,
         service_name=service.name,
@@ -470,6 +478,7 @@ def create_booking_request(
         status="requested",
         google_sync_status="pending",
     )
+    manage_token = create_booking_manage_token(booking) if account_user is None else None
 
     db.add(booking)
     db.flush()
@@ -509,7 +518,22 @@ def create_booking_request(
     db.commit()
     db.refresh(booking)
 
-    return booking
+    return BookingCreationResult(booking=booking, manage_token=manage_token)
+
+
+def create_booking_request(
+    db: Session,
+    *,
+    business_slug: str,
+    payload: BookingRequestCreate,
+    current_user: User | None = None,
+) -> Booking:
+    return create_booking_request_with_token(
+        db,
+        business_slug=business_slug,
+        payload=payload,
+        current_user=current_user,
+    ).booking
 
 
 def reschedule_existing_booking(
@@ -573,6 +597,7 @@ def reschedule_existing_booking(
     booking.preferred_time = new_start_datetime.strftime("%H:%M")
     booking.status = "requested"
     booking.updated_at = datetime.utcnow()
+    refresh_booking_manage_token_expiry(booking)
 
     create_booking_rescheduled_message(
         db,
@@ -631,6 +656,4 @@ def list_bookings_for_business(
         )
     bookings = query.order_by(Booking.start_datetime.asc(), Booking.created_at.desc()).all()
 
-    return [
-        serialize_booking(booking, operational_now=operational_now) for booking in bookings
-    ]
+    return [serialize_booking(booking, operational_now=operational_now) for booking in bookings]

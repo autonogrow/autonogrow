@@ -7,10 +7,11 @@ import hashlib
 import json
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import MetaData, Table, and_, create_engine, func, inspect, or_, select, text
 from sqlalchemy.engine import Connection, Engine, make_url
@@ -277,6 +278,18 @@ ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
         },
     },
     "bookings": {
+        "public_manage_token_hash": {
+            "action": "derive_booking_manage_token",
+            "expected_value": None,
+        },
+        "public_manage_token_expires_at": {
+            "action": "derive_booking_manage_token",
+            "expected_value": None,
+        },
+        "public_manage_token_revoked_at": {
+            "action": "derive_booking_manage_token",
+            "expected_value": None,
+        },
         "price_amount_snapshot": {
             "action": "omit_as_null",
             "expected_value": None,
@@ -324,6 +337,10 @@ ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
     "channel_outbox_messages": {"request_id": {"action": "omit_as_null", "expected_value": None}},
 }
 
+ALLOWED_EXTRA_SOURCE_COLUMNS: dict[str, frozenset[str]] = {
+    "bookings": frozenset({"public_manage_token"}),
+}
+
 BUSINESS_STATUS_VALUES = frozenset(
     {"draft", "onboarding", "configuration_pending", "ready", "active", "suspended", "archived"}
 )
@@ -343,6 +360,8 @@ SENSITIVE_COLUMNS = {
     "email",
     "phone",
     "customer_email",
+    "public_manage_token",
+    "public_manage_token_hash",
 }
 
 CRITICAL_CHECKSUM_COLUMNS = {
@@ -460,6 +479,8 @@ def validate_copy_order() -> None:
         raise RuntimeError("Destination-only tables cannot be present in COPY_ORDER")
     if not set(ALLOWED_MISSING_SOURCE_COLUMNS) <= declared:
         raise RuntimeError("Missing-column policies reference tables outside COPY_ORDER")
+    if not set(ALLOWED_EXTRA_SOURCE_COLUMNS) <= declared:
+        raise RuntimeError("Extra-column policies reference tables outside COPY_ORDER")
     positions = {name: index for index, name in enumerate(COPY_ORDER)}
     for table in Base.metadata.tables.values():
         for foreign_key in table.foreign_keys:
@@ -507,7 +528,11 @@ def analyze_source_schema(engine_or_connection: Engine | Connection) -> dict[str
         if allowed:
             allowed_missing_columns[table_name] = allowed
         incompatible_missing = sorted(missing_columns - set(policies))
-        extra_columns = sorted(source_columns - expected_columns)
+        extra_columns = sorted(
+            source_columns
+            - expected_columns
+            - ALLOWED_EXTRA_SOURCE_COLUMNS.get(table_name, frozenset())
+        )
         if incompatible_missing or extra_columns:
             column_mismatches[table_name] = {
                 "missing": incompatible_missing,
@@ -561,11 +586,72 @@ def normalize_copy_value(table_name: str, column_name: str, value: Any) -> Any:
     return transforms.get(value, value)
 
 
-def prepared_row(table_name: str, row: Any) -> dict[str, Any]:
+def as_utc_naive(value: datetime, timezone_name: str) -> datetime:
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    try:
+        local_timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        local_timezone = timezone.utc
+    return value.replace(tzinfo=local_timezone).astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def source_business_timezones(connection: Connection) -> dict[int, str]:
+    metadata = MetaData()
+    businesses = Table("businesses", metadata, autoload_with=connection)
+    if "timezone" not in businesses.c:
+        return {
+            int(business_id): "Europe/Madrid"
+            for business_id in connection.execute(select(businesses.c.id)).scalars()
+        }
     return {
+        int(business_id): timezone_name or "UTC"
+        for business_id, timezone_name in connection.execute(
+            select(businesses.c.id, businesses.c.timezone)
+        )
+    }
+
+
+def source_row_for_preparation(
+    table_name: str,
+    row: Any,
+    business_timezones: dict[int, str],
+) -> dict[str, Any]:
+    values = dict(row)
+    if table_name == "bookings" and "public_manage_token" in values:
+        values["_booking_timezone"] = business_timezones.get(
+            int(values["business_id"]), "Europe/Madrid"
+        )
+    return values
+
+
+def prepared_row(table_name: str, row: Any) -> dict[str, Any]:
+    values = {
         column_name: normalize_copy_value(table_name, column_name, value)
         for column_name, value in dict(row).items()
     }
+    if table_name == "bookings" and "public_manage_token" in values:
+        timezone_name = values.pop("_booking_timezone", "Europe/Madrid")
+        token = values.pop("public_manage_token")
+        created_at = values.get("created_at") or datetime.utcnow()
+        appointment_end = values.get("end_datetime") or created_at
+        if token:
+            values["public_manage_token_hash"] = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            values["public_manage_token_expires_at"] = min(
+                as_utc_naive(appointment_end, timezone_name) + timedelta(days=7),
+                created_at + timedelta(days=90),
+            )
+            values["public_manage_token_revoked_at"] = (
+                datetime.utcnow()
+                if values.get("customer_user_id") is not None
+                or values.get("status") in {"rejected", "cancelled", "completed", "no_show"}
+                else None
+            )
+        else:
+            values["public_manage_token_hash"] = None
+            values["public_manage_token_expires_at"] = None
+            values["public_manage_token_revoked_at"] = None
+    return values
 
 
 def analyze_source_data(engine: Engine) -> dict[str, Any]:
@@ -934,6 +1020,7 @@ def copy_rows(source: Engine, destination: Engine) -> None:
     source_metadata = MetaData()
     destination_metadata = MetaData()
     with source.connect() as source_connection, destination.begin() as destination_connection:
+        business_timezones = source_business_timezones(source_connection)
         for table_name in source_copy_order(source_connection):
             source_table = Table(table_name, source_metadata, autoload_with=source_connection)
             destination_table = Table(
@@ -943,7 +1030,13 @@ def copy_rows(source: Engine, destination: Engine) -> None:
             while batch := rows.fetchmany(500):
                 destination_connection.execute(
                     destination_table.insert(),
-                    [prepared_row(table_name, row) for row in batch],
+                    [
+                        prepared_row(
+                            table_name,
+                            source_row_for_preparation(table_name, row, business_timezones),
+                        )
+                        for row in batch
+                    ],
                 )
 
 
@@ -957,6 +1050,8 @@ def require_destination_column_policies(engine: Engine, source_analysis: dict[st
         for column_name, policy in policies.items():
             destination_column = destination_columns[column_name]
             action = policy["action"]
+            if action == "derive_booking_manage_token":
+                continue
             if action == "use_destination_default" and destination_column.get("default") is None:
                 incompatible.setdefault(table_name, {})[column_name] = (
                     "destination default is missing"
@@ -980,6 +1075,8 @@ def omitted_column_differences(
     for table_name, policies in source_analysis["allowed_missing_columns"].items():
         table = Table(table_name, metadata, autoload_with=connection)
         for column_name, policy in policies.items():
+            if policy["action"] == "derive_booking_manage_token":
+                continue
             column = table.c[column_name]
             expected = policy["expected_value"]
             mismatch = (
@@ -1107,6 +1204,7 @@ def copy_and_validate_atomic(source: Engine, destination: Engine) -> dict[str, A
         source_analysis = analyze_source_schema(source_connection)
         source_tables = source_copy_order(source_connection)
         excluded_columns = missing_source_columns(source_analysis)
+        business_timezones = source_business_timezones(source_connection)
         transaction = destination_connection.begin()
         try:
             for table_name in source_tables:
@@ -1120,7 +1218,13 @@ def copy_and_validate_atomic(source: Engine, destination: Engine) -> dict[str, A
                 while batch := rows.fetchmany(500):
                     destination_connection.execute(
                         destination_table.insert(),
-                        [prepared_row(table_name, row) for row in batch],
+                        [
+                            prepared_row(
+                                table_name,
+                                source_row_for_preparation(table_name, row, business_timezones),
+                            )
+                            for row in batch
+                        ],
                     )
 
             sequence_report = reset_sequences_on_connection(destination_connection)

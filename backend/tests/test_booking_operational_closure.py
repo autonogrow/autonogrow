@@ -25,9 +25,18 @@ from app.routers.admin import (
     admin_list_booking_close_tasks,
     update_booking_status,
 )
+from app.routers.bookings import create_booking_response
 from app.schemas.booking import BookingRequestCreate
 from app.services.availability_service import get_operational_business_now
-from app.services.booking_service import create_booking_request, serialize_booking
+from app.services.booking_manage_token_service import (
+    booking_manage_token_is_valid,
+    create_booking_manage_token,
+)
+from app.services.booking_service import (
+    create_booking_request,
+    create_booking_request_with_token,
+    serialize_booking,
+)
 from app.services.booking_status_service import list_booking_close_tasks
 
 
@@ -62,9 +71,7 @@ def records():
     staff_user = User(email="closure-staff@test.local", name="Staff", is_active=True)
     other_staff_user = User(email="closure-other-staff@test.local", name="Other", is_active=True)
     outsider = User(email="closure-outsider@test.local", name="Outsider", is_active=True)
-    db.add_all(
-        [business, other_business, admin_user, staff_user, other_staff_user, outsider]
-    )
+    db.add_all([business, other_business, admin_user, staff_user, other_staff_user, outsider])
     db.flush()
     service = BusinessService(
         business_id=business.id,
@@ -104,9 +111,9 @@ def records():
         show_schedule=True,
         public_name="Other",
     )
-    schedule = "{" + ",".join(
-        f'"{day}":[{{"start":"09:00","end":"18:00"}}]' for day in range(7)
-    ) + "}"
+    schedule = (
+        "{" + ",".join(f'"{day}":[{{"start":"09:00","end":"18:00"}}]' for day in range(7)) + "}"
+    )
     settings = AvailabilitySettings(
         business_id=business.id,
         timezone="Europe/Madrid",
@@ -238,6 +245,83 @@ def test_booking_notes_round_trip_without_contaminating_customer(records) -> Non
     assert second.customer.notes == "Prefiere dejar el coche antes de las 9."
 
 
+def test_guest_creation_returns_one_time_token_and_authenticated_creation_does_not(records) -> None:
+    db = records["db"]
+    target = get_operational_business_now(db, records["business"].id).date() + timedelta(days=3)
+    payload = BookingRequestCreate(
+        customer_name="Guest token",
+        customer_phone="622222222",
+        service_id=records["service"].id,
+        staff_business_user_id=records["staff"].id,
+        start_datetime=f"{target.isoformat()}T12:00:00",
+    )
+
+    guest = create_booking_request_with_token(
+        db, business_slug=records["business"].slug, payload=payload
+    )
+    authenticated = create_booking_request_with_token(
+        db,
+        business_slug=records["business"].slug,
+        payload=payload.model_copy(update={"start_datetime": f"{target.isoformat()}T13:00:00"}),
+        current_user=records["outsider"],
+    )
+
+    assert guest.manage_token
+    assert guest.manage_token != guest.booking.public_manage_token_hash
+    assert booking_manage_token_is_valid(guest.booking, guest.manage_token)
+    assert authenticated.manage_token is None
+    assert authenticated.booking.customer_user_id == records["outsider"].id
+    assert authenticated.booking.public_manage_token_hash is None
+
+
+def test_terminal_transition_revokes_guest_token_and_audits_without_secret(records) -> None:
+    db = records["db"]
+    booking = add_booking(records, status="confirmed", start=datetime.now() + timedelta(days=1))
+    token = create_booking_manage_token(booking)
+    db.commit()
+
+    update_booking_status(
+        records["business"].slug,
+        booking.id,
+        BookingStatusUpdate(status="completed"),
+        request_for(),
+        actor=records["admin_user"],
+        db=db,
+    )
+
+    assert booking.public_manage_token_revoked_at is not None
+    assert not booking_manage_token_is_valid(booking, token)
+    audit = db.query(AuditLog).filter_by(action="manage_token_revoked").one()
+    assert token not in (audit.metadata_json or "")
+    assert audit.metadata_json == '{"reason": "booking_completed"}'
+
+
+def test_public_creation_audits_token_lifecycle_without_secret(records) -> None:
+    db = records["db"]
+    target = get_operational_business_now(db, records["business"].id).date() + timedelta(days=4)
+    payload = BookingRequestCreate(
+        customer_name="Audited guest",
+        customer_phone="633333333",
+        service_id=records["service"].id,
+        staff_business_user_id=records["staff"].id,
+        start_datetime=f"{target.isoformat()}T14:00:00",
+    )
+
+    response = create_booking_response(
+        db,
+        records["business"].slug,
+        payload,
+        None,
+        request_for("/api/businesses/closure-a/bookings"),
+    )
+
+    token = response["booking_manage_token"]
+    assert token and response["booking_manage_token_expires_at"]
+    audit = db.query(AuditLog).filter_by(action="manage_token_created").one()
+    assert token not in (audit.metadata_json or "")
+    assert response["booking"]["id"] == int(audit.resource_id)
+
+
 @pytest.mark.parametrize("status", ["completed", "no_show", "cancelled", "rejected"])
 def test_only_overdue_confirmed_bookings_are_close_tasks(records, status: str) -> None:
     now = datetime(2026, 1, 10, 12)
@@ -260,9 +344,7 @@ def test_only_overdue_confirmed_bookings_are_close_tasks(records, status: str) -
         start=now - timedelta(hours=2),
         end=now - timedelta(hours=1),
     )
-    tasks = list_booking_close_tasks(
-        records["db"], business=records["business"], now=now
-    )
+    tasks = list_booking_close_tasks(records["db"], business=records["business"], now=now)
     assert len(tasks) == 1
     assert tasks[0]["status"] == "confirmed"
     assert tasks[0]["effective_end_datetime"] == (now - timedelta(hours=1)).isoformat()
@@ -292,9 +374,7 @@ def test_close_task_uses_legacy_service_and_default_duration_fallbacks(records) 
         end=None,
         duration=None,
     )
-    tasks = list_booking_close_tasks(
-        records["db"], business=records["business"], now=now
-    )
+    tasks = list_booking_close_tasks(records["db"], business=records["business"], now=now)
     assert {task["id"] for task in tasks} == {service_fallback.id, default_fallback.id}
 
     without_start = add_booking(
@@ -306,9 +386,7 @@ def test_close_task_uses_legacy_service_and_default_duration_fallbacks(records) 
     without_start.start_datetime = None
     without_start.preferred_date = None
     records["db"].commit()
-    tasks = list_booking_close_tasks(
-        records["db"], business=records["business"], now=now
-    )
+    tasks = list_booking_close_tasks(records["db"], business=records["business"], now=now)
     assert without_start.id not in {task["id"] for task in tasks}
 
 
@@ -432,9 +510,7 @@ def test_closing_booking_removes_derived_task(records, target_status: str) -> No
     )
     assert booking.id in {
         task["id"]
-        for task in list_booking_close_tasks(
-            records["db"], business=records["business"], now=now
-        )
+        for task in list_booking_close_tasks(records["db"], business=records["business"], now=now)
     }
     result = update_booking_status(
         records["business"].slug,
@@ -447,9 +523,7 @@ def test_closing_booking_removes_derived_task(records, target_status: str) -> No
     assert result["booking"]["status"] == target_status
     assert booking.id not in {
         task["id"]
-        for task in list_booking_close_tasks(
-            records["db"], business=records["business"], now=now
-        )
+        for task in list_booking_close_tasks(records["db"], business=records["business"], now=now)
     }
     second = update_booking_status(
         records["business"].slug,

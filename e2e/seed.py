@@ -40,6 +40,12 @@ from app.models import (  # noqa: E402
 )
 from app.models.registry import register_models  # noqa: E402
 from app.services.auth_session_service import create_auth_session  # noqa: E402
+from app.services.booking_manage_token_service import (  # noqa: E402
+    TERMINAL_BOOKING_STATUSES,
+    as_utc_naive,
+    hash_booking_manage_token,
+)
+from app.services.capability_service import configure_business_modules  # noqa: E402
 
 ALL_DAY_SCHEDULE = {str(day): [{"start": "09:00", "end": "18:00"}] for day in range(7)}
 JPEG_BYTES = base64.b64decode(
@@ -88,12 +94,11 @@ def _booking(
     token: str,
 ) -> Booking:
     duration = service.duration_minutes or 45
-    return Booking(
+    booking = Booking(
         business_id=business.id,
         customer_id=customer.id,
         customer_user_id=user.id if user else None,
         customer_email=user.email if user else None,
-        public_manage_token=token,
         created_by_user=user is not None,
         service_id=service.id,
         staff_business_user_id=staff.id,
@@ -109,6 +114,15 @@ def _booking(
         status=status,
         source="e2e",
     )
+    if user is None:
+        booking.public_manage_token_hash = hash_booking_manage_token(token)
+        booking.public_manage_token_expires_at = min(
+            as_utc_naive(booking.end_datetime, business.timezone) + timedelta(days=7),
+            datetime.utcnow() + timedelta(days=90),
+        )
+        if status in TERMINAL_BOOKING_STATUSES:
+            booking.public_manage_token_revoked_at = datetime.utcnow()
+    return booking
 
 
 def _seed_instagram(db: Session, business: Business, owner: User, marker: str) -> None:
@@ -266,6 +280,14 @@ def reset_database() -> None:
         db.add_all((business_a, business_b))
         db.flush()
 
+        for business in (business_a, business_b):
+            configure_business_modules(
+                db,
+                business_id=business.id,
+                enabled_modules=("essential", "growth", "social"),
+                actor_user_id=None,
+            )
+
         admin_membership_a = BusinessUser(
             business_id=business_a.id, user_id=admin_a.id, role="business_admin", active=True
         )
@@ -407,7 +429,7 @@ def reset_database() -> None:
             business=business_a,
             customer=guest_a,
             service=services_a[1],
-            start=now.replace(hour=15, minute=0),
+            start=next_day.replace(hour=15, minute=0),
             status="requested",
             staff=staff_members[1],
             token="e2e-pending-booking-a-token",

@@ -78,11 +78,23 @@ def test_growth_disabled_hides_its_surface_and_api_fails_closed(journey) -> None
     expect(page.locator('.admin-tab[data-section="growth"]')).to_be_hidden()
     expect(page.locator('.admin-tab[data-section="instagram-content"]')).to_be_visible()
     expect(page.locator('.admin-tab[data-section="reviews"]:visible').first).to_be_visible()
-    assert page.request.get("/api/admin/businesses/salon-e2e/opportunities").status == 403
+    denied = page.request.get("/api/admin/businesses/salon-e2e/opportunities")
+    assert denied.status == 403
+    assert denied.json()["detail"]["code"] == "module_not_available"
 
 
 def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> None:
     _session, page = _open_admin(journey)
+    capabilities = page.request.get("/api/admin/businesses/salon-e2e/capabilities")
+    assert capabilities.status == 200
+    assert capabilities.json()["modules"]["growth"] == {
+        "module": "growth",
+        "entitled": True,
+        "active": True,
+        "available": True,
+        "configuration_source": "business_module_access",
+        "module_cost": None,
+    }
     expect(page.get_by_role("tab", name="Día")).to_have_attribute("aria-selected", "true")
     page.get_by_role("tab", name="Semana").click()
     expect(page.get_by_role("tab", name="Semana")).to_have_attribute("aria-selected", "true")
@@ -90,6 +102,7 @@ def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> Non
     expect(page.get_by_role("tab", name="Mes")).to_have_attribute("aria-selected", "true")
     page.get_by_role("button", name="Hoy", exact=True).click()
     page.get_by_role("tab", name="Día").click()
+    page.get_by_role("button", name="Periodo siguiente").click()
     page.get_by_role("button", name=re.compile("Invitado Fixture, Color E2E")).click()
     pending = page.locator(".booking-card", has_text="Invitado Fixture")
     expect(pending).to_be_visible()
@@ -160,7 +173,7 @@ def test_appointment_customer_memory_is_private_timed_and_append_only(journey) -
     expect(card.locator("[data-booking-customer-memory-draft]")).to_have_value(
         "Nota nueva exclusiva del cliente"
     )
-    card.get_by_role("button", name="Guardar nota", exact=True).click()
+    card.get_by_role("button", name="Guardar nota", exact=True).press("Enter")
     expect(card.get_by_text("Nota nueva exclusiva del cliente")).to_be_visible()
     expect(card.get_by_text("Nota añadida.")).to_be_visible()
 
@@ -343,7 +356,7 @@ def test_owner_instagram_polling_moves_processing_to_published_without_reload(jo
 
     _session, page = _open_owner_instagram(journey)
     item = page.get_by_role("button", name=re.compile("SALON lanzamiento"))
-    expect(item).to_contain_text("Procesando en Instagram")
+    expect(item).to_contain_text("Reintento programado")
 
     with SessionLocal() as db:
         persisted_content = db.get(InstagramContent, content_id)
@@ -890,7 +903,9 @@ def test_owner_raw_association_manager_classifies_and_updates_without_reload(jou
     expect(page.locator("#owner-instagram-associations-count")).to_have_text("1")
     published.get_by_role("button", name="Abrir contenido").click()
     expect(page.locator("#owner-instagram-composer")).to_be_visible()
-    expect(page.locator("#owner-instagram-composer-title")).to_have_text("Editar publicación")
+    expect(page.locator("#owner-instagram-composer-title")).to_have_text(
+        "Consultar publicación"
+    )
     expect(page.locator("#owner-instagram-composer-caption")).to_have_value(
         "Caption publicada SALON"
     )
@@ -930,6 +945,7 @@ def test_owner_sees_technical_controls_admin_cannot_use(journey) -> None:
 
 def test_mobile_admin_confirms_booking_and_opens_instagram(journey) -> None:
     _session, page = _open_admin(journey, mobile=True)
+    page.get_by_role("button", name="Periodo siguiente").click()
     page.get_by_role("button", name=re.compile("Invitado Fixture, Color E2E")).click()
     pending = page.locator(".booking-card", has_text="Invitado Fixture")
     page.once("dialog", lambda dialog: dialog.accept())

@@ -53,7 +53,8 @@ GOOGLE_MOCK_SCRIPT = """
 (() => {
   window.AUTONOGROW_API_BASE_URL = window.location.origin;
   const token = location.pathname.includes('owner') ? 'e2e-owner'
-    : location.pathname.includes('admin') ? 'e2e-admin-a' : 'e2e-customer';
+    : location.pathname.includes('admin') ? 'e2e-admin-a'
+    : location.search.includes('claim=1') ? 'e2e-claim' : 'e2e-customer';
   let callback = null;
   window.google = { accounts: { id: {
     initialize(options) { callback = options.callback; },

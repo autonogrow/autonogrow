@@ -67,7 +67,11 @@ class Booking(Base):
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     customer_email: Mapped[str | None] = mapped_column(String(320), index=True)
-    public_manage_token: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    public_manage_token_hash: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True
+    )
+    public_manage_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    public_manage_token_revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_by_user: Mapped[bool] = mapped_column(default=False, nullable=False)
     service_id: Mapped[int | None] = mapped_column(
         ForeignKey("services.id", ondelete="SET NULL"), nullable=True
@@ -80,9 +84,7 @@ class Booking(Base):
     duration_minutes: Mapped[int | None] = mapped_column(Integer)
     price_amount_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     currency_snapshot: Mapped[str | None] = mapped_column(String(3))
-    follow_up_enabled_snapshot: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    follow_up_enabled_snapshot: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     follow_up_interval_days_snapshot: Mapped[int | None] = mapped_column(Integer)
     follow_up_window_days_snapshot: Mapped[int | None] = mapped_column(Integer)
     start_datetime: Mapped[datetime | None] = mapped_column(DateTime)

@@ -47,10 +47,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return ("auth", 30, 60)
         if method == "POST" and path.endswith(("/bookings", "/booking-requests")):
             return ("public-booking", 12, 60)
+        if path == "/api/customer/claim-booking":
+            return ("booking-manage", 30, 60)
         if method in {"POST", "PUT", "PATCH", "DELETE"} and (
             "/attachments" in path or "/media/" in path
         ):
             return ("upload", 30, 60)
+        if "/attachments" in path:
+            return ("booking-manage", 60, 60)
         if path.startswith(("/api/owner/", "/api/admin/", "/api/customer/")):
             return ("authenticated", 180, 60)
         return None

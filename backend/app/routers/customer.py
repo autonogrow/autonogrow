@@ -1,4 +1,3 @@
-import secrets
 from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -10,6 +9,10 @@ from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models import Booking, Customer, CustomerAccountLink, User
+from app.services.booking_manage_token_service import (
+    booking_manage_token_is_valid,
+    revoke_booking_manage_token,
+)
 from app.services.customer_identity_service import (
     link_customer_account,
     normalize_instagram_username,
@@ -86,9 +89,7 @@ def owned_booking_filter(user: User):
 
 def booking_query(db: Session, user: User):
     return (
-        db.query(Booking)
-        .options(joinedload(Booking.business))
-        .filter(owned_booking_filter(user))
+        db.query(Booking).options(joinedload(Booking.business)).filter(owned_booking_filter(user))
     )
 
 
@@ -257,10 +258,9 @@ def claim_guest_booking(
         .first()
     )
     if booking is None:
-        raise HTTPException(status_code=404, detail="La reserva no está disponible")
-    stored_token = booking.public_manage_token
-    if not stored_token or not secrets.compare_digest(stored_token, payload.manage_token):
-        raise HTTPException(status_code=404, detail="La reserva no está disponible")
+        raise HTTPException(status_code=404, detail="El enlace ya no es válido.")
+    if not booking_manage_token_is_valid(booking, payload.manage_token):
+        raise HTTPException(status_code=404, detail="El enlace ya no es válido.")
     if booking.customer_user_id not in {None, user.id}:
         raise HTTPException(status_code=409, detail="La reserva ya pertenece a otra cuenta")
     try:
@@ -277,10 +277,22 @@ def claim_guest_booking(
         ) from exc
     booking.customer_user_id = user.id
     booking.customer_email = user.email
+    token_revoked = revoke_booking_manage_token(booking)
     if not user.phone and booking.customer.phone:
         user.phone = booking.customer.phone
         user.phone_normalized = booking.customer.phone_normalized
-    db.commit()
+    if token_revoked:
+        record_audit(
+            db,
+            action="manage_token_revoked",
+            request=request,
+            actor=user,
+            business_id=booking.business_id,
+            resource_type="booking",
+            resource_id=booking.id,
+            metadata={"reason": "account_claim"},
+            commit=False,
+        )
     record_audit(
         db,
         action="customer_booking_claimed",
@@ -289,5 +301,7 @@ def claim_guest_booking(
         business_id=booking.business_id,
         resource_type="booking",
         resource_id=booking.id,
+        commit=False,
     )
+    db.commit()
     return {"ok": True}

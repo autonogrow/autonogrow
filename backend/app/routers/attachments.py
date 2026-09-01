@@ -1,5 +1,4 @@
 from pathlib import Path
-from secrets import compare_digest
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
@@ -10,12 +9,18 @@ from app.core.audit import record_audit
 from app.core.config import get_settings, get_uploads_dir
 from app.core.database import get_db
 from app.core.security import (
-    ensure_can_manage_booking,
     get_optional_current_user,
-    require_business_access,
     require_business_operational_status,
 )
-from app.models import Booking, BookingAttachment, Business, BusinessUser, User
+from app.models import (
+    Booking,
+    BookingAttachment,
+    Business,
+    BusinessUser,
+    CustomerAccountLink,
+    User,
+)
+from app.services.booking_manage_token_service import booking_manage_token_is_valid
 
 router = APIRouter(
     prefix="/api/businesses/{business_slug}/bookings/{booking_id}/attachments",
@@ -43,7 +48,7 @@ def image_signature_matches(content: bytes, content_type: str) -> bool:
     return signatures.get(content_type, False)
 
 
-def can_upload_booking_attachments(
+def can_access_booking_attachments(
     db: Session,
     *,
     booking: Booking,
@@ -52,6 +57,17 @@ def can_upload_booking_attachments(
 ) -> bool:
     if user is not None and user.is_active:
         if user.is_owner or booking.customer_user_id == user.id:
+            return True
+        account_link = (
+            db.query(CustomerAccountLink.id)
+            .filter(
+                CustomerAccountLink.business_id == booking.business_id,
+                CustomerAccountLink.customer_id == booking.customer_id,
+                CustomerAccountLink.user_id == user.id,
+            )
+            .first()
+        )
+        if account_link is not None:
             return True
         membership = (
             db.query(BusinessUser)
@@ -67,36 +83,43 @@ def can_upload_booking_attachments(
                 membership.role == "business_staff"
                 and booking.staff_business_user_id == membership.id
             )
-    return bool(
-        booking.public_manage_token
-        and booking_token
-        and compare_digest(booking.public_manage_token, booking_token)
-    )
+    return booking_manage_token_is_valid(booking, booking_token)
 
 
-def get_business_or_404(db: Session, business_slug: str) -> Business:
+def raise_attachment_access_error(*, current_user: User | None, booking_token: str | None) -> None:
+    if current_user is None and not booking_token:
+        raise HTTPException(status_code=401, detail="Booking attachment authorization required")
+    if current_user is None:
+        raise HTTPException(status_code=404, detail="El enlace ya no es válido.")
+    raise HTTPException(status_code=403, detail="You cannot access files for this booking")
+
+
+def get_attachment_context(
+    db: Session,
+    *,
+    business_slug: str,
+    booking_id: int,
+    current_user: User | None,
+    booking_token: str | None,
+) -> tuple[Business, Booking]:
     business = db.query(Business).filter(Business.slug == business_slug).first()
-
     if business is None:
+        if current_user is None:
+            raise_attachment_access_error(current_user=current_user, booking_token=booking_token)
         raise HTTPException(status_code=404, detail="Business not found")
-
-    return business
-
-
-def get_booking_or_404(db: Session, business_id: int, booking_id: int) -> Booking:
     booking = (
         db.query(Booking)
         .filter(
             Booking.id == booking_id,
-            Booking.business_id == business_id,
+            Booking.business_id == business.id,
         )
         .first()
     )
-
     if booking is None:
+        if current_user is None:
+            raise_attachment_access_error(current_user=current_user, booking_token=booking_token)
         raise HTTPException(status_code=404, detail="Booking not found")
-
-    return booking
+    return business, booking
 
 
 def private_attachment_url(business_slug: str, booking_id: int, attachment_id: int) -> str:
@@ -115,18 +138,21 @@ async def upload_booking_attachments(
     current_user: User | None = Depends(get_optional_current_user),
     booking_token: str | None = Header(default=None, alias="X-Booking-Token"),
 ):
-    business = get_business_or_404(db, business_slug)
-    booking = get_booking_or_404(db, business.id, booking_id)
+    business, booking = get_attachment_context(
+        db,
+        business_slug=business_slug,
+        booking_id=booking_id,
+        current_user=current_user,
+        booking_token=booking_token,
+    )
 
-    if not can_upload_booking_attachments(
+    if not can_access_booking_attachments(
         db,
         booking=booking,
         user=current_user,
         booking_token=booking_token,
     ):
-        if current_user is None and not booking_token:
-            raise HTTPException(status_code=401, detail="Booking upload authorization required")
-        raise HTTPException(status_code=403, detail="You cannot upload files for this booking")
+        raise_attachment_access_error(current_user=current_user, booking_token=booking_token)
 
     if not files:
         return {
@@ -233,12 +259,24 @@ async def upload_booking_attachments(
 def list_booking_attachments(
     business_slug: str,
     booking_id: int,
-    actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+    booking_token: str | None = Header(default=None, alias="X-Booking-Token"),
 ):
-    business = get_business_or_404(db, business_slug)
-    booking = get_booking_or_404(db, business.id, booking_id)
-    ensure_can_manage_booking(db, business_slug=business_slug, booking=booking, user=actor)
+    business, booking = get_attachment_context(
+        db,
+        business_slug=business_slug,
+        booking_id=booking_id,
+        current_user=current_user,
+        booking_token=booking_token,
+    )
+    if not can_access_booking_attachments(
+        db,
+        booking=booking,
+        user=current_user,
+        booking_token=booking_token,
+    ):
+        raise_attachment_access_error(current_user=current_user, booking_token=booking_token)
 
     attachments = (
         db.query(BookingAttachment)
@@ -276,14 +314,17 @@ def get_booking_attachment_content(
     current_user: User | None = Depends(get_optional_current_user),
     booking_token: str | None = Header(default=None, alias="X-Booking-Token"),
 ):
-    business = get_business_or_404(db, business_slug)
-    booking = get_booking_or_404(db, business.id, booking_id)
-    if not can_upload_booking_attachments(
+    business, booking = get_attachment_context(
+        db,
+        business_slug=business_slug,
+        booking_id=booking_id,
+        current_user=current_user,
+        booking_token=booking_token,
+    )
+    if not can_access_booking_attachments(
         db, booking=booking, user=current_user, booking_token=booking_token
     ):
-        if current_user is None and not booking_token:
-            raise HTTPException(status_code=401, detail="Booking attachment authorization required")
-        raise HTTPException(status_code=403, detail="You cannot access files for this booking")
+        raise_attachment_access_error(current_user=current_user, booking_token=booking_token)
 
     attachment = (
         db.query(BookingAttachment)

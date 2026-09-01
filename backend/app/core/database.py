@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import sqlite3
 import warnings
@@ -248,7 +249,9 @@ def run_lightweight_migrations(target_engine=None) -> None:
         "end_datetime": "DATETIME",
         "customer_user_id": "INTEGER",
         "customer_email": "VARCHAR(320)",
-        "public_manage_token": "VARCHAR(255)",
+        "public_manage_token_hash": "VARCHAR(64)",
+        "public_manage_token_expires_at": "DATETIME",
+        "public_manage_token_revoked_at": "DATETIME",
         "created_by_user": "BOOLEAN NOT NULL DEFAULT 0",
         "staff_business_user_id": "INTEGER",
         "internal_notes": "TEXT",
@@ -268,6 +271,47 @@ def run_lightweight_migrations(target_engine=None) -> None:
                     text(f"ALTER TABLE bookings ADD COLUMN {column_name} {column_type}")
                 )
 
+        if "public_manage_token" in existing_columns:
+            legacy_rows = connection.execute(
+                text(
+                    "SELECT id, public_manage_token, customer_user_id, status, "
+                    "created_at, end_datetime FROM bookings "
+                    "WHERE public_manage_token IS NOT NULL"
+                )
+            ).all()
+            migrated_at = datetime.utcnow()
+            for row in legacy_rows:
+                created_at = row.created_at or migrated_at
+                end_datetime = row.end_datetime or created_at
+                if isinstance(created_at, str):
+                    created_at = datetime.fromisoformat(created_at)
+                if isinstance(end_datetime, str):
+                    end_datetime = datetime.fromisoformat(end_datetime)
+                connection.execute(
+                    text(
+                        "UPDATE bookings SET public_manage_token_hash = :token_hash, "
+                        "public_manage_token_expires_at = :expires_at, "
+                        "public_manage_token_revoked_at = :revoked_at, "
+                        "public_manage_token = NULL WHERE id = :booking_id"
+                    ),
+                    {
+                        "token_hash": hashlib.sha256(
+                            row.public_manage_token.encode("utf-8")
+                        ).hexdigest(),
+                        "expires_at": min(
+                            end_datetime + timedelta(days=7),
+                            created_at + timedelta(days=90),
+                        ),
+                        "revoked_at": (
+                            migrated_at
+                            if row.customer_user_id is not None
+                            or row.status in {"rejected", "cancelled", "completed", "no_show"}
+                            else None
+                        ),
+                        "booking_id": row.id,
+                    },
+                )
+
         connection.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_bookings_customer_user_id ON bookings (customer_user_id)"
@@ -280,7 +324,14 @@ def run_lightweight_migrations(target_engine=None) -> None:
         )
         connection.execute(
             text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_bookings_public_manage_token ON bookings (public_manage_token)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_bookings_public_manage_token_hash "
+                "ON bookings (public_manage_token_hash)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_bookings_public_manage_token_expires_at "
+                "ON bookings (public_manage_token_expires_at)"
             )
         )
         connection.execute(

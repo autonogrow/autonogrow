@@ -18,6 +18,7 @@ from app.routers.customer import (
     customer_home,
     update_customer_profile,
 )
+from app.services.booking_manage_token_service import hash_booking_manage_token
 from app.services.booking_service import get_or_create_customer, serialize_booking
 from app.services.customer_identity_service import (
     link_customer_account,
@@ -61,7 +62,6 @@ def seed_booking(
         customer_id=customer.id,
         customer_user_id=user.id if user else None,
         customer_email=user.email if user else None,
-        public_manage_token=token,
         service_name="Corte",
         duration_minutes=45,
         start_datetime=start,
@@ -70,6 +70,9 @@ def seed_booking(
         preferred_time=start.strftime("%H:%M"),
         status="confirmed",
     )
+    if user is None:
+        booking.public_manage_token_hash = hash_booking_manage_token(token)
+        booking.public_manage_token_expires_at = datetime.now() + timedelta(days=30)
     db.add(booking)
     db.flush()
     return booking

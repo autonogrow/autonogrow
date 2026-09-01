@@ -42,7 +42,7 @@ def complete_booking(page: Page, *, guest: bool, service: str = "Corte E2E") -> 
 
 def test_guest_booking_is_real_optional_auth_and_persists(journey) -> None:
     session = journey()
-    page = session.goto("/autonogrow-landing/?b=salon-e2e")
+    page = session.goto("/autonogrow-landing/?b=salon-e2e&claim=1")
     expect(page.locator("#business-name")).to_have_text("Salón E2E")
     expect(page.get_by_text("Europe/Madrid", exact=False)).to_be_visible()
     result = complete_booking(page, guest=True)
@@ -56,8 +56,34 @@ def test_guest_booking_is_real_optional_auth_and_persists(journey) -> None:
     ).to_be_visible()
     assert result["booking"]["id"] > 0
     assert result["booking_manage_token"]
+    assert result["booking_manage_token_expires_at"]
+    guest_attachments = page.request.get(
+        f"/api/businesses/salon-e2e/bookings/{result['booking']['id']}/attachments",
+        headers={"X-Booking-Token": result["booking_manage_token"]},
+    )
+    assert guest_attachments.status == 200
     response = page.request.get("/api/admin/businesses/salon-e2e/bookings")
     assert response.status == 401
+
+    page.locator("#post-booking-google-button button").evaluate("button => button.click()")
+    expect(page.locator("#post-booking-login-status")).to_contain_text("Cita guardada")
+    home = page.request.get("/api/customer/home")
+    assert home.status == 200
+    assert result["booking"]["id"] in {item["id"] for item in home.json()["bookings"]}
+    assert (
+        page.request.get(
+            f"/api/businesses/salon-e2e/bookings/{result['booking']['id']}/attachments"
+        ).status
+        == 200
+    )
+
+    replay = journey()
+    replay_response = replay.page.request.get(
+        f"/api/businesses/salon-e2e/bookings/{result['booking']['id']}/attachments",
+        headers={"X-Booking-Token": result["booking_manage_token"]},
+    )
+    assert replay_response.status == 404
+    assert replay_response.json()["detail"] == "El enlace ya no es válido."
     assert page.locator("#client-name").count() == 1
 
 
@@ -79,9 +105,7 @@ def test_revocable_session_replay_multi_device_and_relogin(journey) -> None:
     first_page.locator("#customer-google-button button").evaluate("button => button.click()")
     expect(first_page.locator("#customer-app")).to_be_visible()
     copied = next(
-        cookie
-        for cookie in first.context.cookies()
-        if cookie["name"] == "autonogrow_session"
+        cookie for cookie in first.context.cookies() if cookie["name"] == "autonogrow_session"
     )
 
     second = journey()
@@ -99,9 +123,7 @@ def test_revocable_session_replay_multi_device_and_relogin(journey) -> None:
     first_page.locator("#customer-google-button button").evaluate("button => button.click()")
     expect(first_page.locator("#customer-app")).to_be_visible()
     csrf = first_page.request.get("/api/auth/csrf").json()["csrf_token"]
-    revoked = first_page.request.post(
-        "/api/auth/logout-all", headers={"X-CSRF-Token": csrf}
-    )
+    revoked = first_page.request.post("/api/auth/logout-all", headers={"X-CSRF-Token": csrf})
     assert revoked.status == 200
     assert first_page.request.get("/api/auth/me").status == 401
     assert second_page.request.get("/api/auth/me").status == 401

@@ -15,7 +15,7 @@ from app.core.security import (
 from app.models import Booking, MessageOutbox, User
 from app.schemas.booking import BookingRequestCreate
 from app.services.booking_service import (
-    create_booking_request,
+    create_booking_request_with_token,
     reschedule_existing_booking,
     serialize_booking,
 )
@@ -69,20 +69,22 @@ def parse_reschedule_start(payload: BookingRescheduleRequest) -> datetime:
 def create_booking_request_legacy(
     business_slug: str,
     payload: BookingRequestCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
 ):
-    return create_booking_response(db, business_slug, payload, current_user)
+    return create_booking_response(db, business_slug, payload, current_user, request)
 
 
 @router.post("/api/businesses/{business_slug}/bookings", status_code=201)
 def create_booking(
     business_slug: str,
     payload: BookingRequestCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
 ):
-    return create_booking_response(db, business_slug, payload, current_user)
+    return create_booking_response(db, business_slug, payload, current_user, request)
 
 
 def create_booking_response(
@@ -90,14 +92,16 @@ def create_booking_response(
     business_slug: str,
     payload: BookingRequestCreate,
     current_user: User | None,
+    request: Request | None = None,
 ):
     try:
-        booking = create_booking_request(
+        creation = create_booking_request_with_token(
             db,
             business_slug=business_slug,
             payload=payload,
             current_user=current_user,
         )
+        booking = creation.booking
     except ValueError as exc:
         if str(exc) in {
             "no_staff_available_for_service",
@@ -117,11 +121,27 @@ def create_booking_response(
             )
         raise map_booking_error(exc) from exc
 
+    if creation.manage_token:
+        record_audit(
+            db,
+            action="manage_token_created",
+            request=request,
+            actor=current_user,
+            business_id=booking.business_id,
+            resource_type="booking",
+            resource_id=booking.id,
+        )
+
     return {
         "ok": True,
         "message": "Cita creada correctamente",
         "booking": serialize_booking(booking),
-        "booking_manage_token": booking.public_manage_token,
+        "booking_manage_token": creation.manage_token,
+        "booking_manage_token_expires_at": (
+            booking.public_manage_token_expires_at.isoformat()
+            if booking.public_manage_token_expires_at
+            else None
+        ),
         "linked_to_account": bool(current_user and current_user.is_active),
     }
 

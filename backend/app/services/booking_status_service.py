@@ -12,6 +12,10 @@ from app.services.availability_service import (
     get_operational_business_now,
 )
 from app.services.booking_attribution_service import sync_attributed_booking_status
+from app.services.booking_manage_token_service import (
+    TERMINAL_BOOKING_STATUSES,
+    revoke_booking_manage_token,
+)
 from app.services.booking_service import (
     begin_serialized_booking_write,
     lock_business_schedule,
@@ -68,9 +72,7 @@ def effective_booking_end(booking: Booking) -> datetime | None:
 def is_booking_request_expired(booking: Booking, *, now: datetime) -> bool:
     ends_at = effective_booking_end(booking)
     return bool(
-        booking.status in {"requested", "pending"}
-        and ends_at is not None
-        and ends_at < now
+        booking.status in {"requested", "pending"} and ends_at is not None and ends_at < now
     )
 
 
@@ -177,6 +179,9 @@ def transition_booking_status(
                 raise BookingStatusTransitionError("booking_request_expired")
 
         booking.status = target_status
+        token_revoked = target_status in TERMINAL_BOOKING_STATUSES and revoke_booking_manage_token(
+            booking, now=operational_now
+        )
         review_request = None
         outbox_message = None
         if target_status == "confirmed":
@@ -184,9 +189,7 @@ def transition_booking_status(
                 db, business=business, booking=booking
             )
         elif target_status == "rejected":
-            outbox_message = create_booking_rejected_message(
-                db, business=business, booking=booking
-            )
+            outbox_message = create_booking_rejected_message(db, business=business, booking=booking)
         elif target_status == "completed":
             snapshot_booking_follow_up(booking, booking.service)
             sync_attributed_booking_status(db, booking=booking)
@@ -208,6 +211,19 @@ def transition_booking_status(
             growth_engine.resolve_for_rebooking(booking)
         else:
             growth_engine.evaluate_business(business.id)
+
+        if token_revoked:
+            record_audit(
+                db,
+                action="manage_token_revoked",
+                request=request,
+                actor=actor,
+                business_id=business.id,
+                resource_type="booking",
+                resource_id=booking.id,
+                metadata={"reason": f"booking_{target_status}"},
+                commit=False,
+            )
 
         record_audit(
             db,

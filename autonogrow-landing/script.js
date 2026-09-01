@@ -1323,7 +1323,10 @@ async function uploadBookingPhotos(bookingId, bookingManageToken, files) {
     }, "booking");
     const count = (result.attachments || []).length;
     return count ? `${count} ${count === 1 ? "imagen adjunta" : "imágenes adjuntas"}.` : "No se adjuntaron imágenes.";
-  } catch (_) {
+  } catch (error) {
+    if ([401, 403, 404].includes(error.status)) {
+      return "El enlace ya no es válido. Inicia sesión para acceder a la reserva si ya la vinculaste a tu cuenta.";
+    }
     return "La solicitud se registró, pero no se pudieron adjuntar las imágenes.";
   }
 }
@@ -1361,7 +1364,9 @@ async function claimPendingBooking() {
     bookingState.manageToken = "";
     if (status) status.textContent = "Cita guardada. La encontrarás en tu espacio.";
   } catch (error) {
-    if (status) status.textContent = error.message;
+    if (status) status.textContent = [403, 404].includes(error.status)
+      ? "El enlace ya no es válido. Accede a Mis citas si la reserva ya está vinculada a tu cuenta."
+      : error.message;
   }
 }
 
