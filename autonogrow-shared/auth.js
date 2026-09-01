@@ -18,7 +18,7 @@
 
   async function secureRequestOptions(options = {}, path = "") {
     const secured = { ...options, credentials: "include" };
-    if (isMutable(secured) && path !== "/api/auth/google") {
+    if (isMutable(secured) && !["/api/auth/google", "/api/auth/logout"].includes(path)) {
       const headers = new Headers(secured.headers || {});
       const token = await getCsrfToken();
       if (token) headers.set("X-CSRF-Token", token);
@@ -34,6 +34,10 @@
     let body = {};
     try { body = text ? JSON.parse(text) : {}; } catch { body = { detail: text }; }
     if (!response.ok) {
+      if (response.status === 401) {
+        csrfToken = undefined;
+        window.dispatchEvent(new CustomEvent("autonogrow:auth-invalidated"));
+      }
       const error = new Error(body.detail || `Error ${response.status}`);
       error.status = response.status;
       error.body = body;
@@ -70,6 +74,7 @@
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ credential }),
             });
+            csrfToken = undefined;
             await onAuthenticated(result.user);
           } catch (error) {
             console.error("Google login failed", { status: error.status || 0 });
@@ -87,8 +92,19 @@
   }
 
   async function logout() {
-    await request("/api/auth/logout", { method: "POST" });
+    try { await request("/api/auth/logout", { method: "POST" }); }
+    catch (_) { /* Local cleanup must remain available for an invalid server session. */ }
+    finally {
+      csrfToken = undefined;
+      window.dispatchEvent(new CustomEvent("autonogrow:auth-invalidated"));
+    }
+  }
+
+  async function logoutAll() {
+    const result = await request("/api/auth/logout-all", { method: "POST" });
     csrfToken = undefined;
+    window.dispatchEvent(new CustomEvent("autonogrow:auth-invalidated"));
+    return result;
   }
 
   async function showEnvironmentMarker() {
@@ -102,6 +118,6 @@
     document.body.appendChild(marker);
   }
 
-  window.AutonoGrowAuth = { API_BASE_URL, request, getMe, getCsrfToken, secureRequestOptions, renderGoogleButton, logout, showEnvironmentMarker };
+  window.AutonoGrowAuth = { API_BASE_URL, request, getMe, getCsrfToken, secureRequestOptions, renderGoogleButton, logout, logoutAll, showEnvironmentMarker };
   showEnvironmentMarker().catch(() => {});
 })();

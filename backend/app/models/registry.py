@@ -10,6 +10,7 @@ from importlib import import_module
 
 MODEL_MODULES = (
     "app.models.audit_log",
+    "app.models.auth_session",
     "app.models.automation_credit",
     "app.models.availability",
     "app.models.booking",

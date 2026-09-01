@@ -37,6 +37,9 @@ class User(Base):
     business_memberships = relationship(
         "BusinessUser", back_populates="user", cascade="all, delete-orphan"
     )
+    auth_sessions = relationship(
+        "AuthSession", back_populates="user", cascade="all, delete-orphan"
+    )
     bookings = relationship("Booking", back_populates="customer_user")
     customer_links = relationship(
         "CustomerAccountLink", back_populates="user", cascade="all, delete-orphan"

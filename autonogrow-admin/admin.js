@@ -8390,6 +8390,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function showAdminLogin(message = "Inicia sesión con la cuenta asignada al negocio.", denied = false) {
   stopAdminPolling();
+  adminAuthUser = null;
+  currentBusiness = null;
+  lastBusinessOperationalStatus = null;
+  businessCapabilities = {
+    essential: { available: false }, growth: { available: false }, social: { available: false }
+  };
   document.getElementById("admin-app").hidden = true;
   document.getElementById("admin-auth-gate").hidden = false;
   document.getElementById("admin-auth-message").textContent = message;

@@ -14,11 +14,37 @@ from app.core.security import (
     create_session_token,
     get_current_user,
     has_owner_access,
+    read_session_token,
+    require_owner,
     sync_effective_owner_access,
 )
 from app.models import BusinessUser, User
+from app.services.auth_session_service import (
+    create_auth_session,
+    delete_expired_auth_sessions,
+    revoke_all_user_sessions,
+    revoke_auth_session,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _clear_auth_cookies(response: Response) -> None:
+    settings = get_settings()
+    response.delete_cookie(
+        SESSION_COOKIE,
+        path="/",
+        secure=settings.cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    response.delete_cookie(
+        CSRF_COOKIE,
+        path="/",
+        secure=settings.cookie_secure,
+        httponly=False,
+        samesite="lax",
+    )
 
 
 class GoogleLoginRequest(BaseModel):
@@ -118,18 +144,10 @@ def google_login(
     user.email_verified = True
     user.is_owner = has_owner_access(user)
     user.last_login_at = datetime.utcnow()
-    db.commit()
-    db.refresh(user)
-
-    response.set_cookie(
-        key=SESSION_COOKIE,
-        value=create_session_token(user.id),
-        max_age=SESSION_MAX_AGE,
-        httponly=True,
-        secure=settings.cookie_secure,
-        samesite="lax",
-        path="/",
-    )
+    db.flush()
+    delete_expired_auth_sessions(db, user_id=user.id)
+    auth_session, raw_session_token = create_auth_session(db, user_id=user.id)
+    signed_session_token = create_session_token(raw_session_token)
     record_audit(
         db,
         action="login_success",
@@ -137,6 +155,28 @@ def google_login(
         actor=user,
         resource_type="user",
         resource_id=user.id,
+        commit=False,
+    )
+    record_audit(
+        db,
+        action="session_created",
+        request=request,
+        actor=user,
+        resource_type="auth_session",
+        resource_id=auth_session.id,
+        commit=False,
+    )
+    db.commit()
+    db.refresh(user)
+
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=signed_session_token,
+        max_age=SESSION_MAX_AGE,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        path="/",
     )
     return {"ok": True, "user": serialize_user(db, user)}
 
@@ -169,25 +209,73 @@ def csrf_token(response: Response):
 def logout(
     response: Response,
     request: Request,
+    db: Session = Depends(get_db),
+):
+    cookie = request.cookies.get(SESSION_COOKIE, "")
+    session_token = read_session_token(cookie) if cookie else None
+    if session_token:
+        auth_session, revoked = revoke_auth_session(db, session_token)
+        if revoked and auth_session is not None:
+            record_audit(
+                db,
+                action="session_revoked",
+                request=request,
+                actor=auth_session.user,
+                resource_type="auth_session",
+                resource_id=auth_session.id,
+                commit=False,
+            )
+            db.commit()
+    _clear_auth_cookies(response)
+    return {"ok": True}
+
+
+@router.post("/logout-all")
+def logout_all(
+    response: Response,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    settings = get_settings()
+    revoked = revoke_all_user_sessions(db, user_id=user.id)
     record_audit(
-        db, action="logout", request=request, actor=user, resource_type="user", resource_id=user.id
+        db,
+        action="all_sessions_revoked",
+        request=request,
+        actor=user,
+        resource_type="user",
+        resource_id=user.id,
+        metadata={"revoked_count": revoked},
+        commit=False,
     )
-    response.delete_cookie(
-        SESSION_COOKIE,
-        path="/",
-        secure=settings.cookie_secure,
-        httponly=True,
-        samesite="lax",
+    db.commit()
+    _clear_auth_cookies(response)
+    return {"ok": True, "revoked_sessions": revoked}
+
+
+@router.post("/users/{user_id}/sessions/revoke-all")
+def owner_revoke_all_user_sessions(
+    user_id: int,
+    response: Response,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    revoked = revoke_all_user_sessions(db, user_id=target.id)
+    record_audit(
+        db,
+        action="all_sessions_revoked",
+        request=request,
+        actor=actor,
+        resource_type="user",
+        resource_id=target.id,
+        metadata={"revoked_count": revoked, "revoked_by_owner": True},
+        commit=False,
     )
-    response.delete_cookie(
-        CSRF_COOKIE,
-        path="/",
-        secure=settings.cookie_secure,
-        httponly=False,
-        samesite="lax",
-    )
-    return {"ok": True}
+    db.commit()
+    if actor.id == target.id:
+        _clear_auth_cookies(response)
+    return {"ok": True, "user_id": target.id, "revoked_sessions": revoked}

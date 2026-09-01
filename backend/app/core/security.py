@@ -5,10 +5,10 @@ from sqlalchemy.orm import Session
 from app.core.config import get_owner_allowed_emails, get_settings
 from app.core.database import get_db
 from app.models import Booking, Business, BusinessUser, User
+from app.services.auth_session_service import SESSION_MAX_AGE, resolve_auth_session
 from app.services.business_status_service import ensure_business_operational
 
 SESSION_COOKIE = "autonogrow_session"
-SESSION_MAX_AGE = 7 * 24 * 60 * 60
 SAFE_BUSINESS_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
@@ -42,15 +42,17 @@ def _serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(secret, salt="autonogrow-session-v1")
 
 
-def create_session_token(user_id: int) -> str:
-    return _serializer().dumps({"user_id": user_id})
+def create_session_token(session_token: str) -> str:
+    """Sign an opaque per-device token; identity remains server-side only."""
+    return _serializer().dumps({"session_token": session_token})
 
 
-def read_session_user_id(token: str) -> int | None:
+def read_session_token(token: str) -> str | None:
     try:
         payload = _serializer().loads(token, max_age=SESSION_MAX_AGE)
-        return int(payload["user_id"])
-    except (BadSignature, SignatureExpired, KeyError, TypeError, ValueError, RuntimeError):
+        session_token = payload["session_token"]
+        return session_token if isinstance(session_token, str) and session_token else None
+    except (BadSignature, SignatureExpired, KeyError, TypeError, RuntimeError):
         return None
 
 
@@ -58,12 +60,16 @@ def get_optional_current_user(request: Request, db: Session = Depends(get_db)) -
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         return None
-    user_id = read_session_user_id(token)
-    if user_id is None:
+    session_token = read_session_token(token)
+    if session_token is None:
         return None
-    user = db.query(User).filter(User.id == user_id).first()
+    auth_session = resolve_auth_session(db, session_token)
+    if auth_session is None:
+        return None
+    user = db.get(User, auth_session.user_id)
     if user is not None:
         sync_effective_owner_access(user)
+    request.state.current_auth_session = auth_session
     request.state.current_user = user
     return user
 

@@ -28,6 +28,7 @@ from app.models.registry import register_models  # noqa: E402
 
 COPY_ORDER = (
     "users",
+    "auth_sessions",
     "operational_states",
     "businesses",
     "business_module_access",
@@ -104,6 +105,7 @@ COPY_ORDER = (
 # Tables introduced after the 20260730_01 staging baseline. If present they are
 # copied normally; older sources may omit them without synthesizing rows.
 OPTIONAL_SOURCE_TABLES = (
+    "auth_sessions",
     "webhook_inbox_events",
     "channel_outbox_messages",
     "worker_heartbeats",

@@ -4224,6 +4224,7 @@ byId("business-form").elements.name.addEventListener("input", (event) => {
 byId("business-form").elements.slug.addEventListener("input", (event) => { event.target.dataset.manuallyEdited = event.target.value ? "true" : ""; });
 
 async function showOwnerLogin(message = "Inicia sesión con una cuenta autorizada.", denied = false) {
+  ownerAuthUser = null;
   byId("owner-app").hidden = true;
   byId("owner-auth-gate").hidden = false;
   byId("owner-auth-message").textContent = message;

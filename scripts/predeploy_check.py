@@ -464,8 +464,8 @@ def check_alembic(reporter: Reporter) -> None:
         return
     if len(heads) == 1:
         reporter.passed(f"Alembic tiene una única head: {heads[0]}")
-        if heads[0] != "20260830_28":
-            reporter.fail("La head operativa esperada es 20260830_28")
+        if heads[0] != "20260901_30":
+            reporter.fail("La head operativa esperada es 20260901_30")
     else:
         reporter.fail("Alembic debe tener exactamente una head")
 

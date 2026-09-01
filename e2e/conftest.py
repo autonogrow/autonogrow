@@ -47,8 +47,7 @@ os.environ.update(
     }
 )
 
-from app.core.security import create_session_token  # noqa: E402
-from e2e.seed import reset_database, user_id  # noqa: E402
+from e2e.seed import reset_database, session_cookie_for  # noqa: E402
 
 GOOGLE_MOCK_SCRIPT = """
 (() => {
@@ -168,7 +167,7 @@ class Journey:
                 [
                     {
                         "name": "autonogrow_session",
-                        "value": create_session_token(user_id(email)),
+                        "value": session_cookie_for(email),
                         "url": BASE_URL,
                         "httpOnly": True,
                         "sameSite": "Lax",

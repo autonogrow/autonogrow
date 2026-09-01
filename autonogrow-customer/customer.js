@@ -237,6 +237,7 @@ function showPageError(message) {
 function hidePageError() { byId("customer-page-status").hidden = true; byId("customer-page-status").replaceChildren(); }
 
 async function showCustomerLogin(expired = false) {
+  customerState.profile = null; customerState.nextBooking = null; customerState.recentServices = []; customerState.bookings = []; customerState.selectedBooking = null;
   closeBookingDetail(); byId("customer-loading").hidden = true; byId("customer-app").hidden = true; byId("customer-auth-gate").hidden = false;
   byId("customer-login-copy").textContent = expired ? "Tu sesión ha caducado. Entra de nuevo para recuperar tus citas." : "Guarda tus citas, repite servicios y reserva más rápido la próxima vez.";
   byId("customer-login-status").textContent = "";

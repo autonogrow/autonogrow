@@ -73,6 +73,45 @@ def test_controlled_google_login_uses_real_auth_endpoint(journey) -> None:
     assert any(cookie["name"] == "autonogrow_session" for cookie in session.context.cookies())
 
 
+def test_revocable_session_replay_multi_device_and_relogin(journey) -> None:
+    first = journey()
+    first_page = first.goto("/autonogrow-customer/")
+    first_page.locator("#customer-google-button button").evaluate("button => button.click()")
+    expect(first_page.locator("#customer-app")).to_be_visible()
+    copied = next(
+        cookie
+        for cookie in first.context.cookies()
+        if cookie["name"] == "autonogrow_session"
+    )
+
+    second = journey()
+    second_page = second.goto("/autonogrow-customer/")
+    second_page.locator("#customer-google-button button").evaluate("button => button.click()")
+    expect(second_page.locator("#customer-app")).to_be_visible()
+
+    first_page.locator("#customer-logout").click()
+    expect(first_page.locator("#customer-auth-gate")).to_be_visible()
+    first.context.add_cookies([copied])
+    assert first_page.request.get("/api/auth/me").status == 401
+    assert second_page.request.get("/api/auth/me").status == 200
+
+    first_page.reload(wait_until="domcontentloaded")
+    first_page.locator("#customer-google-button button").evaluate("button => button.click()")
+    expect(first_page.locator("#customer-app")).to_be_visible()
+    csrf = first_page.request.get("/api/auth/csrf").json()["csrf_token"]
+    revoked = first_page.request.post(
+        "/api/auth/logout-all", headers={"X-CSRF-Token": csrf}
+    )
+    assert revoked.status == 200
+    assert first_page.request.get("/api/auth/me").status == 401
+    assert second_page.request.get("/api/auth/me").status == 401
+
+    second_page.reload(wait_until="domcontentloaded")
+    second_page.locator("#customer-google-button button").evaluate("button => button.click()")
+    expect(second_page.locator("#customer-app")).to_be_visible()
+    assert second_page.request.get("/api/auth/me").status == 200
+
+
 def test_authenticated_home_links_equivalent_phone_and_cross_business_data(journey) -> None:
     session = journey(email="customer@e2e.test")
     page = session.goto("/autonogrow-customer/")

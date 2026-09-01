@@ -17,6 +17,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from app.core.database import Base, create_database_engine  # noqa: E402
+from app.core.security import create_session_token  # noqa: E402
 from app.models import (  # noqa: E402
     AvailabilitySettings,
     Booking,
@@ -38,6 +39,7 @@ from app.models import (  # noqa: E402
     User,
 )
 from app.models.registry import register_models  # noqa: E402
+from app.services.auth_session_service import create_auth_session  # noqa: E402
 
 ALL_DAY_SCHEDULE = {str(day): [{"start": "09:00", "end": "18:00"}] for day in range(7)}
 JPEG_BYTES = base64.b64decode(
@@ -479,13 +481,15 @@ def reset_database() -> None:
         engine.dispose()
 
 
-def user_id(email: str) -> int:
+def session_cookie_for(email: str) -> str:
     engine = create_database_engine(database_url())
     factory = sessionmaker(bind=engine)
     db = factory()
     try:
         user = db.query(User).filter(User.email == email).one()
-        return user.id
+        _session, raw_token = create_auth_session(db, user_id=user.id)
+        db.commit()
+        return create_session_token(raw_token)
     finally:
         db.close()
         engine.dispose()

@@ -260,6 +260,7 @@ def test_allowed_missing_column_is_excluded_symmetrically(tmp_path: Path) -> Non
 
 def test_source_table_classifications_are_explicit_and_complete() -> None:
     assert OPTIONAL_SOURCE_TABLES == (
+        "auth_sessions",
         "webhook_inbox_events",
         "channel_outbox_messages",
         "worker_heartbeats",
@@ -547,4 +548,4 @@ def test_partial_destination_schema_is_rejected(tmp_path: Path) -> None:
 
 
 def test_alembic_has_expected_single_head() -> None:
-    assert head_revisions() == ("20260901_29",)
+    assert head_revisions() == ("20260901_30",)

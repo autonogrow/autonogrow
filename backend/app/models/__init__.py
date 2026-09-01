@@ -1,4 +1,5 @@
 from app.models.audit_log import AuditLog
+from app.models.auth_session import AuthSession
 from app.models.automation_credit import AutomationCreditTransaction
 from app.models.availability import (
     AvailabilityException,
@@ -136,6 +137,7 @@ __all__ = [
     "ChannelOutboxMessage",
     "WorkerHeartbeat",
     "AuditLog",
+    "AuthSession",
     "AutomationCreditTransaction",
     "BusinessChannelIntegration",
     "BusinessChannelControl",
