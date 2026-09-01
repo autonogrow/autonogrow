@@ -19,6 +19,7 @@ from app.models import (
     Business,
     BusinessChannelControl,
     BusinessChannelIntegration,
+    BusinessModuleAccess,
     InstagramContent,
     InstagramContentEditorialReview,
     InstagramContentPublicationHold,
@@ -29,6 +30,7 @@ from app.models import (
     SocialPromotionRevision,
     User,
 )
+from app.services.capability_service import module_is_available
 from app.services.instagram_asset_url_service import resolve_private_asset_path
 from app.services.instagram_image_validation import (
     validate_instagram_caption,
@@ -227,6 +229,13 @@ def publication_preflight(  # noqa: C901
             False,
             "publish_business_not_operational",
             "Publication is disabled while the business is not active",
+            None,
+        )
+    if not module_is_available(db, content.business_id, "social"):
+        return InstagramPublicationPreflight(
+            False,
+            "publish_module_not_available",
+            "Social is not available for this business",
             None,
         )
     current = version or _current_version(db, content)
@@ -1022,6 +1031,13 @@ def build_publish_claim_statement(
             eligible,
             InstagramPublishJob.business_id.in_(
                 select(Business.id).where(Business.status == "active")
+            ),
+            InstagramPublishJob.business_id.in_(
+                select(BusinessModuleAccess.business_id).where(
+                    BusinessModuleAccess.module_key == "social",
+                    BusinessModuleAccess.entitled.is_(True),
+                    BusinessModuleAccess.active.is_(True),
+                )
             ),
         )
         .order_by(InstagramPublishJob.scheduled_for, InstagramPublishJob.id)

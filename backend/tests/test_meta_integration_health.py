@@ -19,6 +19,7 @@ from app.models import (
     MetaIntegrationJob,
     User,
 )
+from app.services.capability_service import configure_business_modules
 from app.services.instagram_login_provider import InstagramLoginProviderError
 from app.services.integration_crypto_service import encrypt_secret
 from app.services.meta_integration_health_checkers import (
@@ -75,6 +76,12 @@ def integration_context(db, settings, *, channel="instagram", slug="health-busin
     owner = User(email=f"owner-{slug}@example.com", name="Owner", is_owner=True)
     db.add_all([business, owner])
     db.flush()
+    configure_business_modules(
+        db,
+        business_id=business.id,
+        enabled_modules=("essential", "growth", "social"),
+        actor_user_id=owner.id,
+    )
     ciphertext, version = encrypt_secret("safe-test-token", settings=settings)
     integration = BusinessChannelIntegration(
         business_id=business.id,

@@ -237,7 +237,14 @@ function renderOwnerModules(businessId) {
   const entry = ownerBusinessHubState.modules.get(String(businessId));
   if (!panel || !entry) return;
   const labels = { essential: "Essential", growth: "Growth", social: "Social" };
-  panel.querySelector("[data-owner-modules-content]").innerHTML = Object.entries(entry.modules).map(([key, module]) => `<form class="owner-brand-editor" data-owner-module-form="${escapeHtml(key)}" data-owner-module-business="${escapeHtml(businessId)}"><h4>${labels[key]}</h4><label><input type="checkbox" data-owner-module-entitled ${module.entitled ? "checked" : ""} ${key === "essential" ? "disabled" : ""}> Incluido para el negocio</label><label><input type="checkbox" data-owner-module-active ${module.active ? "checked" : ""} ${key === "essential" ? "disabled" : ""}> Activo</label><div class="owner-brand-grid"><label>Coste mensual opcional<input data-owner-module-cost type="number" min="0" step="0.01" value="${escapeHtml(module.module_cost?.amount || "")}" placeholder="Sin coste configurado"></label><label>Moneda<select data-owner-module-currency><option value="EUR" ${module.module_cost?.currency === "EUR" || !module.module_cost ? "selected" : ""}>EUR</option></select></label></div><label>Motivo del cambio<input data-owner-module-reason minlength="3" maxlength="500" placeholder="Decisión del piloto" required></label><button class="button button-primary button-small" type="submit">Guardar módulo</button><small>${module.available ? "Disponible en el producto" : "No activo; los datos existentes se conservan"}</small></form>`).join("");
+  panel.querySelector("[data-owner-modules-content]").innerHTML = Object.entries(entry.modules).map(([key, module]) => {
+    const state = module.available
+      ? "Disponible en el producto"
+      : !module.entitled
+        ? "Este módulo no está incluido; los datos existentes se conservan"
+        : "Este módulo está incluido, pero todavía no está activo";
+    return `<form class="owner-brand-editor" data-owner-module-form="${escapeHtml(key)}" data-owner-module-business="${escapeHtml(businessId)}"><h4>${labels[key]}</h4><label><input type="checkbox" data-owner-module-entitled ${module.entitled ? "checked" : ""} ${key === "essential" ? "disabled" : ""}> Incluido para el negocio</label><label><input type="checkbox" data-owner-module-active ${module.active ? "checked" : ""} ${key === "essential" ? "disabled" : ""}> Activo</label><div class="owner-brand-grid"><label>Coste mensual opcional<input data-owner-module-cost type="number" min="0" step="0.01" value="${escapeHtml(module.module_cost?.amount || "")}" placeholder="Sin coste configurado"></label><label>Moneda<select data-owner-module-currency><option value="EUR" ${module.module_cost?.currency === "EUR" || !module.module_cost ? "selected" : ""}>EUR</option></select></label></div><label>Motivo del cambio<input data-owner-module-reason minlength="3" maxlength="500" placeholder="Decisión del piloto" required></label><button class="button button-primary button-small" type="submit">Guardar módulo</button><small>${state}</small></form>`;
+  }).join("");
 }
 
 async function loadOwnerModules(businessId) {

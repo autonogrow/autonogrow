@@ -23,6 +23,7 @@ from app.models import (
     MetaIntegrationJob,
     User,
 )
+from app.services.capability_service import configure_business_modules
 from app.services.instagram_media_sync_service import enqueue_instagram_media_sync
 from app.services.instagram_meta_client import (
     InstagramMetaClient,
@@ -307,6 +308,12 @@ def sync_context(tmp_path):
         owner = User(email="sync-owner@example.test", is_owner=True)
         db.add_all([business, owner])
         db.flush()
+        configure_business_modules(
+            db,
+            business_id=business.id,
+            enabled_modules=("essential", "growth", "social"),
+            actor_user_id=owner.id,
+        )
         ciphertext, version = encrypt_secret("test-token", settings=settings)
         integration = BusinessChannelIntegration(
             business_id=business.id,

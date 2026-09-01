@@ -38,6 +38,7 @@ from app.schemas.owner import (
     InstagramIntegrationDisconnectRequest,
     InstagramIntegrationReconnectRequest,
 )
+from app.services.capability_service import configure_business_modules
 from app.services.conversation_automation_service import (
     ensure_automation_configuration,
     process_inbound_automation,
@@ -215,6 +216,13 @@ class InstagramMultiBusinessIntegrationTest(unittest.TestCase):
             ]
         )
         self.db.flush()
+        for configured_business in (self.business_a, self.business_b):
+            configure_business_modules(
+                self.db,
+                business_id=configured_business.id,
+                enabled_modules=("essential", "growth", "social"),
+                actor_user_id=self.owner.id,
+            )
         self.db.add_all(
             [
                 BusinessUser(

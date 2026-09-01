@@ -15,20 +15,27 @@ combinarse de forma independiente. Cada registro separa:
 - integración: conexión y `health_status` permanecen en `business_channel_integrations`;
 - worker/provider: permanecen en configuración y unidades systemd existentes.
 
-`available = entitled AND active`. Un módulo activo sin entitlement es inválido. Desactivar no
-borra oportunidades, atribuciones, propuestas, publicaciones, jobs ni assets. La reactivación
-recupera acceso a esos datos. La migración `20260822_23` crea los tres registros activos para cada
-negocio previo; el onboarding materializa la selección Owner para negocios nuevos. El fallback de
-compatibilidad ante filas ausentes solo protege fixtures `create_all` y bases locales anteriores a
-la migración; `scripts/check_pilot_configuration.py --json` detecta ese estado en un entorno real.
+`available = entitled AND active`. Un módulo activo sin entitlement no concede acceso. Una fila
+ausente equivale a `entitled=false`, `active=false` y `available=false`: nunca se infiere producto
+contratado por ausencia de datos. Desactivar no borra oportunidades, atribuciones, propuestas,
+publicaciones ni assets; inmoviliza el trabajo recuperable ya encolado y una reactivación no lo
+reanuda automáticamente.
+
+La migración `20260822_23` creó los tres registros activos para cada negocio que existía entonces.
+La migración `20260901_29` completa configuraciones posteriores: un negocio con cero filas conserva
+explícitamente los tres accesos que le daba el antiguo fallback; los huecos de una configuración
+parcial se materializan deshabilitados, como ya se comportaban. Onboarding, altas legacy y seed
+materializan siempre las tres filas. `scripts/check_pilot_configuration.py --json` detecta cualquier
+ausencia o incoherencia restante sin modificar datos.
 
 ## Enforcement y superficie
 
-Los routers Growth y Social usan dependencies de capability además de rol y acceso al business.
-Instagram content/OAuth verifica Social. Un rechazo devuelve 403 con `code=module_not_available`
-sin filtrar datos. Los evaluadores business-scoped de oportunidades, señales y propuestas retornan
-sin generar trabajo cuando el módulo está apagado. El publisher y los workers globales no se
-habilitan ni se reconfiguran aquí.
+Los routers Growth y Social usan dependencies de capability además de rol, acceso al business y su
+estado operativo. Instagram content/OAuth y las mutaciones Instagram/Meta verifican Social; las
+lecturas históricas y diagnósticas siguen separadas. Un rechazo devuelve 403 con
+`code=module_not_available` sin filtrar datos. Los evaluadores business-scoped retornan sin generar
+trabajo cuando el módulo está apagado. Publisher, retry, envíos y workers vuelven a comprobar la
+capability inmediatamente antes de reclamar o producir un efecto externo, cubriendo downgrades.
 
 Business Admin obtiene `/capabilities`, oculta Growth/Social no disponibles y no llama a sus APIs.
 Reviews sigue accesible como función Essential cuando Growth está apagado. Owner consulta y cambia

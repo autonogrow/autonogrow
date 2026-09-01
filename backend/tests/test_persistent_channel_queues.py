@@ -32,6 +32,7 @@ from app.models import (
 from app.routers.instagram_webhook import receive_instagram_webhook
 from app.routers.owner import cancel_outbox_job, get_queue_status, retry_outbox_job
 from app.schemas.owner import QueueJobActionRequest
+from app.services.capability_service import configure_business_modules
 from app.services.channel_provider_contracts import UnsupportedChannelProvider
 from app.services.channel_provider_service import (
     INBOX_PROCESSORS,
@@ -132,6 +133,12 @@ def add_channel_context(
     business = Business(slug=slug, name=slug, status="active")
     db.add(business)
     db.flush()
+    configure_business_modules(
+        db,
+        business_id=business.id,
+        enabled_modules=("essential", "growth", "social"),
+        actor_user_id=None,
+    )
     encrypted, version = encrypt_secret(token, settings=active_settings)
     integration = BusinessChannelIntegration(
         business_id=business.id,

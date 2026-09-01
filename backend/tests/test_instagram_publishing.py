@@ -22,6 +22,7 @@ from app.models import (
     Business,
     BusinessChannelControl,
     BusinessChannelIntegration,
+    BusinessModuleAccess,
     InstagramContent,
     InstagramContentPublicationHold,
     InstagramContentSettings,
@@ -32,6 +33,7 @@ from app.models import (
     InstagramPublishJob,
     User,
 )
+from app.services.capability_service import configure_business_modules, update_business_module
 from app.services.instagram_calendar_service import attention_details, latest_publish_job
 from app.services.instagram_publish_service import (
     build_publish_claim_statement,
@@ -70,6 +72,18 @@ def publishing_context():
     owner = User(email="publisher-owner@example.test", is_owner=True)
     db.add_all([business, other, owner])
     db.flush()
+    configure_business_modules(
+        db,
+        business_id=business.id,
+        enabled_modules=("essential", "growth", "social"),
+        actor_user_id=owner.id,
+    )
+    configure_business_modules(
+        db,
+        business_id=other.id,
+        enabled_modules=("essential", "growth", "social"),
+        actor_user_id=owner.id,
+    )
     db.add(InstagramContentSettings(business_id=business.id, enabled=True))
     db.add(
         BusinessChannelControl(
@@ -337,6 +351,60 @@ def test_claim_is_single_and_expired_claim_is_recovered(publishing_context):
     assert (
         ctx["db"].query(AuditLog).filter_by(action="publish_expired_claim_recovered").count() == 1
     )
+
+
+def test_missing_social_row_is_not_claimed_and_downgrade_never_revives_job(
+    publishing_context,
+):
+    ctx = publishing_context
+    job = queue_now(ctx)
+    social = (
+        ctx["db"]
+        .query(BusinessModuleAccess)
+        .filter_by(business_id=ctx["business"].id, module_key="social")
+        .one()
+    )
+    ctx["db"].delete(social)
+    ctx["db"].commit()
+    assert claim_publish_jobs(
+        ctx["db"], worker_id="missing-social", limit=1, claim_ttl_seconds=30
+    ) == []
+
+    configure_business_modules(
+        ctx["db"],
+        business_id=ctx["business"].id,
+        enabled_modules=("essential", "growth", "social"),
+        actor_user_id=ctx["owner"].id,
+    )
+    ctx["db"].commit()
+    update_business_module(
+        ctx["db"],
+        business_id=ctx["business"].id,
+        module_key="social",
+        entitled=False,
+        active=False,
+        module_cost_amount=None,
+        module_cost_currency=None,
+        actor_user_id=ctx["owner"].id,
+    )
+    ctx["db"].commit()
+    ctx["db"].refresh(job)
+    assert job.status == "action_required"
+    assert job.provider_error_code == "module_not_available"
+    update_business_module(
+        ctx["db"],
+        business_id=ctx["business"].id,
+        module_key="social",
+        entitled=True,
+        active=True,
+        module_cost_amount=None,
+        module_cost_currency=None,
+        actor_user_id=ctx["owner"].id,
+    )
+    ctx["db"].commit()
+    assert claim_publish_jobs(
+        ctx["db"], worker_id="reenabled-social", limit=1, claim_ttl_seconds=30
+    ) == []
 
 
 @pytest.mark.parametrize(

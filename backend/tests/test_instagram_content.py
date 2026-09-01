@@ -37,6 +37,7 @@ from app.models import (
     User,
 )
 from app.routers.instagram_content import admin_router, owner_router
+from app.services.capability_service import configure_business_modules
 from app.services.instagram_calendar_service import (
     CalendarContext,
     calendar_datetime,
@@ -68,6 +69,13 @@ def editorial_context(tmp_path, monkeypatch):
     customer = User(email="customer@editorial.test")
     db.add_all([business, other_business, owner, admin, staff, other_admin, customer])
     db.flush()
+    for configured_business in (business, other_business):
+        configure_business_modules(
+            db,
+            business_id=configured_business.id,
+            enabled_modules=("essential", "growth", "social"),
+            actor_user_id=owner.id,
+        )
     db.add_all(
         [
             BusinessUser(

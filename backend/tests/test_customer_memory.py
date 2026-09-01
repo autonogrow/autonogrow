@@ -40,6 +40,7 @@ from app.schemas.customer_memory import (
     CustomerMemoryReplacement,
     CustomerMemoryUpdate,
 )
+from app.services.capability_service import configure_business_modules
 from app.services.customer_memory_service import (
     CustomerMemoryService,
     validate_memory_content,
@@ -87,6 +88,13 @@ def records(db: Session) -> dict:
         )
     )
     db.flush()
+    for configured_business in (business_a, business_b):
+        configure_business_modules(
+            db,
+            business_id=configured_business.id,
+            enabled_modules=("essential", "growth", "social"),
+            actor_user_id=owner.id,
+        )
     db.add_all(
         (
             BusinessUser(

@@ -22,6 +22,7 @@ from app.schemas.channel_onboarding import (
     ChannelDecisionRequest,
     SimulatedConnectionRequest,
 )
+from app.services.capability_service import require_module_available
 from app.services.channel_control_service import (
     approve_channel_connection,
     configure_channel_capabilities,
@@ -85,6 +86,11 @@ def _control_or_404(
     if control is None:
         raise HTTPException(status_code=404, detail="Channel access has not been granted")
     return control
+
+
+def _require_channel_module(db: Session, *, business_id: int, channel: str) -> None:
+    if validate_controlled_channel(channel) == "instagram":
+        require_module_available(db, business_id, "social")
 
 
 def _audit(
@@ -202,6 +208,7 @@ def request_business_channel_connection(
     business = _business_by_slug(db, business_slug)
     role = _admin_role(db, business=business, actor=actor)
     normalized = validate_controlled_channel(channel)
+    _require_channel_module(db, business_id=business.id, channel=normalized)
     control = _control_or_404(db, business_id=business.id, channel=normalized)
     changed = request_simulated_connection(db, control=control, actor=actor, actor_role=role)
     if changed:
@@ -264,6 +271,7 @@ def grant_owner_channel_access(
 ):
     require_owner(actor)
     _business_by_id(db, business_id)
+    _require_channel_module(db, business_id=business_id, channel=channel)
     control, previous_status = grant_channel_access(
         db,
         business_id=business_id,
@@ -308,6 +316,7 @@ def request_owner_channel_connection(
 ):
     require_owner(actor)
     _business_by_id(db, business_id)
+    _require_channel_module(db, business_id=business_id, channel=channel)
     control = _control_or_404(db, business_id=business_id, channel=channel)
     changed = request_simulated_connection(db, control=control, actor=actor, actor_role="owner")
     if changed:
@@ -342,6 +351,7 @@ def approve_owner_channel_connection(
 ):
     require_owner(actor)
     _business_by_id(db, business_id)
+    _require_channel_module(db, business_id=business_id, channel=channel)
     control = _control_or_404(db, business_id=business_id, channel=channel)
     if control.channel == "instagram" and control.connection_mode == "oauth":
         raise HTTPException(
@@ -392,6 +402,7 @@ def update_owner_channel_capabilities(
 ):
     require_owner(actor)
     _business_by_id(db, business_id)
+    _require_channel_module(db, business_id=business_id, channel=channel)
     control = _control_or_404(db, business_id=business_id, channel=channel)
     old_values = {
         "integrated_delivery_enabled": control.integrated_delivery_enabled,

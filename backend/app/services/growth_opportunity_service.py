@@ -90,7 +90,9 @@ class GrowthOpportunityService:
         business = self.db.get(Business, business_id)
         if business is None:
             raise ValueError("business_not_found")
-        if not module_is_available(self.db, business_id, "growth"):
+        if business.status != "active" or not module_is_available(
+            self.db, business_id, "growth"
+        ):
             return self.result
         self._resolve_existing(business_id)
         self._detect_booking_recovery(business_id)

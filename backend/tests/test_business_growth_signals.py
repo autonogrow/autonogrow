@@ -44,6 +44,7 @@ from app.services.business_growth_signal_service import (
     BusinessGrowthSignalService,
     serialize_growth_signal,
 )
+from app.services.capability_service import configure_business_modules
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 
@@ -83,6 +84,13 @@ def records(db: Session) -> dict[str, object]:
     other = User(email="signals-other@test.local")
     db.add_all((a, b, admin, staff, other))
     db.flush()
+    for configured_business in (a, b):
+        configure_business_modules(
+            db,
+            business_id=configured_business.id,
+            enabled_modules=("essential", "growth", "social"),
+            actor_user_id=None,
+        )
     admin_membership = BusinessUser(
         business_id=a.id,
         user_id=admin.id,

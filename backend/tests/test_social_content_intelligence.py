@@ -34,6 +34,7 @@ from app.routers.social_content import (
     social_content_proposals_summary,
 )
 from app.schemas.social_content_workflow import SocialIdeaAcceptRequest
+from app.services.capability_service import configure_business_modules
 from app.services.social_content_intelligence_service import (
     SocialContentIntelligenceService,
     serialize_social_content_proposal,
@@ -66,6 +67,13 @@ def records(db: Session) -> dict[str, object]:
     outsider = User(email="social-outsider@test.local")
     db.add_all((business, other, admin, staff, outsider))
     db.flush()
+    for configured_business in (business, other):
+        configure_business_modules(
+            db,
+            business_id=configured_business.id,
+            enabled_modules=("essential", "growth", "social"),
+            actor_user_id=None,
+        )
     db.add_all(
         (
             BusinessUser(

@@ -26,6 +26,7 @@ from app.schemas.channel_onboarding import (
     ChannelDecisionRequest,
     SimulatedConnectionRequest,
 )
+from app.services.capability_service import configure_business_modules
 from app.services.channel_control_service import (
     channel_automation_is_authorized,
     get_channel_control,
@@ -61,6 +62,13 @@ def channel_context(db):
     other_admin = User(email="other@channels.test")
     db.add_all([business, other, owner, admin, staff, other_admin])
     db.flush()
+    for configured_business in (business, other):
+        configure_business_modules(
+            db,
+            business_id=configured_business.id,
+            enabled_modules=("essential", "growth", "social"),
+            actor_user_id=owner.id,
+        )
     db.add_all(
         [
             BusinessUser(

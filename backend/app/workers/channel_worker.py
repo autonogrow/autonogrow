@@ -28,6 +28,7 @@ from app.models import (
     MetaIntegrationJob,
     WebhookInboxEvent,
 )
+from app.services.capability_service import module_is_available
 from app.services.channel_provider_contracts import (
     ChannelInboxProcessingError,
     ProviderSender,
@@ -521,17 +522,35 @@ class ChannelWorker:
             if row is None or row.status != "processing":
                 return False
             business = db.get(Business, row.business_id)
-            if business is not None and business.status == "active":
-                return True
             message = (
                 db.get(ConversationMessage, row.conversation_message_id)
                 if row.conversation_message_id
                 else None
             )
+            social_allowed = row.channel != "instagram" or module_is_available(
+                db, row.business_id, "social"
+            )
+            growth_allowed = (
+                message is None
+                or message.opportunity_action is None
+                or module_is_available(db, row.business_id, "growth")
+            )
+            if (
+                business is not None
+                and business.status == "active"
+                and social_allowed
+                and growth_allowed
+            ):
+                return True
+            error_code = (
+                "business_not_operational"
+                if business is None or business.status != "active"
+                else "module_not_available"
+            )
             fail_outbox_job(
                 row,
                 message,
-                classification=classify_queue_error(error_code="business_not_operational"),
+                classification=classify_queue_error(error_code=error_code),
             )
             db.commit()
             return False
@@ -910,6 +929,27 @@ class ChannelWorker:
                 type_db.commit()
                 return
             job_type = current_job.job_type
+            integration = (
+                type_db.get(BusinessChannelIntegration, current_job.integration_id)
+                if current_job.integration_id is not None
+                else None
+            )
+            social_action = job_type in {"instagram_media_sync", "retry_subscription"} and (
+                integration is None or integration.channel == "instagram"
+            )
+            if social_action and not module_is_available(
+                type_db, current_job.business_id, "social"
+            ):
+                fail_meta_integration_job(
+                    type_db,
+                    current_job,
+                    error_code="module_not_available",
+                    safe_message="Social is not available for this business",
+                    retryable=False,
+                    duration_ms=0,
+                )
+                type_db.commit()
+                return
         if job_type == "instagram_media_sync":
             self._process_instagram_media_sync(job_id, started=started)
             return
@@ -1005,7 +1045,14 @@ class ChannelWorker:
                 )
             else:
                 finish_meta_integration_job(db, job, duration_ms=duration_ms)
-                if result.subscription_status == "missing" and job.job_type == "health_check":
+                if (
+                    result.subscription_status == "missing"
+                    and job.job_type == "health_check"
+                    and (
+                        integration.channel != "instagram"
+                        or module_is_available(db, integration.business_id, "social")
+                    )
+                ):
                     enqueue_meta_integration_job(
                         db,
                         business_id=integration.business_id,

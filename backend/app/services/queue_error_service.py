@@ -29,6 +29,7 @@ BLOCKED_CODES = {
     "number_not_registered",
     "whatsapp_template_required",
     "business_not_operational",
+    "module_not_available",
 }
 BACKOFF_SECONDS = (30, 120, 600, 1800, 7200)
 

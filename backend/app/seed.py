@@ -13,6 +13,7 @@ from app.models import (
     SyncJob,
     WeeklyAvailability,
 )
+from app.services.capability_service import configure_business_modules
 
 DEFAULT_WEEKLY_SCHEDULE = {
     0: [],
@@ -401,6 +402,12 @@ def seed() -> None:
 
         for item in BUSINESSES:
             business = upsert_business(db, item)
+            configure_business_modules(
+                db,
+                business_id=business.id,
+                enabled_modules=("essential", "growth", "social"),
+                actor_user_id=None,
+            )
             upsert_services(db, business, item["services"])
             upsert_availability_settings(db, business, item["availability_settings"])
             upsert_weekly_availability(

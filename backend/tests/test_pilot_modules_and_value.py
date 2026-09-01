@@ -34,6 +34,7 @@ from app.services.business_readiness_service import evaluate_business_readiness
 from app.services.capability_service import (
     configure_business_modules,
     module_capabilities,
+    module_is_available,
     require_growth_access,
     require_social_access,
 )
@@ -122,6 +123,58 @@ def test_module_combinations_are_authoritative_and_essential_is_required(db: Ses
             module_cost_currency=None,
             actor_user_id=owner.id,
         )
+
+
+def test_missing_rows_and_all_flag_combinations_fail_closed(db: Session):
+    missing = Business(name="Missing", slug="module-missing", status="active")
+    partial = Business(name="Partial", slug="module-partial", status="active")
+    db.add_all([missing, partial])
+    db.flush()
+    db.add(
+        BusinessModuleAccess(
+            business_id=partial.id,
+            module_key="essential",
+            entitled=True,
+            active=True,
+        )
+    )
+    db.commit()
+
+    for business in (missing, partial):
+        for module_key in ("growth", "social"):
+            capability = module_capabilities(db, business.id)[module_key]
+            assert capability == {
+                "module": module_key,
+                "entitled": False,
+                "active": False,
+                "available": False,
+                "configuration_source": "missing_configuration",
+                "module_cost": None,
+            }
+            assert module_is_available(db, business.id, module_key) is False
+
+    flags = Business(name="Flags", slug="module-flags", status="active")
+    db.add(flags)
+    db.flush()
+    row = BusinessModuleAccess(
+        business_id=flags.id,
+        module_key="growth",
+        entitled=False,
+        active=False,
+    )
+    db.add(row)
+    db.commit()
+    for entitled, active, expected in (
+        (False, False, False),
+        (False, True, False),
+        (True, False, False),
+        (True, True, True),
+    ):
+        row.entitled = entitled
+        row.active = active
+        db.commit()
+        assert module_is_available(db, flags.id, "growth") is expected
+        assert module_capabilities(db, flags.id)["growth"]["available"] is expected
 
 
 def test_disabled_module_blocks_api_stops_generation_and_preserves_data(db: Session):
@@ -355,4 +408,71 @@ def test_pilot_migration_upgrade_and_downgrade(tmp_path):
     engine = create_engine(config.attributes["database_url"])
     assert "business_module_access" not in inspect(engine).get_table_names()
     assert "pilot_baselines" not in inspect(engine).get_table_names()
+    engine.dispose()
+
+
+def test_fail_closed_migration_preserves_zero_row_legacy_and_partial_semantics(tmp_path):
+    path = tmp_path / "fail-closed-modules.db"
+    config = alembic_config()
+    config.attributes["database_url"] = f"sqlite:///{path.as_posix()}"
+    command.upgrade(config, "20260830_28")
+    engine = create_engine(config.attributes["database_url"])
+    with Session(engine) as session:
+        complete = Business(name="Complete", slug="migration-complete", status="active")
+        partial = Business(name="Partial", slug="migration-partial", status="active")
+        legacy = Business(name="Legacy", slug="migration-legacy", status="active")
+        session.add_all((complete, partial, legacy))
+        session.flush()
+        session.add_all(
+            (
+                BusinessModuleAccess(
+                    business_id=complete.id,
+                    module_key="essential",
+                    entitled=True,
+                    active=True,
+                ),
+                BusinessModuleAccess(
+                    business_id=complete.id,
+                    module_key="growth",
+                    entitled=False,
+                    active=False,
+                ),
+                BusinessModuleAccess(
+                    business_id=complete.id,
+                    module_key="social",
+                    entitled=True,
+                    active=True,
+                ),
+                BusinessModuleAccess(
+                    business_id=partial.id,
+                    module_key="essential",
+                    entitled=True,
+                    active=True,
+                ),
+            )
+        )
+        session.commit()
+        ids = {"complete": complete.id, "partial": partial.id, "legacy": legacy.id}
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = create_engine(config.attributes["database_url"])
+    with Session(engine) as session:
+        assert session.query(BusinessModuleAccess).count() == 9
+        assert module_capabilities(session, ids["complete"])["growth"]["available"] is False
+        partial_caps = module_capabilities(session, ids["partial"])
+        assert partial_caps["essential"]["available"] is True
+        assert partial_caps["growth"]["available"] is False
+        assert partial_caps["social"]["available"] is False
+        assert all(
+            item["available"]
+            for item in module_capabilities(session, ids["legacy"]).values()
+        )
+    engine.dispose()
+
+    command.downgrade(config, "20260830_28")
+    command.upgrade(config, "head")
+    engine = create_engine(config.attributes["database_url"])
+    with Session(engine) as session:
+        assert session.query(BusinessModuleAccess).count() == 9
     engine.dispose()

@@ -29,6 +29,7 @@ from app.models import (
 )
 from app.routers.social_content import router as business_social_router
 from app.routers.social_content_workflow import router as owner_social_router
+from app.services.capability_service import configure_business_modules
 from app.services.instagram_content_service import ensure_promotion_window
 
 NOW = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)
@@ -52,6 +53,13 @@ def workflow_context():
     autonogrow_admin = User(email="autonogrow-admin@test.local", is_owner=True)
     db.add_all((business, other, business_owner, other_owner, staff, autonogrow_admin))
     db.flush()
+    for configured_business in (business, other):
+        configure_business_modules(
+            db,
+            business_id=configured_business.id,
+            enabled_modules=("essential", "growth", "social"),
+            actor_user_id=autonogrow_admin.id,
+        )
     db.add_all(
         (
             BusinessUser(

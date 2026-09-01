@@ -20,6 +20,7 @@ from app.models import (
     MetaIntegrationJob,
     User,
 )
+from app.services.capability_service import require_module_available
 from app.services.channel_control_service import get_channel_control
 from app.services.instagram_oauth_service import start_instagram_oauth
 from app.services.meta_integration_job_service import (
@@ -208,7 +209,9 @@ def owner_retry_subscription(
     actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
-    _business_by_id(db, business_id)
+    business = _business_by_id(db, business_id)
+    if _channel(channel) == "instagram":
+        require_module_available(db, business.id, "social")
     return _queue(
         db,
         integration=_integration(db, business_id=business_id, channel=channel),
@@ -229,6 +232,8 @@ def _request_reconnection(
     owner_return: bool,
 ) -> dict:
     normalized = _channel(channel)
+    if normalized == "instagram":
+        require_module_available(db, business.id, "social")
     integration = _integration(db, business_id=business.id, channel=normalized)
     control = get_channel_control(db, business_id=business.id, channel=normalized)
     if control is None:

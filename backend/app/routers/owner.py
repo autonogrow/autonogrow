@@ -68,6 +68,7 @@ from app.services.automation_credit_service import (
 )
 from app.services.availability_service import serialize_settings
 from app.services.business_status_service import ensure_business_operational
+from app.services.capability_service import configure_business_modules, require_module_available
 from app.services.conversation_automation_service import (
     AUTOMATION_PERIOD_DAYS,
     allowed_limit_behaviors,
@@ -1128,6 +1129,7 @@ def create_owner_business_instagram_integration(
 ):
     require_owner(actor)
     business = get_business_by_id_or_404(db, business_id)
+    require_module_available(db, business.id, "social")
     if get_instagram_integration(db, business_id=business_id) is not None:
         raise HTTPException(status_code=409, detail="Business already has an Instagram integration")
     conflict = (
@@ -1291,7 +1293,8 @@ def reconnect_owner_business_instagram_integration(
     db: Session = Depends(get_db),
 ):
     require_owner(actor)
-    get_business_by_id_or_404(db, business_id)
+    business = get_business_by_id_or_404(db, business_id)
+    require_module_available(db, business.id, "social")
     integration = get_instagram_integration(db, business_id=business_id)
     if integration is None:
         raise HTTPException(status_code=404, detail="Instagram integration not found")
@@ -1789,6 +1792,12 @@ def create_owner_business(
     db.add(business)
     try:
         db.flush()
+        configure_business_modules(
+            db,
+            business_id=business.id,
+            enabled_modules=("essential", "growth", "social"),
+            actor_user_id=actor.id,
+        )
         weekly_schedule = SCHEDULE_TEMPLATES[payload.schedule_template]
         db.add(
             AvailabilitySettings(

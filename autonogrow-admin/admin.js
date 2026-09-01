@@ -204,7 +204,7 @@ function canManageConversationTemplates() {
 }
 
 function moduleAvailable(moduleKey) {
-  return businessCapabilities?.[moduleKey]?.available !== false;
+  return businessCapabilities?.[moduleKey]?.available === true;
 }
 
 function applyOperationalBusinessState(status = currentBusiness?.status) {

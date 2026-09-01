@@ -29,6 +29,7 @@ from app.models import (
 from app.routers.social_content_generation import _proposal_or_404
 from app.routers.social_content_generation import router as social_content_generation_router
 from app.schemas.social_content_generation import EditorialPackageEdit
+from app.services.capability_service import configure_business_modules
 from app.services.social_content_generation_service import (
     GENERATOR_VERSION,
     generate_from_proposal,
@@ -70,6 +71,13 @@ def records(db: Session) -> dict[str, object]:
     owner = User(email="generation-owner@test.local", is_owner=True)
     db.add_all((business, other, actor, staff, owner))
     db.flush()
+    for configured_business in (business, other):
+        configure_business_modules(
+            db,
+            business_id=configured_business.id,
+            enabled_modules=("essential", "growth", "social"),
+            actor_user_id=owner.id,
+        )
     db.add_all(
         (
             BusinessUser(

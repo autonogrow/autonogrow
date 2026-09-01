@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.security import require_owner
 from app.models import Business, User
 from app.schemas.business import BusinessCreate, BusinessOut
+from app.services.capability_service import configure_business_modules
 
 router = APIRouter(prefix="/api/businesses", tags=["businesses"])
 
@@ -52,6 +53,13 @@ def create_business(
 
     business = Business(status="configuration_pending", **payload.model_dump())
     db.add(business)
+    db.flush()
+    configure_business_modules(
+        db,
+        business_id=business.id,
+        enabled_modules=("essential", "growth", "social"),
+        actor_user_id=actor.id,
+    )
     db.commit()
     db.refresh(business)
     record_audit(

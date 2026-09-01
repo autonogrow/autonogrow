@@ -160,7 +160,9 @@ class SocialContentIntelligenceService:
         business = self.db.get(Business, business_id)
         if business is None:
             raise ValueError("business_not_found")
-        if not module_is_available(self.db, business_id, "social"):
+        if business.status != "active" or not module_is_available(
+            self.db, business_id, "social"
+        ):
             return self.result
         self._expire(business_id)
         signals = (

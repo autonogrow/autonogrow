@@ -33,6 +33,7 @@ from app.routers.growth_opportunities import (
 )
 from app.schemas.customer_opportunity import OpportunityStatusUpdate, ScheduledFollowUpCreate
 from app.schemas.service import AdminServiceUpdate
+from app.services.capability_service import configure_business_modules
 from app.services.growth_opportunity_service import (
     GrowthOpportunityService,
     snapshot_booking_follow_up,
@@ -61,6 +62,13 @@ def records(db: Session) -> dict:
     other_user = User(email="growth-other@test.local")
     db.add_all((first, second, owner, admin_user, staff_user, other_user))
     db.flush()
+    for configured_business in (first, second):
+        configure_business_modules(
+            db,
+            business_id=configured_business.id,
+            enabled_modules=("essential", "growth", "social"),
+            actor_user_id=owner.id,
+        )
     db.add_all(
         (
             BusinessUser(
