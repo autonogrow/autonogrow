@@ -18,6 +18,8 @@ from app.core.database import get_db
 from app.core.security import (
     get_business_membership,
     get_current_user,
+    require_business_operational_status,
+    require_business_operational_status_by_id,
     require_owner,
     require_tenant_business_admin,
 )
@@ -127,7 +129,7 @@ from app.services.instagram_story_service import (
 owner_router = APIRouter(
     prefix="/api/owner/businesses/{business_id}/instagram-content",
     tags=["owner-instagram-content"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_owner), Depends(require_business_operational_status_by_id)],
 )
 admin_router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}/instagram-content",
@@ -175,6 +177,7 @@ def require_instagram_business_admin(
     business_slug: str,
     actor: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _operational_status: None = Depends(require_business_operational_status),
 ) -> User:
     _admin_business(db, business_slug)
     if actor.is_owner:
@@ -773,7 +776,10 @@ def admin_get_publication_metrics(
     return publication_metrics(db, business.id)
 
 
-@admin_router.patch("/settings/validation-delegation")
+@admin_router.patch(
+    "/settings/validation-delegation",
+    dependencies=[Depends(require_business_operational_status)],
+)
 def admin_update_validation_delegation(
     business_slug: str,
     payload: InstagramValidationDelegationUpdate,

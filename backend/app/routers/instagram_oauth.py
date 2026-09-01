@@ -14,6 +14,7 @@ from app.core.security import (
     get_business_membership,
     get_optional_current_user,
     require_business_admin,
+    require_business_operational_status_by_id,
     require_owner,
 )
 from app.models import Business, InstagramOAuthAttempt, User
@@ -39,7 +40,7 @@ admin_router = APIRouter(
 owner_router = APIRouter(
     prefix="/api/owner/businesses/{business_id}/integrations/instagram/oauth",
     tags=["owner-instagram-login"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_owner), Depends(require_business_operational_status_by_id)],
 )
 
 

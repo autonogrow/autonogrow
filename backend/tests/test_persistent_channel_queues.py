@@ -586,6 +586,32 @@ def test_two_businesses_use_their_own_decrypted_token(database):
     assert tokens == ["token-one", "token-two"]
 
 
+@pytest.mark.parametrize("queue_status", ("pending", "retry"))
+def test_suspended_business_outbox_is_not_claimed_or_sent(database, queue_status):
+    db, factory = database
+    active = settings()
+    business, _, _, message, outbox = add_channel_context(db, active)
+    business.status = "suspended"
+    outbox.status = queue_status
+    if queue_status == "retry":
+        outbox.next_retry_at = datetime.utcnow() - timedelta(seconds=1)
+    db.commit()
+    calls = []
+
+    worker = ChannelWorker(
+        settings=active,
+        session_factory=factory,
+        senders={"instagram": lambda *_args, **_kwargs: calls.append(1)},
+        sleep=lambda _: None,
+    )
+    worker.run_once()
+    db.expire_all()
+
+    assert calls == []
+    assert db.get(ChannelOutboxMessage, outbox.id).status == queue_status
+    assert db.get(ConversationMessage, message.id).delivery_status == "queued"
+
+
 def test_heartbeat_create_update_stale_and_clean_stop(database):
     db, factory = database
     now = datetime.utcnow()

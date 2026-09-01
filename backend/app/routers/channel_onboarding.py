@@ -3,7 +3,12 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
-from app.core.security import get_business_membership, require_business_admin, require_owner
+from app.core.security import (
+    get_business_membership,
+    require_business_admin,
+    require_business_operational_status_by_id,
+    require_owner,
+)
 from app.models import (
     Business,
     BusinessChannelControl,
@@ -39,7 +44,7 @@ admin_router = APIRouter(
 owner_router = APIRouter(
     prefix="/api/owner/businesses/{business_id}/channel-controls",
     tags=["owner-channel-controls"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_owner), Depends(require_business_operational_status_by_id)],
 )
 
 

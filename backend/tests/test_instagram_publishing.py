@@ -511,6 +511,37 @@ def test_disabled_worker_does_not_claim_or_publish(monkeypatch) -> None:
     assert worker.run_once() == 0
 
 
+@pytest.mark.parametrize("job_status", ("queued", "retry_wait"))
+def test_suspended_business_publication_job_never_calls_adapter(
+    publishing_context, job_status
+):
+    ctx = publishing_context
+    job = queue_now(ctx)
+    job.status = job_status
+    if job_status == "retry_wait":
+        job.next_attempt_at = utc_now() - timedelta(seconds=1)
+    ctx["business"].status = "suspended"
+    ctx["db"].commit()
+
+    class CountingAdapter(SimulatedInstagramPublishingAdapter):
+        calls = 0
+
+        def publish(self, request):
+            self.calls += 1
+            return super().publish(request)
+
+    adapter = CountingAdapter()
+    worker = InstagramPublishWorker(
+        settings=worker_settings(),
+        session_factory=ctx["factory"],
+        adapter=adapter,
+        sleep=lambda _: None,
+    )
+    assert worker.run_once() == 0
+    assert adapter.calls == 0
+    assert ctx["db"].get(InstagramPublishJob, job.id).status == job_status
+
+
 def test_retry_reuses_same_job_and_provider_identity(publishing_context):
     ctx = publishing_context
     job = queue_now(ctx)

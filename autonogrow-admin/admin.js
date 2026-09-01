@@ -8,12 +8,19 @@ const fetch = async (input, options = {}) => {
     queueMicrotask(() => showAdminLogin());
   }
   if (response.status === 403 && (url.includes("/api/admin/") || url.includes("/api/bookings/"))) {
-    queueMicrotask(() => showAdminLogin("Tu cuenta no tiene acceso a este negocio.", true));
+    const payload = await response.clone().json().catch(() => null);
+    if (payload?.detail?.code === "business_not_operational") {
+      lastBusinessOperationalStatus = payload.detail.business_status;
+      queueMicrotask(() => applyOperationalBusinessState(payload.detail.business_status));
+    } else {
+      queueMicrotask(() => showAdminLogin("Tu cuenta no tiene acceso a este negocio.", true));
+    }
   }
   return response;
 };
 
 let currentBusiness = null;
+let lastBusinessOperationalStatus = null;
 let businessCapabilities = {
   essential: { available: true }, growth: { available: true }, social: { available: true }
 };
@@ -199,6 +206,29 @@ function canManageConversationTemplates() {
 function moduleAvailable(moduleKey) {
   return businessCapabilities?.[moduleKey]?.available !== false;
 }
+
+function applyOperationalBusinessState(status = currentBusiness?.status) {
+  const operational = status === "active";
+  const banner = document.getElementById("business-operational-banner");
+  const title = document.getElementById("business-operational-banner-title");
+  const message = document.getElementById("business-operational-banner-message");
+  document.body.classList.toggle("business-non-operational", !operational);
+  if (!banner || !title || !message) return;
+  banner.hidden = operational || !status;
+  if (operational || !status) return;
+  const archived = status === "archived";
+  title.textContent = archived ? "Este negocio está archivado" : "Este negocio está suspendido";
+  message.textContent = archived
+    ? "Puedes consultar el histórico, pero las operaciones y acciones externas están deshabilitadas."
+    : "Las operaciones están temporalmente deshabilitadas. Puedes consultar el histórico mientras Owner revisa la reactivación.";
+}
+
+document.addEventListener("submit", (event) => {
+  if (currentBusiness?.status && currentBusiness.status !== "active") {
+    event.preventDefault();
+    applyOperationalBusinessState(currentBusiness.status);
+  }
+}, true);
 
 function configurationCategoryForKey(key) {
   if (key === "business-info") return "business";
@@ -980,6 +1010,12 @@ function dashboardHasConfiguredAvailability() {
 function getDashboardBusinessStatus() {
   if (dashboardDataState.business === "loading") {
     return { label: "Comprobando", context: "Revisando la configuración.", variant: "neutral" };
+  }
+  if (currentBusiness?.status === "suspended") {
+    return { label: "Suspendido", context: "Las operaciones están temporalmente deshabilitadas.", variant: "danger" };
+  }
+  if (currentBusiness?.status === "archived") {
+    return { label: "Archivado", context: "Solo está disponible la consulta histórica.", variant: "danger" };
   }
   if (!currentBusiness?.active) {
     return { label: "No está activo", context: "Revisa la publicación del negocio.", variant: "danger" };
@@ -2062,6 +2098,12 @@ async function loadAdminPanel() {
 
     if (!businessResponse.ok) {
       if (businessResponse.status === 401) return showAdminLogin();
+      if (businessResponse.status === 403 && lastBusinessOperationalStatus) {
+        dashboardDataState.business = "ready";
+        applyOperationalBusinessState(lastBusinessOperationalStatus);
+        renderDashboard();
+        return;
+      }
       if (businessResponse.status === 403) return showAdminLogin("Tu cuenta no tiene acceso a este negocio.", true);
       renderError("No se encontró el negocio.");
       return;
@@ -2969,6 +3011,7 @@ function applyBusinessData(business) {
     if (link) link.href = publicHref;
   }
   if (!allBookings.length) agendaSelectedDate = getMadridDateKey();
+  applyOperationalBusinessState(business.status);
   renderDashboard();
 }
 

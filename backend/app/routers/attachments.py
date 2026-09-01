@@ -13,6 +13,7 @@ from app.core.security import (
     ensure_can_manage_booking,
     get_optional_current_user,
     require_business_access,
+    require_business_operational_status,
 )
 from app.models import Booking, BookingAttachment, Business, BusinessUser, User
 
@@ -104,7 +105,7 @@ def private_attachment_url(business_slug: str, booking_id: int, attachment_id: i
     )
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_business_operational_status)])
 async def upload_booking_attachments(
     business_slug: str,
     booking_id: int,

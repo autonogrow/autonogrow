@@ -5,9 +5,11 @@ from sqlalchemy.orm import Session
 from app.core.config import get_owner_allowed_emails, get_settings
 from app.core.database import get_db
 from app.models import Booking, Business, BusinessUser, User
+from app.services.business_status_service import ensure_business_operational
 
 SESSION_COOKIE = "autonogrow_session"
 SESSION_MAX_AGE = 7 * 24 * 60 * 60
+SAFE_BUSINESS_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 def has_owner_access(user: User) -> bool:
@@ -82,10 +84,41 @@ def require_owner(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def require_business_operational_status(
+    business_slug: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> None:
+    """Allow historical reads but reject every normal business mutation when inactive."""
+
+    if request.method.upper() in SAFE_BUSINESS_METHODS:
+        return
+    business = db.query(Business).filter(Business.slug == business_slug).first()
+    if business is None:
+        raise HTTPException(status_code=404, detail="Business not found")
+    ensure_business_operational(business)
+
+
+def require_business_operational_status_by_id(
+    business_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> None:
+    """Owner operational routes use numeric tenant ids instead of slugs."""
+
+    if request.method.upper() in SAFE_BUSINESS_METHODS:
+        return
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Business not found")
+    ensure_business_operational(business)
+
+
 def require_business_access(
     business_slug: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _operational_status: None = Depends(require_business_operational_status),
 ) -> User:
     sync_effective_owner_access(user)
     if user.is_owner:
@@ -103,6 +136,8 @@ def require_business_access(
     )
     if membership is None:
         raise HTTPException(status_code=403, detail="You do not have access to this business")
+    if membership.business.status == "archived":
+        ensure_business_operational(membership.business)
     return user
 
 
@@ -129,6 +164,7 @@ def require_business_admin(
     business_slug: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _operational_status: None = Depends(require_business_operational_status),
 ) -> User:
     sync_effective_owner_access(user)
     if user.is_owner:
@@ -136,6 +172,8 @@ def require_business_admin(
     membership = get_business_membership(db, business_slug=business_slug, user_id=user.id)
     if membership is None:
         raise HTTPException(status_code=403, detail="You do not have access to this business")
+    if membership.business.status == "archived":
+        ensure_business_operational(membership.business)
     if membership.role != "business_admin":
         raise HTTPException(status_code=403, detail="Business administrator access required")
     return user
@@ -145,6 +183,7 @@ def require_tenant_business_admin(
     business_slug: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _operational_status: None = Depends(require_business_operational_status),
 ) -> User:
     """Require the tenant Business Owner, never the global AutonoGrow operator."""
     sync_effective_owner_access(user)
@@ -153,6 +192,8 @@ def require_tenant_business_admin(
     membership = get_business_membership(db, business_slug=business_slug, user_id=user.id)
     if membership is None or membership.role != "business_admin":
         raise HTTPException(status_code=403, detail="Business owner access required")
+    if membership.business.status == "archived":
+        ensure_business_operational(membership.business)
     return user
 
 
@@ -181,6 +222,7 @@ def ensure_can_manage_booking(
 
 def require_booking_business_access(
     booking_id: int,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
@@ -190,5 +232,7 @@ def require_booking_business_access(
     business = db.query(Business).filter(Business.id == booking.business_id).first()
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
+    if request.method.upper() not in SAFE_BUSINESS_METHODS:
+        ensure_business_operational(business)
     ensure_can_manage_booking(db, business_slug=business.slug, booking=booking, user=user)
     return user

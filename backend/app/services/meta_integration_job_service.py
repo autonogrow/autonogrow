@@ -172,7 +172,9 @@ def schedule_due_meta_jobs(
     if settings.meta_integration_health_check_enabled:
         query = (
             db.query(BusinessChannelIntegration)
+            .join(Business, Business.id == BusinessChannelIntegration.business_id)
             .filter(
+                Business.status == "active",
                 BusinessChannelIntegration.integration_status.in_(("connected", "degraded")),
                 BusinessChannelIntegration.next_health_check_at.is_not(None),
                 BusinessChannelIntegration.next_health_check_at <= current,
@@ -209,11 +211,13 @@ def schedule_due_meta_jobs(
         )
         integrations = (
             db.query(BusinessChannelIntegration)
+            .join(Business, Business.id == BusinessChannelIntegration.business_id)
             .join(
                 InstagramMediaSyncState,
                 InstagramMediaSyncState.integration_id == BusinessChannelIntegration.id,
             )
             .filter(
+                Business.status == "active",
                 BusinessChannelIntegration.channel == "instagram",
                 BusinessChannelIntegration.provider == "instagram",
                 BusinessChannelIntegration.integration_status.in_(("connected", "degraded")),
@@ -241,7 +245,9 @@ def schedule_due_meta_jobs(
     instagram_businesses = {
         row[0]
         for row in db.query(InstagramOAuthAttempt.business_id)
+        .join(Business, Business.id == InstagramOAuthAttempt.business_id)
         .filter(
+            Business.status == "active",
             or_(
                 InstagramOAuthAttempt.expires_at <= current,
                 InstagramOAuthAttempt.status.in_(TERMINAL_ATTEMPT_STATUSES),
@@ -254,7 +260,9 @@ def schedule_due_meta_jobs(
     whatsapp_businesses = {
         row[0]
         for row in db.query(WhatsAppEmbeddedSignupAttempt.business_id)
+        .join(Business, Business.id == WhatsAppEmbeddedSignupAttempt.business_id)
         .filter(
+            Business.status == "active",
             or_(
                 WhatsAppEmbeddedSignupAttempt.expires_at <= current,
                 WhatsAppEmbeddedSignupAttempt.status.in_(TERMINAL_ATTEMPT_STATUSES),
@@ -300,7 +308,8 @@ def claim_meta_integration_jobs(
     )
     query = (
         db.query(MetaIntegrationJob)
-        .filter(eligible)
+        .join(Business, Business.id == MetaIntegrationJob.business_id)
+        .filter(eligible, Business.status == "active")
         .order_by(MetaIntegrationJob.available_at, MetaIntegrationJob.id)
         .limit(limit)
     )

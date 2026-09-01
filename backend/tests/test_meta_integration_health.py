@@ -625,3 +625,36 @@ def test_worker_completes_retry_when_message_subscription_is_already_active(heal
     assert refreshed_job.next_retry_at is None
     assert refreshed_job.last_error_code is None
     subscribe.assert_not_called()
+
+
+@pytest.mark.parametrize("job_status", ("queued", "retry"))
+def test_suspended_business_meta_jobs_are_not_claimed(health_db, job_status):
+    db, _factory = health_db
+    business, _owner, integration, _control = integration_context(
+        db, health_settings(), slug=f"suspended-meta-{job_status}"
+    )
+    business.status = "suspended"
+    job = MetaIntegrationJob(
+        business_id=business.id,
+        integration_id=integration.id,
+        job_type="health_check",
+        status=job_status,
+        idempotency_key=f"suspended-meta:{job_status}",
+        origin="system",
+        available_at=datetime.utcnow() - timedelta(seconds=1),
+        next_retry_at=(
+            datetime.utcnow() - timedelta(seconds=1) if job_status == "retry" else None
+        ),
+    )
+    db.add(job)
+    db.commit()
+
+    claimed = claim_meta_integration_jobs(
+        db,
+        worker_id="status-worker",
+        limit=10,
+        lock_ttl_seconds=60,
+    )
+
+    assert claimed == []
+    assert db.get(MetaIntegrationJob, job.id).status == job_status

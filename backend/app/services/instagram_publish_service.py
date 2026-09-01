@@ -16,6 +16,7 @@ from app.core.audit import record_audit
 from app.core.config import Settings, get_settings
 from app.models import (
     AuditLog,
+    Business,
     BusinessChannelControl,
     BusinessChannelIntegration,
     InstagramContent,
@@ -220,6 +221,14 @@ def publication_preflight(  # noqa: C901
 ) -> InstagramPublicationPreflight:
     """Return the shared, side-effect-free gate used by scheduling and workers."""
     config = settings or get_settings()
+    business_status = db.query(Business.status).filter(Business.id == content.business_id).scalar()
+    if business_status != "active":
+        return InstagramPublicationPreflight(
+            False,
+            "publish_business_not_operational",
+            "Publication is disabled while the business is not active",
+            None,
+        )
     current = version or _current_version(db, content)
     if current is None:
         return InstagramPublicationPreflight(False, "publish_version_missing", "Content has no version", None)
@@ -1009,7 +1018,12 @@ def build_publish_claim_statement(
     )
     statement = (
         select(InstagramPublishJob)
-        .where(eligible)
+        .where(
+            eligible,
+            InstagramPublishJob.business_id.in_(
+                select(Business.id).where(Business.status == "active")
+            ),
+        )
         .order_by(InstagramPublishJob.scheduled_for, InstagramPublishJob.id)
         .limit(limit)
     )

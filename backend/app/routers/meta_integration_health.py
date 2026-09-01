@@ -11,6 +11,7 @@ from app.core.security import (
     SESSION_COOKIE,
     get_business_membership,
     require_business_admin,
+    require_business_operational_status_by_id,
     require_owner,
 )
 from app.models import (
@@ -32,7 +33,7 @@ from app.services.whatsapp_embedded_signup_service import start_whatsapp_embedde
 owner_router = APIRouter(
     prefix="/api/owner/businesses/{business_id}/channels",
     tags=["meta-integration-health"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_owner), Depends(require_business_operational_status_by_id)],
 )
 admin_router = APIRouter(
     prefix="/api/admin/businesses/{business_slug}/channels",

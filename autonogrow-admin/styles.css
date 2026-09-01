@@ -2616,3 +2616,22 @@ input {
 .growth-signal-recommendation { background: var(--ag-color-surface-subtle); border-radius: var(--ag-radius-md); display: grid; gap: .2rem; padding: var(--ag-space-3); }
 .growth-signal-recommendation span { color: var(--ag-color-text-muted); font-size: .78rem; text-transform: uppercase; }
 @media (max-width: 800px) { .growth-signals-list { grid-template-columns: 1fr; } }
+.business-operational-banner {
+  margin: 0 0 1rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid #b45309;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #7c2d12;
+}
+
+.business-operational-banner strong,
+.business-operational-banner p { display: block; margin: 0; }
+.business-operational-banner p { margin-top: .25rem; }
+
+body.business-non-operational #admin-main-content button[type="submit"],
+body.business-non-operational #admin-main-content input[type="submit"] {
+  pointer-events: none;
+  opacity: .5;
+  cursor: not-allowed;
+}

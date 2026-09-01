@@ -20,6 +20,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal, is_sqlite_locked_error
 from app.core.observability import request_id_context
 from app.models import (
+    Business,
     BusinessChannelIntegration,
     ChannelOutboxMessage,
     ConversationMessage,
@@ -258,6 +259,17 @@ class ChannelWorker:
                 if row.conversation_message_id
                 else None
             )
+            business = db.get(Business, row.business_id)
+            if business is None or business.status != "active":
+                fail_outbox_job(
+                    row,
+                    message,
+                    classification=classify_queue_error(
+                        error_code="business_not_operational"
+                    ),
+                )
+                db.commit()
+                return None
             action = message.opportunity_action if message is not None else None
             if action is not None and (
                 action.status == "cancelled" or action.opportunity.status != "pending"
@@ -395,7 +407,7 @@ class ChannelWorker:
 
     def _process_outbox(self, outbox_id: int) -> None:
         prepared = self._prepare_delivery(outbox_id)
-        if prepared is None:
+        if prepared is None or not self._authorize_delivery(outbox_id):
             return
         # The provider call intentionally runs with no Session/transaction open.
         result = prepared.sender(
@@ -500,6 +512,29 @@ class ChannelWorker:
                     integration.safe_error_message = classification.safe_message
                 self._report_outbox_failure(db, row)
             db.commit()
+
+    def _authorize_delivery(self, outbox_id: int) -> bool:
+        """Recheck tenant state immediately before the external provider call."""
+
+        with self.session_factory() as db:
+            row = db.get(ChannelOutboxMessage, outbox_id)
+            if row is None or row.status != "processing":
+                return False
+            business = db.get(Business, row.business_id)
+            if business is not None and business.status == "active":
+                return True
+            message = (
+                db.get(ConversationMessage, row.conversation_message_id)
+                if row.conversation_message_id
+                else None
+            )
+            fail_outbox_job(
+                row,
+                message,
+                classification=classify_queue_error(error_code="business_not_operational"),
+            )
+            db.commit()
+            return False
 
     def _prepare_meta_health_job(self, job_id: int) -> PreparedMetaHealthJob | None:
         with self.session_factory() as db:
@@ -861,6 +896,18 @@ class ChannelWorker:
         with self.session_factory() as type_db:
             current_job = type_db.get(MetaIntegrationJob, job_id)
             if current_job is None or current_job.status != "processing":
+                return
+            business = type_db.get(Business, current_job.business_id)
+            if business is None or business.status != "active":
+                fail_meta_integration_job(
+                    type_db,
+                    current_job,
+                    error_code="business_not_operational",
+                    safe_message="Integration work is disabled while the business is not active",
+                    retryable=False,
+                    duration_ms=0,
+                )
+                type_db.commit()
                 return
             job_type = current_job.job_type
         if job_type == "instagram_media_sync":

@@ -12,6 +12,7 @@ from app.core.security import (
     SESSION_COOKIE,
     get_business_membership,
     require_business_admin,
+    require_business_operational_status_by_id,
     require_owner,
 )
 from app.models import Business, User, WhatsAppEmbeddedSignupAttempt
@@ -38,7 +39,7 @@ admin_router = APIRouter(
 owner_router = APIRouter(
     prefix="/api/owner/businesses/{business_id}/integrations/whatsapp/embedded-signup",
     tags=["owner-whatsapp-embedded-signup"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_owner), Depends(require_business_operational_status_by_id)],
 )
 
 

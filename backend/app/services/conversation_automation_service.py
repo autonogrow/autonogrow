@@ -577,6 +577,15 @@ def process_inbound_automation(
         "delivery_status": None,
         "limit_reached": False,
     }
+    if business.status != "active":
+        return _skip_automatic_response(
+            result,
+            business=business,
+            conversation=conversation,
+            message=message,
+            intent=detection.intent,
+            reason="business_not_operational",
+        )
     if not settings.automation_feature_enabled:
         return _skip_automatic_response(
             result,

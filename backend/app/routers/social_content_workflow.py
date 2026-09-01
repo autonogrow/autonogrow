@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
-from app.core.security import require_owner
+from app.core.security import require_business_operational_status_by_id, require_owner
 from app.models import (
     Business,
     BusinessGrowthSignal,
@@ -39,7 +39,7 @@ from app.services.social_production_readiness_service import production_readines
 router = APIRouter(
     prefix="/api/owner/businesses/{business_id}/social-content",
     tags=["owner-social-content-workflow"],
-    dependencies=[Depends(require_owner)],
+    dependencies=[Depends(require_owner), Depends(require_business_operational_status_by_id)],
 )
 
 

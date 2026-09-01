@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.config import get_settings
 from app.core.database import get_db, safe_database_pool_status
-from app.core.security import require_owner
+from app.core.security import require_business_operational_status_by_id, require_owner
 from app.models import (
     AuditLog,
     AutomationCreditTransaction,
@@ -67,6 +67,7 @@ from app.services.automation_credit_service import (
     serialize_credit_transaction,
 )
 from app.services.availability_service import serialize_settings
+from app.services.business_status_service import ensure_business_operational
 from app.services.conversation_automation_service import (
     AUTOMATION_PERIOD_DAYS,
     allowed_limit_behaviors,
@@ -1116,6 +1117,7 @@ def get_owner_business_instagram_integration(
     "/businesses/{business_id}/integrations/instagram",
     response_model=InstagramIntegrationResponse,
     status_code=201,
+    dependencies=[Depends(require_business_operational_status_by_id)],
 )
 def create_owner_business_instagram_integration(
     business_id: int,
@@ -1223,6 +1225,7 @@ def create_owner_business_instagram_integration(
 @router.post(
     "/businesses/{business_id}/integrations/instagram/verify",
     response_model=InstagramIntegrationVerificationResponse,
+    dependencies=[Depends(require_business_operational_status_by_id)],
 )
 def verify_owner_business_instagram_integration(
     business_id: int,
@@ -1278,6 +1281,7 @@ def verify_owner_business_instagram_integration(
 @router.post(
     "/businesses/{business_id}/integrations/instagram/reconnect",
     response_model=InstagramIntegrationResponse,
+    dependencies=[Depends(require_business_operational_status_by_id)],
 )
 def reconnect_owner_business_instagram_integration(
     business_id: int,
@@ -2256,6 +2260,11 @@ def retry_outbox_job(
     actor: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
+    row = db.get(ChannelOutboxMessage, job_id)
+    if row is not None:
+        business = db.get(Business, row.business_id)
+        if business is not None:
+            ensure_business_operational(business)
     return _owner_queue_action(
         db,
         model=ChannelOutboxMessage,

@@ -58,6 +58,7 @@ from app.services.business_onboarding_service import (
     validate_placeholders,
 )
 from app.services.business_readiness_service import evaluate_business_readiness
+from app.services.business_status_service import freeze_business_jobs
 from app.services.capability_service import configure_business_modules, module_capabilities
 from app.services.conversation_automation_service import ensure_automation_configuration
 from app.services.incident_service import report_incident
@@ -1168,6 +1169,11 @@ def _change_active_state(
         transition_business(business, target)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail="Invalid business state transition") from exc
+    frozen_jobs = (
+        freeze_business_jobs(db, business)
+        if target in {"suspended", "archived"}
+        else None
+    )
     if target == "active":
         readiness = evaluate_business_readiness(db, business)
         if not readiness["ready"]:
@@ -1184,6 +1190,7 @@ def _change_active_state(
             "previous_status": previous_status,
             "new_status": target,
             "reason": payload.reason,
+            "frozen_jobs": frozen_jobs,
         },
     )
     db.commit()

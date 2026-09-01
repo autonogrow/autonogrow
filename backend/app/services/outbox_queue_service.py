@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.observability import request_id_context
 from app.models import (
+    Business,
     BusinessChannelIntegration,
     ChannelOutboxMessage,
     Conversation,
@@ -169,7 +170,8 @@ def claim_outbox_jobs(
     )
     query = (
         db.query(ChannelOutboxMessage)
-        .filter(eligible)
+        .join(Business, Business.id == ChannelOutboxMessage.business_id)
+        .filter(eligible, Business.status == "active")
         .order_by(ChannelOutboxMessage.available_at, ChannelOutboxMessage.id)
         .limit(limit)
     )
