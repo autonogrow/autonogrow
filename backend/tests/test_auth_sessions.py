@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from base64 import urlsafe_b64decode
 from datetime import datetime, timedelta
 from pathlib import Path
 from secrets import token_urlsafe
@@ -24,6 +25,10 @@ from app.routers.auth import router as auth_router
 from app.services.auth_session_service import session_token_hash
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def decode_urlsafe_segment(value: str) -> bytes:
+    return urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
 @pytest.fixture
@@ -143,11 +148,17 @@ def test_login_creates_opaque_server_session_and_legacy_or_unknown_tokens_fail_c
     assert client_b.get("/api/auth/me").status_code == 200
 
     login(client_c, "user-b")
-    tampered_cookie = f"{cookie[:-1]}{'a' if cookie[-1] != 'a' else 'b'}"
+    signed_value, signature = cookie.rsplit(".", maxsplit=1)
+    replacement = "A" if signature[0] != "A" else "B"
+    tampered_signature = f"{replacement}{signature[1:]}"
+    assert decode_urlsafe_segment(tampered_signature) != decode_urlsafe_segment(signature)
+    tampered_cookie = f"{signed_value}.{tampered_signature}"
     client_c.cookies.set(
         SESSION_COOKIE, tampered_cookie, domain="testserver.local", path="/"
     )
     assert client_c.get("/api/auth/me").status_code == 401
+    client_c.cookies.set(SESSION_COOKIE, cookie, domain="testserver.local", path="/")
+    assert client_c.get("/api/auth/me").status_code == 200
 
     audits = db.query(AuditLog).filter(AuditLog.action == "session_created").all()
     assert len(audits) == 4
