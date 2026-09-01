@@ -199,15 +199,14 @@ def test_dashboard_renders_deduplicated_growth_follow_ups_with_useful_access() -
     assert "const byCustomer = new Map()" in dashboard
     assert "opportunity.customer.id" in dashboard
     assert 'opportunity.status === "pending"' in dashboard
-    assert "Seguimientos Growth pendientes" in dashboard
+    assert "Oportunidades para hoy" in dashboard
     assert "opportunity.reason_text" in dashboard
     assert "formatDateTime(opportunity.due_at)" in dashboard
     assert "data-dashboard-opportunity-id" in dashboard
     assert "opportunity.channel?.conversation_id" in dashboard
     assert "dashboardConversations.find" in dashboard
     assert "conversation.customer_id === customerId" in dashboard
-    assert 'showAdminSection("growth-opportunities")' in dashboard
-    assert 'showAdminSection("conversations")' in dashboard
+    assert "focusGrowthOpportunity(opportunityId)" in dashboard
     mutation = js.split("async function updateCustomerOpportunity", 1)[1].split(
         "function renderGrowth", 1
     )[0]

@@ -922,5 +922,5 @@ def test_contracts_document_future_social_context_without_automation() -> None:
     assert "no se crean mensajes individuales" in architecture
     assert "growth-signals?status=active" in admin
     assert "Ver oportunidades relacionadas" in admin
-    assert "Señales del negocio" in html
+    assert "Cambios que conviene revisar" in html
     assert '"growth-signals"' in maintenance

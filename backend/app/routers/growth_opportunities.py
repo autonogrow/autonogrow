@@ -28,6 +28,7 @@ from app.services.growth_opportunity_service import (
     GrowthOpportunityService,
     as_utc,
     manual_followup_dedupe_key,
+    opportunity_ordering,
     serialize_opportunity,
     serialize_scheduled_followup,
     utc_now,
@@ -76,7 +77,9 @@ def serialize_opportunity_detail(
     include_full_customer_context: bool = False,
 ) -> dict:
     result = serialize_opportunity(row)
-    latest_action = sorted(row.actions, key=lambda action: (action.created_at, action.id), reverse=True)
+    latest_action = sorted(
+        row.actions, key=lambda action: (action.created_at, action.id), reverse=True
+    )
     channel = resolve_action_channel(db, opportunity=row)
     result["source_service_name"] = (
         row.source_service.name
@@ -91,9 +94,7 @@ def serialize_opportunity_detail(
         "unavailable_reason": channel.unavailable_reason,
         "assisted_delivery_available": channel.assisted_delivery_available,
     }
-    result["latest_action"] = (
-        serialize_action(db, latest_action[0]) if latest_action else None
-    )
+    result["latest_action"] = serialize_action(db, latest_action[0]) if latest_action else None
     if include_full_customer_context:
         customer_context = CustomerMemoryService(db).compact_context(
             business_id=row.business_id, customer_id=row.customer_id
@@ -120,9 +121,7 @@ def list_opportunities(
     service_id: int | None = None,
 ):
     business = business_or_404(db, business_slug)
-    query = db.query(CustomerOpportunity).filter(
-        CustomerOpportunity.business_id == business.id
-    )
+    query = db.query(CustomerOpportunity).filter(CustomerOpportunity.business_id == business.id)
     if status:
         query = query.filter(CustomerOpportunity.status == status)
     if type:
@@ -145,9 +144,7 @@ def list_opportunities(
         query = query.filter(CustomerOpportunity.due_at >= as_utc(due_from))
     if due_to is not None:
         query = query.filter(CustomerOpportunity.due_at <= as_utc(due_to))
-    rows = query.order_by(
-        CustomerOpportunity.due_at.desc(), CustomerOpportunity.id.desc()
-    ).limit(limit).all()
+    rows = query.order_by(*opportunity_ordering()).limit(limit).all()
     memories_by_customer = group_active_memories_by_customer(
         db,
         business_id=business.id,
@@ -184,12 +181,8 @@ def get_opportunity(
     db: Session = Depends(get_db),
 ):
     business = business_or_404(db, business_slug)
-    row = opportunity_or_404(
-        db, business_id=business.id, opportunity_id=opportunity_id
-    )
-    result = serialize_opportunity_detail(
-        db, row, include_full_customer_context=True
-    )
+    row = opportunity_or_404(db, business_id=business.id, opportunity_id=opportunity_id)
+    result = serialize_opportunity_detail(db, row, include_full_customer_context=True)
     db.commit()
     return {"opportunity": result}
 
@@ -246,9 +239,7 @@ def update_opportunity_status(
     actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
 ):
-    return transition_opportunity(
-        business_slug, opportunity_id, payload, request, actor, db
-    )
+    return transition_opportunity(business_slug, opportunity_id, payload, request, actor, db)
 
 
 @router.post("/opportunities/{opportunity_id}/dismiss")
@@ -381,7 +372,9 @@ def create_scheduled_followup(
     db.refresh(row)
     record_audit(
         db,
-        action="scheduled_customer_followup_created" if created else "scheduled_customer_followup_reused",
+        action="scheduled_customer_followup_created"
+        if created
+        else "scheduled_customer_followup_reused",
         request=request,
         actor=actor,
         business_id=business.id,
@@ -418,9 +411,7 @@ def cancel_scheduled_followup(
     if row.opportunity and row.opportunity.status in {"pending", "actioned"}:
         row.opportunity.status = "dismissed"
         row.opportunity.dismissed_at = now
-        invalidate_actions_for_resolved_opportunity(
-            db, opportunity=row.opportunity, now=now
-        )
+        invalidate_actions_for_resolved_opportunity(db, opportunity=row.opportunity, now=now)
     db.commit()
     db.refresh(row)
     record_audit(

@@ -2103,7 +2103,7 @@ input {
 .conversation-state--compact { min-height: 0; padding: var(--ag-space-4); }
 .conversation-state--error { background: var(--ag-color-danger-bg); }
 
-.conversation-customer-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; overflow: hidden; border-left: 1px solid var(--ag-color-border); background: var(--ag-color-surface); }
+.conversation-customer-panel { box-sizing: border-box; display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; max-width: 100vw; overflow: hidden; border-left: 1px solid var(--ag-color-border); background: var(--ag-color-surface); }
 .conversation-customer-panel:focus-within { box-shadow: inset 3px 0 var(--ag-color-blue-500); }
 .conversation-customer-panel__header { display: flex; align-items: center; justify-content: space-between; gap: var(--ag-space-2); padding: var(--ag-space-4); border-bottom: 1px solid var(--ag-color-border); }
 .conversation-customer-panel__header h3 { margin: 0; font-size: var(--ag-font-size-base); }
@@ -2600,6 +2600,35 @@ input {
 .growth-action-modal-actions { display: flex; gap: var(--ag-space-3); justify-content: flex-end; }
 @media (max-width: 900px) { .growth-results-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .growth-funnel { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 639px) { .growth-results-metrics, .growth-funnel, .growth-action-context { grid-template-columns: 1fr; } .growth-action-modal-actions { flex-direction: column-reverse; } }
+
+/* P1.6A action-oriented Growth experience */
+#growth-attention-list,
+#growth-opportunities-preview,
+.customer-growth-list,
+.dashboard-operational-tasks,
+.dashboard-configuration-tasks { display: grid; gap: var(--ag-space-3); }
+.dashboard-operational-tasks,
+.dashboard-configuration-tasks { margin-top: var(--ag-space-4); padding-top: var(--ag-space-4); border-top: 1px solid var(--ag-color-border); }
+.dashboard-growth-tasks > h4,
+.dashboard-operational-tasks > h4,
+.dashboard-configuration-tasks > h4 { margin: 0; }
+.growth-signal-information { align-self: center; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
+.customer-growth { display: grid; gap: var(--ag-space-3); margin-top: var(--ag-space-4); padding: var(--ag-space-4); border: 1px solid var(--ag-color-blue-500); border-radius: var(--ag-radius-lg); background: var(--ag-color-info-bg); }
+.customer-growth h4,
+.customer-growth p { margin: 0; }
+.customer-growth-list article { display: grid; gap: var(--ag-space-2); padding-top: var(--ag-space-3); border-top: 1px solid var(--ag-color-border); }
+.customer-growth-list article:first-child { padding-top: 0; border-top: 0; }
+.customer-growth-list article > span { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); font-weight: var(--ag-font-weight-bold); text-transform: uppercase; }
+.conversation-growth-follow-up { display: flex; align-items: center; justify-content: space-between; gap: var(--ag-space-4); padding: var(--ag-space-3) var(--ag-space-4); border-bottom: 1px solid var(--ag-color-border); background: var(--ag-color-info-bg); }
+.conversation-growth-follow-up > div { display: grid; min-width: 0; gap: var(--ag-space-1); }
+.conversation-growth-follow-up p,
+.conversation-growth-follow-up small { margin: 0; overflow-wrap: anywhere; }
+.conversation-growth-follow-up small { color: var(--ag-color-text-muted); }
+@media (max-width: 639px) {
+  .conversation-growth-follow-up { align-items: stretch; flex-direction: column; }
+  .conversation-growth-follow-up .ag-button,
+  .customer-growth .ag-button { width: 100%; }
+}
 
 /* Sprint 8B deterministic business growth signals */
 .growth-signals-card { background: var(--ag-color-surface); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-lg); padding: var(--ag-space-5); }

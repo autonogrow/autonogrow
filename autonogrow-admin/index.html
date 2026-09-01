@@ -140,7 +140,7 @@
           <div class="dashboard-panel__header">
             <div>
               <span class="dashboard-panel__eyebrow">Prioridad</span>
-              <h3 id="dashboard-attention-title">Necesita tu atención</h3>
+              <h3 id="dashboard-attention-title">Oportunidades y tareas para hoy</h3>
             </div>
           </div>
           <div id="dashboard-attention-list" class="dashboard-attention-list" aria-busy="true">
@@ -227,31 +227,33 @@
       <div class="growth-hub-layout">
         <div data-growth-navigation></div>
         <div class="growth-hub-content">
-          <header class="growth-hub-header"><div><p class="eyebrow">Acciones comerciales</p><h2 id="growth-hub-title">Crecimiento</h2><p>Prioriza solicitudes de reseña y mejoras basadas en datos reales del negocio.</p></div><span id="growth-overview-status" class="growth-human-status">Comprobando…</span></header>
+          <header class="growth-hub-header"><div><p class="eyebrow">Acciones comerciales</p><h2 id="growth-hub-title">Crecimiento</h2><p>Entiende qué pasa, por qué importa y qué puedes hacer ahora.</p></div><span id="growth-overview-status" class="growth-human-status">Comprobando…</span></header>
           <div id="growth-overview-errors" class="growth-partial-error" role="alert" tabindex="-1" hidden></div>
-          <section class="growth-metrics" aria-label="Resumen de crecimiento" aria-busy="true">
+          <section class="growth-priority-card" aria-labelledby="growth-attention-title"><div class="section-header"><div><p class="eyebrow">A</p><h3 id="growth-attention-title">Necesitan atención</h3><p>Oportunidades vencidas, prioritarias o próximas a vencer y cambios accionables.</p></div></div><div id="growth-attention-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Calculando prioridades.</span></div></section>
+          <section class="growth-priority-card" aria-labelledby="growth-opportunity-preview-title"><div class="section-header"><div><p class="eyebrow">B</p><h3 id="growth-opportunity-preview-title">Oportunidades</h3><p>Clientes que conviene contactar según reservas y seguimientos existentes.</p></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="opportunities">Ver todas</button></div><div id="growth-opportunities-preview" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div></div></section>
+          <section class="growth-signals-card" aria-labelledby="growth-signals-title">
+            <div class="section-header"><div><p class="eyebrow">C · Tendencias</p><h3 id="growth-signals-title">Cambios que conviene revisar</h3><p>Análisis deterministas basados en agenda, recurrencia, demanda y eventos configurados.</p></div><span id="growth-signals-status" class="growth-human-status">Comprobando…</span></div>
+            <div id="growth-signals-list" class="growth-signals-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Analizando cambios del negocio.</span></div>
+          </section>
+          <section class="growth-results-card" aria-labelledby="growth-results-title">
+            <div class="section-header"><div><p class="eyebrow">D · Resultados</p><h3 id="growth-results-title">Últimos 30 días</h3><p>Reservas vinculadas a acciones Growth e importes registrados, sin afirmar causalidad.</p></div></div>
+            <div class="growth-metrics" aria-label="Resumen de crecimiento" aria-busy="true">
             <article><span>Clientes pendientes de solicitud</span><strong id="growth-metric-candidates">—</strong></article>
             <article><span>Solicitudes preparadas</span><strong id="growth-metric-prepared">—</strong></article>
             <article><span>Marcadas como enviadas</span><strong id="growth-metric-sent">—</strong></article>
             <article><span>Solicitudes con error</span><strong id="growth-metric-failed">—</strong></article>
             <article><span>Oportunidades activas</span><strong id="growth-metric-opportunities">—</strong></article>
-          </section>
-          <section class="growth-signals-card" aria-labelledby="growth-signals-title">
-            <div class="section-header"><div><h3 id="growth-signals-title">Señales del negocio</h3><p>Análisis deterministas basados en agenda, recurrencia, demanda y eventos configurados.</p></div><span id="growth-signals-status" class="growth-human-status">Comprobando…</span></div>
-            <div id="growth-signals-list" class="growth-signals-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Analizando señales del negocio.</span></div>
-          </section>
-          <section class="growth-results-card" aria-labelledby="growth-results-title">
-            <div class="section-header"><div><h3 id="growth-results-title">Últimos 30 días</h3><p>Resultados atribuibles observados, sin afirmar causalidad absoluta.</p></div></div>
+            </div>
             <div class="growth-results-metrics" aria-busy="true">
               <article><span>Oportunidades detectadas</span><strong id="growth-result-detected">—</strong></article>
               <article><span>Gestionadas</span><strong id="growth-result-handled">—</strong></article>
-              <article><span>Reservas atribuidas</span><strong id="growth-result-booked">—</strong></article>
+              <article><span>Reservas vinculadas a acciones Growth</span><strong id="growth-result-booked">—</strong></article>
               <article><span>Citas completadas</span><strong id="growth-result-completed">—</strong></article>
-              <article><span>Facturación atribuida</span><strong id="growth-result-revenue">—</strong></article>
+              <article><span>Ingresos registrados en reservas vinculadas</span><strong id="growth-result-revenue">—</strong></article>
             </div>
             <div id="growth-funnel" class="growth-funnel" aria-label="Funnel de oportunidades"></div>
           </section>
-          <section class="growth-priority-card" aria-labelledby="growth-priority-title"><div class="section-header"><div><h3 id="growth-priority-title">Qué conviene hacer primero</h3><p>Bloqueos y acciones ordenados por utilidad operativa.</p></div></div><div id="growth-priority-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Calculando prioridades.</span></div></section>
+          <section class="growth-priority-card" aria-labelledby="growth-priority-title"><div class="section-header"><div><h3 id="growth-priority-title">Mejora la configuración</h3><p>Preparación, recurrencia y conexiones separadas de las oportunidades de clientes.</p></div></div><div id="growth-priority-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Comprobando configuración.</span></div></section>
           <section class="growth-activity-card" aria-labelledby="growth-activity-title"><div class="section-header"><div><h3 id="growth-activity-title">Actividad reciente</h3><p>Preparaciones y cambios reales registrados en solicitudes de reseña.</p></div></div><div id="growth-activity-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando actividad.</span></div></section>
           <div class="growth-overview growth-readiness" aria-label="Preparación operativa">
             <div><strong id="growth-progress-count">Comprobando acciones</strong><span id="growth-points">Basado en datos operativos reales</span></div><strong id="growth-progress-percent">—</strong>

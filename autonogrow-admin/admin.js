@@ -445,6 +445,7 @@ function setupGrowthHub() {
       const opportunityAction = opportunity.dataset.opportunityAction;
       if (opportunityAction === "prepare") prepareOpportunityMessage(opportunityId, opportunity);
       else if (opportunityAction === "conversation") openOpportunityConversation(opportunityId);
+      else if (opportunityAction === "customer") openOpportunityConversation(opportunityId, { openCustomer: true });
       else updateCustomerOpportunity(opportunityId, opportunityAction);
     }
     const signalAction = event.target.closest("[data-growth-signal-action]");
@@ -885,11 +886,44 @@ function getDashboardPendingConversations() {
   return dashboardConversations.filter(conversationNeedsReply);
 }
 
+function compareGrowthOpportunities(first, second) {
+  const statusRank = (item) => item.status === "pending" ? 0 : 1;
+  const overdueRank = (item) => new Date(item.due_at).getTime() <= Date.now() ? 0 : 1;
+  const priorityRank = (item) => ({ high: 0, normal: 1, low: 2 })[item.priority] ?? 3;
+  return statusRank(first) - statusRank(second)
+    || overdueRank(first) - overdueRank(second)
+    || priorityRank(first) - priorityRank(second)
+    || String(first.due_at || "").localeCompare(String(second.due_at || ""))
+    || String(first.created_at || "").localeCompare(String(second.created_at || ""))
+    || Number(first.id || 0) - Number(second.id || 0);
+}
+
+function growthOpportunityHeadline(opportunity) {
+  const customer = opportunity.customer?.name || "Este cliente";
+  const labels = {
+    cancelled_not_rebooked: `${customer} canceló y todavía no ha reservado otra cita`,
+    no_show_not_rebooked: `${customer} no acudió y todavía no ha reservado otra cita`,
+    lead_not_converted: `${customer} consultó, pero todavía no ha reservado`,
+    service_due: `${customer} está en fecha de volver`,
+    scheduled_followup: `${customer} tiene un seguimiento pendiente`
+  };
+  return labels[opportunity.type] || opportunity.reason_text || "Hay una oportunidad activa";
+}
+
+function growthOpportunityTiming(opportunity) {
+  const due = new Date(opportunity.due_at);
+  if (Number.isNaN(due.getTime())) return "Fecha no disponible";
+  const delta = due.getTime() - Date.now();
+  if (delta <= 0) return `Vencía ${formatDateTime(opportunity.due_at)}`;
+  if (delta <= 3 * 24 * 60 * 60 * 1000) return `Vence pronto · ${formatDateTime(opportunity.due_at)}`;
+  return `Fecha recomendada · ${formatDateTime(opportunity.due_at)}`;
+}
+
 function getDashboardGrowthFollowUps() {
   const byCustomer = new Map();
   customerOpportunities
     .filter((opportunity) => opportunity.status === "pending" && opportunity.customer?.id)
-    .sort((first, second) => String(first.due_at || "").localeCompare(String(second.due_at || "")))
+    .sort(compareGrowthOpportunities)
     .forEach((opportunity) => {
       if (!byCustomer.has(opportunity.customer.id)) byCustomer.set(opportunity.customer.id, opportunity);
     });
@@ -1240,20 +1274,43 @@ function renderAttentionItems() {
     return;
   }
   container.setAttribute("aria-busy", "false");
-  const growthTaskItems = growthFollowUps.length ? `
+  const growthSignalCandidates = businessGrowthSignals
+    .filter((signal) => signal.related_opportunities && ["high", "medium"].includes(signal.severity));
+  const growthSlots = Math.max(0, 5 - growthFollowUps.length);
+  const opportunityMarkup = growthFollowUps.slice(0, 5).map((opportunity) => {
+    const recurrence = opportunity.follow_up_interval_days_snapshot;
+    const why = recurrence && opportunity.source_service_name
+      ? `Normalmente repite ${opportunity.source_service_name} cada ${Number(recurrence)} días.`
+      : opportunity.reason_text || "Hay un seguimiento comercial pendiente.";
+    return `
+      <article class="dashboard-attention-item dashboard-attention-item--${opportunity.priority === "high" ? "warning" : "info"} dashboard-growth-task">
+        <span class="dashboard-attention-item__mark" aria-hidden="true">${opportunity.priority === "high" ? "!" : "•"}</span>
+        <div>
+          <h5>${escapeHtml(growthOpportunityHeadline(opportunity))}</h5>
+          <p>${escapeHtml(why)}</p>
+          <p>${escapeHtml(opportunity.source_service_name || "Seguimiento de cliente")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</p>
+        </div>
+        <div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">Preparar mensaje</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-dashboard-opportunity-id="${Number(opportunity.id)}">Ver oportunidad</button></div>
+      </article>`;
+  }).join("");
+  const signalMarkup = growthSignalCandidates.slice(0, growthSlots).map((signal) => {
+    const explanation = signal.explanation || {};
+    return `
+      <article class="dashboard-attention-item dashboard-attention-item--warning dashboard-growth-task">
+        <span class="dashboard-attention-item__mark" aria-hidden="true">!</span>
+        <div><h5>${escapeHtml(explanation.what_happened || explanation.title || "Hay un cambio que conviene revisar")}</h5><p>${escapeHtml(explanation.why_it_matters || "Conviene revisar este cambio antes de actuar.")}</p></div>
+        <button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-signal-action="opportunities" data-growth-signal-id="${Number(signal.id)}">Ver oportunidades</button>
+      </article>`;
+  }).join("");
+  const growthTaskItems = opportunityMarkup || signalMarkup ? `
     <section class="dashboard-growth-tasks" aria-labelledby="dashboard-growth-tasks-title">
-      <h4 id="dashboard-growth-tasks-title">Seguimientos Growth pendientes</h4>
-      ${growthFollowUps.slice(0, 5).map((opportunity) => `
-        <article class="dashboard-attention-item dashboard-attention-item--info dashboard-growth-task">
-          <span class="dashboard-attention-item__mark" aria-hidden="true">•</span>
-          <div>
-            <h5>${escapeHtml(opportunity.customer?.name || "Cliente sin nombre")}</h5>
-            <p>${escapeHtml(opportunity.reason_text || "Seguimiento comercial pendiente.")}</p>
-            <p>Fecha relevante: ${escapeHtml(formatDateTime(opportunity.due_at))}</p>
-          </div>
-          <button class="ag-button ag-button--ghost ag-button--small" type="button" data-dashboard-opportunity-id="${Number(opportunity.id)}">${growthOpportunityConversationId(opportunity) ? "Abrir conversación" : "Ver oportunidad"}</button>
-        </article>`).join("")}
-    </section>` : "";
+      <h4 id="dashboard-growth-tasks-title">Oportunidades para hoy</h4>
+      ${opportunityMarkup}${signalMarkup}
+    </section>` : (growthAvailable && growthLoadState.opportunities === "ready" && growthLoadState.signals === "ready" ? `
+    <section class="dashboard-growth-tasks" aria-labelledby="dashboard-growth-tasks-title">
+      <h4 id="dashboard-growth-tasks-title">Oportunidades para hoy</h4>
+      <div class="dashboard-block-state dashboard-block-state--empty"><strong>Todo está al día</strong><p>No hay oportunidades activas ni señales accionables con los datos evaluados.</p></div>
+    </section>` : "");
   const closeTaskItems = closeTasksReady && bookingCloseTasks.length ? `
     <section class="dashboard-close-tasks" aria-labelledby="dashboard-close-tasks-title">
       <h4 id="dashboard-close-tasks-title">Citas pendientes de cerrar</h4>
@@ -1271,13 +1328,18 @@ function renderAttentionItems() {
           </div>
         </article>`).join("")}
     </section>` : "";
-  const attentionItems = items.slice(0, Math.max(0, 5 - bookingCloseTasks.length)).map((item) => `
+  const configurationSections = new Set(["business", "services", "schedule", "channels", "public-page"]);
+  const configurationItems = items.filter((item) => configurationSections.has(item.section) || ["services", "availability", "channels"].includes(item.retry));
+  const operationalItems = items.filter((item) => !configurationItems.includes(item));
+  const attentionItems = operationalItems.slice(0, Math.max(0, 5 - bookingCloseTasks.length)).map((item) => `
     <article class="dashboard-attention-item dashboard-attention-item--${escapeHtml(item.severity)}">
       <span class="dashboard-attention-item__mark" aria-hidden="true">${item.severity === "danger" ? "!" : "•"}</span>
       <div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(item.description)}</p></div>
       <button class="ag-button ag-button--ghost ag-button--small" type="button" ${item.retry ? `data-dashboard-retry="${escapeHtml(item.retry)}"` : `data-dashboard-section="${escapeHtml(item.section)}"${item.view ? ` data-dashboard-booking-view="${escapeHtml(item.view)}"` : ""}`}>${escapeHtml(item.action)}</button>
     </article>`).join("");
-  container.innerHTML = `${growthTaskItems}${closeTaskItems}${attentionItems}`;
+  const operationalSection = closeTaskItems || attentionItems ? `<section class="dashboard-operational-tasks" aria-labelledby="dashboard-operational-title"><h4 id="dashboard-operational-title">Necesitan atención</h4>${closeTaskItems}${attentionItems}</section>` : "";
+  const configurationSection = configurationItems.length ? `<section class="dashboard-configuration-tasks" aria-labelledby="dashboard-configuration-title"><h4 id="dashboard-configuration-title">Mejora la configuración</h4>${configurationItems.slice(0, 4).map((item) => `<article class="dashboard-attention-item dashboard-attention-item--${escapeHtml(item.severity)}"><span class="dashboard-attention-item__mark" aria-hidden="true">•</span><div><h5>${escapeHtml(item.title)}</h5><p>${escapeHtml(item.description)}</p></div><button class="ag-button ag-button--ghost ag-button--small" type="button" ${item.retry ? `data-dashboard-retry="${escapeHtml(item.retry)}"` : `data-dashboard-section="${escapeHtml(item.section)}"`}>${escapeHtml(item.action)}</button></article>`).join("")}</section>` : "";
+  container.innerHTML = `${growthTaskItems}${operationalSection}${configurationSection}`;
 }
 
 function renderMessageSummary() {
@@ -1369,19 +1431,7 @@ function renderDashboard() {
 async function navigateFromDashboard(button) {
   const opportunityId = Number(button.dataset.dashboardOpportunityId);
   if (Number.isInteger(opportunityId) && opportunityId > 0) {
-    const opportunity = customerOpportunities.find((item) => item.id === opportunityId);
-    const conversationId = Number(growthOpportunityConversationId(opportunity || {}));
-    if (Number.isInteger(conversationId) && conversationId > 0) {
-      showAdminSection("conversations");
-      await selectConversation(conversationId);
-      return;
-    }
-    showAdminSection("growth-opportunities");
-    window.requestAnimationFrame(() => {
-      const card = document.querySelector(`[data-customer-opportunity="${opportunityId}"]`);
-      card?.scrollIntoView?.({ block: "center" });
-      card?.querySelector("button")?.focus?.({ preventScroll: true });
-    });
+    focusGrowthOpportunity(opportunityId);
     return;
   }
   const bookingId = Number(button.dataset.dashboardBookingId);
@@ -1575,6 +1625,16 @@ function calculateGrowthTasks() {
   return tasks.sort((first, second) => priorityGroup(first) - priorityGroup(second) || first.priority - second.priority);
 }
 
+function focusGrowthOpportunity(opportunityId) {
+  if (!moduleAvailable("growth") || !showAdminSection("growth-opportunities")) return false;
+  window.requestAnimationFrame(() => {
+    const card = document.querySelector(`[data-customer-opportunity="${Number(opportunityId)}"]`);
+    card?.scrollIntoView?.({ block: "center" });
+    card?.querySelector("button")?.focus?.({ preventScroll: true });
+  });
+  return true;
+}
+
 function getSafeReviewUrl() {
   const value = String(currentBusiness?.reviews_url || "").trim();
   return value && isSafePublicUrl(value) ? value : "";
@@ -1633,19 +1693,87 @@ function renderGrowthActivity() {
   container.innerHTML = activity.length ? activity.map((item) => `<article><div><strong>${escapeHtml(item.label)}</strong><p>${escapeHtml(item.customer || "Cliente sin nombre")}</p></div><time>${escapeHtml(formatConversationDate(item.at))}</time></article>`).join("") : `<div class="growth-empty-state"><strong>Aún no hay actividad de reseñas</strong><p>Las solicitudes preparadas aparecerán aquí.</p></div>`;
 }
 
+function growthOpportunityEmptyCopy() {
+  const lastEvaluation = growthSignalsSummary?.last_evaluated_at;
+  if (growthSignalsSummary?.data_state === "insufficient_history_or_not_evaluated") {
+    return {
+      title: "Todavía estamos aprendiendo de tu negocio",
+      description: "Algunas detecciones necesitan reservas anteriores para reconocer recurrencia y cambios útiles."
+    };
+  }
+  if (dashboardDataState.bookings === "ready" && !allBookings.some((booking) => booking.status === "completed")) {
+    return {
+      title: "Todavía estamos aprendiendo de tu negocio",
+      description: "Las oportunidades de retorno necesitan citas completadas anteriores; Growth no está roto."
+    };
+  }
+  if (dashboardDataState.services === "ready" && !adminServices.some((service) => service.follow_up_enabled)) {
+    return {
+      title: "Configura cuándo suelen volver tus clientes",
+      description: "Activa la recurrencia en los servicios donde conozcas una frecuencia habitual."
+    };
+  }
+  return {
+    title: "Todo está al día",
+    description: lastEvaluation
+      ? `No hay oportunidades activas. Última evaluación: ${formatDateTime(lastEvaluation)}.`
+      : "No hay oportunidades activas con los datos disponibles."
+  };
+}
+
+function growthOpportunityPreviewMarkup(opportunity, { compact = false } = {}) {
+  const why = opportunity.reason_text || "Hay un seguimiento comercial pendiente.";
+  return `<article class="growth-priority-item growth-priority-item--${opportunity.priority === "high" ? "needs_attention" : "recommended"}" data-customer-opportunity-preview="${Number(opportunity.id)}"><div><span>${escapeHtml(opportunity.priority === "high" ? "Prioridad alta" : growthOpportunityTiming(opportunity))}</span><h4>${escapeHtml(growthOpportunityHeadline(opportunity))}</h4><p>${escapeHtml(why)}</p>${compact ? "" : `<small>${escapeHtml(opportunity.source_service_name || "Sin servicio específico")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</small>`}</div><button class="ag-button ag-button--${compact ? "secondary" : "primary"} ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">Preparar mensaje</button></article>`;
+}
+
+function renderGrowthAttentionAndOpportunities() {
+  const opportunities = customerOpportunities
+    .filter((item) => item.status === "pending")
+    .sort(compareGrowthOpportunities);
+  const attentionOpportunities = opportunities.filter((item) =>
+    item.priority === "high" || new Date(item.due_at).getTime() <= Date.now() + 3 * 24 * 60 * 60 * 1000
+  );
+  const actionableSignals = businessGrowthSignals
+    .filter((signal) => signal.related_opportunities && ["high", "medium"].includes(signal.severity));
+  const attention = document.getElementById("growth-attention-list");
+  const preview = document.getElementById("growth-opportunities-preview");
+  if (attention) {
+    attention.setAttribute("aria-busy", "false");
+    const opportunityCards = attentionOpportunities.slice(0, 5).map((item) => growthOpportunityPreviewMarkup(item, { compact: true }));
+    const remaining = Math.max(0, 5 - opportunityCards.length);
+    const signalCards = actionableSignals.slice(0, remaining).map((signal) => {
+      const explanation = signal.explanation || {};
+      return `<article class="growth-priority-item growth-priority-item--needs_attention"><div><span>${signal.severity === "high" ? "Urgente" : "Prioritaria"}</span><h4>${escapeHtml(explanation.what_happened || explanation.title || "Hay un cambio que conviene revisar")}</h4><p>${escapeHtml(explanation.why_it_matters || "Conviene revisar este cambio antes de actuar.")}</p></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-signal-action="opportunities" data-growth-signal-id="${Number(signal.id)}">Ver oportunidades</button></article>`;
+    });
+    attention.innerHTML = [...opportunityCards, ...signalCards].join("") || `<div class="growth-empty-state"><strong>Sin acciones urgentes</strong><p>Las oportunidades activas no requieren atención inmediata.</p></div>`;
+  }
+  if (preview) {
+    preview.setAttribute("aria-busy", "false");
+    const empty = growthOpportunityEmptyCopy();
+    preview.innerHTML = opportunities.length
+      ? opportunities.slice(0, 3).map((item) => growthOpportunityPreviewMarkup(item)).join("")
+      : `<div class="growth-empty-state"><strong>${escapeHtml(empty.title)}</strong><p>${escapeHtml(empty.description)}</p></div>`;
+  }
+}
+
 function renderGrowthOverview(tasks) {
   const candidates = getReviewCandidates();
   const requests = Array.from(reviewRequestsByBooking.values());
   const prepared = requests.filter((request) => ["pending", "copied"].includes(request.status)).length;
   const sent = requests.filter((request) => request.status === "sent").length;
   const failed = getFailedReviewMessages().length;
-  const activeTasks = tasks.filter((task) => ["recommended", "needs_attention", "blocked", "not_available"].includes(task.status));
-  const completed = tasks.filter((task) => task.status === "completed").length;
-  const percentage = tasks.length ? Math.round((completed / tasks.length) * 100) : 100;
+  const configurationTaskIds = new Set(["active-services", "business-hours", "public-business", "business-gallery"]);
+  const configurationTasks = tasks.filter((task) => configurationTaskIds.has(task.id) || task.id.startsWith("channel-"));
+  const activeTasks = configurationTasks.filter((task) => ["recommended", "needs_attention", "blocked", "not_available"].includes(task.status));
+  const completed = configurationTasks.filter((task) => task.status === "completed").length;
+  const percentage = configurationTasks.length ? Math.round((completed / configurationTasks.length) * 100) : 100;
+  const actionableSignals = businessGrowthSignals.filter((signal) => signal.related_opportunities && ["high", "medium"].includes(signal.severity));
+  const activeOpportunities = customerOpportunities.filter((item) => item.status === "pending");
+  const actionCount = activeOpportunities.length + actionableSignals.length;
   const metricValues = { "growth-metric-candidates": candidates.length, "growth-metric-prepared": prepared, "growth-metric-sent": sent, "growth-metric-failed": failed, "growth-metric-opportunities": customerOpportunities.filter((item) => item.status === "pending").length };
   Object.entries(metricValues).forEach(([id, value]) => { document.getElementById(id).textContent = String(value); });
   document.querySelector(".growth-metrics")?.setAttribute("aria-busy", "false");
-  document.getElementById("growth-progress-count").textContent = `${completed} de ${tasks.length} condiciones resueltas`;
+  document.getElementById("growth-progress-count").textContent = `${completed} de ${configurationTasks.length} condiciones de configuración resueltas`;
   document.getElementById("growth-points").textContent = "Basado en datos operativos reales";
   document.getElementById("growth-progress-percent").textContent = `${percentage}%`;
   const progress = document.querySelector(".growth-progress");
@@ -1656,33 +1784,33 @@ function renderGrowthOverview(tasks) {
   priority.setAttribute("aria-busy", "false");
   priority.innerHTML = activeTasks.length ? activeTasks.slice(0, 5).map((task) => `<article class="growth-priority-item growth-priority-item--${task.status}"><div><span>${growthTaskStateLabel(task.status)}</span><h4>${escapeHtml(task.title)}</h4><p>${escapeHtml(task.description)}</p><small>Depende de: ${escapeHtml(task.dependency)}</small></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="${escapeHtml(task.action)}"${task.channel ? ` data-channel="${escapeHtml(task.channel)}"` : ""}>${escapeHtml(task.action_label)}</button></article>`).join("") : `<div class="growth-empty-state"><strong>No hay acciones prioritarias</strong><p>Las condiciones comprobadas no requieren intervención.</p></div>`;
   const dayComplete = document.getElementById("growth-day-complete");
-  dayComplete.hidden = activeTasks.length > 0 || growthSourceErrors().length > 0;
-  const nextTask = activeTasks[0];
-  document.getElementById("growth-summary-count").textContent = activeTasks.length ? `${activeTasks.length} acción${activeTasks.length === 1 ? "" : "es"} pendiente${activeTasks.length === 1 ? "" : "s"}` : "Sin acciones pendientes";
-  document.getElementById("growth-summary-next").textContent = nextTask ? `Prioridad: ${nextTask.title}` : "No hay bloqueos con los datos disponibles.";
+  dayComplete.hidden = activeTasks.length > 0 || actionCount > 0 || growthSourceErrors().length > 0;
+  const nextOpportunity = activeOpportunities.sort(compareGrowthOpportunities)[0];
+  document.getElementById("growth-summary-count").textContent = actionCount ? `${actionCount} oportunidad${actionCount === 1 ? "" : "es"} para revisar` : "Sin oportunidades pendientes";
+  document.getElementById("growth-summary-next").textContent = nextOpportunity ? growthOpportunityHeadline(nextOpportunity) : (activeTasks[0] ? `Mejora la configuración: ${activeTasks[0].title}` : "No hay bloqueos con los datos disponibles.");
   document.getElementById("growth-summary-progress-bar").style.width = `${percentage}%`;
-  document.getElementById("growth-overview-status").textContent = activeTasks.length ? `${activeTasks.length} pendientes` : "Sin pendientes";
+  document.getElementById("growth-overview-status").textContent = actionCount ? `${actionCount} por revisar` : "Sin oportunidades urgentes";
+  renderGrowthAttentionAndOpportunities();
   renderGrowthActivity();
 }
 
-function renderGrowthOpportunities(tasks) {
+function renderGrowthOpportunities(_tasks) {
   const container = document.getElementById("growth-tasks-list");
   if (!container) return;
-  const visible = tasks.filter((task) => ["recommended", "needs_attention", "blocked", "not_available"].includes(task.status));
   container.setAttribute("aria-busy", "false");
-  const typeLabels = { cancelled_not_rebooked: "Cancelación sin nueva reserva", no_show_not_rebooked: "No presentado sin nueva reserva", lead_not_converted: "Consulta sin reserva", service_due: "Servicio pendiente de repetición", scheduled_followup: "Seguimiento indicado" };
+  const typeLabels = { cancelled_not_rebooked: "Canceló y no ha vuelto a reservar", no_show_not_rebooked: "No acudió y no ha vuelto a reservar", lead_not_converted: "Consultó y todavía no ha reservado", service_due: "Cliente en fecha de volver", scheduled_followup: "Seguimiento indicado" };
   const channelLabels = { whatsapp: "WhatsApp", instagram: "Instagram" };
   const actionLabels = { draft: "Borrador", approved: "Pendiente de envío", sending: "Enviando", sent: "Enviado", failed: "Fallido", cancelled: "Cancelado", completed: "Completado" };
-  const persisted = customerOpportunities.map((item) => {
+  const persisted = [...customerOpportunities].sort(compareGrowthOpportunities).map((item) => {
     const latest = item.latest_action;
     const channel = item.channel?.channel ? (channelLabels[item.channel.channel] || item.channel.channel) : "Sin canal disponible";
     const prepareLabel = latest?.status === "draft" ? "Continuar borrador" : "Preparar mensaje";
     const memory = item.customer_context?.explicit || [];
     const context = memory.length ? `<div class="growth-customer-context"><strong>Contexto del cliente</strong>${memory.map((entry) => `<p>${escapeHtml(entry.value)}</p>`).join("")}</div>` : "";
-    return `<article class="growth-task growth-task-${escapeHtml(item.priority)}" data-customer-opportunity="${item.id}"><span class="growth-task-status">${escapeHtml(typeLabels[item.type] || item.type)}</span><div class="growth-task-copy"><h3>${escapeHtml(item.customer?.name || "Cliente sin nombre")}</h3><p>${escapeHtml(item.reason_text)}</p><div class="growth-opportunity-meta"><span>${escapeHtml(item.source_service_name || "Sin servicio específico")}</span><span>${escapeHtml(channel)}</span><span>${escapeHtml(latest ? actionLabels[latest.status] || latest.status : "Sin acciones")}</span></div><span>Fecha relevante: ${escapeHtml(formatDateTime(item.due_at))}</span><details><summary>Ver contexto</summary><p>${escapeHtml(item.reason_text)}</p>${context}</details></div><div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${item.id}">${escapeHtml(prepareLabel)}</button>${item.channel?.conversation_id ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="conversation" data-opportunity-id="${item.id}">Ver conversación</button>` : ""}<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="actioned" data-opportunity-id="${item.id}">Marcar gestionada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-opportunity-action="dismissed" data-opportunity-id="${item.id}">Descartar</button></div></article>`;
+    return `<article class="growth-task growth-task-${escapeHtml(item.priority)}" data-customer-opportunity="${item.id}"><span class="growth-task-status">${escapeHtml(typeLabels[item.type] || item.type)}</span><div class="growth-task-copy"><h3>${escapeHtml(growthOpportunityHeadline(item))}</h3><p>${escapeHtml(item.reason_text)}</p><div class="growth-opportunity-meta"><span>${escapeHtml(item.source_service_name || "Sin servicio específico")}</span><span>${escapeHtml(channel)}</span><span>${escapeHtml(latest ? actionLabels[latest.status] || latest.status : "Sin acciones")}</span></div><span>${escapeHtml(growthOpportunityTiming(item))}</span><details><summary>Ver contexto</summary><p>${escapeHtml(item.reason_text)}</p>${context}</details></div><div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${item.id}">${escapeHtml(prepareLabel)}</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="customer" data-opportunity-id="${item.id}">Ver cliente</button>${item.channel?.conversation_id ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="conversation" data-opportunity-id="${item.id}">Ver conversación</button>` : ""}<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="actioned" data-opportunity-id="${item.id}">Marcar gestionada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-opportunity-action="dismissed" data-opportunity-id="${item.id}">Descartar</button></div></article>`;
   }).join("");
-  const operational = visible.length ? `<details class="growth-operational-recommendations"><summary>Mejoras operativas (${visible.length})</summary>${visible.map((task) => `<article class="growth-task growth-task-${task.status}" data-growth-task="${escapeHtml(task.id)}"><span class="growth-task-status">${escapeHtml(growthTaskStateLabel(task.status))}</span><div class="growth-task-copy"><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(task.description)}</p><span>Depende de: ${escapeHtml(task.dependency)}</span></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="${escapeHtml(task.action)}"${task.channel ? ` data-channel="${escapeHtml(task.channel)}"` : ""}>${escapeHtml(task.action_label)}</button></article>`).join("")}</details>` : "";
-  container.innerHTML = persisted || operational ? `${persisted}${operational}` : `<div class="growth-empty-state"><strong>No hay oportunidades activas</strong><p>Cuando venza un seguimiento o una reserva necesite atención, aparecerá aquí.</p></div>`;
+  const empty = growthOpportunityEmptyCopy();
+  container.innerHTML = persisted || `<div class="growth-empty-state"><strong>${escapeHtml(empty.title)}</strong><p>${escapeHtml(empty.description)}</p></div>`;
   document.getElementById("growth-opportunities-status").textContent = customerOpportunities.length ? `${customerOpportunities.length} pendientes` : "Sin oportunidades";
 }
 
@@ -1703,7 +1831,7 @@ function renderGrowthActionMetrics() {
   });
   document.querySelector(".growth-results-metrics")?.setAttribute("aria-busy", "false");
   const funnel = growthActionMetrics?.funnel;
-  const labels = { detected: "Detectadas", viewed: "Vistas", actioned: "Gestionadas", sent: "Enviadas", booked: "Reservadas", completed: "Completadas" };
+  const labels = { detected: "Detectadas", viewed: "Acciones preparadas", actioned: "Gestionadas", sent: "Enviadas", booked: "Reservas vinculadas", completed: "Completadas" };
   const container = document.getElementById("growth-funnel");
   if (container) container.innerHTML = funnel
     ? Object.entries(labels).map(([key, label]) => `<span><small>${escapeHtml(label)}</small><strong>${Number(funnel[key] || 0)}</strong></span>`).join("")
@@ -1716,11 +1844,11 @@ function renderBusinessGrowthSignals() {
   if (!container || !status) return;
   container.setAttribute("aria-busy", "false");
   const typeLabels = {
-    low_future_occupancy: "Agenda floja",
+    low_future_occupancy: "Tienes más huecos de lo habitual",
     high_due_customer_pool: "Retorno de clientes",
-    low_return_rate: "Menor tasa de retorno",
+    low_return_rate: "Están volviendo menos clientes",
     service_demand_drop: "Servicio con menor demanda",
-    seasonal_window: "Ventana comercial"
+    seasonal_window: "Se acerca una fecha importante"
   };
   const severityLabels = { info: "Información", low: "Atención", medium: "Prioritaria", high: "Urgente" };
   const recommendationLabels = {
@@ -1730,10 +1858,12 @@ function renderBusinessGrowthSignals() {
     consider_campaign: "Valorar una comunicación comercial",
     review_service_demand: "Revisar la demanda del servicio"
   };
-  container.innerHTML = businessGrowthSignals.length ? businessGrowthSignals.map((signal) => {
+  const severityRank = { high: 0, medium: 1, low: 2, info: 3 };
+  container.innerHTML = businessGrowthSignals.length ? [...businessGrowthSignals].sort((first, second) => (severityRank[first.severity] ?? 4) - (severityRank[second.severity] ?? 4) || Number(first.id) - Number(second.id)).map((signal) => {
     const explanation = signal.explanation || {};
     const related = signal.related_opportunities;
-    return `<article class="growth-signal growth-signal--${escapeHtml(signal.severity)}" data-growth-signal="${signal.id}"><div class="growth-signal-heading"><span>${escapeHtml(severityLabels[signal.severity] || signal.severity)}</span><small>${escapeHtml(signal.service?.name || "Todo el negocio")}</small></div><h4>${escapeHtml(explanation.title || typeLabels[signal.type] || signal.type)}</h4><p><strong>${escapeHtml(explanation.what_happened || "Se ha detectado una variación relevante.")}</strong></p><p>${escapeHtml(explanation.comparison || "")}</p><p>${escapeHtml(explanation.why_it_matters || "")}</p><div class="growth-signal-recommendation"><span>Recomendación</span><strong>${escapeHtml(recommendationLabels[signal.recommendation_code] || explanation.suggested_action || signal.recommendation_code)}</strong></div><div class="growth-opportunity-actions">${related ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-signal-action="opportunities" data-growth-signal-id="${signal.id}">Ver oportunidades relacionadas</button>` : ""}<button class="ag-button ag-button--ghost ag-button--small" type="button" data-growth-signal-action="dismiss" data-growth-signal-id="${signal.id}">Descartar señal</button></div></article>`;
+    const classification = related ? (severityLabels[signal.severity] || signal.severity) : "Información";
+    return `<article class="growth-signal growth-signal--${escapeHtml(signal.severity)}" data-growth-signal="${signal.id}"><div class="growth-signal-heading"><span>${escapeHtml(classification)}</span><small>${escapeHtml(signal.service?.name || "Todo el negocio")}</small></div><h4>${escapeHtml(typeLabels[signal.type] || explanation.title || signal.type)}</h4><p><strong>${escapeHtml(explanation.what_happened || "Se ha detectado una variación relevante.")}</strong></p><p>${escapeHtml(explanation.comparison || "")}</p><p>${escapeHtml(explanation.why_it_matters || "")}</p><div class="growth-signal-recommendation"><span>${related ? "Qué hacer" : "Qué conviene revisar"}</span><strong>${escapeHtml(recommendationLabels[signal.recommendation_code] || explanation.suggested_action || signal.recommendation_code)}</strong></div><div class="growth-opportunity-actions">${related ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-signal-action="opportunities" data-growth-signal-id="${signal.id}">Ver oportunidades relacionadas</button>` : `<span class="growth-signal-information">Información · no requiere una acción directa</span>`}<button class="ag-button ag-button--ghost ag-button--small" type="button" data-growth-signal-action="dismiss" data-growth-signal-id="${signal.id}">Descartar</button></div></article>`;
   }).join("") : `<div class="growth-empty-state"><strong>No hay señales activas</strong><p>${growthSignalsSummary?.data_state === "insufficient_history_or_not_evaluated" ? "Todavía no hay suficiente histórico o no se ha ejecutado el análisis diario." : "Los datos evaluados no superan los umbrales conservadores actuales."}</p></div>`;
   status.textContent = businessGrowthSignals.length ? `${businessGrowthSignals.length} activa${businessGrowthSignals.length === 1 ? "" : "s"}` : "Sin alertas";
 }
@@ -1806,6 +1936,7 @@ async function loadCustomerOpportunities({ background = false } = {}) {
     growthLoadState.opportunities = "ready";
     renderGrowth();
     renderDashboard();
+    if (selectedConversation) renderConversationCustomerPanel(selectedConversation);
   } catch (error) {
     console.error(error);
     growthLoadState.opportunities = "error";
@@ -2013,12 +2144,13 @@ async function copyGrowthOpportunityText() {
   }
 }
 
-async function openOpportunityConversation(opportunityId) {
+async function openOpportunityConversation(opportunityId, { openCustomer = false } = {}) {
   const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/opportunities/${opportunityId}/open-conversation`, { method: "POST" });
   const body = await readAdminResponseBody(response);
   if (!response.ok || !body.conversation_id) return alert(conversationErrorMessage(body, "No se pudo abrir la conversación."));
   showAdminSection("conversations");
   await selectConversation(body.conversation_id);
+  if (openCustomer && selectedConversation?.customer_id) openConversationCustomerPanel(document.activeElement);
 }
 
 async function updateCustomerOpportunity(opportunityId, status) {
@@ -4289,6 +4421,12 @@ function conversationAttentionBadges(item) {
   return `<span class="conversation-attention-states">${states.join("")}</span>`;
 }
 
+function renderConversationGrowthFollowUp(conversation) {
+  const opportunity = conversation.status === "closed" ? null : conversation.growth_opportunity;
+  if (!moduleAvailable("growth") || !opportunity) return "";
+  return `<aside class="conversation-growth-follow-up" aria-label="Seguimiento Growth"><div><strong>Este cliente requiere seguimiento porque…</strong><p>${escapeHtml(opportunity.reason_text)}</p><small>${escapeHtml(opportunity.source_service_name || "Seguimiento de cliente")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</small></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="view-growth-opportunity" data-id="${Number(opportunity.id)}">Ver oportunidad</button></aside>`;
+}
+
 function conversationFilterLabel(value) {
   return value === "needs_reply" ? "Necesitan respuesta" : conversationStatusLabel(value);
 }
@@ -4781,6 +4919,7 @@ function renderConversationDetail(conversation, uiState = null) {
         </div>
       </div>
     </header>
+    ${renderConversationGrowthFollowUp(conversation)}
     <div id="conversation-thread" class="conversation-thread" data-last-message-id="${messages.at(-1)?.id || ""}" data-message-count="${messages.length}">
       ${messages.length ? renderConversationMessages(messages) : `<div class="conversation-state conversation-state--compact"><p>Todavía no hay mensajes.</p></div>`}
       <button id="conversation-new-messages" class="ag-button ag-button--primary ag-button--small conversation-new-messages" type="button" data-admin-action="scroll-conversation-bottom" hidden>Hay mensajes nuevos</button>
@@ -5101,6 +5240,15 @@ function renderCustomerMemorySection(customerId) {
     <section class="customer-memory customer-memory--activity"><div class="customer-memory-heading"><div><h4>Actividad</h4><p>Datos observados, no preferencias declaradas</p></div></div><dl class="conversation-customer-stats"><div><dt>Visitas completadas</dt><dd>${Number(derived.visit_count || 0)}</dd></div><div><dt>Última visita</dt><dd>${derived.last_visit_at ? escapeHtml(formatConversationDate(derived.last_visit_at)) : "Sin visitas"}</dd></div><div><dt>Servicio más frecuente</dt><dd>${escapeHtml(frequent?.name || "Sin evidencia")}</dd></div><div><dt>Comportamiento observado</dt><dd>${derived.observed_return_interval_days ? `~${Number(derived.observed_return_interval_days)} días` : "Evidencia insuficiente"}</dd></div></dl>${derived.configured_recurrence ? `<p class="customer-memory-help">La recurrencia configurada (${Number(derived.configured_recurrence.interval_days)} días) tiene prioridad sobre el intervalo observado.</p>` : ""}</section>`;
 }
 
+function renderCustomerGrowthSection(customerId) {
+  if (!customerId || !moduleAvailable("growth")) return "";
+  const opportunities = customerOpportunities
+    .filter((item) => item.status === "pending" && Number(item.customer?.id) === Number(customerId))
+    .sort(compareGrowthOpportunities);
+  if (!opportunities.length) return "";
+  return `<section class="customer-growth" aria-labelledby="customer-growth-title"><div class="customer-memory-heading"><div><h4 id="customer-growth-title">Oportunidades activas</h4><p>Acciones Growth, separadas de la memoria del cliente</p></div><span class="growth-human-status">${opportunities.length}</span></div><div class="customer-growth-list">${opportunities.slice(0, 3).map((opportunity) => `<article><span>${escapeHtml(opportunity.priority === "high" ? "Prioridad alta" : "Oportunidad activa")}</span><strong>${escapeHtml(growthOpportunityHeadline(opportunity))}</strong><p>${escapeHtml(opportunity.source_service_name || "Sin servicio específico")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</p><div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">Preparar mensaje</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="conversation" data-opportunity-id="${Number(opportunity.id)}">Abrir conversación</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="view-growth-opportunity" data-id="${Number(opportunity.id)}">Abrir oportunidad</button></div></article>`).join("")}</div></section>`;
+}
+
 function renderConversationCustomerSearch() {
   if (!conversationCustomerSearchState.open || isBusinessStaff()) return "";
   const results = conversationCustomerSearchState.results.map((customer) => `
@@ -5203,6 +5351,7 @@ function renderConversationCustomerPanel(conversation) {
       <div><dt>Última actividad</dt><dd>${escapeHtml(formatConversationDate(conversation.last_message_at))}</dd></div>
     </dl>
     ${renderConversationCustomerSearch()}
+    ${associated ? renderCustomerGrowthSection(customerId) : ""}
     ${associated && conversation.customer_memory_eligible ? renderCustomerMemorySection(customerId) : ""}
   `;
   if (associated && conversation.customer_memory_eligible && !customerMemorySummaries.has(customerId)) void loadCustomerMemorySummary(customerId);
@@ -7803,6 +7952,7 @@ function setupAdminDelegatedActions() {
     else if (action === "modify-conversation-suggestion" && Number.isInteger(id)) modifyConversationSuggestion(id);
     else if (action === "dismiss-conversation-suggestion" && Number.isInteger(id)) dismissConversationSuggestion(id);
     else if (action === "open-conversation-customer-panel") openConversationCustomerPanel(button);
+    else if (action === "view-growth-opportunity" && Number.isInteger(id)) focusGrowthOpportunity(id);
     else if (action === "open-conversation-customer-search") openConversationCustomerSearch();
     else if (action === "search-conversation-customers") void searchConversationCustomers();
     else if (action === "associate-conversation-customer" && Number.isInteger(id)) void updateConversationCustomer(id);

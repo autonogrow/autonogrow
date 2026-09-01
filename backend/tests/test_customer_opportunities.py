@@ -146,9 +146,7 @@ def booking(
         preferred_time=ended.strftime("%H:%M"),
         status=status,
         updated_at=ended,
-        follow_up_enabled_snapshot=(
-            service.follow_up_enabled if snapshot is None else snapshot
-        ),
+        follow_up_enabled_snapshot=(service.follow_up_enabled if snapshot is None else snapshot),
         follow_up_interval_days_snapshot=(
             service.follow_up_interval_days
             if (service.follow_up_enabled if snapshot is None else snapshot)
@@ -322,9 +320,7 @@ def test_dismissed_and_expired_events_do_not_reappear(db: Session, records: dict
     assert db.query(CustomerOpportunity).filter_by(source_booking_id=old.id).count() == 1
 
 
-def test_lead_detection_is_conservative_and_conversation_scoped(
-    db: Session, records: dict
-) -> None:
+def test_lead_detection_is_conservative_and_conversation_scoped(db: Session, records: dict) -> None:
     commercial = Conversation(
         business_id=records["a"].id,
         channel="whatsapp",
@@ -387,21 +383,15 @@ def test_manual_followup_create_due_cancel_resolve_and_cross_ids(
         due_at=current - timedelta(minutes=1),
         note="Revisar con Ana.",
     )
-    created = create_scheduled_followup(
-        "growth-a", payload, request(), records["owner"], db
-    )
-    reused = create_scheduled_followup(
-        "growth-a", payload, request(), records["owner"], db
-    )
+    created = create_scheduled_followup("growth-a", payload, request(), records["owner"], db)
+    reused = create_scheduled_followup("growth-a", payload, request(), records["owner"], db)
     assert created["created"] is True
     assert reused["created"] is False
     row = db.query(ScheduledCustomerFollowUp).one()
     opportunity = db.query(CustomerOpportunity).one()
     assert opportunity.type == "scheduled_followup"
 
-    cancelled = cancel_scheduled_followup(
-        "growth-a", row.id, request(), records["owner"], db
-    )
+    cancelled = cancel_scheduled_followup("growth-a", row.id, request(), records["owner"], db)
     assert cancelled["followup"]["status"] == "cancelled"
     assert opportunity.status == "dismissed"
 
@@ -507,6 +497,95 @@ def test_state_machine_and_tenant_scoped_api(db: Session, records: dict) -> None
             db,
         )
     assert invalid.value.status_code == 409
+
+
+def test_opportunity_list_uses_action_first_stable_ordering(db: Session, records: dict) -> None:
+    now = datetime.now(timezone.utc)
+
+    def add_row(
+        key: str,
+        *,
+        status: str = "pending",
+        priority: str = "normal",
+        due_at: datetime,
+        created_at: datetime,
+    ) -> CustomerOpportunity:
+        row = CustomerOpportunity(
+            business_id=records["a"].id,
+            customer_id=records["customer_a"].id,
+            type="scheduled_followup",
+            status=status,
+            priority=priority,
+            detected_at=created_at,
+            due_at=due_at,
+            reason_code=key,
+            reason_text=key,
+            dedupe_key=f"ordering:{key}",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    overdue_normal = add_row(
+        "overdue-normal",
+        due_at=now - timedelta(days=3),
+        created_at=now - timedelta(hours=5),
+    )
+    overdue_high = add_row(
+        "overdue-high",
+        priority="high",
+        due_at=now - timedelta(days=1),
+        created_at=now - timedelta(hours=4),
+    )
+    stable_first = add_row(
+        "stable-first",
+        priority="low",
+        due_at=now - timedelta(hours=1),
+        created_at=now - timedelta(hours=3),
+    )
+    stable_second = add_row(
+        "stable-second",
+        priority="low",
+        due_at=stable_first.due_at,
+        created_at=stable_first.created_at,
+    )
+    future_high = add_row(
+        "future-high",
+        priority="high",
+        due_at=now + timedelta(days=1),
+        created_at=now - timedelta(hours=2),
+    )
+    actioned = add_row(
+        "actioned-overdue",
+        status="actioned",
+        priority="high",
+        due_at=now - timedelta(days=5),
+        created_at=now - timedelta(hours=1),
+    )
+    db.commit()
+
+    result = list_opportunities(
+        "growth-a",
+        status=None,
+        type=None,
+        customer_id=None,
+        due_from=None,
+        due_to=None,
+        limit=100,
+        db=db,
+    )
+    ordered_ids = [item["id"] for item in result["opportunities"]]
+
+    assert ordered_ids == [
+        overdue_high.id,
+        overdue_normal.id,
+        stable_first.id,
+        stable_second.id,
+        future_high.id,
+        actioned.id,
+    ]
 
 
 def test_database_dedupe_constraint_is_final_guard(db: Session, records: dict) -> None:

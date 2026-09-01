@@ -43,6 +43,36 @@ def _open_owner_instagram(journey):
     return session, page
 
 
+def _assert_no_horizontal_overflow(page) -> None:
+    drawer = page.locator(".conversation-customer-panel.is-open")
+    if drawer.count():
+        expect(drawer).to_have_css(
+            "transform", re.compile(r"^(none|matrix\(1, 0, 0, 1, 0, 0\))$")
+        )
+    offenders = page.evaluate(
+        """() => {
+          const openPanels = [...document.querySelectorAll('.conversation-customer-panel.is-open')];
+          const roots = openPanels.length ? openPanels : [...document.querySelectorAll('.admin-section-active')];
+          const elements = [...new Set(roots.flatMap((root) => [root, ...root.querySelectorAll('*')]))];
+          return elements
+          .filter((element) => {
+            const style = getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && (rect.left < -1 || rect.right > innerWidth + 1);
+          })
+          .slice(0, 20)
+          .map((element) => ({
+            tag: element.tagName,
+            id: element.id,
+            className: String(element.className || ''),
+            rect: element.getBoundingClientRect().toJSON()
+          }));
+        }"""
+    )
+    assert not offenders, offenders
+
+
 def test_admin_controlled_login_navigation_and_owner_separation(journey) -> None:
     session = journey()
     page = session.goto("/autonogrow-admin/?b=salon-e2e")
@@ -81,6 +111,49 @@ def test_growth_disabled_hides_its_surface_and_api_fails_closed(journey) -> None
     denied = page.request.get("/api/admin/businesses/salon-e2e/opportunities")
     assert denied.status == 403
     assert denied.json()["detail"]["code"] == "module_not_available"
+
+
+def test_growth_opportunity_home_customer_conversation_backlink(journey) -> None:
+    _session, page = _open_admin(journey)
+    page.locator('.admin-tab[data-section="summary"]').evaluate("button => button.click()")
+
+    today = page.locator("#dashboard-attention-list")
+    expect(today).to_contain_text("Oportunidades para hoy")
+    expect(today).to_contain_text("María Cliente E2E está en fecha de volver")
+    _assert_no_horizontal_overflow(page)
+    today.get_by_role("button", name="Ver oportunidad").click()
+
+    opportunity = page.locator("[data-customer-opportunity]").filter(has_text="María Cliente E2E")
+    expect(opportunity).to_be_visible()
+    _assert_no_horizontal_overflow(page)
+    opportunity.get_by_role("button", name="Ver cliente").click()
+
+    customer_growth = page.locator(".customer-growth")
+    expect(customer_growth).to_be_visible()
+    expect(customer_growth).to_contain_text("Oportunidades activas")
+    expect(customer_growth).to_contain_text("Corte E2E")
+    _assert_no_horizontal_overflow(page)
+    customer_growth.get_by_role("button", name="Abrir conversación").click()
+
+    page.locator("#conversation-customer-close").click()
+    follow_up = page.locator(".conversation-growth-follow-up")
+    expect(follow_up).to_contain_text("Este cliente requiere seguimiento porque")
+    expect(follow_up).to_contain_text("Está en fecha de volver para Corte E2E.")
+    follow_up.get_by_role("button", name="Ver oportunidad").click()
+    expect(opportunity).to_be_visible()
+
+    for size in ({"width": 768, "height": 1024}, {"width": 390, "height": 844}):
+        page.set_viewport_size(size)
+        page.locator('.admin-tab[data-section="summary"]').evaluate("button => button.click()")
+        expect(today).to_contain_text("Oportunidades para hoy")
+        _assert_no_horizontal_overflow(page)
+        today.get_by_role("button", name="Ver oportunidad").click()
+        expect(opportunity).to_be_visible()
+        _assert_no_horizontal_overflow(page)
+        opportunity.get_by_role("button", name="Ver cliente").click()
+        expect(customer_growth).to_be_visible()
+        _assert_no_horizontal_overflow(page)
+        page.locator("#conversation-customer-close").click()
 
 
 def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> None:
@@ -199,18 +272,14 @@ def test_appointment_customer_memory_is_private_timed_and_append_only(journey) -
     assert len(memory_after_internal_save) == len(memory_before_internal_save)
 
     internal_note.fill("Nota copiada de forma explícita")
-    copy_to_customer = card.get_by_role(
-        "button", name="Guardar también en notas del cliente"
-    )
+    copy_to_customer = card.get_by_role("button", name="Guardar también en notas del cliente")
     page.once("dialog", lambda dialog: dialog.accept())
     copy_to_customer.click()
     expect(copy_to_customer).to_be_enabled()
     expect(card.get_by_text("Nota copiada de forma explícita")).to_be_visible()
     memory_after_copy = page.request.get(memory_path).json()["items"]
     assert len(memory_after_copy) == len(memory_before_internal_save) + 1
-    assert "Nota copiada de forma explícita" in {
-        item["value"] for item in memory_after_copy
-    }
+    assert "Nota copiada de forma explícita" in {item["value"] for item in memory_after_copy}
     current_bookings = page.request.get(bookings_path).json()["bookings"]
     current = next(item for item in current_bookings if item["id"] == customer_booking["id"])
     assert current["internal_notes"] == "Nota copiada de forma explícita"
@@ -903,9 +972,7 @@ def test_owner_raw_association_manager_classifies_and_updates_without_reload(jou
     expect(page.locator("#owner-instagram-associations-count")).to_have_text("1")
     published.get_by_role("button", name="Abrir contenido").click()
     expect(page.locator("#owner-instagram-composer")).to_be_visible()
-    expect(page.locator("#owner-instagram-composer-title")).to_have_text(
-        "Consultar publicación"
-    )
+    expect(page.locator("#owner-instagram-composer-title")).to_have_text("Consultar publicación")
     expect(page.locator("#owner-instagram-composer-caption")).to_have_value(
         "Caption publicada SALON"
     )

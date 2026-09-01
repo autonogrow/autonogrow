@@ -26,8 +26,10 @@ from app.models import (  # noqa: E402
     BusinessUser,
     BusinessUserAvailability,
     BusinessUserService,
+    Conversation,
     Customer,
     CustomerAccountLink,
+    CustomerOpportunity,
     InstagramContent,
     InstagramContentEditorialReview,
     InstagramContentRawAsset,
@@ -318,6 +320,9 @@ def reset_database() -> None:
                 duration_text="45 min",
                 duration_minutes=45,
                 active=True,
+                follow_up_enabled=True,
+                follow_up_interval_days=30,
+                follow_up_window_days=7,
             ),
             BusinessService(
                 business_id=business_a.id,
@@ -465,6 +470,41 @@ def reset_database() -> None:
         )
         db.add_all((booking_a, pending_a, booking_b, completed, completed_user))
         db.flush()
+
+        growth_now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        growth_conversation = Conversation(
+            business_id=business_a.id,
+            customer_id=customer_a.id,
+            channel="whatsapp",
+            external_user_id="growth-customer-e2e",
+            customer_name=customer_a.name,
+            customer_phone=customer_a.phone_normalized,
+            status="replied",
+            last_message_text="Gracias, lo revisaré.",
+            last_message_at=growth_now.replace(tzinfo=None) - timedelta(days=2),
+        )
+        db.add(growth_conversation)
+        db.flush()
+        db.add(
+            CustomerOpportunity(
+                business_id=business_a.id,
+                customer_id=customer_a.id,
+                type="service_due",
+                status="pending",
+                priority="high",
+                detected_at=growth_now - timedelta(days=1),
+                due_at=growth_now - timedelta(hours=2),
+                expires_at=growth_now + timedelta(days=30),
+                source_booking_id=completed_user.id,
+                source_service_id=services_a[0].id,
+                source_conversation_id=growth_conversation.id,
+                reason_code="service_due_e2e",
+                reason_text="Está en fecha de volver para Corte E2E.",
+                dedupe_key="e2e:growth:service-due",
+                follow_up_interval_days_snapshot=30,
+                follow_up_window_days_snapshot=7,
+            )
+        )
 
         review = ReviewRequest(
             business_id=business_a.id,

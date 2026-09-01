@@ -44,6 +44,7 @@ from app.schemas.conversation import (
     ConversationTemplateUpdate,
     TestInboundMessageCreate,
 )
+from app.services.capability_service import configure_business_modules
 from app.services.conversation_service import add_message, render_template, serialize_conversation
 
 
@@ -102,6 +103,14 @@ class ConversationsTest(unittest.TestCase):
                 self.staff,
             ]
         )
+        self.db.commit()
+        for business in (self.business_a, self.business_b):
+            configure_business_modules(
+                self.db,
+                business_id=business.id,
+                enabled_modules=("essential", "growth", "social"),
+                actor_user_id=self.owner.id,
+            )
         self.db.commit()
 
     def tearDown(self):
@@ -459,7 +468,29 @@ class ConversationsTest(unittest.TestCase):
         growth_while_replied = serialize_conversation(self.db, conversation)
         self.assertFalse(growth_while_replied["needs_reply"])
         self.assertTrue(growth_while_replied["growth_follow_up"])
+        self.assertEqual(growth_while_replied["growth_opportunity"]["id"], opportunity.id)
+        self.assertEqual(
+            growth_while_replied["growth_opportunity"]["reason_text"],
+            "Conviene retomar el contacto.",
+        )
         self.assertEqual(growth_while_replied["attention_state"], "growth_follow_up")
+
+        future_high = CustomerOpportunity(
+            business_id=self.business_a.id,
+            customer_id=customer.id,
+            type="scheduled_followup",
+            status="pending",
+            priority="high",
+            detected_at=now,
+            due_at=now + timedelta(days=1),
+            reason_code="future_high",
+            reason_text="Seguimiento futuro de prioridad alta.",
+            dedupe_key=f"test-growth-future:{conversation.id}",
+        )
+        self.db.add(future_high)
+        self.db.commit()
+        selected_growth = serialize_conversation(self.db, conversation)
+        self.assertEqual(selected_growth["growth_opportunity"]["id"], opportunity.id)
 
         add_message(
             self.db,
@@ -494,7 +525,8 @@ class ConversationsTest(unittest.TestCase):
         )["conversation"]
         self.assertTrue(closed["needs_reply"])
         self.assertFalse(closed["follow_up"])
-        self.assertTrue(closed["growth_follow_up"])
+        self.assertFalse(closed["growth_follow_up"])
+        self.assertIsNone(closed["growth_opportunity"])
         self.assertEqual(closed["attention_state"], "needs_reply")
         self.assertEqual(closed["unread_count"], 1)
         needs_reply_list = admin_list_conversations(
@@ -509,7 +541,7 @@ class ConversationsTest(unittest.TestCase):
         )["conversations"]
         listed = next(item for item in needs_reply_list if item["id"] == conversation.id)
         self.assertTrue(listed["needs_reply"])
-        self.assertTrue(listed["growth_follow_up"])
+        self.assertFalse(listed["growth_follow_up"])
 
         reopened = admin_update_conversation_status(
             self.business_a.slug,
@@ -522,8 +554,21 @@ class ConversationsTest(unittest.TestCase):
         self.assertTrue(reopened["needs_reply"])
         self.assertTrue(reopened["growth_follow_up"])
 
+        configure_business_modules(
+            self.db,
+            business_id=self.business_a.id,
+            enabled_modules=("essential", "social"),
+            actor_user_id=self.owner.id,
+        )
+        self.db.commit()
+        without_entitlement = serialize_conversation(self.db, conversation)
+        self.assertFalse(without_entitlement["growth_follow_up"])
+        self.assertIsNone(without_entitlement["growth_opportunity"])
+
         opportunity.status = "dismissed"
         opportunity.dismissed_at = now
+        future_high.status = "dismissed"
+        future_high.dismissed_at = now
         self.db.commit()
         resolved_growth = serialize_conversation(self.db, conversation)
         self.assertTrue(resolved_growth["needs_reply"])

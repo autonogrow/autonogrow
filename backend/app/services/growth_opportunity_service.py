@@ -4,6 +4,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,23 @@ CANCELLED_DELAY = timedelta(days=3)
 NO_SHOW_DELAY = timedelta(days=3)
 LEAD_DELAY = timedelta(hours=48)
 DEFAULT_EXPIRY = timedelta(days=45)
+
+
+def opportunity_ordering(*, now: datetime | None = None) -> tuple:
+    """Return the shared, deterministic action-first ordering for opportunities."""
+    reference = as_utc(now or utc_now())
+    return (
+        case((CustomerOpportunity.status == "pending", 0), else_=1),
+        case((CustomerOpportunity.due_at <= reference, 0), else_=1),
+        case(
+            (CustomerOpportunity.priority == "high", 0),
+            (CustomerOpportunity.priority == "normal", 1),
+            else_=2,
+        ),
+        CustomerOpportunity.due_at.asc(),
+        CustomerOpportunity.created_at.asc(),
+        CustomerOpportunity.id.asc(),
+    )
 
 
 def utc_now() -> datetime:
@@ -90,9 +108,7 @@ class GrowthOpportunityService:
         business = self.db.get(Business, business_id)
         if business is None:
             raise ValueError("business_not_found")
-        if business.status != "active" or not module_is_available(
-            self.db, business_id, "growth"
-        ):
+        if business.status != "active" or not module_is_available(self.db, business_id, "growth"):
             return self.result
         self._resolve_existing(business_id)
         self._detect_booking_recovery(business_id)
@@ -161,7 +177,11 @@ class GrowthOpportunityService:
             if candidate.id == source.id or candidate.service_id != source.service_id:
                 continue
             candidate_time = self._booking_time(candidate)
-            if candidate.status in ACTIVE_BOOKING_STATUSES and candidate_time and candidate_time > occurred_at:
+            if (
+                candidate.status in ACTIVE_BOOKING_STATUSES
+                and candidate_time
+                and candidate_time > occurred_at
+            ):
                 return True
             completed_at = as_utc(candidate.end_datetime or candidate.updated_at)
             if candidate.status == "completed" and completed_at and completed_at > occurred_at:
@@ -177,9 +197,7 @@ class GrowthOpportunityService:
             invalidate_actions_for_resolved_opportunity,
         )
 
-        invalidate_actions_for_resolved_opportunity(
-            self.db, opportunity=opportunity, now=self.now
-        )
+        invalidate_actions_for_resolved_opportunity(self.db, opportunity=opportunity, now=self.now)
         self.result.resolved += 1
 
     def _resolve_existing(self, business_id: int) -> None:
@@ -247,7 +265,9 @@ class GrowthOpportunityService:
     def _detect_booking_recovery(self, business_id: int) -> None:
         bookings = (
             self.db.query(Booking)
-            .filter(Booking.business_id == business_id, Booking.status.in_(("cancelled", "no_show")))
+            .filter(
+                Booking.business_id == business_id, Booking.status.in_(("cancelled", "no_show"))
+            )
             .all()
         )
         for booking in bookings:
@@ -264,7 +284,11 @@ class GrowthOpportunityService:
             ):
                 continue
             days = max(0, (self.now - occurred).days)
-            kind = "cancelled_not_rebooked" if booking.status == "cancelled" else "no_show_not_rebooked"
+            kind = (
+                "cancelled_not_rebooked"
+                if booking.status == "cancelled"
+                else "no_show_not_rebooked"
+            )
             reason = (
                 f"Canceló su cita hace {days} días y no tiene otra reserva."
                 if booking.status == "cancelled"
@@ -477,9 +501,7 @@ class GrowthOpportunityService:
                 invalidate_actions_for_resolved_opportunity,
             )
 
-            invalidate_actions_for_resolved_opportunity(
-                self.db, opportunity=row, now=self.now
-            )
+            invalidate_actions_for_resolved_opportunity(self.db, opportunity=row, now=self.now)
             self.result.expired += 1
 
 

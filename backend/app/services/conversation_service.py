@@ -12,6 +12,7 @@ from app.models import (
     Business,
     BusinessChannelControl,
     BusinessChannelIntegration,
+    BusinessModuleAccess,
     Conversation,
     ConversationAutomationSettings,
     ConversationMessage,
@@ -21,6 +22,7 @@ from app.models import (
     CustomerOpportunity,
     User,
 )
+from app.services.capability_service import module_is_available
 from app.services.channel_control_service import integrated_delivery_is_authorized
 from app.services.channel_provider_service import (
     delivery_provider_for_channel,
@@ -32,6 +34,7 @@ from app.services.conversation_automation_state_service import (
     serialize_conversation_automation_state,
 )
 from app.services.customer_identity_service import normalize_phone
+from app.services.growth_opportunity_service import opportunity_ordering
 from app.services.idempotent_insert_service import insert_rows_ignore_conflicts
 from app.services.incident_service import INSTAGRAM_AUTH_CLIENT_MESSAGE
 from app.services.integration_crypto_service import IntegrationCryptoError, decrypt_secret
@@ -126,9 +129,7 @@ WHATSAPP_WINDOW_MESSAGE_SCAN_LIMIT = 100
 INVALID_REPLY_OUTBOUND_STATUSES = ("failed", "blocked", "cancelled")
 
 
-def conversation_has_manual_customer_decision(
-    db: Session, *, conversation: Conversation
-) -> bool:
+def conversation_has_manual_customer_decision(db: Session, *, conversation: Conversation) -> bool:
     return (
         db.query(AuditLog.id)
         .filter(
@@ -274,19 +275,49 @@ def unread_count(db: Session, conversation: Conversation) -> int:
     )
 
 
-def conversation_has_growth_follow_up(db: Session, conversation: Conversation) -> bool:
-    if conversation.customer_id is None:
-        return False
+def conversation_growth_opportunity(
+    db: Session, conversation: Conversation
+) -> CustomerOpportunity | None:
+    if (
+        conversation.customer_id is None
+        or conversation.status == "closed"
+        or not module_is_available(db, conversation.business_id, "growth")
+    ):
+        return None
     return (
-        db.query(CustomerOpportunity.id)
+        db.query(CustomerOpportunity)
         .filter(
             CustomerOpportunity.business_id == conversation.business_id,
             CustomerOpportunity.customer_id == conversation.customer_id,
             CustomerOpportunity.status == "pending",
         )
+        .order_by(*opportunity_ordering())
         .first()
-        is not None
     )
+
+
+def conversation_has_growth_follow_up(db: Session, conversation: Conversation) -> bool:
+    return conversation_growth_opportunity(db, conversation) is not None
+
+
+def serialize_conversation_growth_opportunity(
+    opportunity: CustomerOpportunity | None,
+) -> dict[str, Any] | None:
+    if opportunity is None:
+        return None
+    return {
+        "id": opportunity.id,
+        "customer_id": opportunity.customer_id,
+        "type": opportunity.type,
+        "priority": opportunity.priority,
+        "reason_code": opportunity.reason_code,
+        "reason_text": opportunity.reason_text,
+        "due_at": opportunity.due_at.isoformat(),
+        "source_service_id": opportunity.source_service_id,
+        "source_service_name": (
+            opportunity.source_service.name if opportunity.source_service else None
+        ),
+    }
 
 
 def serialize_conversation(
@@ -297,6 +328,7 @@ def serialize_conversation(
     capabilities: ConversationDeliveryCapabilities | None = None,
     unread_count_value: int | None = None,
     growth_follow_up_value: bool | None = None,
+    growth_opportunity_value: CustomerOpportunity | None = None,
 ) -> dict[str, Any]:
     try:
         matched_patterns = json.loads(conversation.matched_patterns_json or "[]")
@@ -320,16 +352,17 @@ def serialize_conversation(
         region=conversation.business.country_code,
     )
     unanswered_count = (
-        unread_count_value
-        if unread_count_value is not None
-        else unread_count(db, conversation)
+        unread_count_value if unread_count_value is not None else unread_count(db, conversation)
     )
     needs_reply = unanswered_count > 0
     manual_pending = conversation.status == "pending"
-    growth_follow_up = (
-        growth_follow_up_value
+    growth_opportunity = (
+        growth_opportunity_value
         if growth_follow_up_value is not None
-        else conversation_has_growth_follow_up(db, conversation)
+        else conversation_growth_opportunity(db, conversation)
+    )
+    growth_follow_up = (
+        bool(growth_opportunity) if growth_follow_up_value is None else bool(growth_follow_up_value)
     )
     if needs_reply:
         attention_state = "needs_reply"
@@ -365,6 +398,9 @@ def serialize_conversation(
         "manual_pending": manual_pending,
         "follow_up": manual_pending,
         "growth_follow_up": growth_follow_up,
+        "growth_opportunity": serialize_conversation_growth_opportunity(
+            growth_opportunity if growth_follow_up else None
+        ),
         "attention_state": attention_state,
         "last_message_text": conversation.last_message_text,
         "last_message_at": (
@@ -465,21 +501,32 @@ def serialize_conversation_list(
         for conversation in conversations
         if conversation.customer_id is not None
     }
-    growth_follow_up_customer_ids = (
-        {
-            customer_id
-            for (customer_id,) in db.query(CustomerOpportunity.customer_id)
+    growth_opportunities_by_customer: dict[tuple[int, int], CustomerOpportunity] = {}
+    if customer_ids:
+        growth_rows = (
+            db.query(CustomerOpportunity)
+            .join(
+                BusinessModuleAccess,
+                and_(
+                    BusinessModuleAccess.business_id == CustomerOpportunity.business_id,
+                    BusinessModuleAccess.module_key == "growth",
+                    BusinessModuleAccess.entitled.is_(True),
+                    BusinessModuleAccess.active.is_(True),
+                ),
+            )
+            .options(joinedload(CustomerOpportunity.source_service))
             .filter(
                 CustomerOpportunity.business_id.in_(business_ids),
                 CustomerOpportunity.customer_id.in_(customer_ids),
                 CustomerOpportunity.status == "pending",
             )
-            .distinct()
+            .order_by(*opportunity_ordering())
             .all()
-        }
-        if customer_ids
-        else set()
-    )
+        )
+        for opportunity in growth_rows:
+            growth_opportunities_by_customer.setdefault(
+                (opportunity.business_id, opportunity.customer_id), opportunity
+            )
     whatsapp_ids = [
         conversation.id for conversation in conversations if conversation.channel == "whatsapp"
     ]
@@ -598,6 +645,14 @@ def serialize_conversation_list(
             assisted_delivery_available=_assisted_delivery_available(conversation),
             unavailable_reason=reason,
         )
+        growth_key = (
+            (conversation.business_id, conversation.customer_id)
+            if conversation.customer_id is not None
+            else None
+        )
+        growth_opportunity = (
+            growth_opportunities_by_customer.get(growth_key) if growth_key else None
+        )
         results.append(
             serialize_conversation(
                 db,
@@ -605,8 +660,9 @@ def serialize_conversation_list(
                 capabilities=capabilities,
                 unread_count_value=unread_counts.get(conversation.id, 0),
                 growth_follow_up_value=(
-                    conversation.customer_id in growth_follow_up_customer_ids
+                    conversation.status != "closed" and growth_opportunity is not None
                 ),
+                growth_opportunity_value=growth_opportunity,
             )
         )
     return results
@@ -887,7 +943,9 @@ def _provider_time_is_in_window(
     current = _as_utc(now)
     if provider_time > current:
         return False
-    return current - provider_time <= timedelta(hours=settings.whatsapp_customer_service_window_hours)
+    return current - provider_time <= timedelta(
+        hours=settings.whatsapp_customer_service_window_hours
+    )
 
 
 def is_whatsapp_customer_service_window_open(

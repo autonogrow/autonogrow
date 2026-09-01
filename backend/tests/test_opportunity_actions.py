@@ -1033,7 +1033,7 @@ def test_constraints_metrics_periods_and_frontend_contracts(
     landing = (root / "autonogrow-landing" / "script.js").read_text(encoding="utf-8")
     assert html.count('id="growth-action-modal"') == 1
     assert "Nada se enviará hasta que pulses Enviar" in html
-    assert "Facturación atribuida" in html
+    assert "Ingresos registrados en reservas vinculadas" in html
     assert "/actions/prepare" in js
     assert "/growth-metrics?period=30d" in js
     assert "Todavía no se muestra como enviado" in js

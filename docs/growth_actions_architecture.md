@@ -54,7 +54,7 @@ Owner/business admin pueden crear atribución manual mediante el endpoint explí
 
 `GET /growth-metrics` soporta 7 días, 30 días y rango manual (máximo 366 días). Devuelve detectadas, pendientes, gestionadas, descartadas, acciones preparadas, mensajes enviados, reservas atribuidas y citas completadas atribuidas, tanto total como por tipo.
 
-El funnel persistente usa oportunidades, acciones, atribuciones y eventos de auditoría: `detected -> viewed -> actioned -> sent -> booked -> completed`. La UI usa el término **Facturación atribuida**. El importe solo se muestra cuando todas las citas completadas del conjunto tienen snapshot fiable y la moneda coincide; de lo contrario devuelve `NULL`.
+El funnel persistente usa oportunidades, acciones, atribuciones y eventos de auditoría: `detected -> viewed -> actioned -> sent -> booked -> completed`. La UI describe el importe como **Ingresos registrados en reservas vinculadas** para no afirmar causalidad. Solo se muestra cuando todas las citas completadas del conjunto tienen snapshot fiable y la moneda coincide; de lo contrario devuelve `NULL`.
 
 Los eventos `opportunity_viewed`, `action_prepared`, `action_edited`, `action_sent`, `action_failed`, `opportunity_handled`, `booking_attributed` y `attributed_booking_completed` reutilizan `AuditLog`. El texto y los tokens no entran en metadata.
 
