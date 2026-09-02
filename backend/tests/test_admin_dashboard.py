@@ -189,6 +189,18 @@ def test_dashboard_renders_derived_booking_close_tasks_with_closure_actions() ->
     assert "booking.staff_display_name" in dashboard
     assert "formatBookingSlot(booking)" in dashboard
     assert ".dashboard-close-task__actions" in css
+    assert "@media (max-width: 1023px)" in css
+    assert "grid-column: 1 / -1" in css
+    assert "overflow-wrap: anywhere" in css
+
+
+def test_dashboard_growth_empty_copy_is_not_an_operational_all_clear() -> None:
+    _, _, js = read_sources()
+    dashboard = dashboard_javascript(js)
+
+    assert "No hay oportunidades comerciales pendientes" in dashboard
+    assert "No hemos detectado oportunidades Growth" in dashboard
+    assert "formatGrowthDays(recurrence)" in dashboard
 
 
 def test_dashboard_renders_deduplicated_growth_follow_ups_with_useful_access() -> None:

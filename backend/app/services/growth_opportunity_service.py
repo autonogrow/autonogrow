@@ -59,6 +59,17 @@ def as_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def format_days(value: int) -> str:
+    return f"{value} d\u00eda" if value == 1 else f"{value} d\u00edas"
+
+
+def service_due_reason(*, service_name: str, days_since_service: int, recurrence_days: int) -> str:
+    return (
+        f"Realiz\u00f3 {service_name} hace {format_days(days_since_service)}; el servicio est\u00e1 "
+        f"configurado para seguimiento cada {format_days(recurrence_days)}."
+    )
+
+
 def snapshot_booking_follow_up(booking: Booking, service: BusinessService | None) -> None:
     """Capture service recurrence once; later service edits must not rewrite history."""
     # A non-null window is the capture marker. Zero represents an explicitly
@@ -372,9 +383,10 @@ class GrowthOpportunityService:
                     "source_booking_id": booking.id,
                     "source_service_id": booking.service_id,
                     "reason_code": "configured_service_return_window",
-                    "reason_text": (
-                        f"Realizó {booking.service_name} hace {days} días; el servicio está "
-                        f"configurado para seguimiento cada {interval} días."
+                    "reason_text": service_due_reason(
+                        service_name=booking.service_name,
+                        days_since_service=days,
+                        recurrence_days=interval,
                     ),
                     "source_occurred_at": occurred,
                     "follow_up_interval_days_snapshot": interval,

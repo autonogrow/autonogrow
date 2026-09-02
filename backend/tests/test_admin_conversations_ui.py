@@ -362,6 +362,8 @@ def test_conversation_drawer_has_focus_escape_and_responsive_modes() -> None:
     assert 'window.matchMedia("(max-width: 639px)").matches' in navigation
     assert "closeConversationMobileDetail()" in navigation
     assert "env(safe-area-inset-bottom)" in css
+    assert ".conversation-customer-content { overflow-x: hidden; }" in css
+    assert ".customer-memory-item > * { overflow-wrap: anywhere;" in css
 
 
 def test_conversation_polling_keeps_versions_drafts_scroll_and_single_pipeline() -> None:

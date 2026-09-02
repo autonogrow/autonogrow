@@ -240,6 +240,25 @@ def test_opportunity_actions_expose_integrated_assisted_and_unavailable_ux() -> 
     assert "whatsappWindow.location.href = body.whatsapp_url" in assisted
 
 
+def test_growth_opportunity_copy_and_modal_handle_variable_content() -> None:
+    html, css, js = sources()
+    opportunities = function_block(js, "function renderGrowthOpportunities", "function renderGrowthActionMetrics")
+
+    assert "Sin acci\\u00f3n preparada" in opportunities
+    assert 'details.querySelector("p")?.remove()' in opportunities
+    assert 'button.classList.add("ag-button--ghost")' in opportunities
+    for selector in (
+        "growth-action-modal__header",
+        "growth-action-modal__body",
+        "growth-action-modal-actions",
+    ):
+        assert selector in html or selector in css
+    assert "max-height: calc(100dvh" in css
+    assert "overflow-y: auto" in css
+    assert "max-height: 32dvh" in css
+    assert "overflow-wrap: anywhere" in css
+
+
 def test_accessibility_and_responsive_structure_are_explicit() -> None:
     html, css, js = sources()
     assert html.count("<h1") == 1

@@ -36,11 +36,28 @@ from app.schemas.service import AdminServiceUpdate
 from app.services.capability_service import configure_business_modules
 from app.services.growth_opportunity_service import (
     GrowthOpportunityService,
+    format_days,
     serialize_opportunity,
+    service_due_reason,
     snapshot_booking_follow_up,
 )
 
 NOW = datetime(2026, 8, 14, 10, 0, tzinfo=timezone.utc)
+
+
+def test_service_due_copy_separates_elapsed_and_recurrence_days() -> None:
+    assert format_days(1) == "1 d\u00eda"
+    assert format_days(2) == "2 d\u00edas"
+    assert "hace 2 d\u00edas" in service_due_reason(
+        service_name="Servicio",
+        days_since_service=2,
+        recurrence_days=1,
+    )
+    assert "cada 1 d\u00eda" in service_due_reason(
+        service_name="Servicio",
+        days_since_service=1,
+        recurrence_days=1,
+    )
 
 
 @pytest.fixture

@@ -123,7 +123,7 @@ def test_growth_opportunity_home_customer_conversation_backlink(journey) -> None
     _assert_no_horizontal_overflow(page)
     today.get_by_role("button", name="Ver oportunidad").first.click()
 
-    opportunity = page.locator("[data-customer-opportunity]").filter(has_text="María Cliente E2E")
+    opportunity = page.locator("[data-customer-opportunity]").filter(has_text="Cliente E2E")
     expect(opportunity).to_be_visible()
     _assert_no_horizontal_overflow(page)
     opportunity.get_by_role("button", name="Ver cliente").click()
@@ -131,14 +131,14 @@ def test_growth_opportunity_home_customer_conversation_backlink(journey) -> None
     customer_growth = page.locator(".customer-growth")
     expect(customer_growth).to_be_visible()
     expect(customer_growth).to_contain_text("Oportunidades activas")
-    expect(customer_growth).to_contain_text("Corte E2E")
+    expect(customer_growth).to_contain_text("profesional de Instagram")
     _assert_no_horizontal_overflow(page)
     customer_growth.get_by_role("button", name="Abrir conversación").click()
 
     page.locator("#conversation-customer-close").click()
     follow_up = page.locator(".conversation-growth-follow-up")
     expect(follow_up).to_contain_text("Este cliente requiere seguimiento porque")
-    expect(follow_up).to_contain_text("Está en fecha de volver para Corte E2E.")
+    expect(follow_up).to_contain_text("Esta nota E2E es deliberadamente larga")
     follow_up.get_by_role("button", name="Ver oportunidad").click()
     expect(opportunity).to_be_visible()
 
@@ -154,6 +154,41 @@ def test_growth_opportunity_home_customer_conversation_backlink(journey) -> None
         expect(customer_growth).to_be_visible()
         _assert_no_horizontal_overflow(page)
         page.locator("#conversation-customer-close").click()
+
+
+def test_growth_message_modal_stays_usable_with_long_service_name(journey) -> None:
+    _session, page = _open_admin(journey)
+    page.locator('.admin-tab[data-section="growth"]').click()
+    page.get_by_role("button", name="Oportunidades").click()
+
+    opportunity = page.locator("[data-customer-opportunity]").first
+    expect(opportunity).to_be_visible()
+    expect(opportunity).to_contain_text("profesional de Instagram")
+    opportunity.get_by_role("button", name="Preparar mensaje").click()
+
+    modal = page.locator("#growth-action-modal.open")
+    textarea = page.locator("#growth-action-text")
+    expect(modal).to_be_visible()
+    expect(textarea).to_be_visible()
+    expect(page.locator(".growth-action-modal-actions")).to_be_visible()
+    for size in ((1280, 800), (390, 844)):
+        page.set_viewport_size({"width": size[0], "height": size[1]})
+        geometry = modal.evaluate(
+            """element => {
+              const modal = element.getBoundingClientRect();
+              const textarea = document.querySelector('#growth-action-text').getBoundingClientRect();
+              const actions = document.querySelector('.growth-action-modal-actions').getBoundingClientRect();
+              return { modal, textarea, actions, viewport: innerHeight };
+            }"""
+        )
+        assert geometry["modal"]["top"] >= 0
+        assert geometry["modal"]["bottom"] <= geometry["viewport"]
+        assert geometry["textarea"]["height"] >= 100
+        assert geometry["actions"]["bottom"] <= geometry["viewport"]
+        textarea.evaluate(
+            "element => { element.value = 'https://example.test/' + 'signed-token-'.repeat(180); }"
+        )
+        assert textarea.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
 
 
 def test_growth_opportunity_opens_customer_without_conversation(journey) -> None:

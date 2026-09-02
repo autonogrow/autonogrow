@@ -2601,6 +2601,74 @@ input {
 @media (max-width: 900px) { .growth-results-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .growth-funnel { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 639px) { .growth-results-metrics, .growth-funnel, .growth-action-context { grid-template-columns: 1fr; } .growth-action-modal-actions { flex-direction: column-reverse; } }
 
+/* P1.6A.2: variable-length Growth content must remain usable in every viewport. */
+.dashboard-close-task > :not(.dashboard-close-task__actions) { min-width: 0; }
+.dashboard-close-task h5,
+.dashboard-close-task p { overflow-wrap: anywhere; word-break: normal; }
+.growth-task-copy { min-width: 0; }
+.growth-task-copy details { margin-top: var(--ag-space-3); }
+.growth-task-copy details > p { margin: var(--ag-space-2) 0 0; }
+.growth-opportunity-actions [data-opportunity-action="actioned"] { color: var(--ag-color-text-muted); }
+.growth-opportunity-actions [data-opportunity-action="dismissed"] { color: var(--ag-color-danger); }
+.growth-opportunity-action--dismiss { border-color: color-mix(in srgb, var(--ag-color-danger) 45%, var(--ag-color-border)); }
+
+.conversation-customer-content,
+.conversation-customer-summary,
+.conversation-customer-stats,
+.conversation-customer-stats div,
+.conversation-customer-stats dt,
+.conversation-customer-stats dd,
+.conversation-customer-instagram,
+.customer-memory,
+.customer-memory-heading,
+.customer-memory-item { min-width: 0; max-width: 100%; }
+.conversation-customer-stats div { align-items: start; }
+.conversation-customer-stats dt { flex: 0 1 42%; }
+.conversation-customer-stats dd,
+.conversation-customer-instagram,
+.customer-memory-heading > div,
+.customer-memory-item > * { overflow-wrap: anywhere; word-break: normal; }
+.conversation-customer-content { overflow-x: hidden; }
+
+#growth-action-modal { align-items: center; padding: var(--ag-space-3); overflow: hidden; }
+.growth-action-modal-card {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: var(--ag-space-3);
+  width: min(42rem, 100%);
+  max-height: calc(100dvh - 2 * var(--ag-space-3));
+  padding: var(--ag-space-5);
+  overflow: hidden;
+}
+.growth-action-modal__header { display: grid; gap: var(--ag-space-2); min-width: 0; padding-right: 2.75rem; }
+.growth-action-modal__header h2,
+.growth-action-modal__header p { margin: 0; overflow-wrap: anywhere; }
+.growth-action-modal__body { display: grid; min-width: 0; min-height: 0; gap: var(--ag-space-3); overflow-y: auto; overscroll-behavior: contain; padding-right: var(--ag-space-1); }
+.growth-action-context { min-width: 0; }
+.growth-action-context div,
+.growth-action-context dd { min-width: 0; overflow-wrap: anywhere; word-break: normal; }
+.growth-action-context div:nth-child(2) dd { display: block; max-height: 9rem; overflow-y: auto; overscroll-behavior: contain; }
+.growth-action-modal-card label { display: grid; min-width: 0; gap: var(--ag-space-2); }
+.growth-action-modal-card textarea { min-height: 9rem; max-height: 32dvh; overflow: auto; resize: vertical; overflow-wrap: anywhere; }
+.growth-action-modal-actions { position: relative; z-index: 1; flex-wrap: wrap; padding-top: var(--ag-space-3); border-top: 1px solid var(--ag-color-border); background: var(--ag-color-surface); }
+
+@media (max-width: 1023px) {
+  .dashboard-close-task { grid-template-columns: auto minmax(0, 1fr); }
+  .dashboard-close-task__actions { grid-column: 1 / -1; justify-content: flex-start; }
+}
+
+@media (max-width: 639px) {
+  .dashboard-close-task__actions { display: flex; }
+  .dashboard-close-task__actions .ag-button { flex: 1 1 10rem; width: auto; }
+  #growth-action-modal { align-items: end; padding: var(--ag-space-2); }
+  .growth-action-modal-card { max-height: calc(100dvh - 2 * var(--ag-space-2)); padding: var(--ag-space-4); border-radius: var(--ag-radius-xl) var(--ag-radius-xl) 0 0; }
+  .growth-action-context { grid-template-columns: 1fr; }
+  .growth-action-modal-actions { flex-direction: column-reverse; }
+  .growth-action-modal-actions .ag-button,
+  .growth-action-modal-actions .btn { width: 100%; }
+}
+
 /* P1.6A action-oriented Growth experience */
 #growth-attention-list,
 #growth-opportunities-preview,

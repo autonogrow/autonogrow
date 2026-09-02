@@ -898,6 +898,12 @@ function compareGrowthOpportunities(first, second) {
     || Number(first.id || 0) - Number(second.id || 0);
 }
 
+function formatGrowthDays(value) {
+  const days = Number(value);
+  if (!Number.isFinite(days)) return "";
+  return `${days} d\u00eda${days === 1 ? "" : "s"}`;
+}
+
 function growthOpportunityHeadline(opportunity) {
   const customer = opportunity.customer?.name || "Este cliente";
   const labels = {
@@ -1280,7 +1286,11 @@ function renderAttentionItems() {
   const growthFollowUps = growthLoadState.opportunities === "ready" ? getDashboardGrowthFollowUps() : [];
   if (!items.length && !bookingCloseTasks.length && !growthFollowUps.length && relevantStates.some((state) => state === "loading")) return;
   if (!items.length && !growthFollowUps.length && (!closeTasksReady || !bookingCloseTasks.length)) {
-    renderDashboardEmptyState(container, "Todo está al día", "No hay tareas urgentes en este momento.");
+    renderDashboardEmptyState(
+      container,
+      "No hay oportunidades comerciales pendientes",
+      "No hemos detectado oportunidades Growth ni se\u00f1ales que requieran actuar ahora."
+    );
     return;
   }
   container.setAttribute("aria-busy", "false");
@@ -1290,7 +1300,7 @@ function renderAttentionItems() {
   const opportunityMarkup = growthFollowUps.slice(0, 5).map((opportunity) => {
     const recurrence = opportunity.follow_up_interval_days_snapshot;
     const why = recurrence && opportunity.source_service_name
-      ? `Normalmente repite ${opportunity.source_service_name} cada ${Number(recurrence)} días.`
+      ? `Normalmente repite ${opportunity.source_service_name} cada ${formatGrowthDays(recurrence)}.`
       : opportunity.reason_text || "Hay un seguimiento comercial pendiente.";
     return `
       <article class="dashboard-attention-item dashboard-attention-item--${opportunity.priority === "high" ? "warning" : "info"} dashboard-growth-task">
@@ -1319,7 +1329,7 @@ function renderAttentionItems() {
     </section>` : (growthAvailable && growthLoadState.opportunities === "ready" && growthLoadState.signals === "ready" ? `
     <section class="dashboard-growth-tasks" aria-labelledby="dashboard-growth-tasks-title">
       <h4 id="dashboard-growth-tasks-title">Oportunidades para hoy</h4>
-      <div class="dashboard-block-state dashboard-block-state--empty"><strong>Todo está al día</strong><p>No hay oportunidades activas ni señales accionables con los datos evaluados.</p></div>
+      <div class="dashboard-block-state dashboard-block-state--empty"><strong>No hay oportunidades comerciales pendientes</strong><p>No hemos detectado oportunidades Growth ni señales que requieran actuar ahora.</p></div>
     </section>` : "");
   const closeTaskItems = closeTasksReady && bookingCloseTasks.length ? `
     <section class="dashboard-close-tasks" aria-labelledby="dashboard-close-tasks-title">
@@ -1810,8 +1820,9 @@ function renderGrowthOpportunities(_tasks) {
   container.setAttribute("aria-busy", "false");
   const typeLabels = { cancelled_not_rebooked: "Canceló y no ha vuelto a reservar", no_show_not_rebooked: "No acudió y no ha vuelto a reservar", lead_not_converted: "Consultó y todavía no ha reservado", service_due: "Cliente en fecha de volver", scheduled_followup: "Seguimiento indicado" };
   const actionLabels = { draft: "Borrador", approved: "Pendiente de envío", sending: "Enviando", sent: "Enviado", failed: "Fallido", cancelled: "Cancelado", completed: "Completado" };
+  actionLabels.not_prepared = "Sin acci\u00f3n preparada";
   const persisted = [...customerOpportunities].sort(compareGrowthOpportunities).map((item) => {
-    const latest = item.latest_action;
+    const latest = item.latest_action || { status: "not_prepared" };
     const channel = growthOpportunityChannelLabel(item);
     const prepareLabel = latest?.status === "draft" ? "Continuar borrador" : "Preparar mensaje";
     const memory = item.customer_context?.explicit || [];
@@ -1820,6 +1831,20 @@ function renderGrowthOpportunities(_tasks) {
   }).join("");
   const empty = growthOpportunityEmptyCopy();
   container.innerHTML = persisted || `<div class="growth-empty-state"><strong>${escapeHtml(empty.title)}</strong><p>${escapeHtml(empty.description)}</p></div>`;
+  container.querySelectorAll("details").forEach((details) => {
+    if (!details.querySelector(".growth-customer-context")) {
+      details.remove();
+      return;
+    }
+    details.querySelector("p")?.remove();
+  });
+  container.querySelectorAll('[data-opportunity-action="actioned"]').forEach((button) => {
+    button.classList.remove("ag-button--secondary");
+    button.classList.add("ag-button--ghost");
+  });
+  container.querySelectorAll('[data-opportunity-action="dismissed"]').forEach((button) => {
+    button.classList.add("growth-opportunity-action--dismiss");
+  });
   document.getElementById("growth-opportunities-status").textContent = customerOpportunities.length ? `${customerOpportunities.length} pendientes` : "Sin oportunidades";
 }
 

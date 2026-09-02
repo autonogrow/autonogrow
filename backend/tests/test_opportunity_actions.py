@@ -325,7 +325,7 @@ def test_associated_conversation_is_resolved_without_phone_or_sender_fallback(
 @pytest.mark.parametrize(
     ("opportunity_type", "expected"),
     [
-        ("service_due", "aproximadamente 21 días"),
+        ("service_due", "ya est\u00e1s en fecha de volver"),
         ("cancelled_not_rebooked", "quedó cancelada"),
         ("no_show_not_rebooked", "retomar tu cita"),
         ("lead_not_converted", "hace poco nos preguntaste"),
@@ -362,6 +362,8 @@ def test_prepare_creates_deterministic_editable_draft_without_sending(
     assert action["message_id"] is None
     assert action["can_send"] is True
     assert expected in action["suggested_text"]
+    if opportunity_type == "service_due":
+        assert "aproximadamente" not in action["suggested_text"]
     assert "https://app.example.test/autonogrow-landing/" in action["booking_url"]
     assert db.query(ConversationMessage).count() == 0
     assert {

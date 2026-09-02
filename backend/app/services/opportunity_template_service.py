@@ -64,11 +64,9 @@ class OpportunityMessageTemplateService:
         greeting = f"Hola {name}," if name else "Hola,"
         service = _service_name(opportunity)
         if opportunity.type == "service_due":
-            days = opportunity.follow_up_interval_days_snapshot
-            period = f"{days} días" if days else "un tiempo"
             text = (
-                f"{greeting} hace aproximadamente {period} desde tu último servicio de "
-                f"{service}. Si quieres volver a reservar, podemos ayudarte a encontrar un hueco."
+                f"{greeting} ya est\u00e1s en fecha de volver para {service}. "
+                "Si quieres reservar, podemos ayudarte a encontrar un hueco."
             )
         elif opportunity.type == "cancelled_not_rebooked":
             text = (

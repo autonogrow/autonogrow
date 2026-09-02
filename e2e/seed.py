@@ -335,6 +335,16 @@ def reset_database() -> None:
                 duration_minutes=60,
                 active=True,
             ),
+            BusinessService(
+                business_id=business_a.id,
+                name="Creaci\u00f3n de p\u00e1gina profesional de Instagram y TikTok con estrategia de contenidos E2E",
+                description="Servicio E2E de nombre largo para comprobar el ajuste responsive.",
+                price_text="90 \u20ac",
+                price_amount=Decimal("90.00"),
+                duration_text="90 min",
+                duration_minutes=90,
+                active=True,
+            ),
         ]
         services_b = [
             BusinessService(
@@ -510,10 +520,14 @@ def reset_database() -> None:
                 due_at=growth_now - timedelta(hours=2),
                 expires_at=growth_now + timedelta(days=30),
                 source_booking_id=completed_user.id,
-                source_service_id=services_a[0].id,
+                source_service_id=services_a[2].id,
                 source_conversation_id=growth_conversation.id,
                 reason_code="service_due_e2e",
-                reason_text="Está en fecha de volver para Corte E2E.",
+                reason_text=(
+                    "Está en fecha de volver para un servicio con preparación comercial "
+                    "y seguimiento personalizado. Esta nota E2E es deliberadamente larga para "
+                    "comprobar el ajuste del contexto, el modal y sus acciones."
+                ),
                 dedupe_key="e2e:growth:service-due",
                 follow_up_interval_days_snapshot=30,
                 follow_up_window_days_snapshot=7,

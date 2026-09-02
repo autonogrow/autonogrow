@@ -774,8 +774,11 @@
       <div class="modal-card ag-modal growth-action-modal-card">
         <button class="modal-close ag-modal__close" type="button" data-growth-action-modal="close" aria-label="Cerrar">×</button>
         <p class="eyebrow">Acción asistida</p>
+        <header class="growth-action-modal__header">
         <h2 id="growth-action-modal-title">Preparar mensaje</h2>
         <p id="growth-action-modal-description">Revisa el texto. Nada se enviará hasta que pulses Enviar. También puedes abrirlo en WhatsApp para enviarlo tú.</p>
+        </header>
+        <div class="growth-action-modal__body">
         <dl class="growth-action-context">
           <div><dt>Canal</dt><dd id="growth-action-channel">Sin canal disponible</dd></div>
           <div><dt>Motivo</dt><dd id="growth-action-reason">—</dd></div>
@@ -783,11 +786,12 @@
         </dl>
         <label for="growth-action-text">Mensaje<textarea id="growth-action-text" maxlength="4096" rows="8"></textarea></label>
         <p id="growth-action-notice" class="inline-feedback" role="status" aria-live="polite"></p>
-        <div class="growth-action-modal-actions">
+        </div>
+        <footer class="growth-action-modal-actions">
           <button class="ag-button ag-button--ghost" type="button" data-growth-action-modal="copy">Copiar texto</button>
           <button id="growth-action-whatsapp" class="btn btn-whatsapp" type="button" data-growth-action-modal="whatsapp" hidden>Abrir en WhatsApp</button>
           <button id="growth-action-send" class="ag-button ag-button--primary" type="button" data-growth-action-modal="send">Enviar por WhatsApp</button>
-        </div>
+        </footer>
       </div>
     </div>
 
