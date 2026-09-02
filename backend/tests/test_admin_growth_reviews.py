@@ -55,23 +55,40 @@ def test_growth_has_three_categories_and_preserves_legacy_contracts() -> None:
     assert sorted({item for item in inventory.ids if inventory.ids.count(item) > 1}) == []
 
 
-def test_summary_uses_only_real_operational_counts() -> None:
+def test_growth_results_and_review_metrics_stay_in_their_domains() -> None:
     html, _, js = sources()
     for element_id in (
-        "growth-metric-candidates",
-        "growth-metric-prepared",
-        "growth-metric-sent",
-        "growth-metric-failed",
-        "growth-metric-opportunities",
+        "growth-result-detected",
+        "growth-result-prepared",
+        "growth-result-sent",
+        "growth-result-booked",
+        "growth-result-completed",
+        "growth-result-revenue",
+    ):
+        assert html.count(f'id="{element_id}"') == 1
+    for element_id in (
+        "review-metric-candidates",
+        "review-metric-prepared",
+        "review-metric-sent",
+        "review-metric-failed",
     ):
         assert html.count(f'id="{element_id}"') == 1
     render = function_block(js, "function renderGrowthOverview", "function renderGrowthOpportunities")
-    for source in ("getReviewCandidates()", "reviewRequestsByBooking.values()", "getFailedReviewMessages()", "calculateGrowthTasks"):
-        assert source in js
-    for forbidden in ("conversion", "revenue", "roi", "rating", "reviews_received", "localStorage"):
+    results = function_block(js, "function renderGrowthActionMetrics", "function renderBusinessGrowthSignals")
+    reviews = function_block(js, "function renderReviewRequests", "function renderReviewCandidateCard")
+    for source in ("getReviewCandidates()", "reviewRequestsByBooking.values()", "getFailedReviewMessages()"):
+        assert source not in render
+        assert source in reviews
+    for source in ("growth-result-prepared", "growth-result-sent", "growth-result-booked"):
+        assert source in results
+    for forbidden in ("conversion", "roi", "rating", "reviews_received", "localStorage"):
         assert forbidden not in render.lower()
     assert "Marcadas como enviadas" in html
     assert "reseña publicada" in html
+    opportunities = html.split('data-admin-section="growth-opportunities"', 1)[1].split(
+        'id="growth-action-modal"', 1
+    )[0]
+    assert "Solicitudes de reseña asistidas" not in opportunities
 
 
 def test_review_candidates_are_completed_bookings_without_prior_request() -> None:

@@ -203,6 +203,39 @@ def test_growth_opportunity_opens_customer_without_conversation(journey) -> None
     expect(page.locator("#conversation-customer-content")).to_contain_text("Invitado Fixture")
 
 
+def test_growth_results_and_reviews_keep_separate_product_surfaces(journey) -> None:
+    _session, page = _open_admin(journey)
+    page.get_by_role("button", name="Crecimiento", exact=True).click()
+
+    page.locator('[data-growth-target="growth-opportunities"]:visible').click()
+    opportunities = page.locator('[data-admin-section="growth-opportunities"]')
+    expect(opportunities).to_be_visible()
+    expect(opportunities.locator("[data-customer-opportunity]").first).to_be_visible()
+    expect(opportunities).not_to_contain_text("Solicitudes de reseña asistidas")
+
+    page.locator('[data-growth-target="growth"]:visible').click()
+    results = page.locator(".growth-results-card")
+    expect(results).to_be_visible()
+    for label in (
+        "Oportunidades detectadas",
+        "Acciones preparadas",
+        "Mensajes enviados",
+        "Reservas vinculadas a acciones Growth",
+        "Citas completadas",
+        "Ingresos registrados en reservas vinculadas",
+    ):
+        expect(results).to_contain_text(label)
+    expect(results).not_to_contain_text("Solicitudes preparadas")
+
+    page.locator('[data-growth-target="reviews"]:visible').click()
+    reviews = page.locator('[data-admin-section="reviews"]')
+    expect(reviews).to_be_visible()
+    expect(reviews).to_contain_text("Clientes atendidos")
+    expect(reviews).to_contain_text("Solicitudes preparadas")
+    expect(reviews).to_contain_text("Marcadas como enviadas")
+    expect(reviews).to_contain_text("Solicitudes con error")
+
+
 def test_conversation_uses_customer_instagram_as_visual_fallback_only(journey) -> None:
     _session, page = _open_admin(journey)
     page.locator('.admin-tab[data-section="conversations"]').click()

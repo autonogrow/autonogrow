@@ -403,6 +403,9 @@ def test_dashboard_and_growth_metrics_are_derived_without_product_claims() -> No
     growth = function_block(
         js, "function renderGrowthOverview", "function renderGrowthOpportunities"
     )
+    reviews = function_block(
+        js, "function renderReviewRequests", "function renderReviewCandidateCard"
+    )
     for real_source in (
         "getDashboardTodayBookings()",
         "getDashboardPendingBookings()",
@@ -414,7 +417,8 @@ def test_dashboard_and_growth_metrics_are_derived_without_product_claims() -> No
         "reviewRequestsByBooking.values()",
         "getFailedReviewMessages()",
     ):
-        assert real_source in growth
+        assert real_source in reviews
+        assert real_source not in growth
     for forbidden in ("conversion", "revenue", "roi", "rating", "review_received"):
         assert forbidden not in (dashboard + growth).lower()
 

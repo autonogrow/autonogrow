@@ -227,7 +227,7 @@
       <div class="growth-hub-layout">
         <div data-growth-navigation></div>
         <div class="growth-hub-content">
-          <header class="growth-hub-header"><div><p class="eyebrow">Acciones comerciales</p><h2 id="growth-hub-title">Crecimiento</h2><p>Entiende qué pasa, por qué importa y qué puedes hacer ahora.</p></div><span id="growth-overview-status" class="growth-human-status">Comprobando…</span></header>
+          <header class="growth-hub-header"><div><p class="eyebrow">Resumen</p><h2 id="growth-hub-title">Crecimiento</h2><p>Entiende qué pasa, por qué importa y qué puedes hacer ahora.</p></div><span id="growth-overview-status" class="growth-human-status">Comprobando…</span></header>
           <div id="growth-overview-errors" class="growth-partial-error" role="alert" tabindex="-1" hidden></div>
           <section class="growth-priority-card" aria-labelledby="growth-attention-title"><div class="section-header"><div><p class="eyebrow">A</p><h3 id="growth-attention-title">Necesitan atención</h3><p>Oportunidades vencidas, prioritarias o próximas a vencer y cambios accionables.</p></div></div><div id="growth-attention-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Calculando prioridades.</span></div></section>
           <section class="growth-priority-card" aria-labelledby="growth-opportunity-preview-title"><div class="section-header"><div><p class="eyebrow">B</p><h3 id="growth-opportunity-preview-title">Oportunidades</h3><p>Clientes que conviene contactar según reservas y seguimientos existentes.</p></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="opportunities">Ver todas</button></div><div id="growth-opportunities-preview" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div></div></section>
@@ -237,16 +237,10 @@
           </section>
           <section class="growth-results-card" aria-labelledby="growth-results-title">
             <div class="section-header"><div><p class="eyebrow">D · Resultados</p><h3 id="growth-results-title">Últimos 30 días</h3><p>Reservas vinculadas a acciones Growth e importes registrados, sin afirmar causalidad.</p></div></div>
-            <div class="growth-metrics" aria-label="Resumen de crecimiento" aria-busy="true">
-            <article><span>Clientes pendientes de solicitud</span><strong id="growth-metric-candidates">—</strong></article>
-            <article><span>Solicitudes preparadas</span><strong id="growth-metric-prepared">—</strong></article>
-            <article><span>Marcadas como enviadas</span><strong id="growth-metric-sent">—</strong></article>
-            <article><span>Solicitudes con error</span><strong id="growth-metric-failed">—</strong></article>
-            <article><span>Oportunidades activas</span><strong id="growth-metric-opportunities">—</strong></article>
-            </div>
             <div class="growth-results-metrics" aria-busy="true">
               <article><span>Oportunidades detectadas</span><strong id="growth-result-detected">—</strong></article>
-              <article><span>Gestionadas</span><strong id="growth-result-handled">—</strong></article>
+              <article><span>Acciones preparadas</span><strong id="growth-result-prepared">—</strong></article>
+              <article><span>Mensajes enviados</span><strong id="growth-result-sent">—</strong></article>
               <article><span>Reservas vinculadas a acciones Growth</span><strong id="growth-result-booked">—</strong></article>
               <article><span>Citas completadas</span><strong id="growth-result-completed">—</strong></article>
               <article><span>Ingresos registrados en reservas vinculadas</span><strong id="growth-result-revenue">—</strong></article>
@@ -254,7 +248,6 @@
             <div id="growth-funnel" class="growth-funnel" aria-label="Funnel de oportunidades"></div>
           </section>
           <section class="growth-priority-card" aria-labelledby="growth-priority-title"><div class="section-header"><div><h3 id="growth-priority-title">Mejora la configuración</h3><p>Preparación, recurrencia y conexiones separadas de las oportunidades de clientes.</p></div></div><div id="growth-priority-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Comprobando configuración.</span></div></section>
-          <section class="growth-activity-card" aria-labelledby="growth-activity-title"><div class="section-header"><div><h3 id="growth-activity-title">Actividad reciente</h3><p>Preparaciones y cambios reales registrados en solicitudes de reseña.</p></div></div><div id="growth-activity-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando actividad.</span></div></section>
           <div class="growth-overview growth-readiness" aria-label="Preparación operativa">
             <div><strong id="growth-progress-count">Comprobando acciones</strong><span id="growth-points">Basado en datos operativos reales</span></div><strong id="growth-progress-percent">—</strong>
           </div>
@@ -746,12 +739,14 @@
       <div class="growth-hub-layout">
         <div data-growth-navigation></div>
         <div class="growth-hub-content">
-          <header class="growth-hub-header"><div><p class="eyebrow">Crecimiento</p><h2 id="growth-reviews-title">Reseñas</h2><p>Prepara solicitudes para clientes atendidos y distingue lo preparado de lo enviado.</p></div><span id="growth-reviews-status" class="growth-human-status">Comprobando…</span></header>
+          <header class="growth-hub-header"><div><p class="eyebrow">Crecimiento</p><h2 id="growth-reviews-title">Reseñas</h2><p>Prepara solicitudes para clientes atendidos y distingue lo preparado de lo enviado. AutonoGrow no envía automáticamente estas solicitudes ni consume créditos.</p></div><span id="growth-reviews-status" class="growth-human-status">Comprobando…</span></header>
           <div id="growth-reviews-errors" class="growth-partial-error" role="alert" tabindex="-1" hidden></div>
           <section id="growth-review-link-card" class="growth-review-link-card" aria-labelledby="growth-review-link-title" aria-busy="true"><div><p>Configuración</p><h3 id="growth-review-link-title">Enlace de reseñas</h3><span>Comprobando…</span></div></section>
+          <section class="growth-review-block" aria-labelledby="review-metrics-title"><div class="section-header"><div><h3 id="review-metrics-title">Resumen de solicitudes</h3><p>Estados reales de las solicitudes de reseña.</p></div></div><div class="review-metrics" aria-label="Métricas de reseñas" aria-busy="true"><article><span>Clientes pendientes de solicitud</span><strong id="review-metric-candidates">—</strong></article><article><span>Solicitudes preparadas</span><strong id="review-metric-prepared">—</strong></article><article><span>Marcadas como enviadas</span><strong id="review-metric-sent">—</strong></article><article><span>Solicitudes con error</span><strong id="review-metric-failed">—</strong></article></div></section>
           <section class="growth-review-block" aria-labelledby="growth-review-candidates-title"><div class="section-header"><div><h3 id="growth-review-candidates-title">Clientes atendidos</h3><p>Reservas completadas que todavía no tienen una solicitud.</p></div></div><div id="review-candidates-list" class="review-requests-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando clientes.</span></div></section>
           <section class="growth-review-block" aria-labelledby="growth-review-pending-title"><div class="section-header"><div><h3 id="growth-review-pending-title">Necesitan seguimiento</h3><p>Solicitudes preparadas, copiadas o abiertas en WhatsApp.</p></div></div><div id="review-requests-pending-list" class="review-requests-list" aria-busy="true"><p class="empty-state">Cargando solicitudes de reseña...</p></div></section>
           <section class="growth-review-block" aria-labelledby="growth-review-history-title"><div class="section-header"><div><h3 id="growth-review-history-title">Solicitudes recientes</h3><p>Solicitudes marcadas como enviadas u omitidas; no equivalen a una reseña publicada.</p></div></div><div id="review-requests-history-list" class="review-requests-list" aria-busy="true"><p class="empty-state">Cargando historial...</p></div></section>
+          <section class="growth-review-block growth-activity-card" aria-labelledby="review-activity-title"><div class="section-header"><div><h3 id="review-activity-title">Actividad reciente</h3><p>Preparaciones y cambios reales registrados en solicitudes de reseña.</p></div></div><div id="review-activity-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando actividad.</span></div></section>
           <p id="growth-reviews-feedback" class="inline-feedback" role="status" aria-live="polite"></p>
         </div>
       </div>
@@ -765,7 +760,6 @@
           <div id="growth-opportunities-errors" class="growth-partial-error" role="alert" tabindex="-1" hidden></div>
           <p class="growth-opportunities-help">Estas señales son deterministas: AutonoGrow muestra el motivo y nunca envía mensajes automáticamente.</p>
           <div id="growth-tasks-list" class="growth-tasks-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Calculando oportunidades.</span></div>
-          <aside class="growth-review-automation-note"><div><strong>Solicitudes de reseña asistidas</strong><p>El sistema actual no envía automáticamente estas solicitudes ni consume créditos. Puedes configurar las automatizaciones de conversación por separado.</p></div><button class="ag-button ag-button--secondary ag-button--small" type="button" data-growth-action="automations">Ver respuestas automáticas</button></aside>
         </div>
       </div>
     </section>

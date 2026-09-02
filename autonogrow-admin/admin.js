@@ -1680,14 +1680,12 @@ function hasUsableReviewPhone(booking) {
 }
 
 function growthSourcesSettled() {
-  return dashboardDataState.bookings !== "loading" && growthLoadState.reviews !== "loading" && growthLoadState.outbox !== "loading" && growthLoadState.opportunities !== "loading" && growthLoadState.signals !== "loading";
+  return dashboardDataState.bookings !== "loading" && growthLoadState.opportunities !== "loading" && growthLoadState.signals !== "loading";
 }
 
 function growthSourceErrors() {
   const errors = [];
   if (dashboardDataState.bookings === "error") errors.push("No se pudieron comprobar las reservas.");
-  if (growthLoadState.reviews === "error") errors.push("No se pudieron actualizar las solicitudes de reseña.");
-  if (growthLoadState.outbox === "error") errors.push("No se pudo comprobar el estado de los mensajes asistidos.");
   if (growthLoadState.opportunities === "error") errors.push("No se pudieron actualizar las oportunidades de clientes.");
   if (growthLoadState.signals === "error") errors.push("No se pudieron actualizar las señales agregadas del negocio.");
   return errors;
@@ -1697,8 +1695,8 @@ function growthTaskStateLabel(status) {
   return ({ recommended: "Recomendada", needs_attention: "Necesita atención", blocked: "Bloqueada", completed: "Completada", not_available: "No disponible", neutral: "Comprobando" })[status] || "Estado no disponible";
 }
 
-function renderGrowthActivity() {
-  const container = document.getElementById("growth-activity-list");
+function renderReviewActivity() {
+  const container = document.getElementById("review-activity-list");
   if (!container) return;
   const activity = Array.from(reviewRequestsByBooking.values()).map((request) => {
     const outbox = getReviewOutboxMessage(request.booking_id);
@@ -1777,11 +1775,6 @@ function renderGrowthAttentionAndOpportunities() {
 }
 
 function renderGrowthOverview(tasks) {
-  const candidates = getReviewCandidates();
-  const requests = Array.from(reviewRequestsByBooking.values());
-  const prepared = requests.filter((request) => ["pending", "copied"].includes(request.status)).length;
-  const sent = requests.filter((request) => request.status === "sent").length;
-  const failed = getFailedReviewMessages().length;
   const configurationTaskIds = new Set(["active-services", "business-hours", "public-business", "business-gallery"]);
   const configurationTasks = tasks.filter((task) => configurationTaskIds.has(task.id) || task.id.startsWith("channel-"));
   const activeTasks = configurationTasks.filter((task) => ["recommended", "needs_attention", "blocked", "not_available"].includes(task.status));
@@ -1790,9 +1783,6 @@ function renderGrowthOverview(tasks) {
   const actionableSignals = businessGrowthSignals.filter((signal) => signal.related_opportunities && ["high", "medium"].includes(signal.severity));
   const activeOpportunities = customerOpportunities.filter((item) => item.status === "pending");
   const actionCount = activeOpportunities.length + actionableSignals.length;
-  const metricValues = { "growth-metric-candidates": candidates.length, "growth-metric-prepared": prepared, "growth-metric-sent": sent, "growth-metric-failed": failed, "growth-metric-opportunities": customerOpportunities.filter((item) => item.status === "pending").length };
-  Object.entries(metricValues).forEach(([id, value]) => { document.getElementById(id).textContent = String(value); });
-  document.querySelector(".growth-metrics")?.setAttribute("aria-busy", "false");
   document.getElementById("growth-progress-count").textContent = `${completed} de ${configurationTasks.length} condiciones de configuración resueltas`;
   document.getElementById("growth-points").textContent = "Basado en datos operativos reales";
   document.getElementById("growth-progress-percent").textContent = `${percentage}%`;
@@ -1811,7 +1801,6 @@ function renderGrowthOverview(tasks) {
   document.getElementById("growth-summary-progress-bar").style.width = `${percentage}%`;
   document.getElementById("growth-overview-status").textContent = actionCount ? `${actionCount} por revisar` : "Sin oportunidades urgentes";
   renderGrowthAttentionAndOpportunities();
-  renderGrowthActivity();
 }
 
 function renderGrowthOpportunities(_tasks) {
@@ -1852,7 +1841,8 @@ function renderGrowthActionMetrics() {
   const metrics = growthActionMetrics?.summary;
   const values = {
     "growth-result-detected": metrics?.opportunities_detected,
-    "growth-result-handled": metrics?.opportunities_handled,
+    "growth-result-prepared": metrics?.funnel?.viewed,
+    "growth-result-sent": metrics?.funnel?.sent,
     "growth-result-booked": metrics?.bookings_attributed,
     "growth-result-completed": metrics?.attributed_bookings_completed,
     "growth-result-revenue": metrics?.attributed_revenue == null
@@ -2233,7 +2223,6 @@ function renderGrowth() {
   renderGrowthOpportunities(tasks);
   renderGrowthActionMetrics();
   renderBusinessGrowthSignals();
-  renderReviewRequests();
 }
 
 async function loadAdminPanel() {
@@ -6662,6 +6651,16 @@ function renderReviewRequests() {
   const pending = reviewRequests.filter((item) => ["pending", "copied"].includes(item.status));
   const history = reviewRequests.filter((item) => ["sent", "skipped"].includes(item.status));
   const candidates = getReviewCandidates();
+  const metricValues = {
+    "review-metric-candidates": candidates.length,
+    "review-metric-prepared": pending.length,
+    "review-metric-sent": reviewRequests.filter((item) => item.status === "sent").length,
+    "review-metric-failed": getFailedReviewMessages().length
+  };
+  Object.entries(metricValues).forEach(([id, value]) => {
+    document.getElementById(id).textContent = String(value);
+  });
+  document.querySelector(".review-metrics")?.setAttribute("aria-busy", "false");
   const reviewLink = getSafeReviewUrl();
   const errors = document.getElementById("growth-reviews-errors");
   const status = document.getElementById("growth-reviews-status");
@@ -6682,6 +6681,7 @@ function renderReviewRequests() {
   historyContainer.innerHTML = history.length
     ? history.map(renderReviewSummaryCard).join("")
     : `<div class="growth-empty-state"><strong>Aún no hay solicitudes cerradas</strong><p>Este historial distingue las marcadas como enviadas de las omitidas.</p></div>`;
+  renderReviewActivity();
 }
 
 function renderReviewCandidateCard(booking) {

@@ -2375,20 +2375,19 @@ input {
 .review-status,
 .growth-task-status,
 .growth-priority-item > div > span { display: inline-flex; align-items: center; width: fit-content; min-height: 1.75rem; padding: .2rem .65rem; border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-pill); background: var(--ag-color-surface-subtle); color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); font-weight: var(--ag-font-weight-bold); line-height: 1.2; }
-.growth-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--ag-space-3); }
-.growth-metrics article { display: grid; align-content: space-between; min-height: 7.5rem; padding: var(--ag-space-4); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-lg); background: var(--ag-color-surface); }
-.growth-metrics span { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
-.growth-metrics strong { font-family: var(--ag-font-heading); font-size: var(--ag-font-size-2xl); }
+.review-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--ag-space-3); }
+.review-metrics article { display: grid; align-content: space-between; min-height: 7.5rem; padding: var(--ag-space-4); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-lg); background: var(--ag-color-surface); }
+.review-metrics span { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
+.review-metrics strong { font-family: var(--ag-font-heading); font-size: var(--ag-font-size-2xl); }
 .growth-priority-card,
 .growth-activity-card,
 .growth-review-block,
-.growth-review-link-card,
-.growth-review-automation-note { padding: var(--ag-space-5); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-xl); background: var(--ag-color-surface); }
+.growth-review-link-card { padding: var(--ag-space-5); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-xl); background: var(--ag-color-surface); }
 .growth-priority-card .section-header,
 .growth-activity-card .section-header,
 .growth-review-block .section-header { margin-bottom: var(--ag-space-4); }
 #growth-priority-list,
-#growth-activity-list { display: grid; gap: var(--ag-space-3); }
+#review-activity-list { display: grid; gap: var(--ag-space-3); }
 .growth-priority-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--ag-space-4); padding: var(--ag-space-4); border: 1px solid var(--ag-color-border); border-left-width: 4px; border-radius: var(--ag-radius-lg); background: var(--ag-color-surface-subtle); }
 .growth-priority-item--blocked,
 .growth-priority-item--not_available { border-left-color: var(--ag-color-danger); }
@@ -2398,24 +2397,21 @@ input {
 .growth-priority-item p { margin: var(--ag-space-1) 0 0; }
 .growth-priority-item p,
 .growth-priority-item small { color: var(--ag-color-text-muted); }
-#growth-activity-list article { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ag-space-4); padding-bottom: var(--ag-space-3); border-bottom: 1px solid var(--ag-color-border); }
-#growth-activity-list article:last-child { padding-bottom: 0; border-bottom: 0; }
-#growth-activity-list p,
-#growth-activity-list time { margin: var(--ag-space-1) 0 0; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
+#review-activity-list article { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ag-space-4); padding-bottom: var(--ag-space-3); border-bottom: 1px solid var(--ag-color-border); }
+#review-activity-list article:last-child { padding-bottom: 0; border-bottom: 0; }
+#review-activity-list p,
+#review-activity-list time { margin: var(--ag-space-1) 0 0; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
 .growth-readiness { margin: 0; }
 .growth-partial-error { display: grid; gap: var(--ag-space-2); padding: var(--ag-space-4); border: 1px solid var(--ag-color-danger); border-radius: var(--ag-radius-lg); background: var(--ag-color-danger-bg); color: var(--ag-color-danger); }
 .growth-partial-error[hidden] { display: none; }
 .growth-partial-error ul { margin: 0; }
-.growth-review-link-card,
-.growth-review-automation-note { display: flex; align-items: center; justify-content: space-between; gap: var(--ag-space-4); }
+.growth-review-link-card { display: flex; align-items: center; justify-content: space-between; gap: var(--ag-space-4); }
 .growth-review-link-card > div { display: grid; gap: var(--ag-space-1); }
 .growth-review-link-card h3,
 .growth-review-link-card p,
-.growth-review-link-card small,
-.growth-review-automation-note p { margin: 0; }
+.growth-review-link-card small { margin: 0; }
 .growth-review-link-card p { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); font-weight: var(--ag-font-weight-bold); letter-spacing: .04em; text-transform: uppercase; }
-.growth-review-link-card small,
-.growth-review-automation-note p { color: var(--ag-color-text-muted); }
+.growth-review-link-card small { color: var(--ag-color-text-muted); }
 .growth-link-state--ready,
 .review-status-sent { border-color: var(--ag-color-green-500); background: var(--ag-color-success-bg); color: var(--ag-color-success-strong, #166534); }
 .growth-link-state--missing,
@@ -2443,7 +2439,6 @@ input {
 .growth-task-not_available { border-left-color: var(--ag-color-danger); }
 .growth-task-recommended { border-left-color: var(--ag-color-blue-500); }
 .growth-task-copy span { font-weight: var(--ag-font-weight-semibold); }
-.growth-review-automation-note { background: var(--ag-color-info-bg); }
 .review-actions .ag-button,
 .review-actions .btn { min-height: var(--ag-touch-target); }
 
@@ -2453,7 +2448,7 @@ input {
   .growth-navigation > p { grid-column: 1 / -1; }
   .growth-navigation button { min-width: 0; }
   .growth-navigation button[aria-current="page"] { box-shadow: inset 0 -3px var(--ag-color-blue-500); }
-  .growth-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .review-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 639px) {
@@ -2463,26 +2458,23 @@ input {
   .growth-navigation > p { grid-column: auto; }
   .growth-navigation button small { white-space: normal; }
   .growth-hub-header,
-  .growth-review-link-card,
-  .growth-review-automation-note { align-items: stretch; flex-direction: column; }
-  .growth-metrics,
+  .growth-review-link-card { align-items: stretch; flex-direction: column; }
+  .review-metrics,
   .review-useful-data { grid-template-columns: 1fr; }
-  .growth-metrics article { min-height: 6rem; }
+  .review-metrics article { min-height: 6rem; }
   .growth-priority-card,
   .growth-activity-card,
   .growth-review-block,
-  .growth-review-link-card,
-  .growth-review-automation-note { padding: var(--ag-space-4); }
+  .growth-review-link-card { padding: var(--ag-space-4); }
   .growth-priority-item,
   .growth-task { grid-template-columns: minmax(0, 1fr); }
   .growth-priority-item .ag-button,
   .growth-task .ag-button,
   .growth-review-link-card .ag-button,
-  .growth-review-automation-note .ag-button,
   .review-actions,
   .review-actions .ag-button,
   .review-actions .btn { width: 100%; }
-  #growth-activity-list article { flex-direction: column; gap: var(--ag-space-1); }
+  #review-activity-list article { flex-direction: column; gap: var(--ag-space-1); }
   .growth-hub-category { padding-bottom: calc(var(--ag-mobile-nav-height, 4rem) + env(safe-area-inset-bottom)); }
 }
 
@@ -2696,6 +2688,8 @@ input {
   .conversation-growth-follow-up { align-items: stretch; flex-direction: column; }
   .conversation-growth-follow-up .ag-button,
   .customer-growth .ag-button { width: 100%; }
+  .growth-results-card .growth-results-metrics,
+  .review-metrics { grid-template-columns: 1fr; }
 }
 
 /* Sprint 8B deterministic business growth signals */
@@ -2732,3 +2726,6 @@ body.business-non-operational #admin-main-content input[type="submit"] {
   opacity: .5;
   cursor: not-allowed;
 }
+
+/* P1.6A.3: Results is the Growth funnel; request metrics live in Reviews. */
+.growth-results-card .growth-results-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
