@@ -198,6 +198,12 @@ def auto_associate_conversation_customer(
 def serialize_conversation_customer(customer: Customer | None) -> dict[str, Any] | None:
     if customer is None:
         return None
+    account_link = customer.account_link
+    instagram_username = (
+        account_link.user.instagram_username
+        if account_link is not None and account_link.user is not None
+        else None
+    )
     return {
         "customer_id": customer.id,
         "name": customer.name,
@@ -205,6 +211,8 @@ def serialize_conversation_customer(customer: Customer | None) -> dict[str, Any]
         "phone_normalized": customer.phone_normalized,
         "email": customer.email,
         "status": customer.status,
+        # Informational profile value. Delivery still uses channel_identity.
+        "instagram_username": instagram_username,
     }
 
 
@@ -696,7 +704,9 @@ def list_conversations(
         db.query(Conversation)
         .options(
             joinedload(Conversation.business),
-            joinedload(Conversation.customer).joinedload(Customer.account_link),
+            joinedload(Conversation.customer)
+            .joinedload(Customer.account_link)
+            .joinedload(CustomerAccountLink.user),
         )
         .filter(Conversation.business_id == business_id)
     )
@@ -746,7 +756,9 @@ def get_conversation(db: Session, *, business_id: int, conversation_id: int) -> 
         db.query(Conversation)
         .options(
             joinedload(Conversation.business),
-            joinedload(Conversation.customer).joinedload(Customer.account_link),
+            joinedload(Conversation.customer)
+            .joinedload(Customer.account_link)
+            .joinedload(CustomerAccountLink.user),
         )
         .filter(
             Conversation.id == conversation_id,

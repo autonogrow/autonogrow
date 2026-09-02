@@ -87,6 +87,15 @@ def resolve_action_channel(
     requested_conversation_id: int | None = None,
 ) -> ActionChannelResolution:
     candidates: list[Conversation] = []
+
+    def add_candidate(conversation: Conversation | None) -> None:
+        if (
+            conversation is not None
+            and conversation.status != "closed"
+            and conversation.id not in {candidate.id for candidate in candidates}
+        ):
+            candidates.append(conversation)
+
     if requested_conversation_id is not None:
         requested = (
             db.query(Conversation)
@@ -102,12 +111,30 @@ def resolve_action_channel(
         conversation_phone = _normalized_phone(requested.customer_phone)
         if (
             requested.id != opportunity.source_conversation_id
+            and requested.customer_id != opportunity.customer_id
             and (not customer_phone or customer_phone != conversation_phone)
         ):
             raise ValueError("conversation_customer_mismatch")
-        candidates.append(requested)
-    elif opportunity.source_conversation is not None:
-        candidates.append(opportunity.source_conversation)
+        add_candidate(requested)
+        if not candidates:
+            raise ValueError("conversation_not_found")
+    else:
+        # A persisted Customer association is the authoritative relationship for
+        # navigation and delivery selection. It intentionally does not use a
+        # manually declared Instagram username to manufacture a conversation.
+        add_candidate(opportunity.source_conversation)
+        associated = (
+            db.query(Conversation)
+            .filter(
+                Conversation.business_id == opportunity.business_id,
+                Conversation.customer_id == opportunity.customer_id,
+                Conversation.status != "closed",
+            )
+            .order_by(Conversation.last_message_at.desc(), Conversation.id.desc())
+            .all()
+        )
+        for conversation in associated:
+            add_candidate(conversation)
 
     phone = _normalized_phone(opportunity.customer.phone)
     if phone and requested_conversation_id is None:
@@ -117,12 +144,9 @@ def resolve_action_channel(
             .order_by(Conversation.last_message_at.desc(), Conversation.id.desc())
             .all()
         )
-        candidates.extend(
-            row
-            for row in known
-            if row.id not in {candidate.id for candidate in candidates}
-            and _normalized_phone(row.customer_phone) == phone
-        )
+        for conversation in known:
+            if _normalized_phone(conversation.customer_phone) == phone:
+                add_candidate(conversation)
 
     assisted_fallback: ActionChannelResolution | None = None
     unavailable_fallback: ActionChannelResolution | None = None

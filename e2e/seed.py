@@ -271,6 +271,7 @@ def reset_database() -> None:
             preferred_name="María",
             phone="+34612345678",
             phone_normalized="+34612345678",
+            instagram_username="mihii_mihii",
         )
         professional_users = [
             User(email=f"pro-{index}@e2e.test", name=name)
@@ -486,6 +487,19 @@ def reset_database() -> None:
         db.add(growth_conversation)
         db.flush()
         db.add(
+            Conversation(
+                business_id=business_a.id,
+                customer_id=customer_a.id,
+                channel="instagram",
+                external_user_id="growth-customer-instagram-e2e",
+                customer_name="Instagram fallback E2E",
+                customer_username=None,
+                status="replied",
+                last_message_text="Consulta por Instagram.",
+                last_message_at=growth_now.replace(tzinfo=None) - timedelta(days=1),
+            )
+        )
+        db.add(
             CustomerOpportunity(
                 business_id=business_a.id,
                 customer_id=customer_a.id,
@@ -503,6 +517,21 @@ def reset_database() -> None:
                 dedupe_key="e2e:growth:service-due",
                 follow_up_interval_days_snapshot=30,
                 follow_up_window_days_snapshot=7,
+            )
+        )
+        db.add(
+            CustomerOpportunity(
+                business_id=business_a.id,
+                customer_id=guest_a.id,
+                type="scheduled_followup",
+                status="pending",
+                priority="normal",
+                detected_at=growth_now - timedelta(days=1),
+                due_at=growth_now - timedelta(hours=1),
+                expires_at=growth_now + timedelta(days=30),
+                reason_code="customer_without_conversation_e2e",
+                reason_text="Customer sin Conversation asociada.",
+                dedupe_key="e2e:growth:customer-without-conversation",
             )
         )
 

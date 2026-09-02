@@ -121,7 +121,7 @@ def test_growth_opportunity_home_customer_conversation_backlink(journey) -> None
     expect(today).to_contain_text("Oportunidades para hoy")
     expect(today).to_contain_text("María Cliente E2E está en fecha de volver")
     _assert_no_horizontal_overflow(page)
-    today.get_by_role("button", name="Ver oportunidad").click()
+    today.get_by_role("button", name="Ver oportunidad").first.click()
 
     opportunity = page.locator("[data-customer-opportunity]").filter(has_text="María Cliente E2E")
     expect(opportunity).to_be_visible()
@@ -147,13 +147,40 @@ def test_growth_opportunity_home_customer_conversation_backlink(journey) -> None
         page.locator('.admin-tab[data-section="summary"]').evaluate("button => button.click()")
         expect(today).to_contain_text("Oportunidades para hoy")
         _assert_no_horizontal_overflow(page)
-        today.get_by_role("button", name="Ver oportunidad").click()
+        today.get_by_role("button", name="Ver oportunidad").first.click()
         expect(opportunity).to_be_visible()
         _assert_no_horizontal_overflow(page)
         opportunity.get_by_role("button", name="Ver cliente").click()
         expect(customer_growth).to_be_visible()
         _assert_no_horizontal_overflow(page)
         page.locator("#conversation-customer-close").click()
+
+
+def test_growth_opportunity_opens_customer_without_conversation(journey) -> None:
+    _session, page = _open_admin(journey)
+    page.locator('.admin-tab[data-section="growth"]').click()
+    page.get_by_role("button", name="Oportunidades").click()
+
+    opportunity = page.locator("[data-customer-opportunity]").filter(has_text="Invitado Fixture")
+    expect(opportunity).to_be_visible()
+    expect(opportunity.get_by_role("button", name="Ver conversaci\u00f3n")).to_have_count(0)
+    opportunity.get_by_role("button", name="Ver cliente").click()
+    expect(page.locator("#conversation-customer-content")).to_contain_text("Invitado Fixture")
+
+
+def test_conversation_uses_customer_instagram_as_visual_fallback_only(journey) -> None:
+    _session, page = _open_admin(journey)
+    page.locator('.admin-tab[data-section="conversations"]').click()
+
+    fallback = page.locator(".conversation-list-item").filter(has_text="@mihii_mihii")
+    expect(fallback).to_be_visible()
+    fallback.click()
+    expect(page.locator("#conversation-detail")).to_contain_text("@mihii_mihii")
+    expect(page.locator("#conversation-send-button")).to_have_count(0)
+
+    page.locator('[data-admin-action="open-conversation-customer-panel"]').click()
+    expect(page.locator("#conversation-customer-content")).to_contain_text("Instagram del cliente")
+    expect(page.locator("#conversation-customer-content")).to_contain_text("@mihii_mihii")
 
 
 def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> None:

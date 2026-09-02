@@ -506,10 +506,29 @@ class GrowthOpportunityService:
 
 
 def serialize_opportunity(row: CustomerOpportunity) -> dict:
+    account_link = row.customer.account_link
+    instagram_username = (
+        account_link.user.instagram_username
+        if account_link is not None and account_link.user is not None
+        else None
+    )
     return {
         "id": row.id,
         "business_id": row.business_id,
-        "customer": {"id": row.customer.id, "name": row.customer.name},
+        # Keep the direct identifier for navigation. Customer access is scoped by
+        # the opportunity's business and must never be inferred from a channel.
+        "customer_id": row.customer_id,
+        "customer": {
+            "id": row.customer.id,
+            "name": row.customer.name,
+            "phone": row.customer.phone,
+            "phone_normalized": row.customer.phone_normalized,
+            "email": row.customer.email,
+            "status": row.customer.status,
+            "memory_eligible": account_link is not None,
+            # This is profile context only; it is not a Meta sender identity.
+            "instagram_username": instagram_username,
+        },
         "type": row.type,
         "status": row.status,
         "priority": row.priority,

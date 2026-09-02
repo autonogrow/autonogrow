@@ -61,6 +61,7 @@ from app.services.opportunity_action_service import (
     OpportunityActionService,
     expire_drafts,
     invalidate_actions_for_resolved_opportunity,
+    resolve_action_channel,
 )
 from app.services.opportunity_template_service import create_attribution_token
 from app.services.outbox_queue_service import (
@@ -293,6 +294,32 @@ def available_capabilities(
         assisted_delivery_available=conversation.channel == "whatsapp",
         unavailable_reason=None,
     )
+
+
+def test_associated_conversation_is_resolved_without_phone_or_sender_fallback(
+    db: Session, records: dict[str, object]
+) -> None:
+    customer = records["customer_a"]
+    business = records["a"]
+    assert isinstance(customer, Customer)
+    assert isinstance(business, Business)
+    customer.phone = None
+    conversation = Conversation(
+        business_id=business.id,
+        customer_id=customer.id,
+        channel="instagram",
+        external_user_id="associated-instagram-customer",
+        customer_username=None,
+        status="replied",
+        last_message_at=NOW,
+    )
+    db.add(conversation)
+    db.commit()
+    row = opportunity(db, records)
+
+    resolution = resolve_action_channel(db, opportunity=row)
+    assert resolution.conversation is not None
+    assert resolution.conversation.id == conversation.id
 
 
 @pytest.mark.parametrize(

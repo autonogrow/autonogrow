@@ -36,6 +36,7 @@ from app.schemas.service import AdminServiceUpdate
 from app.services.capability_service import configure_business_modules
 from app.services.growth_opportunity_service import (
     GrowthOpportunityService,
+    serialize_opportunity,
     snapshot_booking_follow_up,
 )
 
@@ -586,6 +587,34 @@ def test_opportunity_list_uses_action_first_stable_ordering(db: Session, records
         future_high.id,
         actioned.id,
     ]
+
+
+def test_opportunity_customer_navigation_is_independent_of_conversation(
+    db: Session, records: dict
+) -> None:
+    customer = records["customer_a"]
+    business = records["a"]
+    assert isinstance(customer, Customer)
+    assert isinstance(business, Business)
+    row = CustomerOpportunity(
+        business_id=business.id,
+        customer_id=customer.id,
+        type="scheduled_followup",
+        status="pending",
+        priority="normal",
+        detected_at=NOW,
+        due_at=NOW,
+        reason_code="customer_navigation",
+        reason_text="El Customer se abre sin una Conversation.",
+        dedupe_key="customer-navigation-without-conversation",
+    )
+    db.add(row)
+    db.commit()
+
+    payload = serialize_opportunity(row)
+    assert payload["customer_id"] == customer.id
+    assert payload["customer"]["id"] == customer.id
+    assert payload["source_conversation_id"] is None
 
 
 def test_database_dedupe_constraint_is_final_guard(db: Session, records: dict) -> None:

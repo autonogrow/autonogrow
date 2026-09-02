@@ -445,7 +445,7 @@ function setupGrowthHub() {
       const opportunityAction = opportunity.dataset.opportunityAction;
       if (opportunityAction === "prepare") prepareOpportunityMessage(opportunityId, opportunity);
       else if (opportunityAction === "conversation") openOpportunityConversation(opportunityId);
-      else if (opportunityAction === "customer") openOpportunityConversation(opportunityId, { openCustomer: true });
+      else if (opportunityAction === "customer") openOpportunityCustomer(opportunityId, opportunity);
       else updateCustomerOpportunity(opportunityId, opportunityAction);
     }
     const signalAction = event.target.closest("[data-growth-signal-action]");
@@ -937,6 +937,16 @@ function growthOpportunityConversationId(opportunity) {
   }
   const customerId = Number(opportunity.customer?.id);
   return dashboardConversations.find((conversation) => conversation.customer_id === customerId)?.id || null;
+}
+
+function growthOpportunityChannelLabel(opportunity) {
+  const channel = opportunity.channel || {};
+  if (channel.can_send && channel.channel) {
+    return ({ whatsapp: "WhatsApp", instagram: "Instagram" })[channel.channel] || channel.channel;
+  }
+  if (channel.assisted_delivery_available) return "WhatsApp asistido";
+  if (channel.conversation_id || channel.customer_contact_identity_known) return "Sin canal integrado";
+  return "Sin canal/contacto utilizable";
 }
 
 function dashboardBookingSortKey(booking) {
@@ -1799,11 +1809,10 @@ function renderGrowthOpportunities(_tasks) {
   if (!container) return;
   container.setAttribute("aria-busy", "false");
   const typeLabels = { cancelled_not_rebooked: "Canceló y no ha vuelto a reservar", no_show_not_rebooked: "No acudió y no ha vuelto a reservar", lead_not_converted: "Consultó y todavía no ha reservado", service_due: "Cliente en fecha de volver", scheduled_followup: "Seguimiento indicado" };
-  const channelLabels = { whatsapp: "WhatsApp", instagram: "Instagram" };
   const actionLabels = { draft: "Borrador", approved: "Pendiente de envío", sending: "Enviando", sent: "Enviado", failed: "Fallido", cancelled: "Cancelado", completed: "Completado" };
   const persisted = [...customerOpportunities].sort(compareGrowthOpportunities).map((item) => {
     const latest = item.latest_action;
-    const channel = item.channel?.channel ? (channelLabels[item.channel.channel] || item.channel.channel) : "Sin canal disponible";
+    const channel = growthOpportunityChannelLabel(item);
     const prepareLabel = latest?.status === "draft" ? "Continuar borrador" : "Preparar mensaje";
     const memory = item.customer_context?.explicit || [];
     const context = memory.length ? `<div class="growth-customer-context"><strong>Contexto del cliente</strong>${memory.map((entry) => `<p>${escapeHtml(entry.value)}</p>`).join("")}</div>` : "";
@@ -1978,8 +1987,9 @@ function openGrowthActionModal(action, opportunity, trigger = null) {
   selectedOpportunityAction = action;
   selectedOpportunityForAction = opportunity;
   growthActionReturnFocus = trigger || document.activeElement;
-  const channel = { whatsapp: "WhatsApp", instagram: "Instagram" }[action.channel]
-    || (action.delivery_mode === "assisted" ? "WhatsApp asistido" : "Sin canal disponible");
+  const channel = action.delivery_mode === "integrated" && action.channel
+    ? ({ whatsapp: "WhatsApp", instagram: "Instagram" }[action.channel] || action.channel)
+    : action.delivery_mode === "assisted" ? "WhatsApp asistido" : "Sin canal integrado";
   const status = { draft: "Borrador editable", approved: "Aprobado y pendiente", sending: "Enviando", sent: "Enviado", failed: "Fallido", cancelled: "Cancelado", completed: "Completado" }[action.status] || action.status;
   document.getElementById("growth-action-channel").textContent = channel;
   document.getElementById("growth-action-reason").textContent = opportunity.reason_text;
@@ -2144,13 +2154,25 @@ async function copyGrowthOpportunityText() {
   }
 }
 
-async function openOpportunityConversation(opportunityId, { openCustomer = false } = {}) {
+function openOpportunityCustomer(opportunityId, trigger) {
+  const opportunity = customerOpportunities.find((item) => Number(item.id) === Number(opportunityId));
+  const customer = opportunity?.customer;
+  const customerId = Number(opportunity?.customer_id || customer?.id);
+  if (!Number.isInteger(customerId) || customerId <= 0 || !customer) {
+    alert("No se pudo abrir el cliente de esta oportunidad.");
+    return;
+  }
+  if (!showAdminSection("conversations")) return;
+  openConversationCustomerPanel(trigger);
+  renderStandaloneCustomerPanel({ ...customer, customer_id: customerId });
+}
+
+async function openOpportunityConversation(opportunityId) {
   const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/opportunities/${opportunityId}/open-conversation`, { method: "POST" });
   const body = await readAdminResponseBody(response);
   if (!response.ok || !body.conversation_id) return alert(conversationErrorMessage(body, "No se pudo abrir la conversación."));
   showAdminSection("conversations");
   await selectConversation(body.conversation_id);
-  if (openCustomer && selectedConversation?.customer_id) openConversationCustomerPanel(document.activeElement);
 }
 
 async function updateCustomerOpportunity(opportunityId, status) {
@@ -4356,7 +4378,10 @@ function conversationDisplayName(item) {
   const identity = item.channel_identity || {};
   if (item.customer?.name) return item.customer.name;
   if (identity.display_name) return identity.display_name;
-  if (item.channel === "instagram" && identity.username) return `@${identity.username}`;
+  if (item.channel === "instagram") {
+    const username = identity.username || item.customer?.instagram_username;
+    if (username) return `@${username}`;
+  }
   if (item.channel === "whatsapp" && (identity.phone_normalized || identity.phone)) {
     return formatConversationPhone(identity.phone_normalized || identity.phone);
   }
@@ -4376,7 +4401,9 @@ function conversationChannelIdentity(item) {
     return phone ? formatConversationPhone(phone) : "Número de WhatsApp no disponible";
   }
   if (item.channel === "instagram") {
-    return identity.username ? `@${identity.username}` : "Usuario de Instagram no disponible";
+    if (identity.username) return `@${identity.username}`;
+    if (item.customer?.instagram_username) return `@${item.customer.instagram_username}`;
+    return "Instagram no asociado";
   }
   return identity.phone || identity.username || "Identidad de canal no disponible";
 }
@@ -5350,11 +5377,42 @@ function renderConversationCustomerPanel(conversation) {
       ${associated ? `<div><dt>Nombre</dt><dd>${escapeHtml(customer.name)}</dd></div><div><dt>Teléfono</dt><dd>${escapeHtml(formatConversationPhone(customer.phone_normalized || customer.phone) || "No disponible")}</dd></div><div><dt>Email</dt><dd>${escapeHtml(customer.email || "No disponible")}</dd></div>` : ""}
       <div><dt>Última actividad</dt><dd>${escapeHtml(formatConversationDate(conversation.last_message_at))}</dd></div>
     </dl>
+    ${associated && customer.instagram_username ? `<p class="conversation-customer-instagram"><strong>Instagram del cliente</strong><br />@${escapeHtml(customer.instagram_username)}</p>` : ""}
+    ${associated && conversation.channel === "instagram" && conversation.channel_identity?.username ? `<p class="conversation-customer-instagram"><strong>Identidad de esta conversaci\u00f3n</strong><br />@${escapeHtml(conversation.channel_identity.username)}</p>` : ""}
     ${renderConversationCustomerSearch()}
     ${associated ? renderCustomerGrowthSection(customerId) : ""}
     ${associated && conversation.customer_memory_eligible ? renderCustomerMemorySection(customerId) : ""}
   `;
   if (associated && conversation.customer_memory_eligible && !customerMemorySummaries.has(customerId)) void loadCustomerMemorySummary(customerId);
+}
+
+function renderStandaloneCustomerPanel(customer) {
+  const content = document.getElementById("conversation-customer-content");
+  if (!content) return;
+  const customerId = Number(customer.customer_id || customer.id);
+  if (!Number.isInteger(customerId) || customerId <= 0) return;
+  const contact = [formatConversationPhone(customer.phone_normalized || customer.phone), customer.email]
+    .filter(Boolean);
+  content.innerHTML = `
+    <section class="conversation-customer-summary">
+      <div class="conversation-customer-avatar" aria-hidden="true">${escapeHtml(String(customer.name || "C").charAt(0).toUpperCase())}</div>
+      <h4>${escapeHtml(customer.name || "Cliente")}</h4>
+      <p>${escapeHtml(contact.join(" - ") || "Sin m\u00e1s datos de contacto")}</p>
+      <span class="conversation-channel">Cliente</span>
+      <strong class="conversation-association-status">Cliente de la oportunidad</strong>
+    </section>
+    <dl class="conversation-customer-stats">
+      <div><dt>Nombre</dt><dd>${escapeHtml(customer.name || "No disponible")}</dd></div>
+      <div><dt>Tel\u00e9fono</dt><dd>${escapeHtml(formatConversationPhone(customer.phone_normalized || customer.phone) || "No disponible")}</dd></div>
+      <div><dt>Email</dt><dd>${escapeHtml(customer.email || "No disponible")}</dd></div>
+      ${customer.instagram_username ? `<div><dt>Instagram del cliente</dt><dd>@${escapeHtml(customer.instagram_username)}</dd></div>` : ""}
+    </dl>
+    ${renderCustomerGrowthSection(customerId)}
+    ${customer.memory_eligible ? renderCustomerMemorySection(customerId) : ""}
+  `;
+  if (customer.memory_eligible && !customerMemorySummaries.has(customerId)) {
+    void loadCustomerMemorySummary(customerId);
+  }
 }
 
 function openCustomerMemoryForm(mode, customerId, memoryId = null) {

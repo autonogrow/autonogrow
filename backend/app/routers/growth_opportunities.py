@@ -93,6 +93,9 @@ def serialize_opportunity_detail(
         "delivery_mode": channel.delivery_mode,
         "unavailable_reason": channel.unavailable_reason,
         "assisted_delivery_available": channel.assisted_delivery_available,
+        "customer_contact_identity_known": bool(
+            result["customer"].get("instagram_username")
+        ),
     }
     result["latest_action"] = serialize_action(db, latest_action[0]) if latest_action else None
     if include_full_customer_context:

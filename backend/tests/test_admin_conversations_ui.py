@@ -311,12 +311,39 @@ def test_conversation_identity_is_honest_and_staff_controls_remain_hidden() -> N
     display = function_block(js, "function conversationDisplayName", "function conversationStatusLabel")
     panel = function_block(js, "function renderConversationCustomerPanel", "function openCustomerMemoryForm")
     assert "item.customer?.name" in display
-    assert "Usuario de Instagram no disponible" in display
+    assert "item.customer?.instagram_username" in display
+    assert "Instagram no asociado" in display
     assert "external_user_id" not in display
     assert "@${identity.username}" in display
+    assert "Instagram del cliente" in panel
     assert "+34 ${spanish[1]} ${spanish[2]} ${spanish[3]}" in display
     assert 'if (isBusinessStaff()) return;' in js
     assert 'isBusinessStaff() ? ""' in panel
+
+
+def test_growth_customer_navigation_does_not_reuse_conversation_navigation() -> None:
+    _, _, js = read_sources()
+    growth = function_block(js, "function setupGrowthHub", "function setupChannelHub")
+    customer = function_block(js, "function openOpportunityCustomer", "async function openOpportunityConversation")
+    conversation = function_block(js, "async function openOpportunityConversation", "async function updateCustomerOpportunity")
+
+    assert "openOpportunityCustomer(opportunityId, opportunity)" in growth
+    assert "customer_id" in customer
+    assert "renderStandaloneCustomerPanel" in customer
+    assert "/open-conversation" not in customer
+    assert "/open-conversation" in conversation
+
+
+def test_growth_and_conversation_channel_copy_reflects_real_capabilities() -> None:
+    _, _, js = read_sources()
+    channel = function_block(js, "function growthOpportunityChannelLabel", "function dashboardBookingSortKey")
+    identity = function_block(js, "function conversationChannelIdentity", "function conversationAssociationLabel")
+
+    assert "WhatsApp asistido" in channel
+    assert "Sin canal integrado" in channel
+    assert "Sin canal/contacto utilizable" in channel
+    assert "item.customer?.instagram_username" in identity
+    assert "Instagram no asociado" in identity
 
 
 def test_conversation_drawer_has_focus_escape_and_responsive_modes() -> None:

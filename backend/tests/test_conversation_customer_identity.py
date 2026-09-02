@@ -324,6 +324,42 @@ def test_instagram_requires_verified_provider_identity_and_account_link(records)
     assert serialize_conversation(db, unknown)["channel_identity"]["username"] is None
 
 
+def test_customer_instagram_is_a_visual_fallback_not_a_meta_sender_identity(records) -> None:
+    db, business, _, _, _ = records
+    customer = add_customer(db, business, name="Fallback customer")
+    user = User(email="fallback@identity.test", instagram_username="customer.context")
+    db.add(user)
+    db.flush()
+    db.add(
+        CustomerAccountLink(
+            user=user,
+            customer=customer,
+            business_id=business.id,
+            link_method="profile_context",
+        )
+    )
+    conversation = add_conversation(
+        db,
+        business,
+        channel="instagram",
+        external_user_id="meta-sender-without-username",
+        phone=None,
+    )
+    conversation.customer = customer
+    db.commit()
+
+    fallback = serialize_conversation(db, conversation)
+    assert fallback["channel_identity"]["username"] is None
+    assert fallback["customer"]["instagram_username"] == "customer.context"
+    assert fallback["integrated_delivery_available"] is False
+
+    conversation.customer_username = "meta.sender"
+    db.commit()
+    meta = serialize_conversation(db, conversation)
+    assert meta["channel_identity"]["username"] == "meta.sender"
+    assert meta["customer"]["instagram_username"] == "customer.context"
+
+
 def test_many_conversations_and_channels_can_share_one_customer(records) -> None:
     db, business, _, _, _ = records
     customer = add_customer(db, business, name="Shared")
