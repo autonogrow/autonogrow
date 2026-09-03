@@ -118,6 +118,84 @@ def test_growth_opportunity_home_customer_conversation_backlink(journey) -> None
     today = page.locator("#dashboard-attention-list")
     expect(today).to_contain_text("Oportunidades para hoy")
     expect(today).to_contain_text("María Cliente E2E está en fecha de volver")
+    home_opportunity = today.locator(".dashboard-growth-opportunity").filter(
+        has_text="María Cliente E2E"
+    )
+    expect(home_opportunity).to_contain_text(
+        "Creación de página profesional de Instagram y TikTok con estrategia de contenidos E2E"
+    )
+    expect(
+        home_opportunity.locator(".dashboard-growth-opportunity__actions .ag-button")
+    ).to_have_count(2)
+    for size in (
+        {"width": 1280, "height": 800},
+        {"width": 900, "height": 900},
+        {"width": 768, "height": 1024},
+        {"width": 390, "height": 844},
+    ):
+        page.set_viewport_size(size)
+        page.locator('.admin-tab[data-section="summary"]').evaluate("button => button.click()")
+        expect(home_opportunity).to_be_visible()
+        home_opportunity.locator("h5").evaluate(
+            "element => { element.textContent = 'María Cliente E2E con un nombre deliberadamente largo está en fecha de volver'; }"
+        )
+        geometry = home_opportunity.evaluate(
+            """element => {
+              const card = element.getBoundingClientRect();
+              const header = element.querySelector('.dashboard-growth-opportunity__header').getBoundingClientRect();
+              const title = element.querySelector('h5');
+              const actions = element.querySelector('.dashboard-growth-opportunity__actions').getBoundingClientRect();
+              const description = element.querySelector('.dashboard-growth-opportunity__description');
+              const metadata = element.querySelector('.dashboard-growth-opportunity__metadata');
+              const descriptionRect = description.getBoundingClientRect();
+              const metadataRect = metadata.getBoundingClientRect();
+              return {
+                card,
+                header,
+                titleWidth: title.getBoundingClientRect().width,
+                titleWordBreak: getComputedStyle(title).wordBreak,
+                actions,
+                description: descriptionRect,
+                descriptionScrollWidth: description.scrollWidth,
+                descriptionClientWidth: description.clientWidth,
+                descriptionOverflowWrap: getComputedStyle(description).overflowWrap,
+                metadata: metadataRect,
+                metadataScrollWidth: metadata.scrollWidth,
+                metadataClientWidth: metadata.clientWidth
+              };
+            }"""
+        )
+        block_widths = [
+            geometry["header"]["width"],
+            geometry["actions"]["width"],
+            geometry["description"]["width"],
+            geometry["metadata"]["width"],
+        ]
+        assert max(block_widths) - min(block_widths) <= 1
+        assert min(block_widths) >= geometry["card"]["width"] * 0.8
+        assert geometry["titleWidth"] >= geometry["header"]["width"] * 0.7
+        assert geometry["header"]["bottom"] <= geometry["actions"]["top"] + 1
+        assert geometry["actions"]["bottom"] <= geometry["description"]["top"] + 1
+        assert geometry["description"]["bottom"] <= geometry["metadata"]["top"] + 1
+        assert geometry["descriptionScrollWidth"] <= geometry["descriptionClientWidth"] + 1
+        assert geometry["metadataScrollWidth"] <= geometry["metadataClientWidth"] + 1
+        assert geometry["descriptionOverflowWrap"] == "break-word"
+        assert geometry["titleWordBreak"] == "normal"
+        _assert_no_horizontal_overflow(page)
+    secondary_action = home_opportunity.get_by_role("button", name="Ver oportunidad")
+    secondary_action.evaluate("element => { element.hidden = true; }")
+    expect(home_opportunity.get_by_role("button", name="Preparar mensaje")).to_be_visible()
+    one_action_widths = home_opportunity.evaluate(
+        """element => ({
+          actions: element.querySelector('.dashboard-growth-opportunity__actions').getBoundingClientRect().width,
+          description: element.querySelector('.dashboard-growth-opportunity__description').getBoundingClientRect().width
+        })"""
+    )
+    assert abs(one_action_widths["actions"] - one_action_widths["description"]) <= 1
+    _assert_no_horizontal_overflow(page)
+    secondary_action.evaluate("element => { element.hidden = false; }")
+    page.set_viewport_size({"width": 1280, "height": 800})
+    page.locator('.admin-tab[data-section="summary"]').evaluate("button => button.click()")
     _assert_no_horizontal_overflow(page)
     today.get_by_role("button", name="Ver oportunidad").first.click()
 

@@ -1597,6 +1597,13 @@ input {
 .dashboard-close-tasks > h4,
 .dashboard-growth-tasks > h4 { margin: 0; font-size: var(--ag-font-size-md); }
 .dashboard-close-task__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--ag-space-2); }
+.dashboard-attention-item.dashboard-growth-opportunity { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.dashboard-growth-opportunity__header { display: flex; align-items: flex-start; width: 100%; min-width: 0; gap: var(--ag-space-3); }
+.dashboard-growth-opportunity__header .dashboard-attention-item__mark { flex: 0 0 auto; }
+.dashboard-growth-opportunity__header h5 { flex: 1 1 auto; min-width: 0; margin: 0; overflow-wrap: break-word; word-break: normal; }
+.dashboard-growth-opportunity__actions { justify-content: flex-start; width: 100%; min-width: 0; }
+.dashboard-growth-opportunity__description,
+.dashboard-growth-opportunity__metadata { width: 100%; min-width: 0; overflow-wrap: break-word; word-break: normal; }
 
 .dashboard-next-booking { display: grid; gap: var(--ag-space-4); }
 .dashboard-next-booking__time { display: flex; align-items: baseline; gap: var(--ag-space-2); margin: 0; }

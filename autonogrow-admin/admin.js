@@ -1303,14 +1303,14 @@ function renderAttentionItems() {
       ? `Normalmente repite ${opportunity.source_service_name} cada ${formatGrowthDays(recurrence)}.`
       : opportunity.reason_text || "Hay un seguimiento comercial pendiente.";
     return `
-      <article class="dashboard-attention-item dashboard-attention-item--${opportunity.priority === "high" ? "warning" : "info"} dashboard-growth-task">
-        <span class="dashboard-attention-item__mark" aria-hidden="true">${opportunity.priority === "high" ? "!" : "•"}</span>
-        <div>
+      <article class="dashboard-attention-item dashboard-attention-item--${opportunity.priority === "high" ? "warning" : "info"} dashboard-growth-task dashboard-growth-opportunity">
+        <header class="dashboard-growth-opportunity__header">
+          <span class="dashboard-attention-item__mark" aria-hidden="true">${opportunity.priority === "high" ? "!" : "•"}</span>
           <h5>${escapeHtml(growthOpportunityHeadline(opportunity))}</h5>
-          <p>${escapeHtml(why)}</p>
-          <p>${escapeHtml(opportunity.source_service_name || "Seguimiento de cliente")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</p>
-        </div>
-        <div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">Preparar mensaje</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-dashboard-opportunity-id="${Number(opportunity.id)}">Ver oportunidad</button></div>
+        </header>
+        <div class="growth-opportunity-actions dashboard-growth-opportunity__actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">Preparar mensaje</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-dashboard-opportunity-id="${Number(opportunity.id)}">Ver oportunidad</button></div>
+        <p class="dashboard-growth-opportunity__description">${escapeHtml(why)}</p>
+        <p class="dashboard-growth-opportunity__metadata">${escapeHtml(opportunity.source_service_name || "Seguimiento de cliente")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</p>
       </article>`;
   }).join("");
   const signalMarkup = growthSignalCandidates.slice(0, growthSlots).map((signal) => {

@@ -36,6 +36,40 @@ def test_home_prioritizes_real_growth_opportunities_and_separates_setup() -> Non
     assert "review" not in growth_markup.lower()
 
 
+def test_home_growth_opportunity_card_stacks_content_without_narrow_text_columns() -> None:
+    _, css, js = sources()
+    render = function_block(js, "function renderAttentionItems", "function renderMessageSummary")
+    card = render.split('dashboard-growth-task dashboard-growth-opportunity">', 1)[1].split(
+        "</article>", 1
+    )[0]
+
+    expected_order = (
+        'class="dashboard-growth-opportunity__header"',
+        'class="growth-opportunity-actions dashboard-growth-opportunity__actions"',
+        'class="dashboard-growth-opportunity__description"',
+        'class="dashboard-growth-opportunity__metadata"',
+    )
+    assert [card.index(fragment) for fragment in expected_order] == sorted(
+        card.index(fragment) for fragment in expected_order
+    )
+    assert "ag-button--primary" in card
+    assert "ag-button--secondary" in card
+    assert "Preparar mensaje" in card
+    assert "Ver oportunidad" in card
+
+    layout = css.split(".dashboard-growth-opportunity {", 1)[1].split(".dashboard-next-booking", 1)[
+        0
+    ]
+    assert "grid-template-columns: minmax(0, 1fr)" in layout
+    assert "flex: 1 1 auto" in layout
+    assert "width: 100%" in layout
+    assert "min-width: 0" in layout
+    assert "flex-wrap: wrap" in css
+    assert "overflow-wrap: break-word" in layout
+    assert "word-break: normal" in layout
+    assert "word-break: break-all" not in layout
+
+
 def test_growth_hierarchy_copy_and_results_are_honest() -> None:
     html, _, js = sources()
     positions = [
@@ -49,7 +83,9 @@ def test_growth_hierarchy_copy_and_results_are_honest() -> None:
     assert "Ingresos registrados en reservas vinculadas" in html
     assert 'viewed: "Acciones preparadas"' in js
     assert 'viewed: "Vistas"' not in js
-    overview = function_block(js, "function renderGrowthOverview", "function renderGrowthOpportunities")
+    overview = function_block(
+        js, "function renderGrowthOverview", "function renderGrowthOpportunities"
+    )
     opportunities = function_block(
         js, "function renderGrowthOpportunities", "function renderGrowthActionMetrics"
     )
