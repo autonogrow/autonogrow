@@ -73,10 +73,20 @@ def test_growth_results_and_review_metrics_stay_in_their_domains() -> None:
         "review-metric-failed",
     ):
         assert html.count(f'id="{element_id}"') == 1
-    render = function_block(js, "function renderGrowthOverview", "function renderGrowthOpportunities")
-    results = function_block(js, "function renderGrowthActionMetrics", "function renderBusinessGrowthSignals")
-    reviews = function_block(js, "function renderReviewRequests", "function renderReviewCandidateCard")
-    for source in ("getReviewCandidates()", "reviewRequestsByBooking.values()", "getFailedReviewMessages()"):
+    render = function_block(
+        js, "function renderGrowthOverview", "function renderGrowthOpportunities"
+    )
+    results = function_block(
+        js, "function renderGrowthActionMetrics", "function renderBusinessGrowthSignals"
+    )
+    reviews = function_block(
+        js, "function renderReviewRequests", "function renderReviewCandidateCard"
+    )
+    for source in (
+        "getReviewCandidates()",
+        "reviewRequestsByBooking.values()",
+        "getFailedReviewMessages()",
+    ):
         assert source not in render
         assert source in reviews
     for source in ("growth-result-prepared", "growth-result-sent", "growth-result-booked"):
@@ -91,13 +101,22 @@ def test_growth_results_and_review_metrics_stay_in_their_domains() -> None:
     assert "Solicitudes de reseña asistidas" not in opportunities
 
 
-def test_review_candidates_are_completed_bookings_without_prior_request() -> None:
+def test_review_candidates_are_unique_customers_without_prior_cycle() -> None:
     _, _, js = sources()
     block = function_block(js, "function getReviewCandidates", "function getReviewOutboxMessage")
     assert 'booking.status === "completed"' in block
-    assert "!reviewRequestsByBooking.has(booking.id)" in block
-    candidate = function_block(js, "function renderReviewCandidateCard", "function reviewDeliveryState")
-    for label in ("Cliente sin nombre", "Servicio sin indicar", "Fecha de la cita", "Canal disponible"):
+    assert "getStableReviewCustomerId(booking)" in block
+    assert "getReviewRequestForCustomer(customerId)" in block
+    assert "seenCustomerIds.has(customerId)" in block
+    candidate = function_block(
+        js, "function renderReviewCandidateCard", "function reviewDeliveryState"
+    )
+    for label in (
+        "Cliente sin nombre",
+        "Servicio sin indicar",
+        "Fecha de la cita",
+        "Canal disponible",
+    ):
         assert label in candidate
     assert "Cita #" not in candidate
     assert "customer_phone" not in candidate
@@ -107,21 +126,31 @@ def test_review_creation_reuses_tenant_scoped_idempotent_backend_flow() -> None:
     _, _, js = sources()
     router = ADMIN_ROUTER.read_text(encoding="utf-8")
     service = REVIEW_SERVICE.read_text(encoding="utf-8")
-    creation = function_block(js, "async function createReviewRequest", "async function openReviewWhatsApp")
-    assert "/api/admin/businesses/${getBusinessSlug()}/bookings/${bookingId}/review-request" in creation
+    creation = function_block(
+        js, "async function createReviewRequest", "async function openReviewWhatsApp"
+    )
+    assert (
+        "/api/admin/businesses/${getBusinessSlug()}/bookings/${bookingId}/review-request"
+        in creation
+    )
     assert 'method: "POST"' in creation
     assert "reviewMutationKeys.has(mutationKey)" in creation
-    assert "reviewRequestsByBooking.has(bookingId)" in creation
+    assert "getReviewRequestForCustomer(customerId)" in creation
+    assert "review-create-customer:${customerId}" in creation
     assert 'booking.status !== "completed"' in creation
     assert "get_or_create_review_request" in router
     assert "Booking.business_id == business.id" in router
-    assert "ReviewRequest.booking_id == booking.id" in service
+    assert "ReviewRequest.customer_id == booking.customer_id" in service
+    assert "ReviewRequest.business_id == business.id" in service
+    assert "ReviewRequest.is_customer_cycle_anchor.is_(True)" in service
     assert "UniqueConstraint" not in creation
 
 
 def test_review_delivery_is_explicitly_assisted_not_integrated() -> None:
     html, _, js = sources()
-    creation = function_block(js, "async function createReviewRequest", "async function copyReviewMessage")
+    creation = function_block(
+        js, "async function createReviewRequest", "async function copyReviewMessage"
+    )
     assert "WhatsApp asistido" in creation
     assert "la enviarás tú" in creation
     assert "AutonoGrow no la marcará como enviada" in creation
@@ -134,8 +163,12 @@ def test_review_delivery_is_explicitly_assisted_not_integrated() -> None:
 
 def test_only_existing_review_and_outbox_states_are_mapped() -> None:
     _, _, js = sources()
-    request_states = function_block(js, "function renderReviewRequests", "function renderReviewCandidateCard")
-    delivery = function_block(js, "function reviewDeliveryState", "function renderReviewSummaryCard")
+    request_states = function_block(
+        js, "function renderReviewRequests", "function renderReviewCandidateCard"
+    )
+    delivery = function_block(
+        js, "function reviewDeliveryState", "function renderReviewSummaryCard"
+    )
     for state in ("pending", "copied", "sent", "skipped"):
         assert state in request_states
     for state in ("failed", "opened"):
@@ -150,7 +183,9 @@ def test_review_link_has_one_safe_source_of_truth() -> None:
     safe_link = function_block(js, "function getSafeReviewUrl", "function getReviewCandidates")
     assert "currentBusiness?.reviews_url" in safe_link
     assert "isSafePublicUrl(value)" in safe_link
-    render = function_block(js, "function renderReviewRequests", "function renderReviewCandidateCard")
+    render = function_block(
+        js, "function renderReviewRequests", "function renderReviewCandidateCard"
+    )
     assert 'data-growth-action="configuration-reviews"' in render
     assert 'rel="noopener noreferrer"' in render
     assert "Enlace no válido" in render
@@ -159,12 +194,15 @@ def test_review_link_has_one_safe_source_of_truth() -> None:
     assert 'getElementById("business-setting-reviews-url")?.focus()' in navigation
 
 
-def test_review_failures_are_safe_and_no_fake_retry_is_offered() -> None:
+def test_review_failures_recover_the_same_assisted_message() -> None:
     _, _, js = sources()
-    delivery = function_block(js, "function reviewDeliveryState", "function renderReviewSummaryCard")
+    delivery = function_block(
+        js, "function reviewDeliveryState", "function renderReviewSummaryCard"
+    )
     card = function_block(js, "function renderReviewSummaryCard", "function getAgendaWeekStart")
     actions = function_block(js, "async function createReviewRequest", "function formatBookingSlot")
-    assert "no dispone de un reintento automático seguro" in delivery
+    assert "volver a abrir el mismo mensaje" in delivery
+    assert '"failed"].includes(outbox?.status)' in card
     assert "data-review-retry" not in card
     for forbidden in ("traceback", "payload", "token", "job_id", "exception"):
         assert forbidden not in actions.lower()
@@ -189,13 +227,17 @@ def test_growth_opportunities_are_real_and_navigate_to_exact_context() -> None:
     navigation = function_block(js, "function navigateToGrowthAction", "function setupGrowthHub")
     for section in ("bookings", "services", "schedule", "public-page", "conversations", "messages"):
         assert f'"{section}"' in navigation
-    assert 'showAdminSection(`channel-${button.dataset.channel}`)' in navigation
+    assert "showAdminSection(`channel-${button.dataset.channel}`)" in navigation
 
 
 def test_partial_errors_and_background_refresh_preserve_loaded_data() -> None:
     _, _, js = sources()
-    reviews = function_block(js, "async function loadReviewRequests", "function conversationErrorMessage")
-    outbox = function_block(js, "async function loadMessageOutbox", "function renderMessageOutboxMetrics")
+    reviews = function_block(
+        js, "async function loadReviewRequests", "function conversationErrorMessage"
+    )
+    outbox = function_block(
+        js, "async function loadMessageOutbox", "function renderMessageOutboxMetrics"
+    )
     assert "reviewRequestsLoadVersion" in reviews
     assert "requestVersion !== reviewRequestsLoadVersion" in reviews
     assert "messageOutboxLoadVersion" in outbox
@@ -208,7 +250,9 @@ def test_partial_errors_and_background_refresh_preserve_loaded_data() -> None:
 
 def test_polling_is_reused_and_mutations_are_guarded() -> None:
     _, _, js = sources()
-    polling = function_block(js, "function ensureAdminPollingTasks", "function updateAdminSyncIndicator")
+    polling = function_block(
+        js, "function ensureAdminPollingTasks", "function updateAdminSyncIndicator"
+    )
     assert 'adminPollingTasks.set("operations"' in polling
     assert "loadReviewRequests({ background: true })" in polling
     assert "loadMessageOutbox({ background: true })" in polling
@@ -220,7 +264,9 @@ def test_polling_is_reused_and_mutations_are_guarded() -> None:
 
 def test_dashboard_agenda_and_outbox_share_the_same_review_state() -> None:
     _, _, js = sources()
-    dashboard = function_block(js, "function getDashboardAttentionItems", "function renderAttentionItems")
+    dashboard = function_block(
+        js, "function getDashboardAttentionItems", "function renderAttentionItems"
+    )
     assert "getReviewCandidates()" in dashboard
     assert "getFailedReviewMessages()" in dashboard
     assert 'section: "reviews"' in dashboard
@@ -241,7 +287,11 @@ def test_dashboard_agenda_and_outbox_share_the_same_review_state() -> None:
 def test_opportunity_actions_expose_integrated_assisted_and_unavailable_ux() -> None:
     html, _, js = sources()
     modal = function_block(js, "function openGrowthActionModal", "function closeGrowthActionModal")
-    assisted = function_block(js, "async function openGrowthOpportunityWhatsApp", "async function copyGrowthOpportunityText")
+    assisted = function_block(
+        js,
+        "async function openGrowthOpportunityWhatsApp",
+        "async function copyGrowthOpportunityText",
+    )
     assert 'id="growth-action-send"' in html
     assert 'id="growth-action-whatsapp"' in html
     assert "Enviar por WhatsApp" in html
@@ -252,14 +302,16 @@ def test_opportunity_actions_expose_integrated_assisted_and_unavailable_ux() -> 
     assert "AutonoGrow no lo marcará como enviado" in modal
     assert "opportunityAssistedOpening" in assisted
     assert "isSafeWhatsAppUrl(body.whatsapp_url)" in assisted
-    assert 'response.status === 429' in assisted
+    assert "response.status === 429" in assisted
     assert 'response.headers.get("Retry-After")' in js
     assert "whatsappWindow.location.href = body.whatsapp_url" in assisted
 
 
 def test_growth_opportunity_copy_and_modal_handle_variable_content() -> None:
     html, css, js = sources()
-    opportunities = function_block(js, "function renderGrowthOpportunities", "function renderGrowthActionMetrics")
+    opportunities = function_block(
+        js, "function renderGrowthOpportunities", "function renderGrowthActionMetrics"
+    )
 
     assert "Sin acci\\u00f3n preparada" in opportunities
     assert 'details.querySelector("p")?.remove()' in opportunities

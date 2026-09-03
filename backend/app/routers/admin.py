@@ -32,7 +32,9 @@ from app.schemas.review_request import ReviewRequestStatusUpdate
 from app.schemas.service import AdminServiceCreate, AdminServiceUpdate
 from app.services.availability_service import get_operational_business_now
 from app.services.booking_service import (
+    begin_serialized_booking_write,
     list_bookings_for_business,
+    lock_business_schedule,
     reschedule_existing_booking,
     serialize_booking,
 )
@@ -50,8 +52,10 @@ from app.services.message_outbox_service import (
     serialize_message_outbox,
 )
 from app.services.review_request_service import (
+    ReviewRequestLifecycleError,
     get_or_create_review_request,
     serialize_review_request,
+    transition_review_request_status,
 )
 
 router = APIRouter(
@@ -520,6 +524,10 @@ def update_booking_status(
             409,
             "La hora de esta solicitud ya pas\u00f3. Reagenda o rechaza la solicitud.",
         ),
+        "booking_without_stable_customer": (
+            409,
+            "La cita no tiene un Customer estable para deduplicar la solicitud de rese\u00f1a.",
+        ),
     }
     try:
         transition = transition_booking_status(
@@ -550,11 +558,12 @@ def update_booking_status(
         "review_request": (
             serialize_review_request(review_request) if review_request is not None else None
         ),
+        "review_request_reused": bool(
+            review_request is not None and review_request.booking_id != booking.id
+        ),
         "review_request_warning": (
             None
-            if review_request is not None
-            or payload.status != "completed"
-            or not transition.changed
+            if review_request is not None or payload.status != "completed" or not transition.changed
             else "Este negocio todav\u00eda no tiene enlace de rese\u00f1as configurado."
         ),
         "outbox_message": (
@@ -670,12 +679,24 @@ def update_outbox_message_status(
     if message is None:
         raise HTTPException(status_code=404, detail="Outbox message not found")
 
-    if payload.status == "sent":
-        mark_sent(message)
-    elif payload.status == "skipped":
-        mark_skipped(message)
-    else:
-        message.status = "failed"
+    try:
+        if payload.status == "sent":
+            if message.review_request is not None:
+                transition_review_request_status(message.review_request, "sent")
+            mark_sent(message)
+        elif payload.status == "skipped":
+            if message.review_request is not None:
+                transition_review_request_status(message.review_request, "skipped")
+            mark_skipped(message)
+        else:
+            if message.status in {"sent", "skipped"}:
+                raise ValueError("message_closed")
+            message.status = "failed"
+    except (ReviewRequestLifecycleError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="This outbox message is already closed"
+        ) from exc
 
     db.commit()
     db.refresh(message)
@@ -718,16 +739,19 @@ def create_review_request_for_booking(
     booking_id: int,
     db: Session = Depends(get_db),
 ):
+    begin_serialized_booking_write(db)
     business = db.query(Business).filter(Business.slug == business_slug).first()
 
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")
+    business = lock_business_schedule(db, business)
 
-    booking = (
-        db.query(Booking)
-        .filter(Booking.id == booking_id, Booking.business_id == business.id)
-        .first()
+    booking_query = db.query(Booking).filter(
+        Booking.id == booking_id, Booking.business_id == business.id
     )
+    if db.get_bind().dialect.name == "postgresql":
+        booking_query = booking_query.populate_existing().with_for_update()
+    booking = booking_query.first()
 
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -735,7 +759,14 @@ def create_review_request_for_booking(
     if booking.status != "completed":
         raise HTTPException(status_code=400, detail="Booking must be completed")
 
-    review_request = get_or_create_review_request(db, business=business, booking=booking)
+    try:
+        review_request = get_or_create_review_request(db, business=business, booking=booking)
+    except ReviewRequestLifecycleError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="La cita no tiene un Customer estable para deduplicar la solicitud de rese\u00f1a.",
+        ) from exc
 
     if review_request is None:
         raise HTTPException(
@@ -746,16 +777,18 @@ def create_review_request_for_booking(
     outbox_message = create_review_request_message(
         db,
         business=business,
-        booking=booking,
         review_request=review_request,
     )
     db.commit()
     db.refresh(review_request)
-    db.refresh(outbox_message)
+    if outbox_message is not None:
+        db.refresh(outbox_message)
     return {
         "ok": True,
         "review_request": serialize_review_request(review_request),
-        "outbox_message": serialize_message_outbox(outbox_message),
+        "outbox_message": (
+            serialize_message_outbox(outbox_message) if outbox_message is not None else None
+        ),
     }
 
 
@@ -788,13 +821,20 @@ def update_review_request_status(
     if review_request is None:
         raise HTTPException(status_code=404, detail="Review request not found")
 
-    review_request.status = payload.status
-    now = datetime.utcnow()
-
-    if payload.status == "copied":
-        review_request.copied_at = now
-    elif payload.status == "sent":
-        review_request.sent_at = now
+    try:
+        transition_review_request_status(review_request, payload.status)
+        if payload.status == "sent":
+            for message in review_request.message_outbox:
+                mark_sent(message)
+        elif payload.status == "skipped":
+            for message in review_request.message_outbox:
+                mark_skipped(message)
+    except (ReviewRequestLifecycleError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="La solicitud de rese\u00f1a ya est\u00e1 cerrada.",
+        ) from exc
 
     db.commit()
     db.refresh(review_request)

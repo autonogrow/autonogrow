@@ -15,13 +15,13 @@ Crecimiento
 
 El Resumen responde con datos operativos; Reseñas separa clientes atendidos, solicitudes que necesitan seguimiento e historial; Oportunidades explica condiciones reales y su dependencia. La pestaña primaria heredada `reviews`, sus contenedores, IDs y endpoints permanecen, pero la navegación principal entra por Crecimiento.
 
-No se modificó backend funcional, modelos, migraciones, permisos, payloads ni endpoints. Tampoco se añadieron campañas, analítica de reputación, scraping, una API de Google Business Profile o automatización de reseñas.
+La deduplicación posterior por Customer modifica el modelo, la migración, el payload de `ReviewRequest` y la semántica idempotente de los endpoints existentes, sin añadir rutas ni permisos nuevos. Tampoco se añadieron campañas, analítica de reputación, scraping, una API de Google Business Profile o automatización de reseñas.
 
 ## Fuentes reales
 
 | Información | Fuente | Interpretación visible |
 | --- | --- | --- |
-| Clientes pendientes de solicitud | Reservas `completed` sin `ReviewRequest` conocida | Cliente atendido; todavía no equivale a una solicitud |
+| Clientes pendientes de solicitud | Customers con alguna reserva `completed` y sin ciclo `ReviewRequest` | Cliente atendido; todavía no equivale a una solicitud |
 | Solicitudes preparadas | `ReviewRequest.status` en `pending` o `copied` | Requieren envío o decisión humana |
 | Marcadas como enviadas | `ReviewRequest.status == sent` | Declaración manual; no prueba entrega ni reseña publicada |
 | Solicitudes con error | `MessageOutbox.message_type == booking_completed_review` y `status == failed` | El mensaje asistido no quedó preparado correctamente |
@@ -40,7 +40,7 @@ No se calculan conversión, ingresos, ROI, posición, puntuación media, reseña
 | Abrir reserva | Reserva del negocio presente en `allBookings` | Sí | ID interno usado solo para navegación | Agenda conserva contexto y enfoca la tarjeta |
 | Abrir cliente | No existe destino estable desde una solicitud de reseña | No se ofrece | Requeriría una relación o endpoint no existente | No se inventa acción |
 | Solicitar reseña | POST de review request existente | Sí | Reserva completada y enlace válido | Solicitud idempotente y mensaje asistido |
-| Volver a intentar solicitud fallida | No existe endpoint específico seguro | No se ofrece | Backend tendría que definir semántica | Se explica el bloqueo sin reintento local |
+| Recuperar solicitud fallida | Outbox existente de la Booking de origen | Sí | Mensaje asistido y URL `wa.me` válida | Reabre el mismo mensaje sin crear otro ciclo |
 | Abrir mensaje asistido | POST idempotente + PATCH `opened` del outbox | Sí | Teléfono y URL `wa.me` válidos; popup permitido | WhatsApp se abre; no se marca como enviado |
 | Descartar recomendación | No existe persistencia backend | No se ofrece | Endpoint de descarte inexistente | La condición desaparece solo si cambia el dato real |
 | Marcar tarea completada | Derivada de la condición | No existe acción manual | El backend o dato real debe cambiar | La oportunidad se resuelve al dejar de cumplirse |
@@ -60,11 +60,11 @@ La lógica disponible en el producto es deliberadamente estrecha:
 
 1. la reserva pertenece al negocio resuelto por la ruta autenticada;
 2. su estado es `completed`;
-3. no existe una solicitud previa para esa reserva;
+3. el Customer estable no tiene ya un ciclo de solicitud en ese Business;
 4. el negocio tiene un enlace de reseñas no vacío; el frontend, además, exige el protocolo público seguro admitido;
 5. el permiso Business Admin se valida en servidor.
 
-La restricción única por `booking_id` y `get_or_create_review_request` preservan idempotencia. Un teléfono válido habilita WhatsApp asistido; si falta, todavía puede prepararse y copiarse el mensaje. El backend actual no define espera mínima tras la cita, seguimiento de reseña publicada, bloqueo por créditos ni automatización específica. La interfaz no añade esas reglas.
+La restricción única parcial por `business_id + customer_id` y `get_or_create_review_request` preservan un ciclo canónico y mantienen visibles los ciclos legacy adicionales. `booking_id` conserva solamente el origen. Un teléfono válido habilita WhatsApp asistido; si falta, todavía puede prepararse y copiarse el mensaje. El backend actual no define espera mínima tras la cita, seguimiento de reseña publicada, bloqueo por créditos ni automatización específica. La interfaz no añade esas reglas.
 
 Cada tarjeta muestra cliente, servicio, fecha, estado, canal disponible y acción. No muestra booking ID, customer ID, review request ID ni outbox ID. Los identificadores permanecen únicamente como referencias internas necesarias para las rutas autorizadas.
 
@@ -91,7 +91,7 @@ Las automatizaciones existentes son respuestas de conversación y no incluyen un
 - omitida;
 - no se pudo preparar.
 
-Los errores visibles son genéricos y accionables. No incluyen detalles backend, Graph API, traceback, payload, token, job ni IDs. No hay botón de reintento para un outbox fallido porque el backend no ofrece una operación específica segura. Copiar, crear, abrir o cambiar estado bloquea mutaciones repetidas; las respuestas obsoletas de solicitudes y outbox se descartan con versiones de carga.
+Los errores visibles son genéricos y accionables. No incluyen detalles backend, Graph API, traceback, payload, token, job ni IDs. Un outbox fallido puede volver a abrir el mismo mensaje; no se crea otra solicitud ni se cambia la Booking de origen. Copiar, crear, abrir o cambiar estado bloquea mutaciones repetidas; las respuestas obsoletas de solicitudes y outbox se descartan con versiones de carga.
 
 Los fallos son parciales: un error de outbox conserva los clientes cargados; un error de solicitudes conserva el snapshot anterior; un error de oportunidades no sustituye el contenido de Reseñas. Un estado vacío positivo solo aparece cuando las fuentes requeridas han terminado y no hay error conocido.
 

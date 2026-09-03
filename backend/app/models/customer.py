@@ -31,6 +31,7 @@ class Customer(Base):
     business = relationship("Business", back_populates="customers")
     bookings = relationship("Booking", back_populates="customer")
     conversations = relationship("Conversation", back_populates="customer")
+    review_requests = relationship("ReviewRequest", back_populates="customer")
     opportunities = relationship(
         "CustomerOpportunity", back_populates="customer", cascade="all, delete-orphan"
     )
@@ -44,5 +45,8 @@ class Customer(Base):
         "ScheduledCustomerFollowUp", back_populates="customer", cascade="all, delete-orphan"
     )
     account_link = relationship(
-        "CustomerAccountLink", back_populates="customer", cascade="all, delete-orphan", uselist=False
+        "CustomerAccountLink",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+        uselist=False,
     )

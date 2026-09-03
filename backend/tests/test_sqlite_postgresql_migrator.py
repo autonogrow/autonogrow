@@ -326,11 +326,12 @@ def test_exact_30_table_staging_baseline_is_valid(tmp_path: Path) -> None:
         "business_channel_integrations",
         "businesses",
         "services",
-            "bookings",
-            "business_gallery_images",
-            "conversations",
-            "users",
+        "bookings",
+        "business_gallery_images",
+        "conversations",
+        "users",
         "customers",
+        "review_requests",
     }
     report = safe_source_database_report(source, source_tables)
     for table_name in OPTIONAL_SOURCE_TABLES:
@@ -382,6 +383,69 @@ def test_modern_source_copies_new_table_rows(tmp_path: Path) -> None:
             ).scalar_one()
             == "8" * 64
         )
+    source.dispose()
+    destination.dispose()
+
+
+def test_staging_review_rows_derive_customer_and_preserve_legacy_cycles(tmp_path: Path) -> None:
+    source = staging_baseline_source(tmp_path)
+    destination_path = tmp_path / "review-cycle-destination.db"
+    destination_url = f"sqlite:///{destination_path.as_posix()}"
+    config = alembic_config()
+    config.attributes["database_url"] = destination_url
+    command.upgrade(config, "head")
+    destination = create_engine(destination_url)
+    with source.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO businesses (id, slug, name, status, created_at, updated_at) "
+                "VALUES (1, 'review-copy', 'Review Copy', 'active', "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO customers "
+                "(id, business_id, name, status, created_at, updated_at) "
+                "VALUES (2, 1, 'Legacy Customer', 'active', "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+        for booking_id in (3, 4):
+            connection.execute(
+                text(
+                    "INSERT INTO bookings "
+                    "(id, business_id, customer_id, created_by_user, service_name, "
+                    "preferred_time, status, source, google_sync_status, created_at, updated_at) "
+                    "VALUES (:id, 1, 2, 0, 'Legacy Service', '10:00', 'completed', "
+                    "'landing', 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ),
+                {"id": booking_id},
+            )
+        for request_id, booking_id, created_at in (
+            (5, 3, "2026-01-01 10:00:00"),
+            (6, 4, "2026-02-01 10:00:00"),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO review_requests "
+                    "(id, business_id, booking_id, customer_name, reviews_url, message, "
+                    "status, created_at) VALUES "
+                    "(:id, 1, :booking_id, 'Legacy Customer', 'https://reviews.test', "
+                    "'Legacy request', 'sent', :created_at)"
+                ),
+                {"id": request_id, "booking_id": booking_id, "created_at": created_at},
+            )
+
+    copy_rows(source, destination)
+
+    with destination.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT id, customer_id, is_customer_cycle_anchor FROM review_requests ORDER BY id"
+            )
+        ).all()
+    assert rows == [(5, 2, 1), (6, 2, 0)]
     source.dispose()
     destination.dispose()
 
@@ -548,4 +612,4 @@ def test_partial_destination_schema_is_rejected(tmp_path: Path) -> None:
 
 
 def test_alembic_has_expected_single_head() -> None:
-    assert head_revisions() == ("20260901_31",)
+    assert head_revisions() == ("20260903_32",)

@@ -3,6 +3,7 @@ from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Booking, Business, MessageOutbox, ReviewRequest
@@ -135,8 +136,23 @@ def create_message_if_not_exists(
         whatsapp_url=whatsapp_url,
         status="pending",
     )
-    db.add(outbox_message)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(outbox_message)
+            db.flush()
+    except IntegrityError:
+        existing = (
+            db.query(MessageOutbox)
+            .filter(
+                MessageOutbox.business_id == business.id,
+                MessageOutbox.booking_id == booking.id,
+                MessageOutbox.message_type == message_type,
+            )
+            .first()
+        )
+        if existing is None:
+            raise
+        return existing
     return outbox_message
 
 
@@ -202,9 +218,25 @@ def create_review_request_message(
     db: Session,
     *,
     business: Business,
-    booking: Booking,
     review_request: ReviewRequest,
-) -> MessageOutbox:
+) -> MessageOutbox | None:
+    booking = review_request.booking
+    if booking is None or booking.business_id != business.id:
+        raise ValueError("review_request_without_origin_booking")
+
+    existing = (
+        db.query(MessageOutbox)
+        .filter(
+            MessageOutbox.business_id == business.id,
+            MessageOutbox.booking_id == booking.id,
+            MessageOutbox.message_type == "booking_completed_review",
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+    if review_request.status in {"sent", "skipped"}:
+        return None
     return create_message_if_not_exists(
         db,
         business=business,
@@ -218,7 +250,7 @@ def create_review_request_message(
 def mark_opened(message: MessageOutbox) -> MessageOutbox:
     if not message.whatsapp_url:
         raise ValueError("invalid_whatsapp_phone")
-    if message.status not in {"pending", "opened"}:
+    if message.status not in {"pending", "opened", "failed"}:
         raise ValueError("message_closed")
 
     message.status = "opened"
@@ -228,6 +260,8 @@ def mark_opened(message: MessageOutbox) -> MessageOutbox:
 
 
 def mark_sent(message: MessageOutbox) -> MessageOutbox:
+    if message.status == "skipped":
+        raise ValueError("message_closed")
     message.status = "sent"
     if message.sent_at is None:
         message.sent_at = datetime.utcnow()
@@ -235,6 +269,8 @@ def mark_sent(message: MessageOutbox) -> MessageOutbox:
 
 
 def mark_skipped(message: MessageOutbox) -> MessageOutbox:
+    if message.status == "sent":
+        raise ValueError("message_closed")
     message.status = "skipped"
     if message.skipped_at is None:
         message.skipped_at = datetime.utcnow()

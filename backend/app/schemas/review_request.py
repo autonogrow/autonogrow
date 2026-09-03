@@ -5,6 +5,7 @@ class ReviewRequestOut(BaseModel):
     id: int
     business_id: int
     booking_id: int
+    customer_id: int | None
     customer_name: str
     customer_phone: str | None
     reviews_url: str

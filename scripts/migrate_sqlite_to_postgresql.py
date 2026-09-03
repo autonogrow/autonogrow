@@ -311,6 +311,16 @@ ALLOWED_MISSING_SOURCE_COLUMNS: dict[str, dict[str, dict[str, Any]]] = {
             "expected_value": None,
         },
     },
+    "review_requests": {
+        "customer_id": {
+            "action": "derive_review_customer",
+            "expected_value": None,
+        },
+        "is_customer_cycle_anchor": {
+            "action": "derive_review_customer_cycle_anchor",
+            "expected_value": True,
+        },
+    },
     "availability_settings": {
         "auto_confirm_bookings": {
             "action": "use_destination_default",
@@ -612,16 +622,88 @@ def source_business_timezones(connection: Connection) -> dict[int, str]:
     }
 
 
+def source_review_cycle_context(connection: Connection) -> dict[str, Any]:
+    inspector = inspect(connection)
+    review_columns = {column["name"] for column in inspector.get_columns("review_requests")}
+    missing_customer = "customer_id" not in review_columns
+    missing_anchor = "is_customer_cycle_anchor" not in review_columns
+    if not missing_customer and not missing_anchor:
+        return {}
+
+    metadata = MetaData()
+    review_requests = Table("review_requests", metadata, autoload_with=connection)
+    bookings = Table("bookings", metadata, autoload_with=connection)
+    customers = Table("customers", metadata, autoload_with=connection)
+    booking_customers = {
+        int(booking_id): (int(business_id), int(customer_id))
+        for booking_id, business_id, customer_id in connection.execute(
+            select(bookings.c.id, bookings.c.business_id, bookings.c.customer_id)
+        )
+        if customer_id is not None
+    }
+    customer_businesses = {
+        int(customer_id): int(business_id)
+        for customer_id, business_id in connection.execute(
+            select(customers.c.id, customers.c.business_id)
+        )
+    }
+    selected_columns = [
+        review_requests.c.id,
+        review_requests.c.business_id,
+        review_requests.c.booking_id,
+        review_requests.c.created_at,
+    ]
+    if "customer_id" in review_requests.c:
+        selected_columns.append(review_requests.c.customer_id)
+    rows = connection.execute(
+        select(*selected_columns).order_by(review_requests.c.created_at, review_requests.c.id)
+    ).mappings()
+    customer_by_request: dict[int, int | None] = {}
+    anchor_by_customer: dict[tuple[int, int], int] = {}
+    for row in rows:
+        request_id = int(row["id"])
+        business_id = int(row["business_id"])
+        if "customer_id" in row:
+            customer_id = int(row["customer_id"]) if row["customer_id"] is not None else None
+            booking_business_id = business_id
+        else:
+            booking_business_id, customer_id = booking_customers.get(
+                int(row["booking_id"]), (None, None)
+            )
+        if (
+            customer_id is None
+            or booking_business_id != business_id
+            or customer_businesses.get(customer_id) != business_id
+        ):
+            customer_id = None
+        customer_by_request[request_id] = customer_id
+        if customer_id is not None:
+            anchor_by_customer.setdefault((business_id, customer_id), request_id)
+    return {
+        "customer_by_request": customer_by_request,
+        "anchor_request_ids": frozenset(anchor_by_customer.values()),
+    }
+
+
 def source_row_for_preparation(
     table_name: str,
     row: Any,
     business_timezones: dict[int, str],
+    review_cycle_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     values = dict(row)
     if table_name == "bookings" and "public_manage_token" in values:
         values["_booking_timezone"] = business_timezones.get(
             int(values["business_id"]), "Europe/Madrid"
         )
+    if table_name == "review_requests" and review_cycle_context:
+        request_id = int(values["id"])
+        if "customer_id" not in values:
+            values["customer_id"] = review_cycle_context["customer_by_request"].get(request_id)
+        if "is_customer_cycle_anchor" not in values:
+            values["is_customer_cycle_anchor"] = (
+                request_id in review_cycle_context["anchor_request_ids"]
+            )
     return values
 
 
@@ -1021,6 +1103,7 @@ def copy_rows(source: Engine, destination: Engine) -> None:
     destination_metadata = MetaData()
     with source.connect() as source_connection, destination.begin() as destination_connection:
         business_timezones = source_business_timezones(source_connection)
+        review_cycle_context = source_review_cycle_context(source_connection)
         for table_name in source_copy_order(source_connection):
             source_table = Table(table_name, source_metadata, autoload_with=source_connection)
             destination_table = Table(
@@ -1033,7 +1116,12 @@ def copy_rows(source: Engine, destination: Engine) -> None:
                     [
                         prepared_row(
                             table_name,
-                            source_row_for_preparation(table_name, row, business_timezones),
+                            source_row_for_preparation(
+                                table_name,
+                                row,
+                                business_timezones,
+                                review_cycle_context,
+                            ),
                         )
                         for row in batch
                     ],
@@ -1051,6 +1139,8 @@ def require_destination_column_policies(engine: Engine, source_analysis: dict[st
             destination_column = destination_columns[column_name]
             action = policy["action"]
             if action == "derive_booking_manage_token":
+                continue
+            if action in {"derive_review_customer", "derive_review_customer_cycle_anchor"}:
                 continue
             if action == "use_destination_default" and destination_column.get("default") is None:
                 incompatible.setdefault(table_name, {})[column_name] = (
@@ -1205,6 +1295,7 @@ def copy_and_validate_atomic(source: Engine, destination: Engine) -> dict[str, A
         source_tables = source_copy_order(source_connection)
         excluded_columns = missing_source_columns(source_analysis)
         business_timezones = source_business_timezones(source_connection)
+        review_cycle_context = source_review_cycle_context(source_connection)
         transaction = destination_connection.begin()
         try:
             for table_name in source_tables:
@@ -1221,7 +1312,12 @@ def copy_and_validate_atomic(source: Engine, destination: Engine) -> dict[str, A
                         [
                             prepared_row(
                                 table_name,
-                                source_row_for_preparation(table_name, row, business_timezones),
+                                source_row_for_preparation(
+                                    table_name,
+                                    row,
+                                    business_timezones,
+                                    review_cycle_context,
+                                ),
                             )
                             for row in batch
                         ],

@@ -46,9 +46,7 @@ def _open_owner_instagram(journey):
 def _assert_no_horizontal_overflow(page) -> None:
     drawer = page.locator(".conversation-customer-panel.is-open")
     if drawer.count():
-        expect(drawer).to_have_css(
-            "transform", re.compile(r"^(none|matrix\(1, 0, 0, 1, 0, 0\))$")
-        )
+        expect(drawer).to_have_css("transform", re.compile(r"^(none|matrix\(1, 0, 0, 1, 0, 0\))$"))
     offenders = page.evaluate(
         """() => {
           const openPanels = [...document.querySelectorAll('.conversation-customer-panel.is-open')];
@@ -444,6 +442,93 @@ def test_whatsapp_assisted_opens_safe_url_without_claiming_sent(journey) -> None
     expect(pending).to_contain_text("Abierta en WhatsApp")
     expect(pending).to_contain_text(re.compile("no lo marc. como enviado", re.IGNORECASE))
     expect(pending).not_to_contain_text("Marcada como enviada")
+
+
+def test_review_cycle_is_not_recreated_when_same_customer_returns(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import Booking, Customer, ReviewRequest
+
+    _session, page = _open_admin(journey)
+    with SessionLocal() as db:
+        returning_customer = db.query(Customer).filter(Customer.name == "Invitado Fixture").one()
+        original_cycle = (
+            db.query(ReviewRequest).filter(ReviewRequest.customer_id == returning_customer.id).one()
+        )
+        return_booking = (
+            db.query(Booking)
+            .filter(
+                Booking.customer_id == returning_customer.id,
+                Booking.status == "requested",
+            )
+            .one()
+        )
+        second_customer_booking = (
+            db.query(Booking)
+            .filter(
+                Booking.customer_id != returning_customer.id,
+                Booking.business_id == returning_customer.business_id,
+                Booking.status == "completed",
+            )
+            .one()
+        )
+        original_cycle_id = original_cycle.id
+        original_booking_id = original_cycle.booking_id
+        returning_customer_id = returning_customer.id
+
+    def mutate(path: str, payload: dict[str, str] | None = None) -> dict:
+        return page.evaluate(
+            """async ({ path, payload }) => {
+              const response = await fetch(path, {
+                method: payload ? 'PATCH' : 'POST',
+                headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+                body: payload ? JSON.stringify(payload) : undefined
+              });
+              return { status: response.status, body: await response.json() };
+            }""",
+            {"path": path, "payload": payload},
+        )
+
+    sent = mutate(
+        f"/api/admin/businesses/salon-e2e/review-requests/{original_cycle_id}/status",
+        {"status": "sent"},
+    )
+    assert sent["status"] == 200
+    assert (
+        mutate(
+            f"/api/admin/businesses/salon-e2e/bookings/{return_booking.id}/status",
+            {"status": "confirmed"},
+        )["status"]
+        == 200
+    )
+    completed = mutate(
+        f"/api/admin/businesses/salon-e2e/bookings/{return_booking.id}/status",
+        {"status": "completed"},
+    )
+    assert completed["status"] == 200
+    assert completed["body"]["review_request"]["id"] == original_cycle_id
+    assert completed["body"]["review_request"]["booking_id"] == original_booking_id
+    assert completed["body"]["review_request_reused"] is True
+    assert completed["body"]["outbox_message"] is None
+
+    second_customer = mutate(
+        f"/api/admin/businesses/salon-e2e/bookings/{second_customer_booking.id}/review-request"
+    )
+    assert second_customer["status"] == 200
+    assert second_customer["body"]["review_request"]["id"] != original_cycle_id
+
+    review_rows = page.request.get("/api/admin/businesses/salon-e2e/review-requests").json()[
+        "review_requests"
+    ]
+    assert len(review_rows) == 2
+    assert len([item for item in review_rows if item["customer_id"] == returning_customer_id]) == 1
+
+    page.reload(wait_until="domcontentloaded")
+    page.get_by_role("button", name="Crecimiento", exact=True).click()
+    page.locator('[data-growth-target="reviews"]:visible').click()
+    expect(page.locator("#review-candidates-list")).not_to_contain_text("Invitado Fixture")
+    expect(page.locator("#review-requests-history-list")).to_contain_text("Invitado Fixture")
+    expect(page.locator("#review-metric-sent")).to_have_text("1")
+    expect(page.locator("#review-metric-prepared")).to_have_text("1")
 
 
 def test_owner_business_switching_isolates_bookings_and_instagram(journey) -> None:

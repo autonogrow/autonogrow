@@ -30,7 +30,10 @@ from app.services.message_outbox_service import (
     create_booking_rejected_message,
     create_review_request_message,
 )
-from app.services.review_request_service import get_or_create_review_request
+from app.services.review_request_service import (
+    ReviewRequestLifecycleError,
+    get_or_create_review_request,
+)
 
 BOOKING_STATUSES = {
     "requested",
@@ -193,16 +196,18 @@ def transition_booking_status(
         elif target_status == "completed":
             snapshot_booking_follow_up(booking, booking.service)
             sync_attributed_booking_status(db, booking=booking)
-            review_request = get_or_create_review_request(
-                db,
-                business=business,
-                booking=booking,
-            )
-            if review_request is not None:
-                outbox_message = create_review_request_message(
+            try:
+                review_request = get_or_create_review_request(
                     db,
                     business=business,
                     booking=booking,
+                )
+            except ReviewRequestLifecycleError as exc:
+                raise BookingStatusTransitionError(str(exc)) from exc
+            if review_request is not None and review_request.booking_id == booking.id:
+                outbox_message = create_review_request_message(
+                    db,
+                    business=business,
                     review_request=review_request,
                 )
 

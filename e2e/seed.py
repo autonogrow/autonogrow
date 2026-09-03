@@ -552,6 +552,8 @@ def reset_database() -> None:
         review = ReviewRequest(
             business_id=business_a.id,
             booking_id=completed.id,
+            customer_id=guest_a.id,
+            is_customer_cycle_anchor=True,
             customer_name=guest_a.name,
             customer_phone=guest_a.phone,
             reviews_url=business_a.reviews_url,

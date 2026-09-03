@@ -1660,9 +1660,30 @@ function getSafeReviewUrl() {
   return value && isSafePublicUrl(value) ? value : "";
 }
 
+function getStableReviewCustomerId(item) {
+  const customerId = Number(item?.customer_id);
+  return Number.isSafeInteger(customerId) && customerId > 0 ? customerId : null;
+}
+
+function getReviewRequestForCustomer(customerId) {
+  if (!customerId) return null;
+  return Array.from(reviewRequestsByBooking.values())
+    .find((reviewRequest) => getStableReviewCustomerId(reviewRequest) === customerId) || null;
+}
+
 function getReviewCandidates() {
-  return allBookings.filter((booking) => booking.status === "completed" && !reviewRequestsByBooking.has(booking.id))
-    .sort((first, second) => getBookingSortValue(second).localeCompare(getBookingSortValue(first)));
+  const seenCustomerIds = new Set();
+  return allBookings
+    .filter((booking) => booking.status === "completed")
+    .sort((first, second) => getBookingSortValue(second).localeCompare(getBookingSortValue(first)))
+    .filter((booking) => {
+      const customerId = getStableReviewCustomerId(booking);
+      if (!customerId || getReviewRequestForCustomer(customerId) || seenCustomerIds.has(customerId)) {
+        return false;
+      }
+      seenCustomerIds.add(customerId);
+      return true;
+    });
 }
 
 function getReviewOutboxMessage(bookingId) {
@@ -6421,6 +6442,7 @@ async function updateOutboxStatus(messageId, status) {
 }
 
 function replaceOutboxMessage(updatedMessage) {
+  if (!updatedMessage) return;
   const exists = messageOutbox.some((message) => message.id === updatedMessage.id);
   messageOutbox = exists
     ? messageOutbox.map((message) => message.id === updatedMessage.id ? updatedMessage : message)
@@ -6693,7 +6715,7 @@ function renderReviewCandidateCard(booking) {
 
 function reviewDeliveryState(reviewRequest) {
   const outbox = getReviewOutboxMessage(reviewRequest.booking_id);
-  if (outbox?.status === "failed") return { label: "No se pudo preparar", detail: "Comprueba el canal. Este mensaje no dispone de un reintento automático seguro." };
+  if (outbox?.status === "failed") return { label: "No se pudo preparar", detail: "Puedes volver a abrir el mismo mensaje o copiarlo; no se creará otro ciclo." };
   if (reviewRequest.status === "sent") return { label: "Marcada como enviada", detail: "Este estado lo confirmó una persona; no significa que la reseña se haya publicado." };
   if (reviewRequest.status === "skipped") return { label: "Omitida", detail: "La solicitud se cerró sin marcarla como enviada." };
   if (outbox?.status === "opened") return { label: "Abierta en WhatsApp", detail: "WhatsApp se abrió con el mensaje preparado; AutonoGrow no lo marcó como enviado." };
@@ -6705,7 +6727,7 @@ function renderReviewSummaryCard(reviewRequest) {
   const booking = allBookings.find((item) => item.id === reviewRequest.booking_id);
   const outbox = getReviewOutboxMessage(reviewRequest.booking_id);
   const delivery = reviewDeliveryState(reviewRequest);
-  const openAvailable = !["sent", "skipped"].includes(reviewRequest.status) && ["pending", "opened"].includes(outbox?.status) && isSafeWhatsAppUrl(outbox?.whatsapp_url);
+  const openAvailable = !["sent", "skipped"].includes(reviewRequest.status) && ["pending", "opened", "failed"].includes(outbox?.status) && isSafeWhatsAppUrl(outbox?.whatsapp_url);
   const active = !["sent", "skipped"].includes(reviewRequest.status);
   const timestamp = reviewRequest.sent_at || reviewRequest.copied_at || outbox?.opened_at || reviewRequest.created_at;
   return `<article class="review-summary-card"><div class="review-request-header"><div><h4>${escapeHtml(reviewRequest.customer_name || "Cliente sin nombre")}</h4><p>${escapeHtml(booking?.service_name || "Servicio sin indicar")}${booking ? ` · ${escapeHtml(formatBookingSlot(booking))}` : ""}</p></div><span class="review-status review-status-${escapeHtml(reviewRequest.status)}">${escapeHtml(delivery.label)}</span></div><p class="review-delivery-note">${escapeHtml(delivery.detail)}</p><details class="review-message-details"><summary>Ver mensaje preparado</summary><p class="review-message">${escapeHtml(reviewRequest.message)}</p></details><textarea data-review-fallback="${reviewRequest.id}" class="review-copy-fallback" readonly>${escapeHtml(reviewRequest.message)}</textarea><p class="review-request-time">Actualizada: ${escapeHtml(formatConversationDate(timestamp))}</p><div class="review-actions">${openAvailable ? `<button class="btn btn-small btn-whatsapp" type="button" data-review-open="${reviewRequest.id}">${outbox?.status === "opened" ? "Abrir de nuevo en WhatsApp" : "Abrir en WhatsApp"}</button>` : ""}${active ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-review-copy="${reviewRequest.id}">Copiar mensaje</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-review-status="sent" data-review-request="${reviewRequest.id}">Marcar como enviada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-review-status="skipped" data-review-request="${reviewRequest.id}">Omitir</button>` : ""}${booking ? `<button class="ag-button ag-button--ghost ag-button--small" type="button" data-growth-action="booking" data-booking-id="${booking.id}">Ver reserva</button>` : ""}</div><p data-review-feedback="${reviewRequest.id}" class="inline-feedback" role="status"></p></article>`;
@@ -7178,12 +7200,15 @@ function showGrowthReviewFeedback(message, isError = false, reviewRequestId = nu
 async function createReviewRequest(bookingId) {
   const booking = allBookings.find((item) => item.id === bookingId);
   if (!booking || booking.status !== "completed") return showGrowthReviewFeedback("Esta reserva no está disponible para solicitar una reseña.", true);
+  const customerId = getStableReviewCustomerId(booking);
+  if (!customerId) return showGrowthReviewFeedback("Esta reserva no tiene un Customer estable para preparar una solicitud.", true);
+  if (getReviewRequestForCustomer(customerId)) return;
   const reviewUrl = getSafeReviewUrl();
   if (!reviewUrl) return showGrowthReviewFeedback("Configura primero un enlace de reseñas válido.", true);
   const confirmed = window.confirm(`Preparar solicitud de reseña\n\nCliente: ${booking.customer_name || "Cliente sin nombre"}\nCanal: ${hasUsableReviewPhone(booking) ? "WhatsApp asistido" : "Copia manual"}\nEntrega: la enviarás tú; AutonoGrow no la marcará como enviada.\nDestino: ${reviewUrl}`);
   if (!confirmed) return;
-  const mutationKey = `review-create:${bookingId}`;
-  if (reviewMutationKeys.has(mutationKey) || reviewRequestsByBooking.has(bookingId)) return;
+  const mutationKey = `review-create-customer:${customerId}`;
+  if (reviewMutationKeys.has(mutationKey) || getReviewRequestForCustomer(customerId)) return;
   reviewMutationKeys.add(mutationKey);
   document.querySelectorAll(`[data-review-create="${bookingId}"]`).forEach((button) => { button.disabled = true; });
   try {
@@ -7198,7 +7223,7 @@ async function createReviewRequest(bookingId) {
       throw new Error("review_request_failed");
     }
 
-    reviewRequestsByBooking.set(bookingId, result.review_request);
+    reviewRequestsByBooking.set(result.review_request.booking_id, result.review_request);
     replaceOutboxMessage(result.outbox_message);
     renderReviewStats();
     renderReviewRequests();
@@ -7845,6 +7870,8 @@ async function updateBookingStatus(bookingId, status) {
     } else if (shouldOpenWhatsApp) {
       if (result?.outbox_message) {
         await openPreparedWhatsAppMessage(result.outbox_message, whatsappWindow);
+      } else if (status === "completed" && result?.review_request_reused) {
+        whatsappWindow?.close();
       } else {
         whatsappWindow?.close();
         alert(safeConfigurationError(
