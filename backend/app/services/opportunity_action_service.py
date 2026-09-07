@@ -26,10 +26,22 @@ from app.services.opportunity_template_service import (
 )
 
 DRAFT_TTL = timedelta(days=7)
+ACTIVE_CONTACT_STATUSES = ("draft", "approved", "sending")
+SUCCESSFUL_CONTACT_STATUSES = ("sent", "completed")
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def begin_serialized_action_write(db: Session) -> None:
+    """Serialize SQLite action transitions; PostgreSQL uses row locks instead."""
+
+    if db.get_bind().dialect.name != "sqlite":
+        return
+    if db.in_transaction():
+        db.commit()
+    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
 
 
 def _normalized_phone(value: str | None) -> str:
@@ -228,6 +240,57 @@ def expire_drafts(
     return len(rows)
 
 
+def retryable_failed_outbox(
+    db: Session, *, action: OpportunityAction, lock: bool = False
+) -> ChannelOutboxMessage | None:
+    if action.status != "failed" or action.message_id is None:
+        return None
+    query = db.query(ChannelOutboxMessage).filter(
+        ChannelOutboxMessage.business_id == action.business_id,
+        ChannelOutboxMessage.conversation_message_id == action.message_id,
+        ChannelOutboxMessage.status == "blocked",
+        ChannelOutboxMessage.provider_message_id.is_(None),
+    )
+    if lock and db.get_bind().dialect.name == "postgresql":
+        query = query.with_for_update()
+    outbox = query.first()
+    if (
+        outbox is None
+        or action.message is None
+        or action.message.provider_message_id is not None
+    ):
+        return None
+    return outbox
+
+
+def retry_failed_action_delivery(
+    db: Session,
+    *,
+    action: OpportunityAction,
+    actor_user_id: int,
+    now: datetime | None = None,
+) -> ChannelOutboxMessage:
+    if action.opportunity.status != "pending":
+        raise ValueError("opportunity_not_actionable")
+    outbox = retryable_failed_outbox(db, action=action, lock=True)
+    if outbox is None:
+        raise ValueError("delivery_retry_not_safe")
+    current = now or utc_now()
+    outbox.status = "pending"
+    outbox.available_at = current.replace(tzinfo=None)
+    outbox.next_retry_at = None
+    outbox.processing_started_at = None
+    outbox.locked_by = None
+    outbox.lock_expires_at = None
+    action.message.delivery_status = "queued"
+    action.status = "approved"
+    action.approved_by_user_id = actor_user_id
+    action.sent_by_user_id = actor_user_id
+    action.approved_at = current
+    action.failure_reason = None
+    return outbox
+
+
 def invalidate_actions_for_resolved_opportunity(
     db: Session,
     *,
@@ -285,18 +348,48 @@ class OpportunityActionService:
             raise ValueError("opportunity_business_mismatch")
         if opportunity.status != "pending":
             raise ValueError("opportunity_not_actionable")
-        existing = (
+        existing_rows = (
             self.db.query(OpportunityAction)
             .filter(
                 OpportunityAction.business_id == business.id,
                 OpportunityAction.opportunity_id == opportunity.id,
                 OpportunityAction.action_type == action_type,
             )
-            .first()
+            .order_by(OpportunityAction.created_at.desc(), OpportunityAction.id.desc())
+            .all()
         )
-        if existing is not None:
+        for existing in existing_rows:
             sync_action_from_message(existing, now=self.now)
-            return existing, False
+            if (
+                existing.status == "draft"
+                and existing.expires_at is not None
+                and existing.expires_at <= self.now
+            ):
+                existing.status = "cancelled"
+                existing.cancelled_at = self.now
+                existing.failure_reason = "draft_expired"
+        self.db.flush()
+        if action_type != "contact_customer" and existing_rows:
+            return existing_rows[0], False
+        successful = next(
+            (
+                item
+                for item in existing_rows
+                if item.status in SUCCESSFUL_CONTACT_STATUSES
+            ),
+            None,
+        )
+        if successful is not None:
+            return successful, False
+        active = next(
+            (item for item in existing_rows if item.status in ACTIVE_CONTACT_STATUSES),
+            None,
+        )
+        if active is not None:
+            return active, False
+        failed = next((item for item in existing_rows if item.status == "failed"), None)
+        if failed is not None:
+            return failed, False
 
         resolution = resolve_action_channel(
             self.db,
@@ -323,15 +416,28 @@ class OpportunityActionService:
                 self.db.add(row)
                 self.db.flush()
         except IntegrityError:
-            row = (
+            candidates = (
                 self.db.query(OpportunityAction)
                 .filter(
                     OpportunityAction.business_id == business.id,
                     OpportunityAction.opportunity_id == opportunity.id,
                     OpportunityAction.action_type == action_type,
                 )
-                .one()
+                .order_by(OpportunityAction.created_at.desc(), OpportunityAction.id.desc())
+                .all()
             )
+            row = next(
+                (
+                    item
+                    for item in candidates
+                    if action_type != "contact_customer"
+                    or item.status in ACTIVE_CONTACT_STATUSES
+                    or item.status in SUCCESSFUL_CONTACT_STATUSES
+                ),
+                None,
+            )
+            if row is None:
+                raise
             return row, False
         if action_type == "contact_customer":
             text = OpportunityMessageTemplateService().render(
@@ -357,6 +463,12 @@ def serialize_action(db: Session, row: OpportunityAction) -> dict[str, Any]:
     action_booking_url = None
     if row.action_type == "contact_customer":
         action_booking_url = booking_url(row.business, row)
+    can_retry_integrated = retryable_failed_outbox(db, action=row) is not None
+    recovery_state = None
+    if row.status == "cancelled":
+        recovery_state = "expired" if row.failure_reason == "draft_expired" else "cancelled"
+    elif row.status == "failed":
+        recovery_state = "failed_retryable" if can_retry_integrated else "failed_uncertain"
     return {
         "id": row.id,
         "business_id": row.business_id,
@@ -371,6 +483,8 @@ def serialize_action(db: Session, row: OpportunityAction) -> dict[str, Any]:
         "suggested_text": row.suggested_text,
         "final_text": row.final_text,
         "can_send": resolution.can_send,
+        "can_retry_integrated": can_retry_integrated,
+        "recovery_state": recovery_state,
         "assisted_delivery_available": resolution.assisted_delivery_available,
         "delivery_mode": resolution.delivery_mode,
         "unavailable_reason": resolution.unavailable_reason,

@@ -34,6 +34,7 @@ from app.services.growth_opportunity_service import (
     utc_now,
 )
 from app.services.opportunity_action_service import (
+    begin_serialized_action_write,
     invalidate_actions_for_resolved_opportunity,
     resolve_action_channel,
     serialize_action,
@@ -54,16 +55,15 @@ def business_or_404(db: Session, business_slug: str) -> Business:
 
 
 def opportunity_or_404(
-    db: Session, *, business_id: int, opportunity_id: int
+    db: Session, *, business_id: int, opportunity_id: int, lock: bool = False
 ) -> CustomerOpportunity:
-    row = (
-        db.query(CustomerOpportunity)
-        .filter(
-            CustomerOpportunity.id == opportunity_id,
-            CustomerOpportunity.business_id == business_id,
-        )
-        .first()
+    query = db.query(CustomerOpportunity).filter(
+        CustomerOpportunity.id == opportunity_id,
+        CustomerOpportunity.business_id == business_id,
     )
+    if lock and db.get_bind().dialect.name == "postgresql":
+        query = query.with_for_update()
+    row = query.first()
     if row is None:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return row
@@ -198,10 +198,16 @@ def transition_opportunity(
     actor: User,
     db: Session,
 ):
+    begin_serialized_action_write(db)
     if payload.status not in {"actioned", "dismissed"}:
         raise HTTPException(status_code=400, detail="Unsupported opportunity transition")
     business = business_or_404(db, business_slug)
-    row = opportunity_or_404(db, business_id=business.id, opportunity_id=opportunity_id)
+    row = opportunity_or_404(
+        db,
+        business_id=business.id,
+        opportunity_id=opportunity_id,
+        lock=True,
+    )
     allowed = {
         "pending": {"actioned", "dismissed"},
         "actioned": {"dismissed"},

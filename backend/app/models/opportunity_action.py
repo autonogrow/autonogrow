@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -53,11 +54,29 @@ class OpportunityAction(Base):
             "channel IS NULL OR channel IN ('whatsapp','instagram')",
             name="ck_opportunity_actions_channel",
         ),
-        UniqueConstraint(
+        Index(
+            "uq_opportunity_action_active_contact",
             "business_id",
             "opportunity_id",
             "action_type",
-            name="uq_opportunity_action_conservative_dedupe",
+            unique=True,
+            postgresql_where=text(
+                "action_type = 'contact_customer' "
+                "AND status IN ('draft','approved','sending')"
+            ),
+            sqlite_where=text(
+                "action_type = 'contact_customer' "
+                "AND status IN ('draft','approved','sending')"
+            ),
+        ),
+        Index(
+            "uq_opportunity_action_singleton_non_contact",
+            "business_id",
+            "opportunity_id",
+            "action_type",
+            unique=True,
+            postgresql_where=text("action_type <> 'contact_customer'"),
+            sqlite_where=text("action_type <> 'contact_customer'"),
         ),
         UniqueConstraint("message_id", name="uq_opportunity_action_message"),
         Index(

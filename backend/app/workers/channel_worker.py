@@ -6,7 +6,7 @@ import socket
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import cast
 
 import requests
@@ -284,7 +284,7 @@ class ChannelWorker:
                 row.safe_error_message = "Opportunity is no longer relevant"
                 message.delivery_status = "cancelled"
                 action.status = "cancelled"
-                action.cancelled_at = datetime.utcnow()
+                action.cancelled_at = datetime.now(timezone.utc)
                 action.failure_reason = "opportunity_no_longer_relevant"
                 db.commit()
                 return None
@@ -535,6 +535,25 @@ class ChannelWorker:
                 or message.opportunity_action is None
                 or module_is_available(db, row.business_id, "growth")
             )
+            action = message.opportunity_action if message is not None else None
+            action_allowed = action is None or (
+                action.status != "cancelled"
+                and action.opportunity.status == "pending"
+            )
+            if not action_allowed:
+                assert message is not None and action is not None
+                row.status = "cancelled"
+                row.failed_at = datetime.utcnow()
+                row.locked_by = None
+                row.lock_expires_at = None
+                row.next_retry_at = None
+                row.safe_error_message = "Opportunity is no longer relevant"
+                message.delivery_status = "cancelled"
+                action.status = "cancelled"
+                action.cancelled_at = datetime.now(timezone.utc)
+                action.failure_reason = "opportunity_no_longer_relevant"
+                db.commit()
+                return False
             if (
                 business is not None
                 and business.status == "active"

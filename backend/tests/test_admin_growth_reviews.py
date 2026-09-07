@@ -313,7 +313,8 @@ def test_growth_opportunity_copy_and_modal_handle_variable_content() -> None:
         js, "function renderGrowthOpportunities", "function renderGrowthActionMetrics"
     )
 
-    assert "Sin acci\\u00f3n preparada" in opportunities
+    assert "growthOpportunityActionStatus(latest)" in opportunities
+    assert 'if (!action) return "Sin acciones"' in js
     assert 'details.querySelector("p")?.remove()' in opportunities
     assert 'button.classList.add("ag-button--ghost")' in opportunities
     for selector in (

@@ -456,6 +456,7 @@ function setupGrowthHub() {
     if (modalAction?.dataset.growthActionModal === "copy") copyGrowthOpportunityText();
     if (modalAction?.dataset.growthActionModal === "send") sendGrowthOpportunityAction();
     if (modalAction?.dataset.growthActionModal === "whatsapp") openGrowthOpportunityWhatsApp();
+    if (modalAction?.dataset.growthActionModal === "cancel") cancelGrowthOpportunityAction();
   });
   document.getElementById("growth-action-modal")?.addEventListener("click", (event) => {
     if (event.target.id === "growth-action-modal") closeGrowthActionModal();
@@ -1299,6 +1300,7 @@ function renderAttentionItems() {
   const growthSlots = Math.max(0, 5 - growthFollowUps.length);
   const opportunityMarkup = growthFollowUps.slice(0, 5).map((opportunity) => {
     const recurrence = opportunity.follow_up_interval_days_snapshot;
+    const actionLabel = growthOpportunityActionLabel(opportunity);
     const why = recurrence && opportunity.source_service_name
       ? `Normalmente repite ${opportunity.source_service_name} cada ${formatGrowthDays(recurrence)}.`
       : opportunity.reason_text || "Hay un seguimiento comercial pendiente.";
@@ -1308,7 +1310,7 @@ function renderAttentionItems() {
           <span class="dashboard-attention-item__mark" aria-hidden="true">${opportunity.priority === "high" ? "!" : "•"}</span>
           <h5>${escapeHtml(growthOpportunityHeadline(opportunity))}</h5>
         </header>
-        <div class="growth-opportunity-actions dashboard-growth-opportunity__actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">Preparar mensaje</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-dashboard-opportunity-id="${Number(opportunity.id)}">Ver oportunidad</button></div>
+        <div class="growth-opportunity-actions dashboard-growth-opportunity__actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">${escapeHtml(actionLabel)}</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-dashboard-opportunity-id="${Number(opportunity.id)}">Ver oportunidad</button></div>
         <p class="dashboard-growth-opportunity__description">${escapeHtml(why)}</p>
         <p class="dashboard-growth-opportunity__metadata">${escapeHtml(opportunity.source_service_name || "Seguimiento de cliente")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</p>
       </article>`;
@@ -1762,7 +1764,34 @@ function growthOpportunityEmptyCopy() {
 
 function growthOpportunityPreviewMarkup(opportunity, { compact = false } = {}) {
   const why = opportunity.reason_text || "Hay un seguimiento comercial pendiente.";
-  return `<article class="growth-priority-item growth-priority-item--${opportunity.priority === "high" ? "needs_attention" : "recommended"}" data-customer-opportunity-preview="${Number(opportunity.id)}"><div><span>${escapeHtml(opportunity.priority === "high" ? "Prioridad alta" : growthOpportunityTiming(opportunity))}</span><h4>${escapeHtml(growthOpportunityHeadline(opportunity))}</h4><p>${escapeHtml(why)}</p>${compact ? "" : `<small>${escapeHtml(opportunity.source_service_name || "Sin servicio específico")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</small>`}</div><button class="ag-button ag-button--${compact ? "secondary" : "primary"} ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">Preparar mensaje</button></article>`;
+  const actionLabel = growthOpportunityActionLabel(opportunity);
+  return `<article class="growth-priority-item growth-priority-item--${opportunity.priority === "high" ? "needs_attention" : "recommended"}" data-customer-opportunity-preview="${Number(opportunity.id)}"><div><span>${escapeHtml(opportunity.priority === "high" ? "Prioridad alta" : growthOpportunityTiming(opportunity))}</span><h4>${escapeHtml(growthOpportunityHeadline(opportunity))}</h4><p>${escapeHtml(why)}</p>${compact ? "" : `<small>${escapeHtml(opportunity.source_service_name || "Sin servicio específico")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</small>`}</div><button class="ag-button ag-button--${compact ? "secondary" : "primary"} ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">${escapeHtml(actionLabel)}</button></article>`;
+}
+
+function growthOpportunityActionLabel(opportunity) {
+  const action = opportunity?.latest_action;
+  if (!action) return "Preparar mensaje";
+  if (action.status === "draft") return "Continuar borrador";
+  if (["approved", "sending"].includes(action.status)) return "Ver envío pendiente";
+  if (action.status === "failed") return action.can_retry_integrated ? "Reintentar envío" : "Recuperar contacto";
+  if (action.status === "cancelled") return action.recovery_state === "expired" ? "Preparar de nuevo" : "Preparar nuevo mensaje";
+  if (["sent", "completed"].includes(action.status)) return "Ver mensaje enviado";
+  return "Preparar mensaje";
+}
+
+function growthOpportunityActionStatus(action) {
+  if (!action) return "Sin acciones";
+  if (action.recovery_state === "expired") return "Mensaje no vigente";
+  const labels = {
+    draft: "Borrador",
+    approved: "Pendiente de envío",
+    sending: "Enviando",
+    sent: "Enviado",
+    failed: "No se pudo enviar",
+    cancelled: "Intento cancelado",
+    completed: "Completado"
+  };
+  return labels[action.status] || action.status;
 }
 
 function renderGrowthAttentionAndOpportunities() {
@@ -1829,15 +1858,13 @@ function renderGrowthOpportunities(_tasks) {
   if (!container) return;
   container.setAttribute("aria-busy", "false");
   const typeLabels = { cancelled_not_rebooked: "Canceló y no ha vuelto a reservar", no_show_not_rebooked: "No acudió y no ha vuelto a reservar", lead_not_converted: "Consultó y todavía no ha reservado", service_due: "Cliente en fecha de volver", scheduled_followup: "Seguimiento indicado" };
-  const actionLabels = { draft: "Borrador", approved: "Pendiente de envío", sending: "Enviando", sent: "Enviado", failed: "Fallido", cancelled: "Cancelado", completed: "Completado" };
-  actionLabels.not_prepared = "Sin acci\u00f3n preparada";
   const persisted = [...customerOpportunities].sort(compareGrowthOpportunities).map((item) => {
-    const latest = item.latest_action || { status: "not_prepared" };
+    const latest = item.latest_action;
     const channel = growthOpportunityChannelLabel(item);
-    const prepareLabel = latest?.status === "draft" ? "Continuar borrador" : "Preparar mensaje";
+    const prepareLabel = growthOpportunityActionLabel(item);
     const memory = item.customer_context?.explicit || [];
     const context = memory.length ? `<div class="growth-customer-context"><strong>Contexto del cliente</strong>${memory.map((entry) => `<p>${escapeHtml(entry.value)}</p>`).join("")}</div>` : "";
-    return `<article class="growth-task growth-task-${escapeHtml(item.priority)}" data-customer-opportunity="${item.id}"><span class="growth-task-status">${escapeHtml(typeLabels[item.type] || item.type)}</span><div class="growth-task-copy"><h3>${escapeHtml(growthOpportunityHeadline(item))}</h3><p>${escapeHtml(item.reason_text)}</p><div class="growth-opportunity-meta"><span>${escapeHtml(item.source_service_name || "Sin servicio específico")}</span><span>${escapeHtml(channel)}</span><span>${escapeHtml(latest ? actionLabels[latest.status] || latest.status : "Sin acciones")}</span></div><span>${escapeHtml(growthOpportunityTiming(item))}</span><details><summary>Ver contexto</summary><p>${escapeHtml(item.reason_text)}</p>${context}</details></div><div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${item.id}">${escapeHtml(prepareLabel)}</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="customer" data-opportunity-id="${item.id}">Ver cliente</button>${item.channel?.conversation_id ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="conversation" data-opportunity-id="${item.id}">Ver conversación</button>` : ""}<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="actioned" data-opportunity-id="${item.id}">Marcar gestionada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-opportunity-action="dismissed" data-opportunity-id="${item.id}">Descartar</button></div></article>`;
+    return `<article class="growth-task growth-task-${escapeHtml(item.priority)}" data-customer-opportunity="${item.id}"><span class="growth-task-status">${escapeHtml(typeLabels[item.type] || item.type)}</span><div class="growth-task-copy"><h3>${escapeHtml(growthOpportunityHeadline(item))}</h3><p>${escapeHtml(item.reason_text)}</p><div class="growth-opportunity-meta"><span>${escapeHtml(item.source_service_name || "Sin servicio específico")}</span><span>${escapeHtml(channel)}</span><span>${escapeHtml(growthOpportunityActionStatus(latest))}</span></div><span>${escapeHtml(growthOpportunityTiming(item))}</span><details><summary>Ver contexto</summary><p>${escapeHtml(item.reason_text)}</p>${context}</details></div><div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${item.id}">${escapeHtml(prepareLabel)}</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="customer" data-opportunity-id="${item.id}">Ver cliente</button>${item.channel?.conversation_id ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="conversation" data-opportunity-id="${item.id}">Ver conversación</button>` : ""}<button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="actioned" data-opportunity-id="${item.id}">Marcar gestionada</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-opportunity-action="dismissed" data-opportunity-id="${item.id}">Descartar</button></div></article>`;
   }).join("");
   const empty = growthOpportunityEmptyCopy();
   container.innerHTML = persisted || `<div class="growth-empty-state"><strong>${escapeHtml(empty.title)}</strong><p>${escapeHtml(empty.description)}</p></div>`;
@@ -2026,7 +2053,7 @@ function openGrowthActionModal(action, opportunity, trigger = null) {
   const channel = action.delivery_mode === "integrated" && action.channel
     ? ({ whatsapp: "WhatsApp", instagram: "Instagram" }[action.channel] || action.channel)
     : action.delivery_mode === "assisted" ? "WhatsApp asistido" : "Sin canal integrado";
-  const status = { draft: "Borrador editable", approved: "Aprobado y pendiente", sending: "Enviando", sent: "Enviado", failed: "Fallido", cancelled: "Cancelado", completed: "Completado" }[action.status] || action.status;
+  const status = action.status === "draft" ? "Borrador editable" : growthOpportunityActionStatus(action);
   document.getElementById("growth-action-channel").textContent = channel;
   document.getElementById("growth-action-reason").textContent = opportunity.reason_text;
   document.getElementById("growth-action-status").textContent = status;
@@ -2036,19 +2063,29 @@ function openGrowthActionModal(action, opportunity, trigger = null) {
   const notice = document.getElementById("growth-action-notice");
   const integrated = action.delivery_mode === "integrated" && action.can_send;
   const assisted = action.assisted_delivery_available === true;
-  notice.className = `inline-feedback ${integrated || assisted ? "" : "error"}`;
-  notice.textContent = integrated
+  const canRetry = action.status === "failed" && action.can_retry_integrated === true;
+  const recoveryMessages = {
+    expired: "Este mensaje ya no está vigente. Prepara uno nuevo desde la oportunidad.",
+    cancelled: "Este intento fue cancelado. Puedes preparar uno nuevo desde la oportunidad.",
+    failed_retryable: "No se pudo enviar antes de llegar al proveedor. Puedes reintentar de forma segura.",
+    failed_uncertain: "No se pudo confirmar la entrega. Para evitar duplicados, continúa por WhatsApp o copia el texto."
+  };
+  notice.className = `inline-feedback ${integrated || assisted || canRetry ? "" : "error"}`;
+  notice.textContent = recoveryMessages[action.recovery_state] || (integrated
     ? "Puedes enviarlo desde AutonoGrow o abrir WhatsApp para revisarlo y enviarlo tú."
     : assisted
       ? "Se abrirá WhatsApp con el mensaje preparado para que puedas revisarlo y enviarlo. AutonoGrow no lo marcará como enviado."
-      : growthActionUnavailableMessage(action);
+      : growthActionUnavailableMessage(action));
   const send = document.getElementById("growth-action-send");
-  send.hidden = !integrated;
-  send.disabled = action.status !== "draft" || !integrated;
-  send.textContent = ["approved", "sending"].includes(action.status) ? "Pendiente" : "Enviar por WhatsApp";
+  send.hidden = !((action.status === "draft" && integrated) || canRetry);
+  send.disabled = !((action.status === "draft" && integrated) || canRetry);
+  send.textContent = canRetry ? "Reintentar envío" : (["approved", "sending"].includes(action.status) ? "Pendiente" : "Enviar por WhatsApp");
   const whatsapp = document.getElementById("growth-action-whatsapp");
   whatsapp.hidden = !assisted;
   whatsapp.disabled = !assisted || !["draft", "failed"].includes(action.status);
+  const cancel = document.getElementById("growth-action-cancel");
+  cancel.hidden = action.status !== "draft";
+  cancel.disabled = action.status !== "draft";
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
   document.body.classList.add("modal-scroll-locked");
@@ -2136,8 +2173,10 @@ async function sendGrowthOpportunityAction() {
   } catch (error) {
     notice.className = "inline-feedback error";
     notice.textContent = error.message || "No se pudo enviar el mensaje. Puedes copiarlo para gestionarlo manualmente.";
-    button.disabled = !selectedOpportunityAction?.can_send;
-    button.textContent = "Reintentar envío";
+    const retryable = selectedOpportunityAction?.status === "failed" && selectedOpportunityAction?.can_retry_integrated === true;
+    const draftSend = selectedOpportunityAction?.status === "draft" && selectedOpportunityAction?.can_send === true;
+    button.disabled = !(retryable || draftSend);
+    button.textContent = retryable ? "Reintentar envío" : "Enviar por WhatsApp";
     const whatsapp = document.getElementById("growth-action-whatsapp");
     const assisted = selectedOpportunityAction?.assisted_delivery_available === true;
     whatsapp.hidden = !assisted;
@@ -2173,7 +2212,31 @@ async function openGrowthOpportunityWhatsApp() {
     opportunityAssistedOpening = false;
     button.removeAttribute("aria-busy");
     button.disabled = !selectedOpportunityAction?.assisted_delivery_available;
-    send.disabled = selectedOpportunityAction?.status !== "draft" || !selectedOpportunityAction?.can_send;
+    const retryable = selectedOpportunityAction?.status === "failed" && selectedOpportunityAction?.can_retry_integrated === true;
+    const draftSend = selectedOpportunityAction?.status === "draft" && selectedOpportunityAction?.can_send === true;
+    send.disabled = !(retryable || draftSend);
+  }
+}
+
+async function cancelGrowthOpportunityAction() {
+  const action = selectedOpportunityAction;
+  const button = document.getElementById("growth-action-cancel");
+  if (!action || action.status !== "draft" || button.disabled) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/actions/${action.id}/cancel`, { method: "POST" });
+    const body = await readAdminResponseBody(response);
+    if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo cancelar el intento."));
+    const opportunity = customerOpportunities.find((item) => item.id === selectedOpportunityForAction?.id);
+    if (opportunity) opportunity.latest_action = body.action;
+    closeGrowthActionModal();
+    renderGrowth();
+    renderDashboard();
+  } catch (error) {
+    button.disabled = false;
+    const notice = document.getElementById("growth-action-notice");
+    notice.className = "inline-feedback error";
+    notice.textContent = error.message || "No se pudo cancelar el intento.";
   }
 }
 
@@ -5308,7 +5371,7 @@ function renderCustomerGrowthSection(customerId) {
     .filter((item) => item.status === "pending" && Number(item.customer?.id) === Number(customerId))
     .sort(compareGrowthOpportunities);
   if (!opportunities.length) return "";
-  return `<section class="customer-growth" aria-labelledby="customer-growth-title"><div class="customer-memory-heading"><div><h4 id="customer-growth-title">Oportunidades activas</h4><p>Acciones Growth, separadas de la memoria del cliente</p></div><span class="growth-human-status">${opportunities.length}</span></div><div class="customer-growth-list">${opportunities.slice(0, 3).map((opportunity) => `<article><span>${escapeHtml(opportunity.priority === "high" ? "Prioridad alta" : "Oportunidad activa")}</span><strong>${escapeHtml(growthOpportunityHeadline(opportunity))}</strong><p>${escapeHtml(opportunity.source_service_name || "Sin servicio específico")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</p><div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">Preparar mensaje</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="conversation" data-opportunity-id="${Number(opportunity.id)}">Abrir conversación</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="view-growth-opportunity" data-id="${Number(opportunity.id)}">Abrir oportunidad</button></div></article>`).join("")}</div></section>`;
+  return `<section class="customer-growth" aria-labelledby="customer-growth-title"><div class="customer-memory-heading"><div><h4 id="customer-growth-title">Oportunidades activas</h4><p>Acciones Growth, separadas de la memoria del cliente</p></div><span class="growth-human-status">${opportunities.length}</span></div><div class="customer-growth-list">${opportunities.slice(0, 3).map((opportunity) => `<article><span>${escapeHtml(opportunity.priority === "high" ? "Prioridad alta" : "Oportunidad activa")}</span><strong>${escapeHtml(growthOpportunityHeadline(opportunity))}</strong><p>${escapeHtml(opportunity.source_service_name || "Sin servicio específico")} · ${escapeHtml(growthOpportunityTiming(opportunity))}</p><div class="growth-opportunity-actions"><button class="ag-button ag-button--primary ag-button--small" type="button" data-opportunity-action="prepare" data-opportunity-id="${Number(opportunity.id)}">${escapeHtml(growthOpportunityActionLabel(opportunity))}</button><button class="ag-button ag-button--secondary ag-button--small" type="button" data-opportunity-action="conversation" data-opportunity-id="${Number(opportunity.id)}">Abrir conversación</button><button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="view-growth-opportunity" data-id="${Number(opportunity.id)}">Abrir oportunidad</button></div></article>`).join("")}</div></section>`;
 }
 
 function renderConversationCustomerSearch() {

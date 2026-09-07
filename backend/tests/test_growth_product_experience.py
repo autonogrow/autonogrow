@@ -28,7 +28,7 @@ def test_home_prioritizes_real_growth_opportunities_and_separates_setup() -> Non
     assert "compareGrowthOpportunities" in js
     assert "growthOpportunityHeadline(opportunity)" in render
     assert "growthOpportunityTiming(opportunity)" in render
-    assert "Preparar mensaje" in render
+    assert "growthOpportunityActionLabel(opportunity)" in render
     assert "Mejora la configuración" in render
     growth_markup = render.split("const growthTaskItems =", 1)[1].split("const closeTaskItems", 1)[
         0
@@ -54,7 +54,7 @@ def test_home_growth_opportunity_card_stacks_content_without_narrow_text_columns
     )
     assert "ag-button--primary" in card
     assert "ag-button--secondary" in card
-    assert "Preparar mensaje" in card
+    assert "actionLabel" in card
     assert "Ver oportunidad" in card
 
     layout = css.split(".dashboard-growth-opportunity {", 1)[1].split(".dashboard-next-booking", 1)[
@@ -123,10 +123,39 @@ def test_customer_growth_is_scoped_hidden_when_empty_and_separate_from_memory() 
     assert 'if (!opportunities.length) return ""' in growth
     assert "Number(item.customer?.id) === Number(customerId)" in growth
     assert "Oportunidades activas" in growth
-    assert "Preparar mensaje" in growth
+    assert "growthOpportunityActionLabel(opportunity)" in growth
     assert "Abrir oportunidad" in growth
     assert panel.index("renderCustomerGrowthSection") < panel.index("renderCustomerMemorySection")
     assert ".customer-growth" in css
+
+
+def test_growth_action_lifecycle_has_recovery_ctas_and_no_dead_retry_button() -> None:
+    html, _, js = sources()
+    labels = function_block(
+        js, "function growthOpportunityActionLabel", "function renderGrowthAttentionAndOpportunities"
+    )
+    modal = function_block(js, "function openGrowthActionModal", "function closeGrowthActionModal")
+    sender = function_block(
+        js, "async function sendGrowthOpportunityAction", "async function openGrowthOpportunityWhatsApp"
+    )
+
+    assert "Continuar borrador" in labels
+    assert "Ver envío pendiente" in labels
+    assert "Preparar de nuevo" in labels
+    assert "Preparar nuevo mensaje" in labels
+    assert "Reintentar envío" in labels
+    assert "Recuperar contacto" in labels
+    assert "Ver mensaje enviado" in labels
+    assert "Mensaje no vigente" in labels
+    assert "No se pudo enviar" in labels
+    assert 'failed: "Fallido"' not in labels
+    assert 'id="growth-action-cancel"' in html
+    assert "failed_retryable" in modal
+    assert "failed_uncertain" in modal
+    assert "can_retry_integrated" in modal
+    assert "can_retry_integrated" in sender
+    assert 'button.textContent = "Reintentar envío"' not in sender
+    assert "cancelGrowthOpportunityAction" in js
 
 
 def test_conversation_explains_follow_up_and_links_exact_opportunity() -> None:

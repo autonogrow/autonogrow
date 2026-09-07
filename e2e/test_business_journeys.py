@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -265,6 +266,140 @@ def test_growth_message_modal_stays_usable_with_long_service_name(journey) -> No
             "element => { element.value = 'https://example.test/' + 'signed-token-'.repeat(180); }"
         )
         assert textarea.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
+
+
+def test_growth_action_cancel_expire_and_safe_retry_journeys(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import (
+        Business,
+        BusinessChannelIntegration,
+        ChannelOutboxMessage,
+        ConversationMessage,
+        CustomerOpportunity,
+        OpportunityAction,
+    )
+
+    _session, page = _open_admin(journey)
+    page.locator('.admin-tab[data-section="growth"]').click()
+    page.get_by_role("button", name="Oportunidades").click()
+    opportunity_card = page.locator("[data-customer-opportunity]").filter(
+        has_text="Cliente E2E"
+    )
+    opportunity_card.get_by_role("button", name="Preparar mensaje").click()
+    modal = page.locator("#growth-action-modal.open")
+    expect(modal).to_be_visible()
+    page.locator("#growth-action-text").fill("Primer intento editado por E2E")
+    modal.get_by_role("button", name="Cancelar intento").click()
+    expect(page.locator("#growth-action-modal")).not_to_have_class(re.compile(r"\bopen\b"))
+    expect(
+        opportunity_card.get_by_role("button", name="Preparar nuevo mensaje")
+    ).to_be_visible()
+
+    opportunity_card.get_by_role("button", name="Preparar nuevo mensaje").click()
+    expect(modal).to_be_visible()
+    expect(page.locator("#growth-action-text")).to_be_editable()
+    modal.get_by_role("button", name="Cerrar").click()
+    with SessionLocal() as db:
+        business = db.query(Business).filter(Business.slug == "salon-e2e").one()
+        opportunity = (
+            db.query(CustomerOpportunity)
+            .filter(
+                CustomerOpportunity.business_id == business.id,
+                CustomerOpportunity.reason_code == "service_due_e2e",
+            )
+            .one()
+        )
+        attempts = (
+            db.query(OpportunityAction)
+            .filter(OpportunityAction.opportunity_id == opportunity.id)
+            .order_by(OpportunityAction.id)
+            .all()
+        )
+        assert [item.status for item in attempts] == ["cancelled", "draft"]
+        expired_action = attempts[-1]
+        expired_id = expired_action.id
+        expired_url = expired_action.final_text
+        expired_action.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.commit()
+
+    opportunity_card.get_by_role("button", name="Continuar borrador").click()
+    expect(modal).to_be_visible()
+    expect(page.locator("#growth-action-text")).to_be_editable()
+    modal.get_by_role("button", name="Cerrar").click()
+    with SessionLocal() as db:
+        opportunity = (
+            db.query(CustomerOpportunity)
+            .filter(CustomerOpportunity.reason_code == "service_due_e2e")
+            .one()
+        )
+        attempts = (
+            db.query(OpportunityAction)
+            .filter(OpportunityAction.opportunity_id == opportunity.id)
+            .order_by(OpportunityAction.id)
+            .all()
+        )
+        assert len(attempts) == 3
+        assert attempts[-2].id == expired_id
+        assert attempts[-2].failure_reason == "draft_expired"
+        current = attempts[-1]
+        assert current.id != expired_id
+        assert current.final_text != expired_url
+        integration = BusinessChannelIntegration(
+            business_id=current.business_id,
+            channel="whatsapp",
+            provider="whatsapp",
+            external_account_id="e2e-recovery-phone-id",
+            integration_status="connected",
+        )
+        message = ConversationMessage(
+            conversation_id=current.conversation_id,
+            direction="outbound",
+            sender_type="business",
+            body=current.final_text,
+            delivery_status="blocked",
+        )
+        db.add_all((integration, message))
+        db.flush()
+        current.status = "failed"
+        current.message_id = message.id
+        current.failed_at = datetime.now(timezone.utc)
+        current.failure_reason = "integration_not_configured"
+        outbox = ChannelOutboxMessage(
+            business_id=current.business_id,
+            integration_id=integration.id,
+            conversation_id=current.conversation_id,
+            conversation_message_id=message.id,
+            channel="whatsapp",
+            provider="whatsapp",
+            recipient_external_id="34600000001",
+            payload_json=json.dumps({"text": message.body}),
+            idempotency_key=f"whatsapp:outbound-message:{message.id}",
+            status="blocked",
+            max_attempts=3,
+            available_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db.add(outbox)
+        db.commit()
+        action_id = current.id
+
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#admin-app")).to_be_visible()
+    page.locator('.admin-tab[data-section="growth"]').click()
+    page.get_by_role("button", name="Oportunidades").click()
+    opportunity_card = page.locator("[data-customer-opportunity]").filter(
+        has_text="Cliente E2E"
+    )
+    opportunity_card.get_by_role("button", name="Reintentar envío").click()
+    expect(page.locator("#growth-action-notice")).to_contain_text(
+        "Puedes reintentar de forma segura"
+    )
+    modal.get_by_role("button", name="Reintentar envío").click()
+    expect(page.locator("#growth-action-status")).to_have_text("Pendiente de entrega")
+    with SessionLocal() as db:
+        assert db.get(OpportunityAction, action_id).status == "approved"
+        assert db.query(ConversationMessage).count() == 1
+        assert db.query(ChannelOutboxMessage).count() == 1
+        assert db.query(ChannelOutboxMessage).one().status == "pending"
 
 
 def test_growth_opportunity_opens_customer_without_conversation(journey) -> None:

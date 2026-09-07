@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from threading import Barrier
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from alembic import command
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.requests import Request
 
 from app.core.database import Base
+from app.core.migration_state import alembic_config
 from app.core.security import require_business_access, require_business_admin
 from app.models import (
     AuditLog,
@@ -34,6 +38,7 @@ from app.models import (
 )
 from app.routers.growth_actions import (
     action_or_404,
+    cancel_opportunity_action,
     edit_opportunity_action,
     get_growth_metrics,
     manually_attribute_booking,
@@ -42,6 +47,8 @@ from app.routers.growth_actions import (
     prepare_opportunity_assisted_delivery,
     send_opportunity_action,
 )
+from app.routers.growth_opportunities import transition_opportunity
+from app.schemas.customer_opportunity import OpportunityStatusUpdate
 from app.schemas.opportunity_action import (
     ManualBookingAttributionCreate,
     OpportunityActionPrepare,
@@ -729,6 +736,263 @@ def test_failed_integrated_action_can_offer_assisted_without_duplicate_delivery(
     assert db.query(ChannelOutboxMessage).count() == 0
     assert message.delivery_status == "failed"
     assert message.provider_message_id is None
+    with pytest.raises(HTTPException) as unsafe_retry:
+        send_opportunity_action(
+            "action-a", action["id"], request(), actor=records["admin"], db=db
+        )
+    assert unsafe_retry.value.status_code == 409
+    assert "evitar duplicados" in unsafe_retry.value.detail
+    assert db.query(ConversationMessage).count() == 1
+
+
+def test_cancelled_contact_action_can_be_prepared_again_with_history_preserved(
+    db: Session,
+    records: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation = records["conversation_a"]
+    assert isinstance(conversation, Conversation)
+    row = opportunity(db, records, conversation=conversation)
+    monkeypatch.setattr(
+        "app.services.opportunity_action_service.conversation_delivery_capabilities",
+        available_capabilities,
+    )
+    first = prepare_opportunity_action(
+        "action-a",
+        row.id,
+        OpportunityActionPrepare(),
+        request(),
+        actor=records["staff"],
+        db=db,
+    )["action"]
+
+    cancel_opportunity_action(
+        "action-a", first["id"], request(), actor=records["staff"], db=db
+    )
+    recovered = prepare_opportunity_action(
+        "action-a",
+        row.id,
+        OpportunityActionPrepare(),
+        request(),
+        actor=records["staff"],
+        db=db,
+    )
+
+    assert recovered["created"] is True
+    assert recovered["action"]["status"] == "draft"
+    assert recovered["action"]["id"] != first["id"]
+    assert row.status == "pending"
+    assert [item.status for item in row.actions] == ["cancelled", "draft"]
+
+
+def test_expired_draft_prepares_a_fresh_attempt_and_does_not_reuse_its_link(
+    db: Session,
+    records: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation = records["conversation_a"]
+    assert isinstance(conversation, Conversation)
+    row = opportunity(db, records, conversation=conversation)
+    monkeypatch.setattr(
+        "app.services.opportunity_action_service.conversation_delivery_capabilities",
+        available_capabilities,
+    )
+    first = prepare_opportunity_action(
+        "action-a",
+        row.id,
+        OpportunityActionPrepare(),
+        request(),
+        actor=records["staff"],
+        db=db,
+    )["action"]
+    stored = db.get(OpportunityAction, first["id"])
+    assert stored is not None
+    stored.expires_at = NOW - timedelta(seconds=1)
+    db.commit()
+    assert expire_drafts(db, business_id=records["a"].id, now=NOW) == 1
+    db.commit()
+
+    recovered = prepare_opportunity_action(
+        "action-a",
+        row.id,
+        OpportunityActionPrepare(),
+        request(),
+        actor=records["staff"],
+        db=db,
+    )
+
+    assert recovered["created"] is True
+    assert recovered["action"]["id"] != first["id"]
+    assert recovered["action"]["booking_url"] != first["booking_url"]
+    assert recovered["action"]["final_text"] != first["final_text"]
+    assert stored.status == "cancelled"
+    assert stored.failure_reason == "draft_expired"
+
+
+def test_failed_pre_provider_delivery_can_be_retried_without_new_message_or_outbox(
+    db: Session,
+    records: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation = records["conversation_a"]
+    assert isinstance(conversation, Conversation)
+    row = opportunity(db, records, conversation=conversation)
+    integration = BusinessChannelIntegration(
+        business_id=records["a"].id,
+        channel="whatsapp",
+        provider="whatsapp",
+        external_account_id="phone-id-recovery",
+        integration_status="connected",
+    )
+    message = ConversationMessage(
+        conversation_id=conversation.id,
+        direction="outbound",
+        sender_type="business",
+        body="Seguimiento recuperable",
+        delivery_status="blocked",
+    )
+    db.add_all((integration, message))
+    db.flush()
+    action = OpportunityAction(
+        business_id=records["a"].id,
+        opportunity_id=row.id,
+        customer_id=records["customer_a"].id,
+        action_type="contact_customer",
+        status="failed",
+        channel="whatsapp",
+        conversation_id=conversation.id,
+        message_id=message.id,
+        failed_at=NOW,
+        failure_reason="integration_not_configured",
+    )
+    outbox = ChannelOutboxMessage(
+        business_id=records["a"].id,
+        integration_id=integration.id,
+        conversation_id=conversation.id,
+        conversation_message_id=message.id,
+        channel="whatsapp",
+        provider="whatsapp",
+        recipient_external_id="34600000001",
+        payload_json='{"text":"Seguimiento recuperable"}',
+        idempotency_key=f"whatsapp:outbound-message:{message.id}",
+        status="blocked",
+        max_attempts=3,
+        available_at=NOW.replace(tzinfo=None),
+    )
+    db.add_all((action, outbox))
+    db.commit()
+    monkeypatch.setattr(
+        "app.routers.growth_actions.conversation_delivery_capabilities",
+        available_capabilities,
+    )
+
+    recovered = send_opportunity_action(
+        "action-a", action.id, request(), actor=records["admin"], db=db
+    )
+    repeated = send_opportunity_action(
+        "action-a", action.id, request(), actor=records["admin"], db=db
+    )
+
+    assert recovered["action"]["status"] == "approved"
+    assert repeated["idempotent"] is True
+    assert outbox.status == "pending"
+    assert message.delivery_status == "queued"
+    assert db.query(ConversationMessage).count() == 1
+    assert db.query(ChannelOutboxMessage).count() == 1
+
+
+def test_sent_action_is_terminal_for_automatic_preparation(
+    db: Session,
+    records: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation = records["conversation_a"]
+    assert isinstance(conversation, Conversation)
+    row = opportunity(db, records, conversation=conversation)
+    monkeypatch.setattr(
+        "app.services.opportunity_action_service.conversation_delivery_capabilities",
+        available_capabilities,
+    )
+    action, created = OpportunityActionService(db, now=NOW).prepare(
+        business=records["a"],
+        opportunity=row,
+        actor_user_id=records["admin"].id,
+    )
+    assert created is True
+    action.status = "sent"
+    action.sent_at = NOW
+    db.commit()
+
+    reused, created = OpportunityActionService(db, now=NOW + timedelta(days=21)).prepare(
+        business=records["a"],
+        opportunity=row,
+        actor_user_id=records["admin"].id,
+    )
+
+    assert created is False
+    assert reused.id == action.id
+    assert reused.status == "sent"
+    assert db.query(OpportunityAction).count() == 1
+
+
+def test_multiple_attempts_count_without_duplicate_attribution_or_revenue(
+    db: Session,
+    records: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = datetime.now(timezone.utc).replace(microsecond=0)
+    conversation = records["conversation_a"]
+    assert isinstance(conversation, Conversation)
+    row = opportunity(db, records, conversation=conversation)
+    monkeypatch.setattr(
+        "app.services.opportunity_action_service.conversation_delivery_capabilities",
+        available_capabilities,
+    )
+    service = OpportunityActionService(db, now=current)
+    cancelled, _ = service.prepare(
+        business=records["a"],
+        opportunity=row,
+        actor_user_id=records["admin"].id,
+    )
+    cancelled.status = "cancelled"
+    cancelled.cancelled_at = current
+    db.flush()
+    sent, created = OpportunityActionService(db, now=current + timedelta(minutes=1)).prepare(
+        business=records["a"],
+        opportunity=row,
+        actor_user_id=records["admin"].id,
+    )
+    assert created is True
+    sent.status = "sent"
+    sent.sent_at = current + timedelta(minutes=2)
+    db.commit()
+    attributed_booking = booking(
+        db,
+        records,
+        created_at=current + timedelta(hours=1),
+        status="completed",
+    )
+
+    attribution = attribute_new_booking(
+        db,
+        booking=attributed_booking,
+        now=current + timedelta(hours=1),
+    )
+    db.commit()
+    metrics = growth_metrics(
+        db,
+        business=records["a"],
+        period="30d",
+        now=current + timedelta(hours=2),
+    )
+
+    assert attribution is not None
+    assert attribution.action_id == sent.id
+    assert db.query(BookingAttribution).count() == 1
+    assert metrics["summary"]["actions_prepared"] == 2
+    assert metrics["summary"]["messages_sent"] == 1
+    assert metrics["summary"]["bookings_attributed"] == 1
+    assert metrics["summary"]["attributed_revenue"] == "45.00"
 
 
 def test_booking_before_send_invalidates_draft_and_queued_action(
@@ -1017,6 +1281,249 @@ def test_outbox_claim_retry_and_success_update_the_same_action(
     assert message.provider_message_id == "provider-message-1"
 
 
+def seed_action_concurrency_database(database_url: str) -> tuple[int, int, int]:
+    engine = create_engine(
+        database_url,
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as db:
+        business = Business(
+            slug="action-race",
+            name="Action Race",
+            status="active",
+            currency="EUR",
+        )
+        actor = User(email="action-race@test.local")
+        db.add_all((business, actor))
+        db.flush()
+        customer = Customer(
+            business_id=business.id,
+            name="Concurrent Customer",
+            phone="+34 600 000 099",
+        )
+        db.add(customer)
+        db.flush()
+        conversation = Conversation(
+            business_id=business.id,
+            customer_id=customer.id,
+            channel="whatsapp",
+            external_user_id="34600000099",
+            customer_phone=customer.phone,
+            status="pending",
+            last_message_at=NOW,
+        )
+        db.add(conversation)
+        db.flush()
+        row = CustomerOpportunity(
+            business_id=business.id,
+            customer_id=customer.id,
+            type="service_due",
+            status="pending",
+            priority="normal",
+            detected_at=NOW,
+            due_at=NOW,
+            expires_at=NOW + timedelta(days=30),
+            source_conversation_id=conversation.id,
+            reason_code="concurrency",
+            reason_text="Concurrent action recovery",
+            dedupe_key="concurrency:service-due",
+        )
+        db.add(row)
+        db.commit()
+        result = business.id, row.id, actor.id
+    engine.dispose()
+    return result
+
+
+def test_action_prepare_cancel_retry_and_resolution_are_concurrency_safe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = f"sqlite:///{(tmp_path / 'action-race.db').as_posix()}"
+    business_id, opportunity_id, actor_id = seed_action_concurrency_database(database_url)
+    engine = create_engine(
+        database_url,
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(
+        "app.services.opportunity_action_service.conversation_delivery_capabilities",
+        available_capabilities,
+    )
+
+    prepare_barrier = Barrier(2)
+
+    def prepare_once() -> dict:
+        with factory() as db:
+            actor = db.get(User, actor_id)
+            prepare_barrier.wait()
+            return prepare_opportunity_action(
+                "action-race",
+                opportunity_id,
+                OpportunityActionPrepare(),
+                request(),
+                actor=actor,
+                db=db,
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        prepared = list(executor.map(lambda _index: prepare_once(), range(2)))
+    assert len({item["action"]["id"] for item in prepared}) == 1
+
+    first_action_id = prepared[0]["action"]["id"]
+    cancel_barrier = Barrier(2)
+
+    def cancel_or_prepare(operation: str) -> None:
+        with factory() as db:
+            actor = db.get(User, actor_id)
+            cancel_barrier.wait()
+            if operation == "cancel":
+                cancel_opportunity_action(
+                    "action-race",
+                    first_action_id,
+                    request(),
+                    actor=actor,
+                    db=db,
+                )
+            else:
+                prepare_opportunity_action(
+                    "action-race",
+                    opportunity_id,
+                    OpportunityActionPrepare(),
+                    request(),
+                    actor=actor,
+                    db=db,
+                )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(cancel_or_prepare, ("cancel", "prepare")))
+    with factory() as db:
+        active = (
+            db.query(OpportunityAction)
+            .filter(
+                OpportunityAction.opportunity_id == opportunity_id,
+                OpportunityAction.status.in_(("draft", "approved", "sending")),
+            )
+            .all()
+        )
+        assert len(active) <= 1
+        if not active:
+            actor = db.get(User, actor_id)
+            recovered = prepare_opportunity_action(
+                "action-race",
+                opportunity_id,
+                OpportunityActionPrepare(),
+                request(),
+                actor=actor,
+                db=db,
+            )["action"]
+            action_id = recovered["id"]
+        else:
+            action_id = active[0].id
+
+        action = db.get(OpportunityAction, action_id)
+        conversation = action.conversation
+        integration = BusinessChannelIntegration(
+            business_id=business_id,
+            channel="whatsapp",
+            provider="whatsapp",
+            external_account_id="race-phone-id",
+            integration_status="connected",
+        )
+        message = ConversationMessage(
+            conversation_id=conversation.id,
+            direction="outbound",
+            sender_type="business",
+            body=action.final_text or "Concurrent retry",
+            delivery_status="blocked",
+        )
+        db.add_all((integration, message))
+        db.flush()
+        action.status = "failed"
+        action.message_id = message.id
+        action.failed_at = NOW
+        outbox = ChannelOutboxMessage(
+            business_id=business_id,
+            integration_id=integration.id,
+            conversation_id=conversation.id,
+            conversation_message_id=message.id,
+            channel="whatsapp",
+            provider="whatsapp",
+            recipient_external_id="34600000099",
+            payload_json=json.dumps({"text": message.body}),
+            idempotency_key=f"whatsapp:outbound-message:{message.id}",
+            status="blocked",
+            max_attempts=3,
+            available_at=NOW.replace(tzinfo=None),
+        )
+        db.add(outbox)
+        db.commit()
+        outbox_id = outbox.id
+
+    retry_barrier = Barrier(2)
+
+    def retry_once() -> dict:
+        with factory() as db:
+            actor = db.get(User, actor_id)
+            retry_barrier.wait()
+            return send_opportunity_action(
+                "action-race", action_id, request(), actor=actor, db=db
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        retried = list(executor.map(lambda _index: retry_once(), range(2)))
+    assert sum(bool(item.get("recovered")) for item in retried) == 1
+    assert sum(bool(item.get("idempotent")) for item in retried) == 1
+    with factory() as db:
+        assert db.query(ConversationMessage).count() == 1
+        assert db.query(ChannelOutboxMessage).count() == 1
+        action = db.get(OpportunityAction, action_id)
+        outbox = db.get(ChannelOutboxMessage, outbox_id)
+        action.status = "failed"
+        action.failure_reason = "integration_not_configured"
+        action.message.delivery_status = "blocked"
+        outbox.status = "blocked"
+        db.commit()
+
+    resolution_barrier = Barrier(2)
+
+    def retry_or_resolve(operation: str) -> str:
+        with factory() as db:
+            actor = db.get(User, actor_id)
+            resolution_barrier.wait()
+            try:
+                if operation == "retry":
+                    send_opportunity_action(
+                        "action-race", action_id, request(), actor=actor, db=db
+                    )
+                else:
+                    transition_opportunity(
+                        "action-race",
+                        opportunity_id,
+                        OpportunityStatusUpdate(status="actioned"),
+                        request(),
+                        actor,
+                        db,
+                    )
+            except HTTPException:
+                return "blocked"
+            return "ok"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(retry_or_resolve, ("retry", "resolve")))
+    with factory() as db:
+        assert db.get(CustomerOpportunity, opportunity_id).status == "actioned"
+        assert db.get(OpportunityAction, action_id).status not in {"approved", "sending"}
+        assert db.get(ChannelOutboxMessage, outbox_id).status not in {
+            "pending",
+            "processing",
+            "retry",
+        }
+    engine.dispose()
+
+
 def test_constraints_metrics_periods_and_frontend_contracts(
     db: Session, records: dict[str, object]
 ) -> None:
@@ -1068,3 +1575,115 @@ def test_constraints_metrics_periods_and_frontend_contracts(
     assert "Todavía no se muestra como enviado" in js
     assert "attribution_token" in landing
     assert "getOpportunityAttributionToken" in landing
+
+
+def test_action_attempt_migration_preserves_history_and_limits_active_attempts(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{(tmp_path / 'action-attempt-migration.db').as_posix()}"
+    config = alembic_config()
+    config.attributes["database_url"] = database_url
+    command.upgrade(config, "20260903_32")
+    engine = create_engine(database_url)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as db:
+        business = Business(slug="legacy-actions", name="Legacy Actions", status="active")
+        customer = Customer(
+            business=business,
+            name="Legacy Customer",
+            phone="+34 600 000 088",
+        )
+        db.add_all((business, customer))
+        db.flush()
+        legacy_opportunity = CustomerOpportunity(
+            business_id=business.id,
+            customer_id=customer.id,
+            type="service_due",
+            status="pending",
+            priority="normal",
+            detected_at=NOW,
+            due_at=NOW,
+            expires_at=NOW + timedelta(days=30),
+            reason_code="legacy_action",
+            reason_text="Legacy action history",
+            dedupe_key="legacy:action",
+        )
+        db.add(legacy_opportunity)
+        db.flush()
+        legacy_action = OpportunityAction(
+            business_id=business.id,
+            opportunity_id=legacy_opportunity.id,
+            customer_id=customer.id,
+            action_type="contact_customer",
+            status="cancelled",
+            cancelled_at=NOW,
+        )
+        db.add(legacy_action)
+        db.commit()
+        business_id = business.id
+        customer_id = customer.id
+        opportunity_id = legacy_opportunity.id
+        legacy_action_id = legacy_action.id
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = create_engine(database_url)
+    index_names = {item["name"] for item in inspect(engine).get_indexes("opportunity_actions")}
+    unique_names = {
+        item["name"] for item in inspect(engine).get_unique_constraints("opportunity_actions")
+    }
+    assert "uq_opportunity_action_active_contact" in index_names
+    assert "uq_opportunity_action_singleton_non_contact" in index_names
+    assert "uq_opportunity_action_conservative_dedupe" not in unique_names
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as db:
+        assert db.get(OpportunityAction, legacy_action_id).status == "cancelled"
+        first_active = OpportunityAction(
+            business_id=business_id,
+            opportunity_id=opportunity_id,
+            customer_id=customer_id,
+            action_type="contact_customer",
+            status="draft",
+        )
+        db.add(first_active)
+        db.commit()
+        db.add(
+            OpportunityAction(
+                business_id=business_id,
+                opportunity_id=opportunity_id,
+                customer_id=customer_id,
+                action_type="contact_customer",
+                status="draft",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.flush()
+        db.rollback()
+        first_active = db.get(OpportunityAction, first_active.id)
+        first_active.status = "sent"
+        first_active.sent_at = NOW
+        db.add(
+            OpportunityAction(
+                business_id=business_id,
+                opportunity_id=opportunity_id,
+                customer_id=customer_id,
+                action_type="contact_customer",
+                status="draft",
+            )
+        )
+        db.commit()
+        assert db.query(OpportunityAction).count() == 3
+    engine.dispose()
+
+    clean_url = f"sqlite:///{(tmp_path / 'action-attempt-clean-downgrade.db').as_posix()}"
+    clean_config = alembic_config()
+    clean_config.attributes["database_url"] = clean_url
+    command.upgrade(clean_config, "head")
+    command.downgrade(clean_config, "20260903_32")
+    clean_engine = create_engine(clean_url)
+    clean_unique_names = {
+        item["name"]
+        for item in inspect(clean_engine).get_unique_constraints("opportunity_actions")
+    }
+    assert "uq_opportunity_action_conservative_dedupe" in clean_unique_names
+    clean_engine.dispose()

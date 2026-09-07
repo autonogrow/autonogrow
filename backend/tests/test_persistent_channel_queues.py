@@ -3,7 +3,7 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -25,6 +25,9 @@ from app.models import (
     ChannelOutboxMessage,
     Conversation,
     ConversationMessage,
+    Customer,
+    CustomerOpportunity,
+    OpportunityAction,
     User,
     WebhookInboxEvent,
     WorkerHeartbeat,
@@ -50,6 +53,7 @@ from app.services.instagram_inbox_processor import InboxProcessResult
 from app.services.instagram_provider import ProviderSendResult
 from app.services.integration_crypto_service import encrypt_secret
 from app.services.outbox_queue_service import (
+    claim_outbox_jobs,
     create_channel_outbox,
     fail_outbox_job,
 )
@@ -509,6 +513,70 @@ def test_worker_timeout_retries_without_duplicate_message(database):
     assert db.get(ChannelOutboxMessage, outbox.id).status == "retry"
     assert db.query(ConversationMessage).filter(ConversationMessage.id == message.id).count() == 1
     assert db.query(ChannelOutboxMessage).count() == 1
+
+
+def test_worker_rechecks_resolved_opportunity_immediately_before_provider(database):
+    db, factory = database
+    active = settings()
+    business, _, conversation, message, outbox = add_channel_context(db, active)
+    customer = Customer(
+        business_id=business.id,
+        name="Resolved before provider",
+        phone="+34 600 000 077",
+    )
+    db.add(customer)
+    db.flush()
+    conversation.customer_id = customer.id
+    opportunity = CustomerOpportunity(
+        business_id=business.id,
+        customer_id=customer.id,
+        type="service_due",
+        status="pending",
+        priority="normal",
+        detected_at=datetime.now(timezone.utc),
+        due_at=datetime.now(timezone.utc),
+        reason_code="worker_authorization_race",
+        reason_text="Resolve immediately before provider",
+        dedupe_key="worker:authorization:race",
+    )
+    db.add(opportunity)
+    db.flush()
+    action = OpportunityAction(
+        business_id=business.id,
+        opportunity_id=opportunity.id,
+        customer_id=customer.id,
+        action_type="contact_customer",
+        status="approved",
+        channel="instagram",
+        conversation_id=conversation.id,
+        message_id=message.id,
+    )
+    db.add(action)
+    db.commit()
+    assert claim_outbox_jobs(
+        db,
+        worker_id="authorization-race",
+        limit=1,
+        lock_timeout_seconds=60,
+    ) == [outbox.id]
+    db.commit()
+    calls: list[str] = []
+    worker = ChannelWorker(
+        settings=active,
+        session_factory=factory,
+        senders={"instagram": lambda *_args, **_kwargs: calls.append("sent")},
+        sleep=lambda _: None,
+    )
+    assert worker._prepare_delivery(outbox.id) is not None
+    opportunity.status = "resolved"
+    db.commit()
+
+    assert worker._authorize_delivery(outbox.id) is False
+    db.expire_all()
+    assert db.get(ChannelOutboxMessage, outbox.id).status == "cancelled"
+    assert db.get(ConversationMessage, message.id).delivery_status == "cancelled"
+    assert db.get(OpportunityAction, action.id).status == "cancelled"
+    assert calls == []
 
 
 def test_worker_unknown_outbox_provider_fails_safely(database):

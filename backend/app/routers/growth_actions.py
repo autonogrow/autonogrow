@@ -36,8 +36,10 @@ from app.services.conversation_service import (
 from app.services.growth_metrics_service import growth_metrics
 from app.services.opportunity_action_service import (
     OpportunityActionService,
+    begin_serialized_action_write,
     build_action_assisted_whatsapp_url,
     invalidate_actions_for_resolved_opportunity,
+    retry_failed_action_delivery,
     serialize_action,
     sync_action_from_message,
     utc_now,
@@ -109,6 +111,7 @@ def prepare_opportunity_action(
     actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
 ):
+    begin_serialized_action_write(db)
     if payload.action_type not in {"contact_customer", "open_conversation"}:
         raise HTTPException(status_code=422, detail="Unsupported opportunity action type")
     business = business_or_404(db, business_slug)
@@ -178,7 +181,15 @@ def edit_opportunity_action(
     actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
 ):
+    begin_serialized_action_write(db)
     business = business_or_404(db, business_slug)
+    initial = action_or_404(db, business_id=business.id, action_id=action_id)
+    opportunity_or_404(
+        db,
+        business_id=business.id,
+        opportunity_id=initial.opportunity_id,
+        lock=True,
+    )
     row = action_or_404(db, business_id=business.id, action_id=action_id, lock=True)
     sync_action_from_message(row)
     if row.status != "draft":
@@ -213,9 +224,63 @@ def send_opportunity_action(
     actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
 ):
+    begin_serialized_action_write(db)
     business = business_or_404(db, business_slug)
+    initial = action_or_404(db, business_id=business.id, action_id=action_id)
+    opportunity_or_404(
+        db,
+        business_id=business.id,
+        opportunity_id=initial.opportunity_id,
+        lock=True,
+    )
     row = action_or_404(db, business_id=business.id, action_id=action_id, lock=True)
     sync_action_from_message(row)
+    if row.status == "failed":
+        try:
+            outbox = retry_failed_action_delivery(
+                db,
+                action=row,
+                actor_user_id=actor.id,
+            )
+        except ValueError as error:
+            if str(error) == "opportunity_not_actionable":
+                invalidate_actions_for_resolved_opportunity(
+                    db, opportunity=row.opportunity
+                )
+                db.commit()
+                raise HTTPException(
+                    status_code=409,
+                    detail="La oportunidad ya no esta pendiente.",
+                ) from error
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "No se puede confirmar que el proveedor no recibiera el mensaje. "
+                    "Para evitar duplicados, usa WhatsApp asistido o copia el texto."
+                ),
+            ) from error
+        db.commit()
+        db.refresh(row)
+        record_audit(
+            db,
+            action="action_retry_queued",
+            request=request,
+            actor=actor,
+            business_id=business.id,
+            resource_type="opportunity_action",
+            resource_id=row.id,
+            metadata={
+                "opportunity_id": row.opportunity_id,
+                "channel": row.channel,
+                "outbox_id": outbox.id,
+            },
+        )
+        return {
+            "ok": True,
+            "idempotent": False,
+            "recovered": True,
+            "action": serialize_action(db, row),
+        }
     if row.message_id is not None and row.status in {
         "approved",
         "sending",
@@ -407,7 +472,15 @@ def cancel_opportunity_action(
     actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
 ):
+    begin_serialized_action_write(db)
     business = business_or_404(db, business_slug)
+    initial = action_or_404(db, business_id=business.id, action_id=action_id)
+    opportunity_or_404(
+        db,
+        business_id=business.id,
+        opportunity_id=initial.opportunity_id,
+        lock=True,
+    )
     row = action_or_404(db, business_id=business.id, action_id=action_id, lock=True)
     if row.status != "draft":
         raise HTTPException(status_code=409, detail="Only draft actions can be cancelled")
@@ -434,6 +507,7 @@ def mark_opportunity_handled(
     actor: User = Depends(require_business_access),
     db: Session = Depends(get_db),
 ):
+    begin_serialized_action_write(db)
     business = business_or_404(db, business_slug)
     opportunity = opportunity_or_404(
         db, business_id=business.id, opportunity_id=opportunity_id, lock=True
