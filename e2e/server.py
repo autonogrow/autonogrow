@@ -36,6 +36,18 @@ def install_google_mock(app_env: str) -> None:
             "email_verified": True,
             "name": "Admin Salón E2E",
         },
+        "e2e-admin-b": {
+            "sub": "google-admin-b-e2e",
+            "email": "admin-b@e2e.test",
+            "email_verified": True,
+            "name": "Admin Fisio E2E",
+        },
+        "e2e-staff-a": {
+            "sub": "google-staff-a-e2e",
+            "email": "pro-1@e2e.test",
+            "email_verified": True,
+            "name": "Lucía",
+        },
         "e2e-owner": {
             "sub": "google-owner-e2e",
             "email": "owner@e2e.test",

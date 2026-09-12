@@ -32,6 +32,14 @@ def _open_admin(journey, *, mobile: bool = False):
     return session, page
 
 
+def _switch_admin_identity(page, token: str) -> None:
+    page.locator("#admin-logout").click()
+    expect(page.locator("#admin-auth-gate")).to_be_visible()
+    page.evaluate("token => { window.__AUTONOGROW_E2E_GOOGLE_TOKEN = token; }", token)
+    expect(page.locator("#admin-google-button button")).to_be_visible()
+    page.locator("#admin-google-button button").click()
+
+
 def _open_owner_instagram(journey):
     session = journey(email="owner@e2e.test")
     page = session.goto("/autonogrow-owner/")
@@ -88,11 +96,140 @@ def test_admin_controlled_login_navigation_and_owner_separation(journey) -> None
     assert page.locator("[data-tab='operations']").count() == 0
 
 
+def test_admin_staff_admin_switch_never_reuses_privileged_appointments(journey) -> None:
+    session = journey(email="admin-a@e2e.test")
+    session.context.add_init_script(
+        """
+        (() => {
+          const realFetch = window.fetch.bind(window);
+          window.fetch = async (input, options) => {
+            const response = await realFetch(input, options);
+            if (window.__DELAY_ADMIN_BOOKINGS
+                && String(input).includes('/api/admin/businesses/salon-e2e/bookings?')) {
+              await new Promise((resolve) => setTimeout(resolve, 800));
+            }
+            return response;
+          };
+        })();
+        """
+    )
+    page = session.goto("/autonogrow-admin/?b=salon-e2e#bookings")
+    expect(page.locator("#admin-app")).to_be_visible()
+    staff = next(
+        item
+        for item in page.request.get("/api/admin/businesses/salon-e2e/staff").json()["staff"]
+        if item["email"] == "pro-1@e2e.test"
+    )
+    admin_bookings = page.request.get("/api/admin/businesses/salon-e2e/bookings").json()[
+        "bookings"
+    ]
+    restricted = next(
+        item for item in admin_bookings if item["staff_business_user_id"] != staff["id"]
+    )
+    page.evaluate("bookingId => goToBooking(bookingId, false)", restricted["id"])
+    expect(page.locator(f"#booking-{restricted['id']}")).to_be_visible()
+
+    page.locator("#admin-logout").click()
+    expect(page.locator("#admin-auth-gate")).to_be_visible()
+    page.evaluate(
+        """bookingId => {
+          window.__AUTONOGROW_E2E_GOOGLE_TOKEN = 'e2e-staff-a';
+          window.__DELAY_ADMIN_BOOKINGS = true;
+          window.__STALE_PRIVILEGED_BOOKING_SEEN = false;
+          const check = () => {
+            const app = document.getElementById('admin-app');
+            const card = document.getElementById(`booking-${bookingId}`);
+            if (app && !app.hidden && card && getComputedStyle(card).display !== 'none') {
+              window.__STALE_PRIVILEGED_BOOKING_SEEN = true;
+            }
+          };
+          window.__STALE_OBSERVER = new MutationObserver(check);
+          window.__STALE_OBSERVER.observe(document.body, {
+            childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'class']
+          });
+          check();
+        }""",
+        restricted["id"],
+    )
+    page.locator("#admin-google-button button").click()
+    expect(page.locator("#admin-app")).to_be_visible(timeout=15_000)
+    page.evaluate("window.__DELAY_ADMIN_BOOKINGS = false")
+    expect(page.locator("#admin-auth-user")).to_have_text("Lucía")
+    expect(page.locator(f"#booking-{restricted['id']}")).to_have_count(0)
+    assert page.evaluate("window.__STALE_PRIVILEGED_BOOKING_SEEN") is False
+    staff_booking_ids = {
+        item["id"]
+        for item in page.request.get("/api/admin/businesses/salon-e2e/bookings").json()[
+            "bookings"
+        ]
+    }
+    assert restricted["id"] not in staff_booking_ids
+    page.evaluate("window.__STALE_OBSERVER.disconnect()")
+
+    _switch_admin_identity(page, "e2e-admin-a")
+    expect(page.locator("#admin-app")).to_be_visible(timeout=15_000)
+    expect(page.locator("#admin-auth-user")).to_contain_text("Admin")
+    page.evaluate("bookingId => goToBooking(bookingId, false)", restricted["id"])
+    expect(page.locator(f"#booking-{restricted['id']}")).to_be_visible()
+
+
+def test_admin_switch_to_other_tenant_leaves_no_previous_business_dom(journey) -> None:
+    session, page = _open_admin(journey)
+    previous_booking = page.request.get(
+        "/api/admin/businesses/salon-e2e/bookings"
+    ).json()["bookings"][0]
+    page.evaluate("bookingId => goToBooking(bookingId, false)", previous_booking["id"])
+    expect(page.locator(f"#booking-{previous_booking['id']}")).to_be_visible()
+
+    _switch_admin_identity(page, "e2e-admin-b")
+    expect(page.locator("#admin-auth-gate")).to_be_visible(timeout=15_000)
+    expect(page.locator("#admin-app")).to_be_hidden()
+    expect(page.locator("#admin-auth-message")).to_contain_text("no tiene acceso")
+    assert page.request.get("/api/auth/me").json()["email"] == "admin-b@e2e.test"
+    assert page.locator("#bookings-list").text_content().strip() == ""
+    assert "Salón E2E" not in page.locator("#admin-app").text_content()
+
+
+def test_delayed_admin_response_cannot_repopulate_dom_after_staff_login(journey) -> None:
+    session = journey(email="admin-a@e2e.test")
+    session.context.add_init_script(
+        """
+        (() => {
+          const realFetch = window.fetch.bind(window);
+          window.fetch = async (input, options) => {
+            const response = await realFetch(input, options);
+            if (window.__DELAY_ADMIN_SERVICES
+                && String(input).endsWith('/api/admin/businesses/salon-e2e/services')) {
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+            return response;
+          };
+        })();
+        """
+    )
+    page = session.goto("/autonogrow-admin/?b=salon-e2e#services")
+    expect(page.locator("#admin-app")).to_be_visible()
+    expect(page.locator("#admin-services-list")).to_contain_text("Corte E2E")
+    page.evaluate(
+        """() => {
+          window.__DELAY_ADMIN_SERVICES = true;
+          window.__OLD_ADMIN_SERVICES_PROMISE = loadAdminServices();
+          window.__DELAY_ADMIN_SERVICES = false;
+        }"""
+    )
+
+    _switch_admin_identity(page, "e2e-staff-a")
+    expect(page.locator("#admin-app")).to_be_visible(timeout=15_000)
+    page.wait_for_timeout(1200)
+    assert "Corte E2E" not in page.locator("#admin-services-list").text_content()
+    assert page.request.get("/api/auth/me").json()["email"] == "pro-1@e2e.test"
+
+
 def test_admin_business_status_controls_banner_and_submit_state(journey) -> None:
     from app.core.database import SessionLocal
     from app.models import Business
 
-    _session, page = _open_admin(journey)
+    session, page = _open_admin(journey)
     settings = page.request.get("/api/admin/businesses/salon-e2e/settings").json()
     assert settings["status"] == "active"
     assert settings["active"] is True
@@ -105,6 +242,7 @@ def test_admin_business_status_controls_banner_and_submit_state(journey) -> None
         business.status = "suspended"
         db.commit()
 
+    session.expect_response_error(404, "GET", "/bookings")
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#admin-app")).to_be_visible()
     expect(page.locator("body")).to_have_class(re.compile("business-non-operational"))

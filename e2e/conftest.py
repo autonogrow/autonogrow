@@ -52,7 +52,7 @@ from e2e.seed import reset_database, session_cookie_for  # noqa: E402
 GOOGLE_MOCK_SCRIPT = """
 (() => {
   window.AUTONOGROW_API_BASE_URL = window.location.origin;
-  const token = location.pathname.includes('owner') ? 'e2e-owner'
+  const defaultToken = location.pathname.includes('owner') ? 'e2e-owner'
     : location.pathname.includes('admin') ? 'e2e-admin-a'
     : location.search.includes('claim=1') ? 'e2e-claim' : 'e2e-customer';
   let callback = null;
@@ -63,7 +63,9 @@ GOOGLE_MOCK_SCRIPT = """
       button.type = 'button';
       button.textContent = 'Continuar con Google';
       button.setAttribute('aria-label', 'Continuar con Google');
-      button.addEventListener('click', () => callback({ credential: token }));
+      button.addEventListener('click', () => callback({
+        credential: window.__AUTONOGROW_E2E_GOOGLE_TOKEN || defaultToken
+      }));
       container.replaceChildren(button);
     }
   } } };

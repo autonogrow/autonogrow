@@ -1,22 +1,49 @@
 const API_BASE_URL = AutonoGrowAuth.API_BASE_URL;
 const browserFetch = window.fetch.bind(window);
+let adminSessionGeneration = 0;
+let adminSessionAbortController = new AbortController();
+const staleAdminRequest = new Promise(() => {});
+
+function staleAdminSessionError() {
+  const error = new Error("La sesión administrativa cambió durante la solicitud.");
+  error.name = "AdminSessionStaleError";
+  return error;
+}
+
+function assertAdminSessionCurrent(requestGeneration) {
+  if (requestGeneration !== adminSessionGeneration) throw staleAdminSessionError();
+}
+
 const fetch = async (input, options = {}) => {
-  const securedOptions = await AutonoGrowAuth.secureRequestOptions(options);
-  const response = await browserFetch(input, securedOptions);
-  const url = String(input);
-  if (response.status === 401 && (url.includes("/api/admin/") || url.includes("/api/bookings/"))) {
-    queueMicrotask(() => showAdminLogin());
-  }
-  if (response.status === 403 && (url.includes("/api/admin/") || url.includes("/api/bookings/"))) {
-    const payload = await response.clone().json().catch(() => null);
-    if (payload?.detail?.code === "business_not_operational") {
-      lastBusinessOperationalStatus = payload.detail.business_status;
-      queueMicrotask(() => applyOperationalBusinessState(payload.detail.business_status));
-    } else {
-      queueMicrotask(() => showAdminPermissionFeedback(payload));
+  const requestGeneration = adminSessionGeneration;
+  const sessionSignal = adminSessionAbortController.signal;
+  try {
+    const securedOptions = await AutonoGrowAuth.secureRequestOptions(options);
+    assertAdminSessionCurrent(requestGeneration);
+    const response = await browserFetch(input, { ...securedOptions, signal: sessionSignal });
+    assertAdminSessionCurrent(requestGeneration);
+    const url = String(input);
+    if (response.status === 401 && (url.includes("/api/admin/") || url.includes("/api/bookings/"))) {
+      queueMicrotask(() => showAdminLogin());
+      return staleAdminRequest;
     }
+    if (response.status === 403 && (url.includes("/api/admin/") || url.includes("/api/bookings/"))) {
+      const payload = await response.clone().json().catch(() => null);
+      assertAdminSessionCurrent(requestGeneration);
+      if (payload?.detail?.code === "business_not_operational") {
+        lastBusinessOperationalStatus = payload.detail.business_status;
+        queueMicrotask(() => applyOperationalBusinessState(payload.detail.business_status));
+      } else {
+        queueMicrotask(() => showAdminPermissionFeedback(payload));
+      }
+    }
+    return response;
+  } catch (error) {
+    if (requestGeneration !== adminSessionGeneration || error.name === "AdminSessionStaleError") {
+      return staleAdminRequest;
+    }
+    throw error;
   }
-  return response;
 };
 
 let currentBusiness = null;
@@ -200,6 +227,234 @@ const reviewMutationKeys = new Set();
 const channelHubLoadState = { onboarding: "loading", health: "loading", automation: "loading", templates: "loading" };
 const configurationLoadState = { staff: "loading", gallery: "loading", exceptions: "loading" };
 let staffRemovalReturnFocus = null;
+
+function resetAdminSessionState() {
+  adminSessionGeneration += 1;
+  adminSessionAbortController.abort();
+  adminSessionAbortController = new AbortController();
+  stopAdminPolling();
+  adminPollingTasks.clear();
+  adminPollingLastSuccessAt = null;
+  clearTimeout(conversationSearchTimer);
+  clearTimeout(bookingCustomerMemoryTimer);
+  conversationSearchTimer = null;
+  bookingCustomerMemoryTimer = null;
+
+  currentBusiness = null;
+  lastBusinessOperationalStatus = null;
+  businessCapabilities = {
+    essential: { available: false }, growth: { available: false }, social: { available: false }
+  };
+  pilotReadiness = null;
+  pilotValueSummary = null;
+  adminAuthUser = null;
+  adminMembership = null;
+  allBookings = [];
+  bookingCloseTasks = [];
+  reviewRequestsByBooking = new Map();
+  messageOutbox = [];
+  adminServices = [];
+  staffMembers = [];
+  availabilitySettings = null;
+  availabilityExceptions = [];
+  exceptionDraftWindows = [];
+  adminGallery = [];
+  conversations = [];
+  dashboardConversations = [];
+  conversationTemplates = [];
+  conversationAutomation = null;
+  businessIntegrationStatus = null;
+  businessChannelOnboarding = null;
+  businessChannelHealth = [];
+  adminInstagramSettings = null;
+  adminInstagramContents = [];
+  adminInstagramMetrics = null;
+  socialContentProposals = [];
+  conversationSuggestions = [];
+  customerOpportunities = [];
+  businessGrowthSignals = [];
+  growthSignalsSummary = null;
+  growthActionMetrics = null;
+
+  currentBookingView = "day";
+  agendaSelectedDate = "";
+  agendaSelectedBookingId = null;
+  selectedBookingStatusFilter = "";
+  selectedBookingServiceFilter = "";
+  bookingCustomerSearch = "";
+  selectedStaffFilter = "";
+  selectedConversationId = null;
+  selectedConversation = null;
+  selectedConversationSuggestionId = null;
+  conversationSuggestionNotice = null;
+  conversationReplySending = false;
+  conversationAssistedOpening = false;
+  conversationStatusUpdating = false;
+  conversationCustomerPanelOpen = false;
+  conversationCustomerReturnFocus = null;
+  conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
+  conversationCustomerAssociationUpdating = false;
+  customerMemoryFormState = null;
+  bookingCustomerMemoryPanelState = {
+    bookingId: null, customerId: null, open: false, formOpen: false, draft: "",
+    saving: false, feedback: "", feedbackError: false
+  };
+  selectedOpportunityAction = null;
+  selectedOpportunityForAction = null;
+  growthActionReturnFocus = null;
+  opportunityAssistedOpening = false;
+  adminInstagramCalendarView = "week";
+  adminInstagramCalendarDate = "";
+  adminInstagramSelectedContentId = null;
+  adminInstagramStateFilter = "";
+  adminInstagramFormatFilter = "";
+  rescheduleReturnFocus = null;
+  rescheduleSubmitting = false;
+  rescheduleState = { booking: null, date: "", dayLabel: "", slot: null };
+  staffRemovalReturnFocus = null;
+
+  opportunityMutationIds.clear();
+  growthSignalMutationIds.clear();
+  socialContentProposalMutationIds.clear();
+  sendingConversationSuggestionIds.clear();
+  customerMemorySummaries.clear();
+  customerMemoryLoadingIds.clear();
+  customerMemoryMutationIds.clear();
+  bookingCustomerMemoryDrafts.clear();
+  bookingMutationIds.clear();
+  dashboardRetryInFlight.clear();
+  configurationSnapshots.clear();
+  configurationDirtyKeys.clear();
+  configurationMutationKeys.clear();
+  channelActionKeys.clear();
+  reviewMutationKeys.clear();
+
+  conversationLoadVersion += 1;
+  conversationDetailVersion += 1;
+  conversationAutomationLoadVersion += 1;
+  conversationTemplatesLoadVersion += 1;
+  channelOnboardingLoadVersion += 1;
+  reviewRequestsLoadVersion += 1;
+  bookingsLoadVersion += 1;
+  bookingCloseTasksLoadVersion += 1;
+  rescheduleSlotsLoadVersion += 1;
+  messageOutboxLoadVersion += 1;
+  conversationListFingerprint = "";
+  conversationDetailFingerprint = "";
+  bookingsFingerprint = "";
+  messageOutboxFingerprint = "";
+  reviewRequestsFingerprint = "";
+  dashboardAnnouncementFingerprint = "";
+
+  Object.assign(growthLoadState, { reviews: "loading", outbox: "loading", opportunities: "loading", signals: "loading" });
+  Object.assign(dashboardDataState, {
+    business: "loading", bookings: "loading", closeTasks: "loading", conversations: "loading",
+    services: "loading", availability: "loading", channels: "loading"
+  });
+  Object.assign(channelHubLoadState, { onboarding: "loading", health: "loading", automation: "loading", templates: "loading" });
+  Object.assign(configurationLoadState, { staff: "loading", gallery: "loading", exceptions: "loading" });
+  sessionStorage.removeItem("adminMediaPending");
+  return adminSessionGeneration;
+}
+
+function renderAdminSessionNeutralState() {
+  document.title = "Panel AutonoGrow";
+  document.documentElement.style.setProperty("--primary", "#2563eb");
+  document.body.classList.remove("modal-scroll-locked", "conversation-drawer-open", "business-non-operational");
+  document.querySelectorAll("[data-admin-section]").forEach((section) => { section.hidden = false; });
+  document.querySelectorAll("[data-business-status-disabled]").forEach((control) => {
+    control.disabled = control.dataset.businessStatusDisabled === "true";
+    delete control.dataset.businessStatusDisabled;
+  });
+  document.getElementById("conversation-center")?.classList.remove("conversation-mobile-detail-open");
+  document.getElementById("conversation-customer-panel")?.classList.remove("is-open");
+  document.getElementById("conversation-customer-backdrop")?.setAttribute("hidden", "");
+  document.getElementById("my-staff-availability")?.remove();
+  for (const id of ["growth-action-modal", "reschedule-modal", "staff-removal-modal"]) {
+    const modal = document.getElementById(id);
+    modal?.classList.remove("open");
+    modal?.setAttribute("aria-hidden", "true");
+  }
+
+  for (const id of [
+    "dashboard-attention-list", "dashboard-next-booking", "dashboard-today-bookings",
+    "dashboard-message-summary", "dashboard-weekly-activity", "growth-attention-list",
+    "growth-opportunities-preview", "growth-signals-list", "growth-funnel", "growth-priority-list",
+    "configuration-overview-list", "configuration-task-list", "admin-gallery-list",
+    "channel-onboarding-list", "channel-instagram-content", "channel-whatsapp-content",
+    "admin-services-list", "admin-staff-list", "admin-inactive-staff-list", "conversation-list",
+    "conversation-detail", "conversation-customer-content", "conversation-automation-content",
+    "conversation-template-list", "message-outbox-list", "message-outbox-history-list",
+    "weekly-schedule-editor", "availability-exceptions-list", "bookings-list", "agenda-week-days",
+    "review-candidates-list", "review-requests-pending-list", "review-requests-history-list",
+    "review-activity-list", "growth-tasks-list", "admin-instagram-calendar",
+    "admin-instagram-unscheduled", "admin-instagram-raw-list",
+    "admin-instagram-content-list", "social-content-ideas-list", "staff-removal-bookings"
+  ]) document.getElementById(id)?.replaceChildren();
+
+  for (const id of [
+    "business-name", "business-subtitle", "admin-auth-user", "configuration-business-name",
+    "public-page-preview-name", "public-page-preview-copy", "dashboard-live-region",
+    "agenda-live-region", "conversation-feedback", "business-settings-feedback", "services-feedback",
+    "staff-feedback", "availability-settings-feedback", "availability-exceptions-feedback",
+    "growth-reviews-feedback", "channel-onboarding-feedback", "channel-instagram-feedback",
+    "channel-whatsapp-feedback", "admin-brand-feedback"
+  ]) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = "";
+  }
+
+  for (const id of [
+    "dashboard-stat-today", "dashboard-stat-pending", "dashboard-stat-messages", "stat-total",
+    "stat-requested", "stat-confirmed", "stat-completed", "stat-reviews-pending",
+    "stat-reviews-copied", "stat-reviews-sent", "stat-messages-pending", "stat-messages-opened",
+    "stat-messages-sent", "stat-services-active", "message-count-pending", "message-count-opened",
+    "message-count-sent", "message-count-skipped", "review-metric-candidates", "review-metric-prepared",
+    "review-metric-sent", "review-metric-failed", "growth-result-detected", "growth-result-prepared",
+    "growth-result-sent", "growth-result-booked", "growth-result-completed", "growth-result-revenue"
+  ]) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = "0";
+  }
+
+  document.querySelectorAll("#admin-app form").forEach((form) => form.reset());
+  for (const id of ["conversation-search", "agenda-customer-search"]) {
+    const field = document.getElementById(id);
+    if (field) field.value = "";
+  }
+  for (const id of ["booking-staff-filter", "agenda-service-filter"]) {
+    const field = document.getElementById(id);
+    if (field) field.innerHTML = '<option value="">Todos</option>';
+  }
+
+  document.querySelectorAll("[id^='business-setting-']").forEach((field) => {
+    if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+      if (field.type === "checkbox") field.checked = false;
+      else if (field.type !== "color") field.value = "";
+    }
+  });
+  const logo = document.getElementById("admin-logo-preview");
+  logo?.removeAttribute("src");
+  if (logo) logo.hidden = true;
+  const instagramDetailTitle = document.getElementById("admin-instagram-detail-title");
+  if (instagramDetailTitle) instagramDetailTitle.textContent = "Selecciona una publicación";
+  const instagramDetailClose = document.getElementById("admin-instagram-detail-close");
+  if (instagramDetailClose) instagramDetailClose.hidden = true;
+  for (const id of ["public-page-link", "configuration-public-link", "public-page-preview-link"]) {
+    document.getElementById(id)?.removeAttribute("href");
+  }
+  const permissionFeedback = document.getElementById("admin-permission-feedback");
+  if (permissionFeedback) {
+    permissionFeedback.textContent = "";
+    permissionFeedback.hidden = true;
+  }
+  const operationalBanner = document.getElementById("business-operational-banner");
+  if (operationalBanner) operationalBanner.hidden = true;
+  for (const id of ["business-operational-banner-title", "business-operational-banner-message"]) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = "";
+  }
+}
 
 function getBusinessSlug() {
   const params = new URLSearchParams(window.location.search);
@@ -4381,6 +4636,15 @@ async function loadBookings({ background = false } = {}) {
     });
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/bookings?${range.toString()}`);
 
+    if (response.status === 404 && currentBusiness?.status && currentBusiness.status !== "active") {
+      allBookings = [];
+      bookingsFingerprint = "[]";
+      setDashboardDataState("bookings", "ready");
+      list.setAttribute("aria-busy", "false");
+      renderStats(allBookings);
+      renderBookings();
+      return;
+    }
     if (!response.ok) throw new Error("No se pudieron cargar las reservas.");
 
     const data = await response.json();
@@ -8755,13 +9019,8 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function showAdminLogin(message = "Inicia sesión con la cuenta asignada al negocio.", denied = false) {
-  stopAdminPolling();
-  adminAuthUser = null;
-  currentBusiness = null;
-  lastBusinessOperationalStatus = null;
-  businessCapabilities = {
-    essential: { available: false }, growth: { available: false }, social: { available: false }
-  };
+  resetAdminSessionState();
+  renderAdminSessionNeutralState();
   document.getElementById("admin-app").hidden = true;
   document.getElementById("admin-auth-gate").hidden = false;
   document.getElementById("admin-auth-message").textContent = message;
@@ -8774,15 +9033,19 @@ async function showAdminLogin(message = "Inicia sesión con la cuenta asignada a
 }
 
 async function bootstrapAdminAuth() {
+  const sessionGeneration = resetAdminSessionState();
+  renderAdminSessionNeutralState();
+  document.getElementById("admin-app").hidden = true;
+  document.getElementById("admin-auth-gate").hidden = false;
+  document.getElementById("admin-auth-message").textContent = "Comprobando acceso…";
   try {
     adminAuthUser = await AutonoGrowAuth.getMe();
+    assertAdminSessionCurrent(sessionGeneration);
     if (!adminAuthUser) return showAdminLogin();
     const slug = getBusinessSlug();
     adminMembership = adminAuthUser.businesses.find((item) => item.slug === slug) || null;
     const allowed = adminAuthUser.is_owner || Boolean(adminMembership);
     if (!allowed) return showAdminLogin("Tu cuenta no tiene acceso a este negocio.", true);
-    document.getElementById("admin-auth-gate").hidden = true;
-    document.getElementById("admin-app").hidden = false;
     document.getElementById("admin-auth-user").textContent = adminAuthUser.name || adminAuthUser.email;
     applyRoleVisibility();
     const oauthResult = new URLSearchParams(window.location.search).get("instagram_oauth");
@@ -8791,16 +9054,23 @@ async function bootstrapAdminAuth() {
       if (feedback) feedback.textContent = oauthResult === "pending_review" ? "Instagram conectado. La cuenta queda pendiente de revisión por AutonoGrow." : "No se pudo completar Instagram Login. Inicia un nuevo intento.";
     }
     await loadAdminPanel();
+    assertAdminSessionCurrent(sessionGeneration);
+    document.getElementById("admin-auth-gate").hidden = true;
+    document.getElementById("admin-app").hidden = false;
     if (currentBusiness) startAdminPolling();
   } catch (error) {
+    if (error.name === "AdminSessionStaleError") return;
     console.error("Admin authentication failed", error);
     await showAdminLogin(error.message);
   }
 }
 
 async function adminLogout() {
-  stopAdminPolling();
+  resetAdminSessionState();
+  renderAdminSessionNeutralState();
+  document.getElementById("admin-app").hidden = true;
+  document.getElementById("admin-auth-gate").hidden = false;
+  document.getElementById("admin-auth-message").textContent = "Cerrando sesión…";
   await AutonoGrowAuth.logout();
-  adminAuthUser = null;
   await showAdminLogin();
 }
