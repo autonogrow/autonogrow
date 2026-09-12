@@ -199,7 +199,7 @@ def test_claim_revokes_guest_bearer_preserves_strong_ownership_and_sanitizes_aud
 
 
 def test_attachment_authorization_uses_same_guest_lifecycle_and_cross_scope(db: Session) -> None:
-    now = datetime(2026, 9, 1, 12)
+    now = datetime.now()
     booking = seed_booking(db, slug="attachments-a", start=now + timedelta(days=1))
     foreign = seed_booking(db, slug="attachments-b", start=now + timedelta(days=1))
     token = create_booking_manage_token(booking, now=now)

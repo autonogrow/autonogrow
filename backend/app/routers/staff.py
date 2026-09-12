@@ -157,7 +157,7 @@ def serialize_member(member: BusinessUser) -> dict:
         "avatar_url": member.avatar_url,
         "removed_at": member.removed_at.isoformat() if member.removed_at else None,
         "pending": member.user.google_sub is None,
-        "service_ids": sorted(service.id for service in member.services if service.active),
+        "service_ids": sorted(service.id for service in member.services),
     }
 
 
@@ -503,7 +503,12 @@ def update_staff_services(
             detail="All services must be active and belong to this business",
         )
 
-    member.services = services
+    inactive_assignments = [
+        service
+        for service in member.services
+        if service.business_id == business.id and not service.active
+    ]
+    member.services = [*services, *inactive_assignments]
     member.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(member)
@@ -515,7 +520,7 @@ def update_staff_services(
         business_id=business.id,
         resource_type="business_user",
         resource_id=member.id,
-        metadata={"service_ids": payload.service_ids},
+        metadata={"service_ids": sorted(service.id for service in member.services)},
     )
     return {"ok": True, "staff_member": serialize_member(member)}
 

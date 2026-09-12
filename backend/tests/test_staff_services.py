@@ -13,11 +13,16 @@ from app.models import (
     BusinessUserService,
     User,
 )
+from app.routers.admin import admin_update_service
 from app.routers.staff import (
     StaffServicesUpdate,
+    StaffUpdate,
     list_public_staff,
+    list_staff,
+    update_staff,
     update_staff_services,
 )
+from app.schemas.service import AdminServiceUpdate
 
 
 class StaffServicesTest(unittest.TestCase):
@@ -123,6 +128,92 @@ class StaffServicesTest(unittest.TestCase):
                 db=self.db,
             )
         self.assertEqual(conflict.exception.status_code, 409)
+
+    def test_deactivate_profile_edit_and_reactivate_preserve_assignments(self):
+        update_staff_services(
+            self.business.slug,
+            self.staff.id,
+            StaffServicesUpdate(service_ids=[self.service_1.id, self.service_2.id]),
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )
+
+        admin_update_service(
+            self.business.slug,
+            self.service_1.id,
+            AdminServiceUpdate(active=False),
+            db=self.db,
+        )
+        admin_update_service(
+            self.business.slug,
+            self.service_1.id,
+            AdminServiceUpdate(active=False),
+            db=self.db,
+        )
+
+        serialized = list_staff(self.business.slug, db=self.db)["staff"]
+        serialized_staff = next(item for item in serialized if item["id"] == self.staff.id)
+        self.assertEqual(
+            serialized_staff["service_ids"],
+            [self.service_1.id, self.service_2.id],
+        )
+
+        update_staff(
+            self.business.slug,
+            self.staff.id,
+            StaffUpdate(public_name="Edited while inactive"),
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )
+        update_staff_services(
+            self.business.slug,
+            self.staff.id,
+            StaffServicesUpdate(service_ids=[self.service_2.id]),
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )
+
+        admin_update_service(
+            self.business.slug,
+            self.service_1.id,
+            AdminServiceUpdate(active=True),
+            db=self.db,
+        )
+        admin_update_service(
+            self.business.slug,
+            self.service_1.id,
+            AdminServiceUpdate(active=True),
+            db=self.db,
+        )
+        refreshed = list_staff(self.business.slug, db=self.db)["staff"]
+        refreshed_staff = next(item for item in refreshed if item["id"] == self.staff.id)
+        self.assertEqual(
+            refreshed_staff["service_ids"],
+            [self.service_1.id, self.service_2.id],
+        )
+        update_staff(
+            self.business.slug,
+            self.staff.id,
+            StaffUpdate(public_name="Edited after reactivation"),
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )
+        update_staff_services(
+            self.business.slug,
+            self.staff.id,
+            StaffServicesUpdate(service_ids=refreshed_staff["service_ids"]),
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )
+        self.assertEqual(
+            sorted(service.id for service in self.staff.services),
+            [self.service_1.id, self.service_2.id],
+        )
 
 
 class StaffServicesMigrationTest(unittest.TestCase):

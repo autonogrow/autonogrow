@@ -32,7 +32,9 @@ from app.routers.social_content_workflow import router as owner_social_router
 from app.services.capability_service import configure_business_modules
 from app.services.instagram_content_service import ensure_promotion_window
 
-NOW = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
+PROMOTION_VALID_FROM = NOW + timedelta(days=1)
+PROMOTION_VALID_UNTIL = NOW + timedelta(days=8)
 
 
 @pytest.fixture
@@ -340,8 +342,8 @@ def test_owner_interest_creates_one_admin_review_and_approved_promotion_generati
             "regular_price": "40.00",
             "promotional_price": "30.00",
             "currency": "EUR",
-            "valid_from": "2026-09-01T00:00:00Z",
-            "valid_until": "2026-09-08T00:00:00Z",
+            "valid_from": PROMOTION_VALID_FROM.isoformat(),
+            "valid_until": PROMOTION_VALID_UNTIL.isoformat(),
             "days": [0, 1, 2, 3, 4],
             "scope": "Servicio de manicura",
         },
@@ -385,11 +387,9 @@ def test_owner_interest_creates_one_admin_review_and_approved_promotion_generati
     assert "rentab" not in json.dumps(package, ensure_ascii=False).lower()
     assert ctx["service"].price_amount == Decimal("40.00")
     content = ctx["proposal"].generated_content
-    ensure_promotion_window(ctx["db"], content, datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc))
+    ensure_promotion_window(ctx["db"], content, PROMOTION_VALID_FROM + timedelta(days=1))
     with pytest.raises(HTTPException) as exc:
-        ensure_promotion_window(
-            ctx["db"], content, datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
-        )
+        ensure_promotion_window(ctx["db"], content, PROMOTION_VALID_UNTIL + timedelta(days=1))
     assert exc.value.status_code == 409
     actions = {row.action for row in ctx["db"].query(AuditLog).all()}
     assert {
@@ -426,8 +426,8 @@ def test_promotion_revision_and_business_idor_are_enforced(workflow_context):
             "regular_price": "41.00",
             "promotional_price": "36.00",
             "currency": "EUR",
-            "valid_from": "2026-09-01T00:00:00Z",
-            "valid_until": "2026-09-08T00:00:00Z",
+            "valid_from": PROMOTION_VALID_FROM.isoformat(),
+            "valid_until": PROMOTION_VALID_UNTIL.isoformat(),
             "days": [],
             "scope": "Manicura",
         },

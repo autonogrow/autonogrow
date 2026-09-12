@@ -103,6 +103,7 @@ def serialize_business_settings(business: Business) -> dict:
         "template_key": business.template_key,
         "logo_url": business.logo_url,
         "logo_alt": business.logo_alt,
+        "status": business.status,
         "active": business.status == "active",
     }
 

@@ -88,6 +88,139 @@ def test_admin_controlled_login_navigation_and_owner_separation(journey) -> None
     assert page.locator("[data-tab='operations']").count() == 0
 
 
+def test_admin_business_status_controls_banner_and_submit_state(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import Business
+
+    _session, page = _open_admin(journey)
+    settings = page.request.get("/api/admin/businesses/salon-e2e/settings").json()
+    assert settings["status"] == "active"
+    assert settings["active"] is True
+    expect(page.locator("body")).not_to_have_class(re.compile("business-non-operational"))
+    expect(page.locator("#business-operational-banner")).to_be_hidden()
+    expect(page.locator("#admin-instagram-raw-form button[type='submit']")).to_be_enabled()
+
+    with SessionLocal() as db:
+        business = db.query(Business).filter(Business.slug == "salon-e2e").one()
+        business.status = "suspended"
+        db.commit()
+
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#admin-app")).to_be_visible()
+    expect(page.locator("body")).to_have_class(re.compile("business-non-operational"))
+    expect(page.locator("#business-operational-banner")).to_be_visible()
+    expect(page.locator("#business-operational-banner-title")).to_have_text(
+        "Este negocio está suspendido"
+    )
+    expect(page.locator("#admin-instagram-raw-form button[type='submit']")).to_be_disabled()
+
+
+def test_service_deactivate_reactivate_preserves_team_assignments(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import Business, BusinessService, BusinessUserService
+
+    _session, page = _open_admin(journey)
+    services_path = "/api/admin/businesses/salon-e2e/services"
+    staff_path = "/api/admin/businesses/salon-e2e/staff"
+    service = next(
+        item
+        for item in page.request.get(services_path).json()["services"]
+        if item["name"] == "Corte E2E"
+    )
+    service_id = service["id"]
+    initial_staff = page.request.get(staff_path).json()["staff"]
+    initial_service_ids = {
+        item["id"]: item["service_ids"]
+        for item in initial_staff
+        if service_id in item["service_ids"]
+    }
+    assigned_member_ids = set(initial_service_ids)
+    assert len(assigned_member_ids) == 2
+    with SessionLocal() as db:
+        other_business_id = db.query(Business.id).filter(Business.slug == "fisio-e2e").scalar()
+        other_assignment_count = (
+            db.query(BusinessUserService)
+            .join(BusinessService, BusinessUserService.service_id == BusinessService.id)
+            .filter(BusinessService.business_id == other_business_id)
+            .count()
+        )
+
+    page.evaluate("showAdminSection('services')")
+    service_card = page.locator(".admin-service-item", has_text="Corte E2E")
+    page.once("dialog", lambda dialog: dialog.accept())
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH" and response.url.endswith(f"/services/{service_id}")
+        )
+    ):
+        service_card.locator(".service-active").uncheck()
+        service_card.get_by_role("button", name="Guardar servicio").click()
+
+    public_services = page.request.get("/api/businesses/salon-e2e/services").json()
+    assert service_id not in {item["id"] for item in public_services}
+    public_session = journey()
+    landing = public_session.goto("/autonogrow-landing/?b=salon-e2e")
+    expect(
+        landing.locator("#booking-service-options .choice-button", has_text="Corte E2E")
+    ).to_have_count(0)
+    assert (
+        page.request.get(f"/api/businesses/salon-e2e/staff?service_id={service_id}").status == 404
+    )
+    assert (
+        page.request.get(
+            f"/api/businesses/salon-e2e/available-slots?service_id={service_id}&date=2030-01-02"
+        ).status
+        == 404
+    )
+    assert "Corte E2E" in {
+        item["service_name"]
+        for item in page.request.get("/api/admin/businesses/salon-e2e/bookings").json()["bookings"]
+    }
+    inactive_staff = page.request.get(staff_path).json()["staff"]
+    assert {
+        item["id"]: item["service_ids"]
+        for item in inactive_staff
+        if item["id"] in assigned_member_ids
+    } == initial_service_ids
+    assert assigned_member_ids == {
+        item["id"] for item in inactive_staff if service_id in item["service_ids"]
+    }
+
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#admin-app")).to_be_visible()
+    page.evaluate("showAdminSection('services')")
+    service_card = page.locator(".admin-service-item", has_text="Corte E2E")
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH" and response.url.endswith(f"/services/{service_id}")
+        )
+    ):
+        service_card.locator(".service-active").check()
+        service_card.get_by_role("button", name="Guardar servicio").click()
+
+    page.evaluate("showAdminSection('staff')")
+    for member_id in assigned_member_ids:
+        expect(
+            page.locator(
+                f"[data-staff-id='{member_id}'] .staff-service-checkbox[value='{service_id}']"
+            )
+        ).to_be_checked()
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#admin-app")).to_be_visible()
+    final_staff = page.request.get(staff_path).json()["staff"]
+    assert {
+        item["id"]: item["service_ids"] for item in final_staff if item["id"] in assigned_member_ids
+    } == initial_service_ids
+    with SessionLocal() as db:
+        assert (
+            db.query(BusinessUserService)
+            .join(BusinessService, BusinessUserService.service_id == BusinessService.id)
+            .filter(BusinessService.business_id == other_business_id)
+            .count()
+            == other_assignment_count
+        )
+
+
 def test_growth_disabled_hides_its_surface_and_api_fails_closed(journey) -> None:
     from app.core.database import SessionLocal
     from app.models import Business

@@ -209,24 +209,42 @@ function moduleAvailable(moduleKey) {
 
 function applyOperationalBusinessState(status = currentBusiness?.status) {
   const operational = status === "active";
+  const suspended = status === "suspended";
+  const archived = status === "archived";
   const banner = document.getElementById("business-operational-banner");
   const title = document.getElementById("business-operational-banner-title");
   const message = document.getElementById("business-operational-banner-message");
   document.body.classList.toggle("business-non-operational", !operational);
+  document.querySelectorAll("#admin-main-content button[type='submit'], #admin-main-content input[type='submit']")
+    .forEach((control) => {
+      if (!operational && control.dataset.businessStatusDisabled === undefined) {
+        control.dataset.businessStatusDisabled = String(control.disabled);
+      }
+      if (!operational) control.disabled = true;
+      else if (control.dataset.businessStatusDisabled !== undefined) {
+        control.disabled = control.dataset.businessStatusDisabled === "true";
+        delete control.dataset.businessStatusDisabled;
+      }
+    });
   if (!banner || !title || !message) return;
-  banner.hidden = operational || !status;
-  if (operational || !status) return;
-  const archived = status === "archived";
-  title.textContent = archived ? "Este negocio está archivado" : "Este negocio está suspendido";
+  banner.hidden = operational;
+  if (operational) return;
+  title.textContent = archived
+    ? "Este negocio está archivado"
+    : suspended
+      ? "Este negocio está suspendido"
+      : "Estado operacional no disponible";
   message.textContent = archived
     ? "Puedes consultar el histórico, pero las operaciones y acciones externas están deshabilitadas."
-    : "Las operaciones están temporalmente deshabilitadas. Puedes consultar el histórico mientras Owner revisa la reactivación.";
+    : suspended
+      ? "Las operaciones están temporalmente deshabilitadas. Puedes consultar el histórico mientras Owner revisa la reactivación."
+      : "No se pudo verificar el estado del negocio. Recarga la página antes de realizar cambios.";
 }
 
 document.addEventListener("submit", (event) => {
-  if (currentBusiness?.status && currentBusiness.status !== "active") {
+  if (currentBusiness && currentBusiness?.status !== "active" && event.target.closest("#admin-main-content")) {
     event.preventDefault();
-    applyOperationalBusinessState(currentBusiness.status);
+    applyOperationalBusinessState(currentBusiness?.status);
   }
 }, true);
 

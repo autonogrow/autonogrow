@@ -14,6 +14,7 @@ from app.core.security import (
     require_business_operational_status_by_id,
 )
 from app.models import Business, BusinessUser, Conversation, User
+from app.routers.admin import get_business_settings
 from app.services.conversation_automation_service import process_inbound_automation
 from app.services.conversation_service import add_message
 
@@ -112,6 +113,16 @@ def test_active_business_keeps_existing_admin_and_staff_operations(status_contex
     assert require_business_admin(active.slug, admin, db) is admin
 
 
+@pytest.mark.parametrize("status", ("active", "suspended", "archived"))
+def test_admin_settings_exposes_canonical_business_status(status_context, status):
+    db, businesses, *_ = status_context
+
+    settings = get_business_settings(businesses[status].slug, db=db)
+
+    assert settings["status"] == status
+    assert settings["active"] is (status == "active")
+
+
 @pytest.mark.parametrize("status", ("suspended", "archived"))
 def test_owner_operational_routes_do_not_bypass_business_status(status_context, status):
     db, businesses, *_ = status_context
@@ -162,3 +173,18 @@ def test_admin_frontend_distinguishes_operational_403_from_access_denial():
     assert "lastBusinessOperationalStatus" in js
     assert "applyOperationalBusinessState" in js
     assert "business-non-operational" in css
+
+
+def test_admin_frontend_status_contract_is_explicit_and_fail_closed():
+    js = (ROOT / "autonogrow-admin" / "admin.js").read_text(encoding="utf-8")
+    block = js.split("function applyOperationalBusinessState", 1)[1].split(
+        "function configurationCategoryForKey", 1
+    )[0]
+
+    assert 'status === "active"' in block
+    assert 'status === "suspended"' in block
+    assert 'status === "archived"' in block
+    assert "Estado operacional no disponible" in block
+    assert "banner.hidden = operational" in block
+    assert "control.disabled = true" in block
+    assert 'currentBusiness?.status !== "active"' in block
