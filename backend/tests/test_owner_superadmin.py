@@ -26,6 +26,7 @@ from app.routers.admin import (
 )
 from app.routers.auth import serialize_user
 from app.routers.businesses import get_business
+from app.routers.owner import update_owner_business_publication
 from app.routers.staff import (
     StaffServicesUpdate,
     StaffUpdate,
@@ -35,6 +36,7 @@ from app.routers.staff import (
     update_staff_services,
 )
 from app.schemas.business import BusinessSettingsUpdate
+from app.schemas.owner import OwnerBusinessPublicationUpdate
 from app.schemas.service import AdminServiceCreate, AdminServiceUpdate
 
 
@@ -155,7 +157,7 @@ class OwnerSuperadminTest(unittest.TestCase):
         self.assertEqual(settings["name"], "Owner business")
         updated = update_business_settings(
             self.business.slug,
-            BusinessSettingsUpdate(name="Managed by owner", active=True),
+            BusinessSettingsUpdate(name="Managed by owner"),
             self.request(),
             actor=self.owner,
             db=self.db,
@@ -232,17 +234,38 @@ class OwnerSuperadminTest(unittest.TestCase):
         )
         self.assertGreaterEqual(owner_audits, 5)
 
-    def test_public_page_toggle_persists_for_admin_and_owner_without_changing_tenant(self):
-        hidden = update_business_settings(
+    def test_public_page_publication_is_owner_only_and_does_not_change_tenant(self):
+        with self.assertRaises(HTTPException) as denied:
+            update_business_settings(
+                self.business.slug,
+                BusinessSettingsUpdate(name=self.business.name, active=False),
+                self.request(),
+                actor=self.admin_user,
+                db=self.db,
+            )
+        self.assertEqual(denied.exception.status_code, 403)
+        self.assertEqual(denied.exception.detail["code"], "owner_only_publication")
+        self.assertFalse(self.business.seo_noindex)
+
+        updated = update_business_settings(
             self.business.slug,
-            BusinessSettingsUpdate(name=self.business.name, active=False),
+            BusinessSettingsUpdate(name="Updated by admin"),
             self.request(),
             actor=self.admin_user,
             db=self.db,
         )
+        self.assertEqual(updated["settings"]["name"], "Updated by admin")
+        self.assertTrue(updated["settings"]["active"])
 
+        hidden = update_owner_business_publication(
+            self.business.id,
+            OwnerBusinessPublicationUpdate(published=False, reason="Owner support action"),
+            self.request(),
+            actor=self.owner,
+            db=self.db,
+        )
         self.assertTrue(self.business.seo_noindex)
-        self.assertFalse(hidden["settings"]["active"])
+        self.assertFalse(hidden["business"]["published"])
         self.assertFalse(get_business_settings(self.business.slug, db=self.db)["active"])
         with self.assertRaises(HTTPException) as unavailable:
             get_business(self.business.slug, db=self.db)
@@ -250,16 +273,16 @@ class OwnerSuperadminTest(unittest.TestCase):
         self.assertFalse(self.other_business.seo_noindex)
         self.assertTrue(get_business_settings(self.other_business.slug, db=self.db)["active"])
 
-        restored = update_business_settings(
-            self.business.slug,
-            BusinessSettingsUpdate(name=self.business.name, active=True),
+        restored = update_owner_business_publication(
+            self.business.id,
+            OwnerBusinessPublicationUpdate(published=True, reason="Owner restores publication"),
             self.request(),
             actor=self.owner,
             db=self.db,
         )
 
         self.assertFalse(self.business.seo_noindex)
-        self.assertTrue(restored["settings"]["active"])
+        self.assertTrue(restored["business"]["published"])
         self.assertEqual(get_business(self.business.slug, db=self.db).id, self.business.id)
 
     def test_reviews_url_schema_accepts_existing_web_contract_and_rejects_unsafe_values(self):

@@ -102,6 +102,15 @@ def test_business_state_readiness_publication_admin_and_channels_are_separate() 
         "Readiness",
     ):
         assert layer in activation
+    for contract in (
+        'business.published ? "Publicada" : "Despublicada"',
+        "data-owner-publication",
+        "Despublicar página",
+        "Publicar página",
+        "Para vacaciones o cierres temporales usa las excepciones de disponibilidad.",
+        "/publication",
+    ):
+        assert contract in hub
     summary = hub.split("function ownerBusinessSummary", 1)[1].split(
         "function renderOwnerBusinessDetail", 1
     )[0]

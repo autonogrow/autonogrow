@@ -347,25 +347,61 @@ def test_admin_business_status_controls_banner_and_submit_state(journey) -> None
     expect(page.locator("#admin-instagram-raw-form button[type='submit']")).to_be_disabled()
 
 
-def test_public_page_toggle_persists_hides_landing_and_restores(journey) -> None:
-    _session, page = _open_admin(journey)
-    page.evaluate("showAdminSection('public-page')")
-    toggle = page.locator("#business-setting-active")
-    expect(toggle).to_be_checked()
+def test_public_page_publication_is_owner_only_and_persists_both_states(journey) -> None:
+    _admin_session, admin = _open_admin(journey)
+    admin.evaluate("showAdminSection('public-page')")
+    expect(admin.locator("#public-page-publication-status")).to_have_text(
+        "Publicada. La publicación global la gestiona Owner."
+    )
+    assert admin.locator("#business-setting-active").count() == 0
 
-    with page.expect_response(
+    _admin_session.expect_response_error(403, "PATCH", "/settings")
+    denied = admin.evaluate(
+        """async () => {
+          const response = await fetch('/api/admin/businesses/salon-e2e/settings', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Salón E2E', active: false })
+          });
+          return { status: response.status, body: await response.json() };
+        }"""
+    )
+    assert denied["status"] == 403
+    assert denied["body"]["detail"]["code"] == "owner_only_publication"
+    assert admin.request.get("/api/businesses/salon-e2e").status == 200
+
+    admin.locator("#business-setting-logo-alt").fill("Logo gobernado por Owner")
+    with admin.expect_response(
         lambda response: response.request.method == "PATCH"
         and response.url.endswith("/api/admin/businesses/salon-e2e/settings")
-    ):
-        toggle.uncheck()
-        page.locator("#save-public-page-settings").click()
-    expect(page.locator("#admin-brand-feedback")).to_have_text("Guardado correctamente.")
+    ) as normal_settings:
+        admin.locator("#save-public-page-settings").click()
+    assert normal_settings.value.status == 200
+    expect(admin.locator("#admin-brand-feedback")).to_have_text("Guardado correctamente.")
 
-    page.reload(wait_until="domcontentloaded")
-    expect(page.locator("#admin-app")).to_be_visible()
-    page.evaluate("showAdminSection('public-page')")
-    expect(page.locator("#business-setting-active")).not_to_be_checked()
-    assert page.request.get("/api/businesses/salon-e2e").status == 404
+    owner_session = journey(email="owner@e2e.test")
+    owner = owner_session.goto("/autonogrow-owner/")
+    expect(owner.locator("#owner-app")).to_be_visible()
+    owner.locator('[data-tab="businesses"]').click()
+    row = owner.locator('[data-business-row-id]').filter(has_text="Salón E2E")
+    expect(row).to_be_visible()
+    row.get_by_role("button", name="Abrir negocio").click()
+    owner.locator('[data-owner-detail-tab="activation"]').click()
+    expect(owner.locator('[data-owner-detail-panel="activation"]')).to_contain_text(
+        "Para vacaciones o cierres temporales usa las excepciones de disponibilidad."
+    )
+
+    owner.locator('[data-owner-publication]').click()
+    owner.locator("#owner-dialog-reason").fill("Prueba E2E de gobernanza")
+    with owner.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/publication")
+    ) as unpublished:
+        owner.locator("#owner-dialog-confirm").click()
+    assert unpublished.value.status == 200
+    expect(owner.locator('[data-owner-publication]')).to_have_text("Publicar página")
+    assert owner.request.get("/api/businesses/salon-e2e").status == 404
+    assert owner.request.get("/api/businesses/fisio-e2e").status == 200
 
     public_session = journey()
     public_session.expect_response_error(404, "GET", "/api/businesses/salon-e2e")
@@ -373,16 +409,16 @@ def test_public_page_toggle_persists_hides_landing_and_restores(journey) -> None
     expect(landing.locator("#landing-unavailable")).to_be_visible()
     expect(landing.locator("#landing-app")).to_be_hidden()
 
-    with page.expect_response(
+    owner.locator('[data-owner-publication]').click()
+    owner.locator("#owner-dialog-reason").fill("Restaurar tras prueba E2E")
+    with owner.expect_response(
         lambda response: response.request.method == "PATCH"
-        and response.url.endswith("/api/admin/businesses/salon-e2e/settings")
-    ):
-        page.locator("#business-setting-active").check()
-        page.locator("#save-public-page-settings").click()
-    page.reload(wait_until="domcontentloaded")
-    page.evaluate("showAdminSection('public-page')")
-    expect(page.locator("#business-setting-active")).to_be_checked()
-    assert page.request.get("/api/businesses/salon-e2e").status == 200
+        and response.url.endswith("/publication")
+    ) as published:
+        owner.locator("#owner-dialog-confirm").click()
+    assert published.value.status == 200
+    expect(owner.locator('[data-owner-publication]')).to_have_text("Despublicar página")
+    assert owner.request.get("/api/businesses/salon-e2e").status == 200
 
 
 def test_legitimate_admin_forbidden_responses_keep_valid_sessions_visible(journey) -> None:
@@ -450,7 +486,7 @@ def test_reviews_url_backend_rejects_unsafe_value_without_overwriting(journey) -
     accepted = page.request.patch(
         settings_path,
         headers={"X-CSRF-Token": csrf},
-        data={"name": original["name"], "active": original["active"], "reviews_url": safe_url},
+        data={"name": original["name"], "reviews_url": safe_url},
     )
     assert accepted.status == 200
 
@@ -459,7 +495,6 @@ def test_reviews_url_backend_rejects_unsafe_value_without_overwriting(journey) -
         headers={"X-CSRF-Token": csrf},
         data={
             "name": original["name"],
-            "active": original["active"],
             "reviews_url": "javascript:alert(1)",
         },
     )
@@ -471,7 +506,6 @@ def test_reviews_url_backend_rejects_unsafe_value_without_overwriting(journey) -
         headers={"X-CSRF-Token": csrf},
         data={
             "name": original["name"],
-            "active": original["active"],
             "reviews_url": original["reviews_url"],
         },
     )

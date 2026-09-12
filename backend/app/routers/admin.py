@@ -181,6 +181,14 @@ def update_business_settings(
     db: Session = Depends(get_db),
 ):
     business = get_admin_business_or_404(db, business_slug)
+    if "active" in payload.model_fields_set:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "owner_only_publication",
+                "message": "La publicación global de la página solo puede gestionarla Owner.",
+            },
+        )
     if payload.phone:
         try:
             normalize_whatsapp_phone(payload.phone)
@@ -195,7 +203,6 @@ def update_business_settings(
         updates = resolve_branding(updates)
     for field, value in updates.items():
         setattr(business, field, value)
-    business.seo_noindex = not payload.active
     db.commit()
     db.refresh(business)
     record_audit(

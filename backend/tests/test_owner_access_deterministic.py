@@ -13,6 +13,7 @@ from app.core.security import get_current_user, has_owner_access, require_owner
 from app.models import Business, BusinessUser, User
 from app.routers.auth import router as auth_router
 from app.routers.auth import serialize_user
+from app.routers.owner import router as owner_router
 from app.routers.owner_onboarding import router as owner_onboarding_router
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -116,7 +117,12 @@ def access_client(db, owner_allowlist):
     owner = user()
     normal = user("normal@example.test")
     admin_user = user("admin@example.test")
-    business = Business(name="Existing business", slug="existing-business", status="active")
+    business = Business(
+        name="Existing business",
+        slug="existing-business",
+        status="active",
+        seo_noindex=False,
+    )
     db.add_all([owner, normal, admin_user, business])
     db.flush()
     db.add(
@@ -132,6 +138,7 @@ def access_client(db, owner_allowlist):
     current = {"user": normal}
     app = FastAPI()
     app.include_router(auth_router)
+    app.include_router(owner_router)
     app.include_router(owner_onboarding_router)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: current["user"]
@@ -173,6 +180,20 @@ def test_effective_owner_can_post_owner_onboarding(access_client) -> None:
     )
     assert response.status_code == 201
     assert response.json()["business"]["slug"] == "owner-allowed"
+
+
+def test_publication_endpoint_rejects_business_admin_and_allows_owner(access_client) -> None:
+    client, current, owner, _normal, admin = access_client
+    payload = {"published": False, "reason": "Exceptional support action"}
+
+    current["user"] = admin
+    denied = client.patch("/api/owner/businesses/1/publication", json=payload)
+    assert denied.status_code == 403
+
+    current["user"] = owner
+    updated = client.patch("/api/owner/businesses/1/publication", json=payload)
+    assert updated.status_code == 200
+    assert updated.json()["business"]["published"] is False
 
 
 def test_auth_me_reports_effective_owner(access_client) -> None:

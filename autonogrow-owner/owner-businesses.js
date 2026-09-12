@@ -225,7 +225,7 @@ function ownerUsersEditor(business) {
 
 function ownerActivationPanel(business) {
   const status = ownerBusinessStatus(business);
-  return `<section class="owner-detail-block" data-owner-detail-panel="activation" hidden><header><div><h3>Activación y estado</h3><p>Onboarding, readiness, publicación y estado comercial se comprueban por separado.</p></div><button class="button button-secondary button-small" type="button" data-owner-readiness-refresh="${escapeHtml(business.id)}">Comprobar readiness</button></header><div class="owner-activation-layers"><p><strong>Onboarding</strong>${escapeHtml(OWNER_ONBOARDING_STATUSES.has(status) ? ownerBusinessStatusLabel(status) : status === "active" ? "Completado" : "No activo")}</p><p><strong>Estado comercial</strong>${escapeHtml(ownerBusinessStatusLabel(status))}</p><p><strong>Página pública</strong>${status === "active" ? "Publicada según la configuración vigente" : "No publicada como negocio activo"}</p><p><strong>Readiness</strong><span data-owner-readiness-summary>Sin comprobar en esta vista</span></p></div><div data-owner-readiness-content class="readiness-list"><p class="owner-empty-inline">Comprueba readiness para ver bloqueos y recomendaciones actuales.</p></div><div data-owner-preview-content></div><div class="owner-detail-actions"><button class="button button-secondary" type="button" data-owner-business-onboarding="${escapeHtml(business.id)}">Volver al onboarding</button><button class="button button-secondary" type="button" data-owner-preview="${escapeHtml(business.id)}">Abrir vista previa</button>${status === "active" ? `<button class="button button-danger" type="button" data-business-state-id="${escapeHtml(business.id)}" data-business-status="active">Suspender negocio</button>` : status === "suspended" ? `<button class="button button-primary" type="button" data-business-state-id="${escapeHtml(business.id)}" data-business-status="suspended">Reactivar negocio</button>` : `<button class="button button-primary" type="button" data-owner-activate="${escapeHtml(business.id)}" disabled>Activar negocio</button>`}</div><p data-owner-activation-feedback class="status-text" role="status"></p></section>`;
+  return `<section class="owner-detail-block" data-owner-detail-panel="activation" hidden><header><div><h3>Activación y estado</h3><p>Onboarding, readiness, publicación y estado comercial se comprueban por separado.</p></div><button class="button button-secondary button-small" type="button" data-owner-readiness-refresh="${escapeHtml(business.id)}">Comprobar readiness</button></header><div class="owner-activation-layers"><p><strong>Onboarding</strong>${escapeHtml(OWNER_ONBOARDING_STATUSES.has(status) ? ownerBusinessStatusLabel(status) : status === "active" ? "Completado" : "No activo")}</p><p><strong>Estado comercial</strong>${escapeHtml(ownerBusinessStatusLabel(status))}</p><p><strong>Página pública</strong>${business.published ? "Publicada" : "Despublicada"}</p><p><strong>Readiness</strong><span data-owner-readiness-summary>Sin comprobar en esta vista</span></p></div><p class="owner-partial-notice">Despublicar oculta completamente la página pública. Para vacaciones o cierres temporales usa las excepciones de disponibilidad.</p><div data-owner-readiness-content class="readiness-list"><p class="owner-empty-inline">Comprueba readiness para ver bloqueos y recomendaciones actuales.</p></div><div data-owner-preview-content></div><div class="owner-detail-actions"><button class="button button-secondary" type="button" data-owner-business-onboarding="${escapeHtml(business.id)}">Volver al onboarding</button><button class="button button-secondary" type="button" data-owner-preview="${escapeHtml(business.id)}">Abrir vista previa</button>${status === "active" ? `<button class="button ${business.published ? "button-danger" : "button-primary"}" type="button" data-owner-publication="${escapeHtml(business.id)}" data-owner-published="${business.published ? "true" : "false"}">${business.published ? "Despublicar página" : "Publicar página"}</button><button class="button button-danger" type="button" data-business-state-id="${escapeHtml(business.id)}" data-business-status="active">Suspender negocio</button>` : status === "suspended" ? `<button class="button button-primary" type="button" data-business-state-id="${escapeHtml(business.id)}" data-business-status="suspended">Reactivar negocio</button>` : `<button class="button button-primary" type="button" data-owner-activate="${escapeHtml(business.id)}" disabled>Activar negocio</button>`}</div><p data-owner-activation-feedback class="status-text" role="status"></p></section>`;
 }
 
 function ownerModulesPanel(business) {
@@ -297,7 +297,7 @@ function ownerBusinessSummary(business) {
   const status = ownerBusinessStatus(business);
   const health = business.health || {};
   const incidentsForBusiness = ownerBusinessIncidents(business.id);
-  return `<section class="owner-detail-block" data-owner-detail-panel="summary"><div class="owner-detail-hero"><div><p class="eyebrow">${escapeHtml(business.category || "Negocio")}</p><h3>${escapeHtml(business.name)}</h3><p>${escapeHtml(business.slug)}${business.city ? ` · ${escapeHtml(business.city)}` : ""}</p></div><span class="ag-badge ${status === "active" ? "ag-badge--success" : status === "suspended" ? "ag-badge--danger" : "ag-badge--neutral"}">${escapeHtml(ownerBusinessStatusLabel(status))}</span></div><div class="owner-data-summary"><p><strong>Alta</strong>${escapeHtml(OWNER_ONBOARDING_STATUSES.has(status) ? ownerBusinessStatusLabel(status) : "Completada")}</p><p><strong>Publicación</strong>${status === "active" ? "Activa" : "No activa"}</p><p><strong>Administrador</strong>${escapeHtml(ownerAdminLabel(business))}</p><p><strong>Servicios</strong>${health.has_active_services ? "Configurados" : "Pendientes"}</p><p><strong>Horarios</strong>${health.has_schedule ? "Configurados" : "Pendientes"}</p><p><strong>Canales</strong>${escapeHtml(ownerChannelSummary(business))}</p><p><strong>Incidencias</strong>${incidentsForBusiness === null ? "No se pudo comprobar" : incidentsForBusiness.length}</p><p><strong>Creado</strong>${escapeHtml(formatOwnerDate(business.created_at))}</p></div><div class="owner-detail-actions"><a class="button button-secondary" href="../autonogrow-admin/index.html?b=${encodeURIComponent(business.slug)}" target="_blank" rel="noopener">Abrir Business Admin</a><a class="button button-secondary" href="../autonogrow-landing/index.html?b=${encodeURIComponent(business.slug)}" target="_blank" rel="noopener">Abrir página pública</a><button class="button button-secondary" type="button" data-owner-detail-go="users">Revisar accesos</button><button class="button button-secondary" type="button" data-owner-detail-go="activation">Revisar activación</button><button class="button button-secondary" type="button" data-owner-business-integration="${escapeHtml(business.id)}">Abrir Integraciones</button></div></section>`;
+  return `<section class="owner-detail-block" data-owner-detail-panel="summary"><div class="owner-detail-hero"><div><p class="eyebrow">${escapeHtml(business.category || "Negocio")}</p><h3>${escapeHtml(business.name)}</h3><p>${escapeHtml(business.slug)}${business.city ? ` · ${escapeHtml(business.city)}` : ""}</p></div><span class="ag-badge ${status === "active" ? "ag-badge--success" : status === "suspended" ? "ag-badge--danger" : "ag-badge--neutral"}">${escapeHtml(ownerBusinessStatusLabel(status))}</span></div><div class="owner-data-summary"><p><strong>Alta</strong>${escapeHtml(OWNER_ONBOARDING_STATUSES.has(status) ? ownerBusinessStatusLabel(status) : "Completada")}</p><p><strong>Publicación</strong>${business.published ? "Publicada" : "Despublicada"}</p><p><strong>Administrador</strong>${escapeHtml(ownerAdminLabel(business))}</p><p><strong>Servicios</strong>${health.has_active_services ? "Configurados" : "Pendientes"}</p><p><strong>Horarios</strong>${health.has_schedule ? "Configurados" : "Pendientes"}</p><p><strong>Canales</strong>${escapeHtml(ownerChannelSummary(business))}</p><p><strong>Incidencias</strong>${incidentsForBusiness === null ? "No se pudo comprobar" : incidentsForBusiness.length}</p><p><strong>Creado</strong>${escapeHtml(formatOwnerDate(business.created_at))}</p></div><div class="owner-detail-actions"><a class="button button-secondary" href="../autonogrow-admin/index.html?b=${encodeURIComponent(business.slug)}" target="_blank" rel="noopener">Abrir Business Admin</a><a class="button button-secondary" href="../autonogrow-landing/index.html?b=${encodeURIComponent(business.slug)}" target="_blank" rel="noopener">Abrir página pública</a><button class="button button-secondary" type="button" data-owner-detail-go="users">Revisar accesos</button><button class="button button-secondary" type="button" data-owner-detail-go="activation">Revisar activación</button><button class="button button-secondary" type="button" data-owner-business-integration="${escapeHtml(business.id)}">Abrir Integraciones</button></div></section>`;
 }
 
 function renderOwnerBusinessDetail() {
@@ -555,6 +555,30 @@ async function activateOwnerBusiness(businessId) {
   if (confirmed) await refreshOwnerBusinessContext();
 }
 
+async function changeOwnerBusinessPublication(button) {
+  const businessId = button.dataset.ownerPublication;
+  const business = businesses.find((item) => String(item.id) === String(businessId));
+  if (!business) return;
+  const publishing = button.dataset.ownerPublished !== "true";
+  const confirmed = await confirmOwnerCriticalAction({
+    title: publishing ? "Publicar página" : "Despublicar página",
+    resource: business.name,
+    current: publishing ? "Despublicada" : "Publicada",
+    next: publishing ? "Publicada" : "Despublicada",
+    consequence: publishing
+      ? "La página pública volverá a estar disponible."
+      : "La página pública quedará completamente oculta. Para vacaciones o cierres temporales usa las excepciones de disponibilidad.",
+    confirmLabel: publishing ? "Publicar página" : "Despublicar página",
+    danger: !publishing,
+    action: (reason) => ownerHubRequest(`/api/owner/businesses/${encodeURIComponent(businessId)}/publication`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ published: publishing, reason }),
+    }, "No se pudo cambiar la publicación de la página."),
+  });
+  if (confirmed) await refreshOwnerBusinessContext();
+}
+
 /* Altas y aprobaciones. */
 function ownerOnboardingProgress(session) {
   const completed = new Set([...(session.completed_steps || []), ...(session.skipped_steps || [])]);
@@ -780,6 +804,8 @@ byId("businesses-section").addEventListener("click", (event) => {
   if (preview) { showOwnerBusinessPreview(preview.dataset.ownerPreview); return; }
   const activate = event.target.closest("[data-owner-activate]");
   if (activate) { activateOwnerBusiness(activate.dataset.ownerActivate); return; }
+  const publication = event.target.closest("[data-owner-publication]");
+  if (publication) { changeOwnerBusinessPublication(publication); return; }
   const refreshModules = event.target.closest("[data-owner-modules-refresh]");
   if (refreshModules) loadOwnerModules(refreshModules.dataset.ownerModulesRefresh).catch((error) => { byId("business-detail").querySelector("[data-owner-modules-feedback]").textContent = error.message; });
 });

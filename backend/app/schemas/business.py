@@ -61,7 +61,7 @@ class BusinessSettingsUpdate(BaseModel):
     maps_url: str | None = None
     instagram_url: str | None = None
     reviews_url: str | None = None
-    active: bool
+    active: bool | None = None
     logo_alt: str | None = None
     theme_key: str | None = None
     template_key: str | None = None

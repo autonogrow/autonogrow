@@ -169,6 +169,11 @@ class OwnerBusinessUpdate(BaseModel):
         return value
 
 
+class OwnerBusinessPublicationUpdate(BaseModel):
+    published: bool
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class OwnerBusinessUserCreate(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     role: str = "business_admin"

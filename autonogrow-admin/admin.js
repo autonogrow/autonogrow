@@ -623,7 +623,7 @@ function configurationState(section) {
     if (!currentBusiness || configurationLoadState.gallery === "loading") return { state: "loading", label: "Comprobando…", detail: "Cargando página pública" };
     if (configurationLoadState.gallery === "error") return { state: "error", label: "Error al cargar", detail: "La galería necesita reintento" };
     return currentBusiness.active
-      ? { state: "complete", label: "Completo", detail: "Página pública activa" }
+      ? { state: "complete", label: "Completo", detail: "Página pública publicada" }
       : { state: "review", label: "Necesita revisión", detail: "La página pública está desactivada" };
   }
   return { state: "loading", label: "Comprobando…", detail: "" };
@@ -3574,7 +3574,6 @@ function renderBusinessSettings() {
   Object.entries(fields).forEach(([id, value]) => {
     document.getElementById(id).value = value || "";
   });
-  document.getElementById("business-setting-active").checked = Boolean(currentBusiness.active);
   document.getElementById("business-setting-logo-alt").value = currentBusiness.logo_alt || "";
   document.getElementById("business-setting-theme").value = currentBusiness.theme_key || "slate_gold";
   document.getElementById("business-setting-template").value = currentBusiness.template_key || "classic";
@@ -3585,6 +3584,9 @@ function renderBusinessSettings() {
   if (currentBusiness.logo_url) logo.src = resolveSafeAdminMediaUrl(currentBusiness.logo_url, true);
   document.getElementById("delete-admin-logo").disabled = !currentBusiness.logo_url;
   document.getElementById("public-page-preview-name").textContent = currentBusiness.name || "Tu negocio";
+  document.getElementById("public-page-publication-status").textContent = currentBusiness.active
+    ? "Publicada. La publicación global la gestiona Owner."
+    : "Despublicada. La publicación global la gestiona Owner.";
   document.getElementById("public-page-preview-copy").textContent = currentBusiness.headline || currentBusiness.description || "Una estructura funcional con seis estilos visuales.";
   snapshotConfigurationForm("business-info");
   snapshotConfigurationForm("public-page");
@@ -3684,8 +3686,7 @@ async function saveBusinessSettings(scope = "business") {
     primary_color: value("business-setting-primary-hex"),
     secondary_color: value("business-setting-secondary-hex"),
     accent_color: value("business-setting-accent-hex"),
-    background_color: value("business-setting-background-hex"),
-    active: document.getElementById("business-setting-active").checked
+    background_color: value("business-setting-background-hex")
   };
 
   if (!validateBusinessSettings(payload, isPublicPage ? "public-page" : "business")) return;

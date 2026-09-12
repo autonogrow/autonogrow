@@ -179,10 +179,18 @@ def test_public_page_preserves_six_templates_themes_and_upload_controls() -> Non
     assert "<iframe" not in html.lower()
 
 
-def test_public_page_toggle_and_growth_results_use_the_backend_response_contract() -> None:
-    _, _, js = read_sources()
+def test_public_page_is_informative_and_has_no_admin_publication_control() -> None:
+    html, _, js = read_sources()
     save = function_block(js, "async function saveBusinessSettings", "function syncBrandColorFields")
-    assert 'active: document.getElementById("business-setting-active").checked' in save
+    assert 'id="business-setting-active"' not in html
+    assert "Página pública activa" not in html
+    assert "business-setting-active" not in save
+    assert 'id="public-page-publication-status"' in html
+    assert "La publicación global la gestiona Owner." in js
+
+
+def test_growth_results_use_the_backend_response_contract() -> None:
+    _, _, js = read_sources()
     growth = function_block(
         js, "function renderGrowthActionMetrics", "function renderBusinessGrowthSignals"
     )

@@ -52,6 +52,7 @@ from app.schemas.owner import (
     OwnerAutomationUsageAdjustment,
     OwnerBusinessAutomationSettingsUpdate,
     OwnerBusinessCreate,
+    OwnerBusinessPublicationUpdate,
     OwnerBusinessUpdate,
     OwnerBusinessUserCreate,
     OwnerBusinessUserUpdate,
@@ -336,6 +337,7 @@ def serialize_business(business: Business) -> dict:
         "logo_url": business.logo_url,
         "logo_alt": business.logo_alt,
         "active": business.status == "active",
+        "published": business.status == "active" and not business.seo_noindex,
         "status": business.status,
         "created_at": business.created_at.isoformat() if business.created_at else None,
     }
@@ -1867,6 +1869,45 @@ def update_owner_business(
         business_id=business.id,
         resource_type="business",
         resource_id=business.id,
+    )
+    return {"ok": True, "business": serialize_owner_summary(db, business)}
+
+
+@router.patch("/businesses/{business_id}/publication")
+def update_owner_business_publication(
+    business_id: int,
+    payload: OwnerBusinessPublicationUpdate,
+    request: Request,
+    actor: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    business = get_business_by_id_or_404(db, business_id)
+    if business.status != "active":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "business_not_active",
+                "message": "Solo se puede cambiar la publicación de un negocio activo.",
+                "business_status": business.status,
+            },
+        )
+    was_published = not business.seo_noindex
+    business.seo_noindex = not payload.published
+    db.commit()
+    db.refresh(business)
+    record_audit(
+        db,
+        action="business_publication_changed",
+        request=request,
+        actor=actor,
+        business_id=business.id,
+        resource_type="business",
+        resource_id=business.id,
+        metadata={
+            "old_value": was_published,
+            "new_value": payload.published,
+            "reason": payload.reason,
+        },
     )
     return {"ok": True, "business": serialize_owner_summary(db, business)}
 

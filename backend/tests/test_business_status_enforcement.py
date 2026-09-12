@@ -15,6 +15,8 @@ from app.core.security import (
 )
 from app.models import Business, BusinessUser, Conversation, User
 from app.routers.admin import get_business_settings
+from app.routers.owner import update_owner_business_publication
+from app.schemas.owner import OwnerBusinessPublicationUpdate
 from app.services.conversation_automation_service import process_inbound_automation
 from app.services.conversation_service import add_message
 
@@ -136,6 +138,25 @@ def test_owner_operational_routes_do_not_bypass_business_status(status_context, 
     with pytest.raises(HTTPException) as denied:
         require_business_operational_status_by_id(business.id, request("POST"), db)
     assert denied.value.detail["code"] == "business_not_operational"
+
+
+@pytest.mark.parametrize("status", ("suspended", "archived"))
+def test_owner_publication_preserves_non_active_business_rules(status_context, status):
+    db, businesses, _admin, _staff, owner = status_context
+    business = businesses[status]
+
+    with pytest.raises(HTTPException) as denied:
+        update_owner_business_publication(
+            business.id,
+            OwnerBusinessPublicationUpdate(published=True, reason="Invalid state check"),
+            request("PATCH"),
+            actor=owner,
+            db=db,
+        )
+
+    assert denied.value.status_code == 409
+    assert denied.value.detail["code"] == "business_not_active"
+    assert business.seo_noindex is True
 
 
 @pytest.mark.parametrize("status", ("suspended", "archived"))
