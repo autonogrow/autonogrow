@@ -46,7 +46,7 @@ def install_google_mock(app_env: str) -> None:
             "sub": "google-staff-a-e2e",
             "email": "pro-1@e2e.test",
             "email_verified": True,
-            "name": "Lucía",
+            "name": "staff",
         },
         "e2e-owner": {
             "sub": "google-owner-e2e",

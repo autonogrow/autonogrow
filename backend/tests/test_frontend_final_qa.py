@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import Counter
 from html.parser import HTMLParser
@@ -103,7 +104,7 @@ def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
             "styles.css?v=20260831-p15b3-a",
             "responsive.css?v=5f1",
             "auth.js?v=10b5",
-            "admin.js?v=20260831-p15b3-a",
+            "admin.js?v=10a4c456a1f2",
         ),
         "autonogrow-owner": (
             "styles.css?v=20260825-p12-b",
@@ -122,6 +123,16 @@ def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
         scripts = re.findall(r'<script\b[^>]*src="([^"]+)"', source)
         assert "accounts.google.com/gsi/client" in scripts[0]
         assert next(i for i, item in enumerate(scripts) if "auth.js" in item) < len(scripts) - 1
+
+
+def test_admin_script_cachebuster_matches_normalized_content_hash() -> None:
+    html = text(ROOT / "autonogrow-admin" / "index.html")
+    admin_js = text(ROOT / "autonogrow-admin" / "admin.js")
+    expected = hashlib.sha256(admin_js.encode("utf-8")).hexdigest()[:12]
+    match = re.search(r'<script src="admin\.js\?v=([a-f0-9]{12})"></script>', html)
+
+    assert match is not None
+    assert match.group(1) == expected
 
 
 def test_admin_instagram_planning_preserves_the_business_civil_time() -> None:

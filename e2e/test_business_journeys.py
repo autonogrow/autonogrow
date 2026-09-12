@@ -96,15 +96,79 @@ def test_admin_controlled_login_navigation_and_owner_separation(journey) -> None
     assert page.locator("[data-tab='operations']").count() == 0
 
 
-def test_admin_staff_admin_switch_never_reuses_privileged_appointments(journey) -> None:
+@pytest.mark.parametrize("delay_old_response", [False, True], ids=["normal", "delayed-old-response"])
+def test_admin_staff_admin_switch_never_reuses_privileged_appointments(
+    journey, delay_old_response: bool
+) -> None:
+    from zoneinfo import ZoneInfo
+
+    from app.core.database import SessionLocal
+    from app.models import Booking, Business, BusinessUser, User
+
     session = journey(email="admin-a@e2e.test")
+    with SessionLocal() as db:
+        business = db.query(Business).filter(Business.slug == "salon-e2e").one()
+        staff_membership = (
+            db.query(BusinessUser)
+            .join(User, User.id == BusinessUser.user_id)
+            .filter(BusinessUser.business_id == business.id, User.email == "pro-1@e2e.test")
+            .one()
+        )
+        admin_membership = (
+            db.query(BusinessUser)
+            .join(User, User.id == BusinessUser.user_id)
+            .filter(BusinessUser.business_id == business.id, User.email == "admin-a@e2e.test")
+            .one()
+        )
+        staff_booking = (
+            db.query(Booking)
+            .filter(
+                Booking.business_id == business.id,
+                Booking.staff_business_user_id == staff_membership.id,
+                Booking.status == "confirmed",
+            )
+            .order_by(Booking.id)
+            .first()
+        )
+        restricted_booking = (
+            db.query(Booking)
+            .filter(
+                Booking.business_id == business.id,
+                Booking.staff_business_user_id != staff_membership.id,
+                Booking.start_datetime.is_not(None),
+            )
+            .order_by(Booking.id)
+            .first()
+        )
+        assert staff_booking is not None
+        assert restricted_booking is not None
+        today = datetime.now(ZoneInfo("Europe/Madrid")).replace(
+            hour=9, minute=0, second=0, microsecond=0, tzinfo=None
+        )
+        for booking, start, customer_name in (
+            (staff_booking, today, "Mihai"),
+            (restricted_booking, today.replace(hour=11), "Conflict QA A"),
+        ):
+            booking.start_datetime = start
+            booking.end_datetime = start + timedelta(minutes=booking.duration_minutes or 45)
+            booking.preferred_date = start.date().isoformat()
+            booking.preferred_day_label = start.date().isoformat()
+            booking.preferred_time = start.strftime("%H:%M")
+            booking.customer.name = customer_name
+        restricted_booking.staff_business_user_id = admin_membership.id
+        staff_id = staff_membership.id
+        staff_booking_id = staff_booking.id
+        restricted_booking_id = restricted_booking.id
+        db.commit()
+
     session.context.add_init_script(
         """
         (() => {
           const realFetch = window.fetch.bind(window);
           window.fetch = async (input, options) => {
+            const shouldDelay = window.__DELAY_ADMIN_BOOKINGS === true;
             const response = await realFetch(input, options);
-            if (window.__DELAY_ADMIN_BOOKINGS
+            if (shouldDelay
                 && String(input).includes('/api/admin/businesses/salon-e2e/bookings?')) {
               await new Promise((resolve) => setTimeout(resolve, 800));
             }
@@ -115,31 +179,38 @@ def test_admin_staff_admin_switch_never_reuses_privileged_appointments(journey) 
     )
     page = session.goto("/autonogrow-admin/?b=salon-e2e#bookings")
     expect(page.locator("#admin-app")).to_be_visible()
-    staff = next(
-        item
-        for item in page.request.get("/api/admin/businesses/salon-e2e/staff").json()["staff"]
-        if item["email"] == "pro-1@e2e.test"
-    )
-    admin_bookings = page.request.get("/api/admin/businesses/salon-e2e/bookings").json()[
-        "bookings"
-    ]
-    restricted = next(
-        item for item in admin_bookings if item["staff_business_user_id"] != staff["id"]
-    )
-    page.evaluate("bookingId => goToBooking(bookingId, false)", restricted["id"])
-    expect(page.locator(f"#booking-{restricted['id']}")).to_be_visible()
+    expect(page.locator(f'[data-agenda-booking-open="{restricted_booking_id}"]')).to_be_visible()
+    expect(page.locator(f'[data-agenda-booking-open="{staff_booking_id}"]')).to_be_visible()
+    expect(page.locator("#bookings-list")).to_contain_text("Conflict QA A")
+    expect(page.locator("#bookings-list")).to_contain_text("Mihai")
+    assert "Admin" in page.locator(".agenda-staff-headings").inner_text()
+
+    if delay_old_response:
+        with page.expect_response(
+            lambda response: response.request.method == "GET" and "/bookings?" in response.url
+        ):
+            page.evaluate(
+                """() => {
+                  window.__DELAY_ADMIN_BOOKINGS = true;
+                  window.__OLD_ADMIN_BOOKINGS_PROMISE = loadBookings({ background: true });
+                  window.__DELAY_ADMIN_BOOKINGS = false;
+                }"""
+            )
 
     page.locator("#admin-logout").click()
     expect(page.locator("#admin-auth-gate")).to_be_visible()
     page.evaluate(
         """bookingId => {
           window.__AUTONOGROW_E2E_GOOGLE_TOKEN = 'e2e-staff-a';
-          window.__DELAY_ADMIN_BOOKINGS = true;
           window.__STALE_PRIVILEGED_BOOKING_SEEN = false;
           const check = () => {
             const app = document.getElementById('admin-app');
-            const card = document.getElementById(`booking-${bookingId}`);
-            if (app && !app.hidden && card && getComputedStyle(card).display !== 'none') {
+            const restricted = document.querySelector(
+              `[data-agenda-booking-open="${bookingId}"], #booking-${bookingId}`
+            );
+            const adminLane = Array.from(document.querySelectorAll('.agenda-staff-headings strong'))
+              .some((heading) => heading.textContent.includes('Admin'));
+            if (app && !app.hidden && ((restricted && getComputedStyle(restricted).display !== 'none') || adminLane)) {
               window.__STALE_PRIVILEGED_BOOKING_SEEN = true;
             }
           };
@@ -149,28 +220,51 @@ def test_admin_staff_admin_switch_never_reuses_privileged_appointments(journey) 
           });
           check();
         }""",
-        restricted["id"],
+        restricted_booking_id,
     )
-    page.locator("#admin-google-button button").click()
+    with page.expect_response(
+        lambda response: response.request.method == "GET" and "/bookings?" in response.url
+    ) as staff_bookings_response:
+        page.locator("#admin-google-button button").click()
     expect(page.locator("#admin-app")).to_be_visible(timeout=15_000)
-    page.evaluate("window.__DELAY_ADMIN_BOOKINGS = false")
-    expect(page.locator("#admin-auth-user")).to_have_text("Lucía")
-    expect(page.locator(f"#booking-{restricted['id']}")).to_have_count(0)
+    expect(page.locator("#admin-auth-user")).to_have_text("staff")
+    expect(page.locator("#business-subtitle")).to_have_text("Mi agenda y reservas asignadas")
+    expect(page.locator("#bookings-list")).to_contain_text("Mihai")
+    expect(page.locator("#bookings-list")).not_to_contain_text("Conflict QA A")
+    expect(page.locator(f'[data-agenda-booking-open="{staff_booking_id}"]')).to_be_visible()
+    expect(page.locator(f'[data-agenda-booking-open="{restricted_booking_id}"]')).to_have_count(0)
+    expect(page.locator(f"#booking-{restricted_booking_id}")).to_have_count(0)
+    expect(page.locator(".agenda-staff-headings strong")).to_have_count(1)
+    expect(page.locator(".agenda-staff-headings strong")).to_have_text("Lucía")
+    if delay_old_response:
+        page.wait_for_timeout(900)
     assert page.evaluate("window.__STALE_PRIVILEGED_BOOKING_SEEN") is False
-    staff_booking_ids = {
-        item["id"]
-        for item in page.request.get("/api/admin/businesses/salon-e2e/bookings").json()[
-            "bookings"
-        ]
-    }
-    assert restricted["id"] not in staff_booking_ids
+    staff_payload = staff_bookings_response.value.json()["bookings"]
+    assert staff_payload
+    assert {item["staff_business_user_id"] for item in staff_payload} == {staff_id}
+    assert restricted_booking_id not in {item["id"] for item in staff_payload}
+    staff_state = page.evaluate(
+        """() => ({
+          generation: adminSessionGeneration,
+          userId: adminAuthUser.id,
+          role: adminMembership.role,
+          business: currentBusiness.slug,
+          bookingIds: allBookings.map((booking) => booking.id),
+          professionalIds: [...new Set(allBookings.map((booking) => booking.staff_business_user_id))]
+        })"""
+    )
+    assert staff_state["generation"] > 0
+    assert staff_state["role"] == "business_staff"
+    assert staff_state["business"] == "salon-e2e"
+    assert set(staff_state["bookingIds"]) == {item["id"] for item in staff_payload}
+    assert staff_state["professionalIds"] == [staff_id]
     page.evaluate("window.__STALE_OBSERVER.disconnect()")
 
     _switch_admin_identity(page, "e2e-admin-a")
     expect(page.locator("#admin-app")).to_be_visible(timeout=15_000)
     expect(page.locator("#admin-auth-user")).to_contain_text("Admin")
-    page.evaluate("bookingId => goToBooking(bookingId, false)", restricted["id"])
-    expect(page.locator(f"#booking-{restricted['id']}")).to_be_visible()
+    expect(page.locator("#bookings-list")).to_contain_text("Conflict QA A")
+    expect(page.locator(f'[data-agenda-booking-open="{restricted_booking_id}"]')).to_be_visible()
 
 
 def test_admin_switch_to_other_tenant_leaves_no_previous_business_dom(journey) -> None:
