@@ -18,8 +18,23 @@ def safe_optional_url(value: str | None) -> str | None:
     if value is None or not value.strip():
         return None
     normalized = value.strip()
+    if any(character.isspace() for character in normalized):
+        raise ValueError("La URL debe usar http o https y no puede incluir credenciales")
     parsed = urlparse(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username:
+    try:
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as exc:
+        raise ValueError(
+            "La URL debe usar http o https y no puede incluir credenciales"
+        ) from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or parsed.username
+        or parsed.password
+    ):
         raise ValueError("La URL debe usar http o https y no puede incluir credenciales")
     return normalized
 

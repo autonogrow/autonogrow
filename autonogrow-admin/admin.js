@@ -13,7 +13,7 @@ const fetch = async (input, options = {}) => {
       lastBusinessOperationalStatus = payload.detail.business_status;
       queueMicrotask(() => applyOperationalBusinessState(payload.detail.business_status));
     } else {
-      queueMicrotask(() => showAdminLogin("Tu cuenta no tiene acceso a este negocio.", true));
+      queueMicrotask(() => showAdminPermissionFeedback(payload));
     }
   }
   return response;
@@ -54,6 +54,17 @@ let bookingCustomerSearch = "";
 let adminGallery = [];
 let adminMembership = null;
 let staffMembers = [];
+
+function showAdminPermissionFeedback(payload = null) {
+  const feedback = document.getElementById("admin-permission-feedback");
+  if (!feedback) return;
+  const detail = payload?.detail;
+  const serverMessage = typeof detail === "string"
+    ? detail
+    : (typeof detail?.message === "string" ? detail.message : "");
+  feedback.textContent = serverMessage || "No tienes permiso para realizar esta acción o el módulo no está disponible.";
+  feedback.hidden = false;
+}
 let selectedStaffFilter = "";
 let conversations = [];
 let dashboardConversations = [];
@@ -1907,8 +1918,8 @@ function renderGrowthActionMetrics() {
   const metrics = growthActionMetrics?.summary;
   const values = {
     "growth-result-detected": metrics?.opportunities_detected,
-    "growth-result-prepared": metrics?.funnel?.viewed,
-    "growth-result-sent": metrics?.funnel?.sent,
+    "growth-result-prepared": metrics?.actions_prepared,
+    "growth-result-sent": metrics?.messages_sent,
     "growth-result-booked": metrics?.bookings_attributed,
     "growth-result-completed": metrics?.attributed_bookings_completed,
     "growth-result-revenue": metrics?.attributed_revenue == null
@@ -2039,6 +2050,7 @@ async function loadCustomerOpportunities({ background = false } = {}) {
 async function loadGrowthActionMetrics({ background = false } = {}) {
   try {
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/growth-metrics?period=30d`);
+    if (response.status === 403) return;
     if (!response.ok) throw new Error("growth_metrics_unavailable");
     growthActionMetrics = await response.json();
     renderGrowthActionMetrics();
@@ -2342,6 +2354,8 @@ async function loadAdminPanel() {
         fetch(`${API_BASE_URL}/api/admin/businesses/${slug}/capabilities`)
       ]);
       if (!panelResponse.ok) throw new Error("No se pudo cargar tu agenda.");
+      if (capabilityResponse.status === 401) return showAdminLogin();
+      if (capabilityResponse.status === 403) return showAdminPermissionFeedback();
       if (!capabilityResponse.ok) throw new Error("No se pudieron comprobar los módulos del negocio.");
       const panel = await panelResponse.json();
       businessCapabilities = (await capabilityResponse.json()).modules;
@@ -2374,12 +2388,14 @@ async function loadAdminPanel() {
         renderDashboard();
         return;
       }
-      if (businessResponse.status === 403) return showAdminLogin("Tu cuenta no tiene acceso a este negocio.", true);
+      if (businessResponse.status === 403) return showAdminPermissionFeedback();
       renderError("No se encontró el negocio.");
       return;
     }
 
     currentBusiness = await businessResponse.json();
+    if (capabilityResponse.status === 401) return showAdminLogin();
+    if (capabilityResponse.status === 403) return showAdminPermissionFeedback();
     if (!capabilityResponse.ok) throw new Error("No se pudieron comprobar los módulos del negocio.");
     businessCapabilities = (await capabilityResponse.json()).modules;
     applyRoleVisibility();
@@ -3683,6 +3699,10 @@ async function loadAdminServices() {
     const response = await fetch(
       `${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/services`
     );
+    if (response.status === 403) {
+      container.setAttribute("aria-busy", "false");
+      return;
+    }
     if (!response.ok) {
       throw new Error("No se pudieron cargar los servicios.");
     }
@@ -3896,12 +3916,17 @@ async function loadStaffMembers() {
   configurationLoadState.staff = "loading";
   try {
     const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/staff`);
+    if (response.status === 403) {
+      container.setAttribute("aria-busy", "false");
+      return;
+    }
     if (!response.ok) throw new Error("No se pudo cargar el equipo.");
     const data = await response.json();
     staffMembers = data.staff || [];
     configurationLoadState.staff = "ready";
     container.setAttribute("aria-busy", "false");
     renderStaffMembers();
+    if (adminServices.length && ![...configurationDirtyKeys].some((key) => configurationCategoryForKey(key) === "services")) renderAdminServices();
     const filter = document.getElementById("booking-staff-filter");
     filter.innerHTML = `<option value="">Todos</option>` + staffMembers
       .filter((member) => member.active)

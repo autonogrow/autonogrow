@@ -375,6 +375,9 @@ def test_frontends_clear_auth_state_on_401_keep_403_distinct_and_logout_robustly
     assert 'if (response.status === 403) queueMicrotask(() => revalidateOwnerAfterForbidden());' in owner
     assert 'if (businessResponse.status === 401) return showAdminLogin();' in admin
     assert 'businessResponse.status === 403 && lastBusinessOperationalStatus' in admin
+    admin_wrapper = admin.split("let currentBusiness", 1)[0]
+    assert "showAdminPermissionFeedback(payload)" in admin_wrapper
+    assert "showAdminLogin(" not in admin_wrapper.split("response.status === 403", 1)[1]
     assert 'if (response.status === 401) queueMicrotask(() => showCustomerLogin(true));' in customer
     assert 'if (status === 403) return "No tienes permiso' in customer
     assert 'userLabel.textContent = "Reserva sin iniciar sesión disponible"' in landing

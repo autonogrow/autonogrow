@@ -21,7 +21,7 @@ def list_businesses(
 ):
     return (
         db.query(Business)
-        .filter(Business.status == "active")
+        .filter(Business.status == "active", Business.seo_noindex.is_(False))
         .order_by(Business.id.asc())
         .offset(offset)
         .limit(limit)
@@ -31,7 +31,15 @@ def list_businesses(
 
 @router.get("/{slug}", response_model=BusinessOut)
 def get_business(slug: str, db: Session = Depends(get_db)):
-    business = db.query(Business).filter(Business.slug == slug, Business.status == "active").first()
+    business = (
+        db.query(Business)
+        .filter(
+            Business.slug == slug,
+            Business.status == "active",
+            Business.seo_noindex.is_(False),
+        )
+        .first()
+    )
 
     if business is None:
         raise HTTPException(status_code=404, detail="Business not found")

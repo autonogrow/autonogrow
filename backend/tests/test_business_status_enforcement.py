@@ -30,7 +30,12 @@ def status_context():
     staff = User(email="status-staff@test.local")
     owner = User(email="status-owner@test.local", is_owner=True)
     businesses = {
-        status: Business(slug=f"status-{status}", name=status, status=status)
+        status: Business(
+            slug=f"status-{status}",
+            name=status,
+            status=status,
+            seo_noindex=status != "active",
+        )
         for status in (
             "draft",
             "onboarding",

@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
 
 from app.schemas.branding import COLOR_PALETTES, TEMPLATE_KEYS, resolve_branding, validate_color
+from app.schemas.onboarding import safe_optional_url
 
 
 class BusinessCreate(BaseModel):
@@ -96,6 +97,11 @@ class BusinessSettingsUpdate(BaseModel):
             value = value.strip()
             return value or None
         return value
+
+    @field_validator("reviews_url")
+    @classmethod
+    def validate_reviews_url(cls, value: str | None) -> str | None:
+        return safe_optional_url(value)
 
     @field_validator(
         "primary_color", "secondary_color", "accent_color", "background_color", mode="before"

@@ -109,6 +109,8 @@ def test_services_keep_real_endpoints_validation_impact_and_safe_rendering() -> 
     for value in ("service.name", "service.description", "service.price_text"):
         assert f"escapeHtml({value}" in render
     assert "staffMembers.filter" in render
+    staff_load = function_block(js, "async function loadStaffMembers", "async function loadMyStaffAvailability")
+    assert "renderAdminServices()" in staff_load
     assert 'aria-describedby="service-${service.id}-name-error"' in render
     assert 'setAttribute("aria-invalid", "true")' in js
 
@@ -175,6 +177,20 @@ def test_public_page_preserves_six_templates_themes_and_upload_controls() -> Non
     public_link = function_block(js, "function applyBusinessData", "function renderBusinessSettings")
     assert "encodeURIComponent(getBusinessSlug())" in public_link
     assert "<iframe" not in html.lower()
+
+
+def test_public_page_toggle_and_growth_results_use_the_backend_response_contract() -> None:
+    _, _, js = read_sources()
+    save = function_block(js, "async function saveBusinessSettings", "function syncBrandColorFields")
+    assert 'active: document.getElementById("business-setting-active").checked' in save
+    growth = function_block(
+        js, "function renderGrowthActionMetrics", "function renderBusinessGrowthSignals"
+    )
+    assert '"growth-result-prepared": metrics?.actions_prepared' in growth
+    assert '"growth-result-sent": metrics?.messages_sent' in growth
+    assert "metrics?.funnel" not in growth
+    assert "const funnel = growthActionMetrics?.funnel" in growth
+    assert 'value == null ? "—" : String(value)' in growth
 
 
 def test_dirty_state_is_per_form_and_guards_navigation_reload_and_rerenders() -> None:

@@ -115,6 +115,254 @@ def test_admin_business_status_controls_banner_and_submit_state(journey) -> None
     expect(page.locator("#admin-instagram-raw-form button[type='submit']")).to_be_disabled()
 
 
+def test_public_page_toggle_persists_hides_landing_and_restores(journey) -> None:
+    _session, page = _open_admin(journey)
+    page.evaluate("showAdminSection('public-page')")
+    toggle = page.locator("#business-setting-active")
+    expect(toggle).to_be_checked()
+
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/admin/businesses/salon-e2e/settings")
+    ):
+        toggle.uncheck()
+        page.locator("#save-public-page-settings").click()
+    expect(page.locator("#admin-brand-feedback")).to_have_text("Guardado correctamente.")
+
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#admin-app")).to_be_visible()
+    page.evaluate("showAdminSection('public-page')")
+    expect(page.locator("#business-setting-active")).not_to_be_checked()
+    assert page.request.get("/api/businesses/salon-e2e").status == 404
+
+    public_session = journey()
+    public_session.expect_response_error(404, "GET", "/api/businesses/salon-e2e")
+    landing = public_session.goto("/autonogrow-landing/?b=salon-e2e")
+    expect(landing.locator("#landing-unavailable")).to_be_visible()
+    expect(landing.locator("#landing-app")).to_be_hidden()
+
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/admin/businesses/salon-e2e/settings")
+    ):
+        page.locator("#business-setting-active").check()
+        page.locator("#save-public-page-settings").click()
+    page.reload(wait_until="domcontentloaded")
+    page.evaluate("showAdminSection('public-page')")
+    expect(page.locator("#business-setting-active")).to_be_checked()
+    assert page.request.get("/api/businesses/salon-e2e").status == 200
+
+
+def test_legitimate_admin_forbidden_responses_keep_valid_sessions_visible(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import Business
+    from app.services.capability_service import configure_business_modules
+
+    staff_session = journey(email="pro-1@e2e.test")
+    staff = staff_session.goto("/autonogrow-admin/?b=salon-e2e#bookings")
+    expect(staff.locator("#admin-app")).to_be_visible()
+    staff_session.expect_response_error(403, "GET", "/staff")
+    staff.evaluate("loadStaffMembers()")
+    expect(staff.locator("#admin-permission-feedback")).to_be_visible()
+    expect(staff.locator("#admin-app")).to_be_visible()
+    expect(staff.locator("#admin-auth-gate")).to_be_hidden()
+    assert staff.request.get("/api/auth/me").status == 200
+
+    admin_session, admin = _open_admin(journey)
+    admin_session.expect_response_error(403, "GET", "/salon-e2e/services")
+    admin.route(
+        "**/api/admin/businesses/salon-e2e/services",
+        lambda route: route.fulfill(
+            status=403,
+            content_type="application/json",
+            body=json.dumps({"detail": "Configuración no permitida para esta cuenta."}),
+        ),
+    )
+    admin.evaluate("loadAdminServices()")
+    expect(admin.locator("#admin-permission-feedback")).to_be_visible()
+    expect(admin.locator("#admin-app")).to_be_visible()
+    assert admin.request.get("/api/auth/me").status == 200
+    admin.unroute("**/api/admin/businesses/salon-e2e/services")
+    admin.evaluate("stopAdminPolling()")
+
+    with SessionLocal() as db:
+        business = db.query(Business).filter(Business.slug == "salon-e2e").one()
+        configure_business_modules(
+            db,
+            business_id=business.id,
+            enabled_modules=("essential", "social"),
+            actor_user_id=None,
+        )
+        db.commit()
+    admin_session.expect_response_error(403, "GET", "/growth-metrics")
+    admin.evaluate("loadGrowthActionMetrics()")
+    expect(admin.locator("#admin-permission-feedback")).to_contain_text(
+        "Este módulo no está disponible"
+    )
+    expect(admin.locator("#admin-app")).to_be_visible()
+    expect(admin.locator("#admin-auth-gate")).to_be_hidden()
+    assert admin.request.get("/api/auth/me").status == 200
+
+
+def test_reviews_url_backend_rejects_unsafe_value_without_overwriting(journey) -> None:
+    _session, page = _open_admin(journey)
+    settings_path = "/api/admin/businesses/salon-e2e/settings"
+    original = page.request.get(settings_path).json()
+    csrf = page.evaluate(
+        """async () => {
+            const options = await AutonoGrowAuth.secureRequestOptions({ method: "PATCH" });
+            return options.headers.get("X-CSRF-Token");
+        }"""
+    )
+    safe_url = "https://reviews.example.test/e2e-safe"
+    accepted = page.request.patch(
+        settings_path,
+        headers={"X-CSRF-Token": csrf},
+        data={"name": original["name"], "active": original["active"], "reviews_url": safe_url},
+    )
+    assert accepted.status == 200
+
+    rejected = page.request.patch(
+        settings_path,
+        headers={"X-CSRF-Token": csrf},
+        data={
+            "name": original["name"],
+            "active": original["active"],
+            "reviews_url": "javascript:alert(1)",
+        },
+    )
+    assert rejected.status == 422
+    assert page.request.get(settings_path).json()["reviews_url"] == safe_url
+
+    restored = page.request.patch(
+        settings_path,
+        headers={"X-CSRF-Token": csrf},
+        data={
+            "name": original["name"],
+            "active": original["active"],
+            "reviews_url": original["reviews_url"],
+        },
+    )
+    assert restored.status == 200
+
+
+def test_growth_results_render_summary_values_and_refresh(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import CustomerOpportunity, OpportunityAction
+
+    _session, page = _open_admin(journey)
+    page.evaluate("showAdminSection('growth')")
+    expect(page.locator("#growth-result-prepared")).to_have_text("0")
+    expect(page.locator("#growth-result-sent")).to_have_text("0")
+    with SessionLocal() as db:
+        opportunity = (
+            db.query(CustomerOpportunity)
+            .filter(CustomerOpportunity.reason_code == "service_due_e2e")
+            .one()
+        )
+        db.add(
+            OpportunityAction(
+                business_id=opportunity.business_id,
+                opportunity_id=opportunity.id,
+                customer_id=opportunity.customer_id,
+                action_type="contact_customer",
+                status="sent",
+                channel="whatsapp",
+                suggested_text="Mensaje E2E",
+                final_text="Mensaje E2E",
+                sent_at=datetime.now(timezone.utc),
+            )
+        )
+        db.commit()
+
+    metrics_path = "/api/admin/businesses/salon-e2e/growth-metrics?period=30d"
+    metrics = page.request.get(metrics_path).json()["summary"]
+    assert metrics["actions_prepared"] == 1
+    assert metrics["messages_sent"] == 1
+    page.evaluate("loadGrowthActionMetrics()")
+    page.evaluate("showAdminSection('growth')")
+    expect(page.locator("#growth-result-detected")).to_have_text(
+        str(metrics["opportunities_detected"])
+    )
+    expect(page.locator("#growth-result-prepared")).to_have_text("1")
+    expect(page.locator("#growth-result-sent")).to_have_text("1")
+    expect(page.locator("#growth-result-booked")).to_have_text(
+        str(metrics["bookings_attributed"])
+    )
+    expect(page.locator("#growth-result-completed")).to_have_text(
+        str(metrics["attributed_bookings_completed"])
+    )
+    for viewport in ({"width": 1024, "height": 768}, {"width": 390, "height": 844}):
+        page.set_viewport_size(viewport)
+        _assert_no_horizontal_overflow(page)
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#growth-result-prepared")).to_have_text("1")
+    expect(page.locator("#growth-result-sent")).to_have_text("1")
+
+
+def test_service_professional_count_handles_zero_one_two_after_refresh(journey) -> None:
+    from app.core.database import SessionLocal
+    from app.models import Business, BusinessService, BusinessUserService
+
+    _session, page = _open_admin(journey)
+    with SessionLocal() as db:
+        service = (
+            db.query(BusinessService)
+            .join(Business, Business.id == BusinessService.business_id)
+            .filter(Business.slug == "salon-e2e", BusinessService.name == "Corte E2E")
+            .one()
+        )
+        service_id = service.id
+        assignments = (
+            db.query(BusinessUserService)
+            .filter(BusinessUserService.service_id == service_id)
+            .order_by(BusinessUserService.business_user_id)
+            .all()
+        )
+        assert len(assignments) == 2
+        assignment_ids = [item.business_user_id for item in assignments]
+        other_count = (
+            db.query(BusinessUserService)
+            .join(BusinessService, BusinessService.id == BusinessUserService.service_id)
+            .join(Business, Business.id == BusinessService.business_id)
+            .filter(Business.slug == "fisio-e2e")
+            .count()
+        )
+
+    def expect_count(expected: int) -> None:
+        page.reload(wait_until="domcontentloaded")
+        expect(page.locator("#admin-app")).to_be_visible()
+        page.evaluate("showAdminSection('services')")
+        label = "profesional" if expected == 1 else "profesionales"
+        expect(
+            page.locator(f".admin-service-item[data-service-id='{service_id}'] header p")
+        ).to_contain_text(f"{expected} {label}")
+
+    expect_count(2)
+    with SessionLocal() as db:
+        db.query(BusinessUserService).filter(
+            BusinessUserService.service_id == service_id,
+            BusinessUserService.business_user_id == assignment_ids[0],
+        ).delete(synchronize_session=False)
+        db.commit()
+    expect_count(1)
+    with SessionLocal() as db:
+        db.query(BusinessUserService).filter(
+            BusinessUserService.service_id == service_id,
+            BusinessUserService.business_user_id == assignment_ids[1],
+        ).delete(synchronize_session=False)
+        db.commit()
+        assert (
+            db.query(BusinessUserService)
+            .join(BusinessService, BusinessService.id == BusinessUserService.service_id)
+            .join(Business, Business.id == BusinessService.business_id)
+            .filter(Business.slug == "fisio-e2e")
+            .count()
+            == other_count
+        )
+    expect_count(0)
+
+
 def test_service_deactivate_reactivate_preserves_team_assignments(journey) -> None:
     from app.core.database import SessionLocal
     from app.models import Business, BusinessService, BusinessUserService
@@ -146,7 +394,8 @@ def test_service_deactivate_reactivate_preserves_team_assignments(journey) -> No
         )
 
     page.evaluate("showAdminSection('services')")
-    service_card = page.locator(".admin-service-item", has_text="Corte E2E")
+    service_card = page.locator(f".admin-service-item[data-service-id='{service_id}']")
+    expect(service_card.locator("header p")).to_contain_text("2 profesionales")
     page.once("dialog", lambda dialog: dialog.accept())
     with page.expect_response(
         lambda response: (
@@ -189,7 +438,8 @@ def test_service_deactivate_reactivate_preserves_team_assignments(journey) -> No
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#admin-app")).to_be_visible()
     page.evaluate("showAdminSection('services')")
-    service_card = page.locator(".admin-service-item", has_text="Corte E2E")
+    service_card = page.locator(f".admin-service-item[data-service-id='{service_id}']")
+    expect(service_card.locator("header p")).to_contain_text("2 profesionales")
     with page.expect_response(
         lambda response: (
             response.request.method == "PATCH" and response.url.endswith(f"/services/{service_id}")
@@ -207,6 +457,10 @@ def test_service_deactivate_reactivate_preserves_team_assignments(journey) -> No
         ).to_be_checked()
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#admin-app")).to_be_visible()
+    page.evaluate("showAdminSection('services')")
+    expect(
+        page.locator(f".admin-service-item[data-service-id='{service_id}']").locator("header p")
+    ).to_contain_text("2 profesionales")
     final_staff = page.request.get(staff_path).json()["staff"]
     assert {
         item["id"]: item["service_ids"] for item in final_staff if item["id"] in assigned_member_ids

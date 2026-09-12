@@ -104,7 +104,7 @@ def serialize_business_settings(business: Business) -> dict:
         "logo_url": business.logo_url,
         "logo_alt": business.logo_alt,
         "status": business.status,
-        "active": business.status == "active",
+        "active": business.status == "active" and not business.seo_noindex,
     }
 
 
@@ -195,6 +195,7 @@ def update_business_settings(
         updates = resolve_branding(updates)
     for field, value in updates.items():
         setattr(business, field, value)
+    business.seo_noindex = not payload.active
     db.commit()
     db.refresh(business)
     record_audit(

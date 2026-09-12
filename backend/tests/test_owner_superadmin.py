@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
@@ -24,6 +25,7 @@ from app.routers.admin import (
     update_business_settings,
 )
 from app.routers.auth import serialize_user
+from app.routers.businesses import get_business
 from app.routers.staff import (
     StaffServicesUpdate,
     StaffUpdate,
@@ -47,9 +49,17 @@ class OwnerSuperadminTest(unittest.TestCase):
         self.other_admin_user = User(email="other@superadmin.test", name="Other admin")
         self.staff_user = User(email="staff@superadmin.test", name="Staff")
         self.customer_user = User(email="customer@superadmin.test", name="Customer")
-        self.business = Business(slug="owner-business", name="Owner business", status="active")
+        self.business = Business(
+            slug="owner-business",
+            name="Owner business",
+            status="active",
+            seo_noindex=False,
+        )
         self.other_business = Business(
-            slug="other-business", name="Other business", status="active"
+            slug="other-business",
+            name="Other business",
+            status="active",
+            seo_noindex=False,
         )
         self.admin = BusinessUser(
             business=self.business,
@@ -221,6 +231,86 @@ class OwnerSuperadminTest(unittest.TestCase):
             self.db.query(AuditLog).filter(AuditLog.actor_user_id == self.owner.id).count()
         )
         self.assertGreaterEqual(owner_audits, 5)
+
+    def test_public_page_toggle_persists_for_admin_and_owner_without_changing_tenant(self):
+        hidden = update_business_settings(
+            self.business.slug,
+            BusinessSettingsUpdate(name=self.business.name, active=False),
+            self.request(),
+            actor=self.admin_user,
+            db=self.db,
+        )
+
+        self.assertTrue(self.business.seo_noindex)
+        self.assertFalse(hidden["settings"]["active"])
+        self.assertFalse(get_business_settings(self.business.slug, db=self.db)["active"])
+        with self.assertRaises(HTTPException) as unavailable:
+            get_business(self.business.slug, db=self.db)
+        self.assertEqual(unavailable.exception.status_code, 404)
+        self.assertFalse(self.other_business.seo_noindex)
+        self.assertTrue(get_business_settings(self.other_business.slug, db=self.db)["active"])
+
+        restored = update_business_settings(
+            self.business.slug,
+            BusinessSettingsUpdate(name=self.business.name, active=True),
+            self.request(),
+            actor=self.owner,
+            db=self.db,
+        )
+
+        self.assertFalse(self.business.seo_noindex)
+        self.assertTrue(restored["settings"]["active"])
+        self.assertEqual(get_business(self.business.slug, db=self.db).id, self.business.id)
+
+    def test_reviews_url_schema_accepts_existing_web_contract_and_rejects_unsafe_values(self):
+        self.assertEqual(
+            BusinessSettingsUpdate(
+                name=self.business.name,
+                active=True,
+                reviews_url="https://reviews.example.test/path",
+            ).reviews_url,
+            "https://reviews.example.test/path",
+        )
+        self.assertEqual(
+            BusinessSettingsUpdate(
+                name=self.business.name,
+                active=True,
+                reviews_url="http://localhost:8000/reviews",
+            ).reviews_url,
+            "http://localhost:8000/reviews",
+        )
+        self.assertIsNone(
+            BusinessSettingsUpdate(
+                name=self.business.name, active=True, reviews_url="  "
+            ).reviews_url
+        )
+        self.assertIsNone(
+            BusinessSettingsUpdate(
+                name=self.business.name, active=True, reviews_url=None
+            ).reviews_url
+        )
+
+        self.business.reviews_url = "https://reviews.example.test/original"
+        self.db.commit()
+        for unsafe_url in (
+            "javascript:alert(1)",
+            "data:text/html,unsafe",
+            "file:///etc/passwd",
+            "vbscript:msgbox(1)",
+            "https://user:secret@example.test/reviews",
+            "https://",
+            "not-a-url",
+        ):
+            with self.subTest(unsafe_url=unsafe_url), self.assertRaises(ValidationError):
+                BusinessSettingsUpdate(
+                    name=self.business.name,
+                    active=True,
+                    reviews_url=unsafe_url,
+                )
+            self.db.refresh(self.business)
+            self.assertEqual(
+                self.business.reviews_url, "https://reviews.example.test/original"
+            )
 
     def test_non_owner_tenant_permissions_remain_isolated(self):
         self.assertIs(

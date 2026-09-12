@@ -76,6 +76,7 @@ def _business(slug: str, name: str, category: str, phone: str) -> Business:
         schedule="Todos los días, 09:00 - 18:00",
         reviews_url="https://reviews.e2e.test/business",
         status="active",
+        seo_noindex=False,
         primary_color="#176b5b",
         secondary_color="#20242a",
         accent_color="#e05b46",
