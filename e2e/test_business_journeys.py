@@ -95,6 +95,45 @@ def _assert_no_horizontal_overflow(page) -> None:
     )
 
 
+def _customer_drawer_geometry(page) -> dict:
+    return page.evaluate(
+        """() => {
+          const panel = document.querySelector('.conversation-customer-panel.is-open');
+          const header = panel.querySelector('.conversation-customer-panel__header');
+          const content = panel.querySelector('.conversation-customer-content');
+          const last = content.lastElementChild;
+          const nav = document.querySelector('[data-ag-mobile-nav]');
+          const navStyle = getComputedStyle(nav);
+          const navVisible = navStyle.display !== 'none' && nav.getBoundingClientRect().height > 0;
+          const panelRect = panel.getBoundingClientRect();
+          const headerRect = header.getBoundingClientRect();
+          const contentRect = content.getBoundingClientRect();
+          const lastRect = last.getBoundingClientRect();
+          const navRect = nav.getBoundingClientRect();
+          return {
+            viewportHeight: innerHeight,
+            panelTop: panelRect.top,
+            panelBottom: panelRect.bottom,
+            panelWidth: panelRect.width,
+            headerTop: headerRect.top,
+            headerBottom: headerRect.bottom,
+            contentTop: contentRect.top,
+            contentBottom: contentRect.bottom,
+            contentScrollHeight: content.scrollHeight,
+            contentClientHeight: content.clientHeight,
+            contentScrollTop: content.scrollTop,
+            lastBottom: lastRect.bottom,
+            navVisible,
+            navTop: navVisible ? navRect.top : innerHeight,
+            navHeight: navVisible ? navRect.height : 0,
+            mobileNavToken: parseFloat(navStyle.minHeight),
+            horizontalOverflow:
+              document.documentElement.scrollWidth - document.documentElement.clientWidth
+          };
+        }"""
+    )
+
+
 def test_admin_controlled_login_navigation_and_owner_separation(journey) -> None:
     session = journey()
     page = session.goto("/autonogrow-admin/?b=salon-e2e")
@@ -1134,6 +1173,84 @@ def test_conversation_uses_customer_instagram_as_visual_fallback_only(journey) -
     page.locator('[data-admin-action="open-conversation-customer-panel"]').click()
     expect(page.locator("#conversation-customer-content")).to_contain_text("Instagram del cliente")
     expect(page.locator("#conversation-customer-content")).to_contain_text("@mihii_mihii")
+
+
+@pytest.mark.parametrize(
+    ("email", "role"),
+    (
+        ("admin-a@e2e.test", "business_admin"),
+        ("pro-1@e2e.test", "business_staff"),
+    ),
+)
+@pytest.mark.parametrize(
+    "viewport",
+    (
+        pytest.param({"width": 1440, "height": 900}, id="1440x900"),
+        pytest.param({"width": 1024, "height": 768}, id="1024x768"),
+        pytest.param({"width": 768, "height": 1024}, id="768x1024"),
+        pytest.param({"width": 430, "height": 932}, id="430x932"),
+        pytest.param({"width": 390, "height": 844}, id="390x844"),
+        pytest.param({"width": 375, "height": 667}, id="375x667"),
+    ),
+)
+def test_customer_details_drawer_keeps_final_content_above_mobile_navigation(
+    journey, email: str, role: str, viewport: dict[str, int]
+) -> None:
+    session = journey(email=email)
+    page = session.goto("/autonogrow-admin/?b=salon-e2e#conversations")
+    page.set_viewport_size(viewport)
+    expect(page.locator("#admin-app")).to_be_visible()
+    assert page.evaluate("adminMembership.role") == role
+
+    conversation = page.locator(".conversation-list-item").filter(
+        has_text="María Cliente E2E"
+    ).first
+    expect(conversation).to_have_count(1, timeout=15_000)
+    conversation.evaluate("button => button.click()")
+    customer_button = page.locator(
+        '[data-admin-action="open-conversation-customer-panel"]'
+    )
+    expect(customer_button).to_be_visible()
+    customer_button.evaluate("button => button.click()")
+
+    panel = page.locator(".conversation-customer-panel.is-open")
+    content = page.locator("#conversation-customer-content")
+    final_content = content.locator(".customer-memory--activity")
+    expect(panel).to_be_visible()
+    expect(page.locator("#conversation-customer-close")).to_be_visible()
+    expect(final_content).to_contain_text("Comportamiento observado", timeout=15_000)
+
+    content.evaluate("element => { element.scrollTop = element.scrollHeight; }")
+    page.wait_for_timeout(50)
+    manual_geometry = _customer_drawer_geometry(page)
+    maximum_scroll = (
+        manual_geometry["contentScrollHeight"] - manual_geometry["contentClientHeight"]
+    )
+    assert abs(manual_geometry["contentScrollTop"] - maximum_scroll) <= 1, manual_geometry
+    assert manual_geometry["lastBottom"] <= manual_geometry["navTop"] + 1, manual_geometry
+    assert manual_geometry["horizontalOverflow"] <= 1, manual_geometry
+    assert manual_geometry["headerTop"] >= -1, manual_geometry
+    if viewport["width"] <= 639:
+        assert manual_geometry["navVisible"], manual_geometry
+        assert abs(manual_geometry["navHeight"] - manual_geometry["mobileNavToken"]) <= 1
+        assert manual_geometry["panelBottom"] <= manual_geometry["navTop"] + 1
+    else:
+        assert not manual_geometry["navVisible"], manual_geometry
+
+    content.evaluate("element => { element.scrollTop = 0; }")
+    final_content.evaluate("element => element.scrollIntoView({ block: 'end' })")
+    page.wait_for_timeout(50)
+    into_view_geometry = _customer_drawer_geometry(page)
+    assert into_view_geometry["lastBottom"] <= into_view_geometry["navTop"] + 1, (
+        into_view_geometry
+    )
+
+    page.locator("#conversation-customer-close").click()
+    expect(panel).to_be_hidden()
+    customer_button.evaluate("button => button.click()")
+    expect(panel).to_be_visible()
+    expect(final_content).to_be_visible()
+    _assert_no_horizontal_overflow(page)
 
 
 def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> None:

@@ -2192,6 +2192,7 @@ input {
   .conversation-detail { display: none !important; height: 100%; }
   .conversation-center.conversation-mobile-detail-open .conversation-list-panel { display: none; }
   .conversation-center.conversation-mobile-detail-open .conversation-detail { display: grid !important; }
+  .conversation-customer-panel { bottom: calc(var(--ag-mobile-nav-height) + env(safe-area-inset-bottom)); }
   .conversations-section .conversation-detail-header { padding: var(--ag-space-3) var(--ag-space-4); }
   .conversation-detail-actions { width: 100%; }
   .conversations-section .conversation-thread { padding: var(--ag-space-3) var(--ag-space-4); }
