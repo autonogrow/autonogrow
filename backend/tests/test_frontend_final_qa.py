@@ -107,11 +107,11 @@ def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
             "admin.js?v=daae1788bfba",
         ),
         "autonogrow-owner": (
-            "styles.css?v=20260825-p12-b",
+            "styles.css?v=f89c4b84d664",
             "responsive.css?v=5f1",
             "auth.js?v=10b5",
             "owner.js?v=20260828-p123-a",
-            "owner-businesses.js?v=854b40e07a80",
+            "owner-businesses.js?v=9d429323f26f",
             "owner-onboarding.js?v=5f1",
         ),
         "autonogrow-landing": ("styles.css?v=10b6", "auth.js?v=10b5", "script.js?v=10b7"),
@@ -134,6 +134,35 @@ def test_admin_script_cachebuster_matches_normalized_content_hash() -> None:
 
     assert match is not None
     assert match.group(1) == expected
+
+
+def test_owner_businesses_cachebuster_matches_content_hash() -> None:
+    html = text(ROOT / "autonogrow-owner" / "index.html")
+    businesses_js = text(ROOT / "autonogrow-owner" / "owner-businesses.js")
+    expected = hashlib.sha256(businesses_js.encode("utf-8")).hexdigest()[:12]
+    match = re.search(
+        r'<script src="owner-businesses\.js\?v=([a-f0-9]{12})"></script>', html
+    )
+
+    assert match is not None
+    assert match.group(1) == expected
+
+    styles = text(ROOT / "autonogrow-owner" / "styles.css")
+    expected_styles = hashlib.sha256(styles.encode("utf-8")).hexdigest()[:12]
+    styles_match = re.search(
+        r'<link rel="stylesheet" href="styles\.css\?v=([a-f0-9]{12})" />', html
+    )
+
+    assert styles_match is not None
+    assert styles_match.group(1) == expected_styles
+
+
+def test_owner_explicit_html_entry_is_not_cacheable() -> None:
+    caddy = text(ROOT / "deploy" / "Caddyfile.example")
+    html_matcher = caddy.split("@html_entry path", 1)[1].splitlines()[0]
+
+    assert "/autonogrow-owner/" in html_matcher
+    assert "/autonogrow-owner/index.html" in html_matcher
 
 
 def test_admin_instagram_planning_preserves_the_business_civil_time() -> None:

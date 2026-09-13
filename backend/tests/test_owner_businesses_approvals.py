@@ -103,7 +103,10 @@ def test_business_state_readiness_publication_admin_and_channels_are_separate() 
     ):
         assert layer in activation
     for contract in (
-        'business.published ? "Publicada" : "Despublicada"',
+        'business.published === true ? "Publicada" : "Despublicada"',
+        "ownerPublicationControls(business, status)",
+        "data-owner-publication-controls",
+        "data-owner-publication-status",
         "data-owner-publication",
         "Despublicar página",
         "Publicar página",
@@ -116,6 +119,18 @@ def test_business_state_readiness_publication_admin_and_channels_are_separate() 
     )[0]
     for layer in ("Publicación", "Administrador", "Servicios", "Horarios", "Canales"):
         assert layer in summary
+
+
+def test_publication_control_is_explicitly_limited_to_active_businesses() -> None:
+    _, _, _, hub = sources()
+    controls = hub.split("function ownerPublicationControls", 1)[1].split(
+        "function ownerActivationPanel", 1
+    )[0]
+
+    assert 'if (status !== "active") return "";' in controls
+    assert 'const published = business.published === true;' in controls
+    assert 'published ? "Despublicar página" : "Publicar página"' in controls
+    assert 'data-owner-published="${published ? "true" : "false"}"' in controls
 
 
 def test_detail_has_six_requested_sections() -> None:

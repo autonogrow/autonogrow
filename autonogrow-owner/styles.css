@@ -535,6 +535,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .owner-data-summary, .owner-activation-layers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--ag-space-3); margin-bottom: var(--ag-space-5); }
 .owner-data-summary p, .owner-activation-layers p { min-width: 0; margin: 0; padding: var(--ag-space-3); border-radius: var(--ag-radius-md); color: var(--ag-color-text-muted); background: var(--ag-color-surface-subtle); font-size: var(--ag-font-size-sm); overflow-wrap: anywhere; }
 .owner-detail-actions, .owner-onboarding-row__actions { display: flex; flex-wrap: wrap; gap: var(--ag-space-2); margin-top: var(--ag-space-4); }
+.owner-publication-control { display: flex; align-items: center; justify-content: space-between; gap: var(--ag-space-4); margin-bottom: var(--ag-space-5); padding: var(--ag-space-4); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
+.owner-publication-control p { margin: 0; }
+.owner-publication-control .owner-publication-state { margin: var(--ag-space-1) 0; color: var(--ag-color-text); font-size: var(--ag-font-size-lg); font-weight: var(--ag-font-weight-bold); }
+.owner-publication-control .button { flex: 0 0 auto; }
 .owner-empty-inline, .owner-loading-inline { margin: 0; padding: var(--ag-space-4); color: var(--ag-color-text-muted); text-align: center; }
 .readiness-item > div { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ag-space-3); }
 .readiness-item p { margin: var(--ag-space-2) 0; }
@@ -577,7 +581,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 @media (max-width: 767px) {
   .owner-business-filters, .owner-business-row, .owner-data-summary, .owner-activation-layers, .owner-candidate-layers { grid-template-columns: minmax(0, 1fr); }
   .owner-business-row__actions .button, .owner-business-row__actions a, .owner-detail-actions .button, .owner-detail-actions a, .owner-onboarding-row__actions .button { width: 100%; }
-  .owner-business-detail__header, .owner-detail-block > header, .owner-candidate-review > header, .owner-detail-hero, .owner-onboarding-row, .owner-approval-row { align-items: stretch; flex-direction: column; }
+  .owner-business-detail__header, .owner-detail-block > header, .owner-candidate-review > header, .owner-detail-hero, .owner-onboarding-row, .owner-approval-row, .owner-publication-control { align-items: stretch; flex-direction: column; }
+  .owner-publication-control .button { width: 100%; }
   .owner-onboarding-row__actions { width: 100%; }
   .owner-dialog { padding: var(--ag-space-4); }
   .owner-dialog-context { grid-template-columns: minmax(0, 1fr); }

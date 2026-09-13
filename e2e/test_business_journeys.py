@@ -387,9 +387,13 @@ def test_public_page_publication_is_owner_only_and_persists_both_states(journey)
     expect(row).to_be_visible()
     row.get_by_role("button", name="Abrir negocio").click()
     owner.locator('[data-owner-detail-tab="activation"]').click()
-    expect(owner.locator('[data-owner-detail-panel="activation"]')).to_contain_text(
+    activation = owner.locator('[data-owner-detail-panel="activation"]')
+    expect(activation).to_contain_text(
         "Para vacaciones o cierres temporales usa las excepciones de disponibilidad."
     )
+    expect(activation.locator('[data-owner-publication-controls]')).to_be_visible()
+    expect(activation.locator('[data-owner-publication-status]')).to_have_text("Publicada")
+    expect(activation.get_by_role("button", name="Despublicar página")).to_be_visible()
 
     owner.locator('[data-owner-publication]').click()
     owner.locator("#owner-dialog-reason").fill("Prueba E2E de gobernanza")
@@ -399,6 +403,7 @@ def test_public_page_publication_is_owner_only_and_persists_both_states(journey)
     ) as unpublished:
         owner.locator("#owner-dialog-confirm").click()
     assert unpublished.value.status == 200
+    expect(owner.locator('[data-owner-publication-status]')).to_have_text("Despublicada")
     expect(owner.locator('[data-owner-publication]')).to_have_text("Publicar página")
     assert owner.request.get("/api/businesses/salon-e2e").status == 404
     assert owner.request.get("/api/businesses/fisio-e2e").status == 200
@@ -417,6 +422,7 @@ def test_public_page_publication_is_owner_only_and_persists_both_states(journey)
     ) as published:
         owner.locator("#owner-dialog-confirm").click()
     assert published.value.status == 200
+    expect(owner.locator('[data-owner-publication-status]')).to_have_text("Publicada")
     expect(owner.locator('[data-owner-publication]')).to_have_text("Despublicar página")
     assert owner.request.get("/api/businesses/salon-e2e").status == 200
 

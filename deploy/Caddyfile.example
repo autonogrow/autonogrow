@@ -17,7 +17,7 @@ staging.autonogrow.es {
 
     redir / /autonogrow-landing/ 302
 
-    @html_entry path /autonogrow-landing/ /autonogrow-admin/ /autonogrow-owner/ /autonogrow-customer/ /privacy/ /data-deletion/
+    @html_entry path /autonogrow-landing/ /autonogrow-admin/ /autonogrow-owner/ /autonogrow-owner/index.html /autonogrow-customer/ /privacy/ /data-deletion/
     header @html_entry Cache-Control "no-cache, no-store, must-revalidate"
 
     @static_asset path_regexp static_asset \.(?:css|js|svg|png|jpe?g|webp|woff2?)$
