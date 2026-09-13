@@ -54,6 +54,19 @@ def test_dashboard_has_required_operational_blocks_and_four_metrics() -> None:
     assert metrics.count('class="dashboard-metric ag-card"') == 4
 
 
+def test_healthy_zero_metrics_are_hidden_but_errors_remain_visible() -> None:
+    _, _, js = read_sources()
+    dashboard = dashboard_javascript(js)
+    assert 'setDashboardMetricVisibility("dashboard-stat-today", todayCount > 0)' in dashboard
+    assert 'setDashboardMetricVisibility("dashboard-stat-pending", pendingCount > 0)' in dashboard
+    assert 'setDashboardMetricVisibility("dashboard-stat-messages", pendingMessages > 0)' in dashboard
+    assert dashboard.count('setDashboardMetricVisibility("dashboard-stat-today", true)') == 1
+    assert dashboard.count('setDashboardMetricVisibility("dashboard-stat-pending", true)') == 1
+    assert dashboard.count('setDashboardMetricVisibility("dashboard-stat-messages", true)') == 1
+    assert '].filter(([_label, value]) => value > 0)' in dashboard
+    assert 'container.closest(".dashboard-panel").hidden = rows.length === 0' in js
+
+
 def test_legacy_contracts_and_ids_remain_unique() -> None:
     html, _, _ = read_sources()
     inventory = IdInventory()

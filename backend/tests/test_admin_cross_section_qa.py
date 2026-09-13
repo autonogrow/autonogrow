@@ -205,7 +205,8 @@ def test_contextual_links_reach_the_exact_existing_section_and_subview() -> None
     assert 'showAdminSection("messages")' in growth_navigation
     assert 'data-admin-action="navigate-section" data-section="reviews"' in js
     assert "function setupAdminDelegatedActions" in js
-    assert 'data-channel-hub-target="messages"' in html
+    assert '{ id: "messages", label: "Respuestas automáticas"' in js
+    assert "conversation-automation-shortcut" not in html
 
 
 def test_polling_is_single_flight_backed_off_and_does_not_announce_repaints() -> None:

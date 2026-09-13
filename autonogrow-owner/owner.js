@@ -127,9 +127,17 @@ function ownerDashboardBlock(id) {
 function setOwnerDashboardBlock(id, html, state = "ready") {
   const block = ownerDashboardBlock(id);
   if (!block) return;
+  block.hidden = false;
   block.dataset.state = state;
   block.setAttribute("aria-busy", state === "loading" ? "true" : "false");
   block.querySelector("[data-owner-dashboard-content]").innerHTML = html;
+}
+
+function hideOwnerDashboardBlock(id) {
+  const block = ownerDashboardBlock(id);
+  if (!block) return;
+  block.hidden = true;
+  block.setAttribute("aria-busy", "false");
 }
 
 function ownerDashboardEmpty(title, description) {
@@ -226,13 +234,18 @@ function renderOwnerMetrics() {
   const businessData = dashboardSourceData("businesses", businesses);
   const incidentData = dashboardSourceData("incidents", {});
   const queueData = dashboardSourceData("queue", null);
-  byId("owner-metric-active").textContent = businessSource.status === "error" ? "—" : businessData.filter((item) => item.status === "active").length;
-  byId("owner-metric-pending-businesses").textContent = businessSource.status === "error" ? "—" : businessData.filter(ownerBusinessIsPending).length;
-  byId("owner-metric-decisions").textContent = channelSource.status === "error" ? "—" : pendingOwnerDecisions().length;
-  byId("owner-metric-integrations").textContent = channelSource.status === "error" ? "—" : integrationAttentionItems().length;
-  byId("owner-metric-incidents").textContent = incidentSource.status === "error" ? "—" : Number(incidentData.open_count || 0);
+  const setMetric = (id, value, hideHealthyZero = false) => {
+    const element = byId(id);
+    element.textContent = value;
+    element.closest(".owner-dashboard-metric").hidden = hideHealthyZero && value === 0;
+  };
+  setMetric("owner-metric-active", businessSource.status === "error" ? "—" : businessData.filter((item) => item.status === "active").length);
+  setMetric("owner-metric-pending-businesses", businessSource.status === "error" ? "—" : businessData.filter(ownerBusinessIsPending).length, businessSource.status === "ready");
+  setMetric("owner-metric-decisions", channelSource.status === "error" ? "—" : pendingOwnerDecisions().length, channelSource.status === "ready");
+  setMetric("owner-metric-integrations", channelSource.status === "error" ? "—" : integrationAttentionItems().length, channelSource.status === "ready");
+  setMetric("owner-metric-incidents", incidentSource.status === "error" ? "—" : Number(incidentData.open_count || 0), incidentSource.status === "ready");
   const queueIssues = ownerQueueIssueCount(queueData);
-  byId("owner-metric-messages").textContent = queueSource.status === "error" || queueIssues === null ? "—" : queueIssues;
+  setMetric("owner-metric-messages", queueSource.status === "error" || queueIssues === null ? "—" : queueIssues, queueSource.status === "ready");
   byId("owner-dashboard-metrics").setAttribute("aria-busy", OWNER_DASHBOARD_SOURCE_NAMES.some((name) => ownerDashboardState[name].status === "loading") ? "true" : "false");
 }
 
@@ -245,6 +258,7 @@ function renderPendingDecisions() {
   if (source.status === "error" && !source.data) { setOwnerDashboardBlock("owner-dashboard-decisions", ownerDashboardError(), "error"); return; }
   const decisions = pendingOwnerDecisions();
   if (!decisions.length) {
+    if (source.status === "ready" && !source.errors) { hideOwnerDashboardBlock("owner-dashboard-decisions"); return; }
     const content = source.status === "error"
       ? ownerDashboardStale() + ownerDashboardEmpty("Última comprobación sin decisiones", "La fuente debe recuperarse antes de confirmar que no hay nuevas solicitudes.")
       : source.errors
@@ -278,6 +292,7 @@ function renderIntegrationAttention() {
   if (source.status === "error" && !source.data) { setOwnerDashboardBlock("owner-dashboard-integrations", ownerDashboardError(), "error"); return; }
   const attention = integrationAttentionItems();
   if (!attention.length) {
+    if (source.status === "ready" && !source.errors) { hideOwnerDashboardBlock("owner-dashboard-integrations"); return; }
     const content = source.status === "error"
       ? ownerDashboardStale() + ownerDashboardEmpty("Última comprobación sin problemas", "La fuente debe recuperarse para confirmar el estado actual.")
       : source.errors
@@ -304,6 +319,7 @@ function renderIncidentSummary() {
   if (source.status === "error" && !source.data) { setOwnerDashboardBlock("owner-dashboard-incidents", ownerDashboardError(), "error"); return; }
   const open = (dashboardSourceData("incidents", {}).incidents || []).filter((item) => ["open", "acknowledged"].includes(item.status));
   if (!open.length) {
+    if (source.status === "ready") { hideOwnerDashboardBlock("owner-dashboard-incidents"); return; }
     const content = source.status === "error" ? ownerDashboardStale() + ownerDashboardEmpty("Última comprobación sin incidencias", "Reintenta para confirmar el estado actual.") : ownerDashboardEmpty("No hay incidencias abiertas", "Las incidencias nuevas aparecerán aquí.");
     setOwnerDashboardBlock("owner-dashboard-incidents", content, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
     return;
@@ -321,6 +337,7 @@ function renderOperationsSummary() {
   const workerProblem = !queue.worker_active || Number(queue.stale_worker_count || 0) > 0;
   const pending = Number(queue.pending_inbox || 0) + Number(queue.pending_outbox || 0);
   if (!issueCount && !workerProblem) {
+    if (source.status === "ready" && !pending) { hideOwnerDashboardBlock("owner-dashboard-operations"); return; }
     const message = source.status === "error" ? "Reintenta para confirmar el estado actual." : pending ? `${pending} mensajes pendientes continúan en procesamiento.` : "El procesamiento no presenta problemas detectados.";
     const content = (source.status === "error" ? ownerDashboardStale() : "") + ownerDashboardEmpty(source.status === "error" ? "Última comprobación operativa" : "Procesamiento operativo", message);
     setOwnerDashboardBlock("owner-dashboard-operations", content, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
@@ -351,6 +368,7 @@ function renderBusinessesAttention() {
   if (source.status === "error" && !source.data) { setOwnerDashboardBlock("owner-dashboard-businesses", ownerDashboardError(), "error"); return; }
   const attention = dashboardSourceData("businesses", businesses).map((business) => ({ business, reasons: businessAttentionReasons(business) })).filter((item) => item.reasons.length);
   if (!attention.length) {
+    if (source.status === "ready") { hideOwnerDashboardBlock("owner-dashboard-businesses"); return; }
     const content = (source.status === "error" ? ownerDashboardStale() : "") + ownerDashboardEmpty(source.status === "error" ? "Última comprobación sin bloqueos" : "Sin bloqueos detectados", source.status === "error" ? "Reintenta para confirmar el estado actual." : "Los negocios cargados no presentan carencias operativas básicas.");
     setOwnerDashboardBlock("owner-dashboard-businesses", content, source.status === "loading" ? "loading" : source.status === "error" ? "error" : "ready");
     return;

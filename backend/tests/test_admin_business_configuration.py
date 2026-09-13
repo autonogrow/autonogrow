@@ -76,7 +76,8 @@ def test_preparation_states_use_five_documented_real_criteria() -> None:
     for state in ("complete", "missing", "review", "error"):
         assert f'state: "{state}"' in block
     overview = function_block(js, "function renderConfigurationOverview", "function setupBusinessConfiguration")
-    assert "`${ready} de ${states.length} apartados preparados`" in overview
+    assert 'tasks.hidden = pending.length === 0' in overview
+    assert "configuration-overview-list" not in overview
     assert "%" not in overview
 
 
@@ -118,7 +119,7 @@ def test_services_keep_real_endpoints_validation_impact_and_safe_rendering() -> 
 def test_team_separates_access_from_public_identity_and_reuses_staff_routes() -> None:
     html, _, js = read_sources()
     assert "Rol de acceso" in html
-    assert "no es un título público" in html
+    assert "no es un título público" not in html
     assert "Nombre público" in html
     assert 'id="new-staff-bookable"' in html
     assert "/staff/${memberId}/services`" in js
@@ -186,7 +187,8 @@ def test_public_page_is_informative_and_has_no_admin_publication_control() -> No
     assert "Página pública activa" not in html
     assert "business-setting-active" not in save
     assert 'id="public-page-publication-status"' in html
-    assert "La publicación global la gestiona Owner." in js
+    assert 'currentBusiness.active ? "Publicada" : "Despublicada"' in js
+    assert "La publicación global la gestiona Owner." not in js
 
 
 def test_growth_results_use_the_backend_response_contract() -> None:

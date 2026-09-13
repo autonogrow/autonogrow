@@ -163,7 +163,9 @@ def test_automation_respects_owner_period_channel_health_and_credits() -> None:
     render = function_block(js, "function renderConversationAutomation", "async function saveConversationAutomationSettings")
     assert "settings.automation_feature_enabled" in render
     assert 'usage.period_status === "active"' in render
-    assert "Bloqueada por el canal" in render
+    assert "Bloqueada por el canal" not in render
+    assert "Se evalúa cuando el sistema reconoce esta intención" not in render
+    assert "configuration-item-save-state" not in render
     assert "Créditos de automatización" in render
     assert "La salud del canal se comprueba por separado" in render
     assert "El límite de mensajes forma parte de tu plan" in render

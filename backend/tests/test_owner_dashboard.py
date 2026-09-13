@@ -78,6 +78,20 @@ def test_dashboard_has_six_real_actionable_indicators_and_no_fictional_metrics()
         assert forbidden not in dashboard_javascript(js)
 
 
+def test_dashboard_hides_healthy_zero_indicators_and_empty_attention_blocks() -> None:
+    _, _, js = read_sources()
+    dashboard = dashboard_javascript(js)
+    assert "hideHealthyZero && value === 0" in dashboard
+    for block in (
+        "owner-dashboard-decisions",
+        "owner-dashboard-integrations",
+        "owner-dashboard-incidents",
+        "owner-dashboard-operations",
+        "owner-dashboard-businesses",
+    ):
+        assert f'hideOwnerDashboardBlock("{block}")' in dashboard
+
+
 def test_pending_decisions_are_review_links_not_approval_actions() -> None:
     html, _, js = read_sources()
     overview = dashboard_html(html)

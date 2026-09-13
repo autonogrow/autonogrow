@@ -95,6 +95,19 @@ def test_growth_hierarchy_copy_and_results_are_honest() -> None:
     assert "review-candidates" not in opportunities
 
 
+def test_growth_overview_does_not_repeat_attention_opportunities() -> None:
+    _, _, js = sources()
+    render = function_block(
+        js,
+        "function renderGrowthAttentionAndOpportunities",
+        "function renderGrowthOverview",
+    )
+    assert "const attentionIds = new Set" in render
+    assert "remainingOpportunities" in render
+    assert "!attentionIds.has(Number(item.id))" in render
+    assert 'preview.closest(".growth-priority-card").hidden' in render
+
+
 def test_signals_distinguish_supported_actions_from_information() -> None:
     _, _, js = sources()
     render = function_block(

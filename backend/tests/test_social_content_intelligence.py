@@ -707,7 +707,9 @@ def test_admin_rrss_area_renders_only_required_commercial_decisions() -> None:
     assert ">Rechazar</button>" in js
     assert ">Me interesa</button>" not in js
     assert "if (isBusinessStaff())" in js
-    assert "reservadas al responsable del negocio" in js
+    assert 'STAFF_ADMIN_SECTIONS = new Set(["summary", "growth", "growth-opportunities", "bookings", "conversations"])' in js
+    assert "reservadas al responsable del negocio" not in js
+    assert "card.hidden = socialContentProposals.length === 0" in js
     assert "requieren aprobación expresa del negocio" in html
     assert "available_assets" not in js
 

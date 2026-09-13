@@ -405,7 +405,7 @@ def test_public_page_publication_is_owner_only_and_persists_both_states(journey)
     _admin_session, admin = _open_admin(journey)
     admin.evaluate("showAdminSection('public-page')")
     expect(admin.locator("#public-page-publication-status")).to_have_text(
-        "Publicada. La publicación global la gestiona Owner."
+        "Publicada"
     )
     assert admin.locator("#business-setting-active").count() == 0
 
@@ -479,6 +479,114 @@ def test_public_page_publication_is_owner_only_and_persists_both_states(journey)
     expect(owner.locator('[data-owner-publication-status]')).to_have_text("Publicada")
     expect(owner.locator('[data-owner-publication]')).to_have_text("Despublicar página")
     assert owner.request.get("/api/businesses/salon-e2e").status == 200
+
+
+def test_simplify_one_removes_noise_without_removing_operational_access(journey) -> None:
+    _session, admin = _open_admin(journey)
+
+    admin.evaluate("showAdminSection('conversations', 'replace')")
+    expect(admin.locator("#conversation-list")).to_be_visible()
+    expect(admin.locator("#conversation-detail")).to_be_visible()
+    admin.locator('#conversation-list [data-admin-action="select-conversation"]').last.click()
+    expect(admin.locator("#conversation-detail")).to_contain_text("WhatsApp")
+    assert admin.locator(".conversation-automation-shortcut").count() == 0
+
+    admin.set_viewport_size({"width": 390, "height": 844})
+    admin.evaluate("closeConversationMobileDetail()")
+    expect(admin.locator("#conversation-list")).to_be_visible()
+    assert admin.locator(".conversation-automation-shortcut").count() == 0
+    _assert_no_horizontal_overflow(admin)
+
+    admin.set_viewport_size({"width": 1440, "height": 900})
+    admin.evaluate("showAdminSection('configuration', 'replace')")
+    expect(admin.locator("#pilot-readiness-summary")).to_contain_text(
+        "Listo para recibir reservas"
+    )
+    expect(admin.locator("#configuration-tasks")).to_be_hidden()
+    assert admin.locator("#configuration-overview-list").count() == 0
+
+    admin.evaluate("showAdminSection('messages', 'replace')")
+    automations = admin.locator('[data-admin-section="messages"]')
+    expect(automations).not_to_contain_text("Sin cambios")
+    expect(automations).not_to_contain_text(
+        "Se evalúa cuando el sistema reconoce esta intención"
+    )
+    expect(automations.get_by_role("button", name="Guardar configuración")).to_be_visible()
+
+    admin.evaluate("showAdminSection('growth', 'replace')")
+    attention_ids = set(
+        admin.locator("#growth-attention-list [data-customer-opportunity-preview]")
+        .evaluate_all("items => items.map(item => item.dataset.customerOpportunityPreview)")
+    )
+    preview_ids = set(
+        admin.locator("#growth-opportunities-preview [data-customer-opportunity-preview]")
+        .evaluate_all("items => items.map(item => item.dataset.customerOpportunityPreview)")
+    )
+    assert attention_ids.isdisjoint(preview_ids)
+
+    admin.evaluate("showAdminSection('summary', 'replace')")
+    expect(admin.locator("#dashboard-stat-today").locator("xpath=ancestor::article")).to_be_hidden()
+    expect(admin.locator("#dashboard-stat-pending").locator("xpath=ancestor::article")).to_be_visible()
+    expect(admin.locator("#dashboard-stat-messages").locator("xpath=ancestor::article")).to_be_hidden()
+    expect(admin.locator("#dashboard-weekly-activity")).not_to_contain_text(
+        "Canceladas o rechazadas"
+    )
+    expect(admin.locator("#pilot-value-summary")).not_to_contain_text(
+        "Growth · reservas atribuidas"
+    )
+
+    staff_session = journey(email="pro-1@e2e.test")
+    staff = staff_session.goto("/autonogrow-admin/?b=salon-e2e#instagram-content")
+    expect(staff.locator("#admin-app")).to_be_visible()
+    expect(staff).to_have_url(re.compile(r"#bookings$"))
+    expect(staff.locator('.admin-tab[data-section="instagram-content"]')).to_be_hidden()
+    expect(staff.locator('[data-admin-section="bookings"]')).to_have_class(
+        re.compile(r"\badmin-section-active\b")
+    )
+
+
+def test_owner_simplify_one_hides_healthy_noise_and_keeps_exceptions(journey) -> None:
+    owner_session = journey(email="owner@e2e.test")
+    owner = owner_session.goto("/autonogrow-owner/")
+    expect(owner.locator("#owner-app")).to_be_visible()
+    expect(owner.locator("#owner-sync-status")).to_contain_text("Actualizado", timeout=20_000)
+
+    expect(owner.locator("#owner-metric-active").locator("xpath=ancestor::article")).to_be_visible()
+    for metric_id in (
+        "owner-metric-pending-businesses",
+        "owner-metric-decisions",
+        "owner-metric-integrations",
+        "owner-metric-incidents",
+        "owner-metric-messages",
+    ):
+        expect(owner.locator(f"#{metric_id}").locator("xpath=ancestor::article")).to_be_hidden()
+    for block_id in (
+        "owner-dashboard-decisions",
+        "owner-dashboard-integrations",
+        "owner-dashboard-incidents",
+        "owner-dashboard-businesses",
+    ):
+        expect(owner.locator(f"#{block_id}")).to_be_hidden()
+    expect(owner.locator("#owner-dashboard-operations")).to_be_visible()
+
+    owner.evaluate("setActiveTab('businesses')")
+    owner.evaluate(
+        "openBusinessDetail(businesses.find(item => item.name === 'Salón E2E').id, 'activation')"
+    )
+    activation = owner.locator('[data-owner-detail-panel="activation"]')
+    expect(activation).to_be_visible()
+    expect(activation.locator("[data-owner-readiness-summary]")).not_to_have_text(
+        "Sin comprobar en esta vista"
+    )
+    passed = activation.locator(".readiness-item.passed").first
+    expect(passed).to_contain_text("Correcto")
+    expect(passed.locator("p, small, button")).to_have_count(0)
+    expect(activation.locator(".readiness-item:not(.passed) [data-owner-readiness-step]").first).to_be_visible()
+
+    owner.evaluate("setActiveTab('audit')")
+    audit = owner.locator('[data-panel="audit"]')
+    expect(audit).not_to_contain_text("endpoint Owner")
+    expect(audit).not_to_contain_text("no inventa actores")
 
 
 def test_legitimate_admin_forbidden_responses_keep_valid_sessions_visible(journey) -> None:
@@ -2332,10 +2440,7 @@ def test_admin_browser_history_deep_links_roles_and_services_cta(journey) -> Non
     )
 
     page.locator('.admin-tab[data-section="configuration"]').click()
-    services_card = page.locator("#configuration-overview-list article").filter(
-        has_text="Servicios"
-    )
-    services_card.get_by_role("button", name="Revisar").click()
+    page.locator('[data-admin-section="configuration"] [data-configuration-target="services"]').click()
     expect(page).to_have_url(re.compile(r"#services$"))
     expect(page.locator('[data-admin-section="services"]')).to_have_class(
         re.compile(r"\badmin-section-active\b")

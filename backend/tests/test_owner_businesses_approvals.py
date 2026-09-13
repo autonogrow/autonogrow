@@ -281,6 +281,8 @@ def test_readiness_maps_status_message_remediation_and_destination() -> None:
     ):
         assert field in readiness
     assert "readiness.version" not in readiness
+    assert 'const passed = item.status === "passed"' in readiness
+    assert '${passed ? "" :' in readiness
 
 
 def test_preview_is_read_only_and_explains_guarantees() -> None:

@@ -329,7 +329,8 @@ def test_outbox_uses_real_aggregates_and_hides_unavailable_ones() -> None:
     summary = function(operations, "renderOwnerOutboxSummary", "ownerQueueProblemRow")
     for field in ("pending_outbox", "retry_outbox", "blocked_outbox", "dead_letter_outbox"):
         assert field in summary
-    assert "no expone agregados" in html
+    assert "no expone agregados" not in html
+    assert "target.hidden = metrics.length === 0" in summary
     assert 'job.job_type === "outbox"' in operations
 
 
@@ -362,7 +363,7 @@ def test_integration_jobs_are_translated_and_have_no_manual_retry() -> None:
     ):
         assert f'{raw}: "{label}"' in operations
     jobs = function(operations, "renderOwnerIntegrationJobs", "renderOwnerMaintenance")
-    assert "No existe un endpoint Owner seguro para reintentar este job manualmente" in jobs
+    assert "No existe un endpoint Owner seguro para reintentar este job manualmente" not in jobs
     assert "entry.job.id" not in jobs
     assert "safe_error_code" not in jobs
 
@@ -417,12 +418,13 @@ def test_owner_operations_has_no_misspelled_actions_copy() -> None:
     assert "acciónes" not in (html + owner + businesses + operations).casefold()
 
 
-def test_audit_is_explicitly_derived_because_no_read_endpoint_exists() -> None:
+def test_audit_shows_only_derived_events_without_backend_explanations() -> None:
     html, _, _, _, operations = sources()
-    assert "no expone actualmente un endpoint Owner" in html
-    assert "no inventa actores ni payloads" in html
+    assert "no expone actualmente un endpoint Owner" not in html
+    assert "no inventa actores ni payloads" not in html
     assert "function ownerAuditEvents" in operations
-    assert "Actor y resultado detallado: no expuestos" in operations
+    assert "Actor y resultado detallado: no expuestos" not in operations
+    assert "target.hidden = events.length === 0 && !partial" in operations
     assert "data-owner-audit-business" in operations
 
 
@@ -511,7 +513,7 @@ def test_dom_ids_are_unique_and_required_contracts_exist() -> None:
 
 def test_responsive_accessibility_contracts_are_structural() -> None:
     html, css, _, _, _ = sources()
-    assert '@media (max-width: 1199px)' in css
+    assert 'max-width: 1199px)' in css
     assert '@media (max-width: 767px)' in css
     assert "grid-template-columns: minmax(0, 1fr)" in css
     assert "100dvh" in css

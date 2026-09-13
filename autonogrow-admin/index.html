@@ -250,7 +250,7 @@
           </section>
           <section class="growth-priority-card" aria-labelledby="growth-priority-title"><div class="section-header"><div><h3 id="growth-priority-title">Mejora la configuración</h3><p>Preparación, recurrencia y conexiones separadas de las oportunidades de clientes.</p></div></div><div id="growth-priority-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Comprobando configuración.</span></div></section>
           <div class="growth-overview growth-readiness" aria-label="Preparación operativa">
-            <div><strong id="growth-progress-count">Comprobando acciones</strong><span id="growth-points">Basado en datos operativos reales</span></div><strong id="growth-progress-percent">—</strong>
+            <div><strong id="growth-progress-count">Comprobando acciones</strong><span id="growth-points"></span></div><strong id="growth-progress-percent">—</strong>
           </div>
           <div class="growth-progress" role="progressbar" aria-label="Condiciones operativas resueltas" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="growth-progress-bar"></span></div>
           <div id="growth-day-complete" class="growth-day-complete" hidden><strong>Sin acciones pendientes</strong><p>No hay bloqueos ni oportunidades activas con los datos disponibles.</p></div>
@@ -266,14 +266,7 @@
             <div><p class="eyebrow">Preparación del negocio</p><h2 id="configuration-title">Configuración del negocio</h2><p>Completa lo necesario para recibir reservas y mantener tu página pública.</p></div>
             <a id="configuration-public-link" class="ag-button ag-button--secondary" target="_blank" rel="noopener noreferrer">Ver página pública</a>
           </header>
-          <section class="configuration-summary-card" aria-labelledby="configuration-summary-title">
-            <div><h3 id="configuration-summary-title">Estado general</h3><p id="configuration-business-name">Cargando negocio…</p></div>
-            <strong id="configuration-ready-summary">Comprobando apartados…</strong>
-          </section>
           <section id="pilot-readiness-summary" aria-label="Checklist de configuración" aria-live="polite"><p>Comprobando qué falta…</p></section>
-          <div id="configuration-overview-list" class="configuration-overview-list" aria-live="polite">
-            <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Comprobando configuración.</span>
-          </div>
           <section id="configuration-tasks" class="configuration-tasks" aria-labelledby="configuration-tasks-title">
             <h3 id="configuration-tasks-title">Qué revisar ahora</h3><div id="configuration-task-list"><p class="empty-state">Comprobando tareas…</p></div>
           </section>
@@ -366,9 +359,6 @@
           <header class="channel-hub-hero">
             <div><p class="eyebrow">Configuración de mensajes</p><h2 id="channel-hub-title">Canales y automatizaciones</h2><p>Comprueba qué está conectado, qué puede enviar AutonoGrow y qué necesita atención.</p></div>
           </header>
-          <div class="channel-onboarding-notice ag-alert ag-alert--info">
-            <div><strong>Conexiones oficiales y revisión separada</strong><p>Conectar una cuenta no la activa automáticamente. AutonoGrow revisará la conexión antes de habilitar el envío o las respuestas automáticas.</p></div>
-          </div>
           <div id="channel-overview-attention" class="channel-attention-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Comprobando acciones pendientes.</span></div>
           <div id="channel-onboarding-list" class="channel-overview-grid" aria-busy="true">
             <div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando canales.</span>
@@ -433,7 +423,7 @@
       <fieldset class="new-service-form configuration-create-card" data-config-dirty-key="staff-new">
         <legend>Añadir miembro</legend>
         <label>Email de acceso <span aria-hidden="true">*</span><input id="new-staff-email" type="email" required /></label>
-        <label>Rol de acceso<select id="new-staff-role" aria-describedby="new-staff-role-help"><option value="business_staff">Personal</option><option value="business_admin">Administrador</option></select><small id="new-staff-role-help">Controla los permisos en AutonoGrow; no es un título público.</small></label>
+        <label>Rol de acceso<select id="new-staff-role"><option value="business_staff">Personal</option><option value="business_admin">Administrador</option></select></label>
         <label>Nombre público<input id="new-staff-public-name" type="text" aria-describedby="new-staff-public-name-help" /><small id="new-staff-public-name-help">Nombre que puede mostrarse durante la reserva.</small></label>
         <label class="active-setting"><input id="new-staff-bookable" type="checkbox" />Reservable</label>
         <button id="create-staff-member" class="btn btn-primary" type="button">Añadir miembro</button>
@@ -511,10 +501,6 @@
       </div>
       <button id="conversation-customer-backdrop" class="conversation-customer-backdrop" type="button" aria-label="Cerrar información del cliente" hidden></button>
 
-      <aside class="conversation-automation-shortcut" data-conversation-admin-only>
-        <div><strong>Respuestas automáticas</strong><p>Las reglas y plantillas se configuran ahora junto a los canales.</p></div>
-        <button class="ag-button ag-button--secondary ag-button--small" type="button" data-channel-hub-target="messages">Configurar</button>
-      </aside>
     </section>
 
     <section class="section admin-section message-outbox-section channel-hub-category" data-admin-section="messages" aria-labelledby="channel-automations-title">
@@ -525,7 +511,7 @@
           <div id="channel-automations-errors" class="configuration-error-summary" role="alert" tabindex="-1" hidden></div>
 
           <section id="conversation-automation-panel" class="conversation-automation-panel channel-automation-card" data-conversation-admin-only aria-labelledby="automation-settings-title">
-            <div class="section-header"><div><h3 id="automation-settings-title">Reglas de respuesta</h3><p>La autorización de AutonoGrow y el estado de cada canal siempre tienen prioridad.</p></div></div>
+            <div class="section-header"><div><h3 id="automation-settings-title">Reglas de respuesta</h3></div></div>
             <div id="conversation-automation-content" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando configuración.</span></div>
           </section>
 
@@ -536,7 +522,7 @@
               <label class="ag-field" for="conversation-template-name">Nombre<input id="conversation-template-name" type="text" maxlength="160" autocomplete="off" aria-describedby="conversation-template-name-error" /><small id="conversation-template-name-error" class="field-error"></small></label>
               <label class="ag-field" for="conversation-template-body">Contenido<textarea id="conversation-template-body" rows="4" maxlength="10000" aria-describedby="conversation-template-body-help conversation-template-body-error"></textarea><small id="conversation-template-body-help">Usa únicamente las variables indicadas arriba.</small><small id="conversation-template-body-error" class="field-error"></small></label>
               <div class="template-preview"><strong>Vista previa</strong><p id="conversation-template-preview">Escribe un mensaje para ver una muestra.</p></div>
-              <div class="settings-actions"><button id="create-conversation-template" class="btn btn-secondary" type="button">Crear plantilla</button><span class="configuration-item-save-state">Sin cambios</span></div>
+              <div class="settings-actions"><button id="create-conversation-template" class="btn btn-secondary" type="button">Crear plantilla</button></div>
             </div>
             <div id="conversation-template-list" class="conversation-template-list" aria-busy="true"><div class="ag-skeleton ag-skeleton--card" aria-hidden="true"></div><span class="ag-visually-hidden">Cargando plantillas.</span></div>
           </section>
@@ -860,6 +846,6 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js?v=10b5"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="admin.js?v=e9b8434d9c7e"></script>
+  <script src="admin.js?v=a1b2c3d4e5f6"></script>
 </body>
 </html>

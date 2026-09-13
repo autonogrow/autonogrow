@@ -200,7 +200,7 @@ let rescheduleState = {
 const CONFIGURATION_SECTIONS = new Set(["configuration", "business", "services", "staff", "schedule", "public-page"]);
 const CHANNEL_HUB_SECTIONS = new Set(["channels", "channel-instagram", "channel-whatsapp", "messages"]);
 const GROWTH_HUB_SECTIONS = new Set(["growth", "reviews", "growth-opportunities"]);
-const STAFF_ADMIN_SECTIONS = new Set(["summary", "growth", "growth-opportunities", "instagram-content", "bookings", "conversations"]);
+const STAFF_ADMIN_SECTIONS = new Set(["summary", "growth", "growth-opportunities", "bookings", "conversations"]);
 const GROWTH_HUB_CATEGORIES = [
   { id: "growth", label: "Resumen", description: "Prioridades y actividad" },
   { id: "reviews", label: "Reseñas", description: "Clientes y solicitudes" },
@@ -638,26 +638,16 @@ function configurationNavigationMarkup(activeSection) {
 }
 
 function renderConfigurationOverview() {
-  if (!document.getElementById("configuration-overview-list")) return;
   const activeSection = document.querySelector("[data-admin-section].admin-section-active")?.dataset.adminSection || "configuration";
   document.querySelectorAll("[data-configuration-navigation]").forEach((container) => {
     container.innerHTML = configurationNavigationMarkup(activeSection);
   });
   const sections = CONFIGURATION_CATEGORIES.filter((category) => category.id !== "configuration");
   const states = sections.map((category) => ({ category, status: configurationState(category.id) }));
-  const ready = states.filter(({ status }) => status.state === "complete").length;
-  document.getElementById("configuration-business-name").textContent = currentBusiness?.name || "Negocio sin nombre";
-  document.getElementById("configuration-ready-summary").textContent = `${ready} de ${states.length} apartados preparados`;
-  document.getElementById("configuration-overview-list").innerHTML = states.map(({ category, status }) => `
-    <article class="configuration-overview-item configuration-overview-item--${status.state}">
-      <div><h3>${category.label}</h3><p>${escapeHtml(status.detail)}</p></div>
-      <span class="configuration-status configuration-status--${status.state}">${status.label}</span>
-      <button class="ag-button ag-button--secondary ag-button--small" type="button" data-configuration-target="${category.id}">Revisar</button>
-    </article>`).join("");
   const pending = states.filter(({ status }) => !["complete", "loading"].includes(status.state));
-  document.getElementById("configuration-task-list").innerHTML = pending.length
-    ? pending.map(({ category, status }) => `<button type="button" data-configuration-target="${category.id}"><strong>${category.label}</strong><span>${escapeHtml(status.detail)}</span></button>`).join("")
-    : `<p class="configuration-all-ready">Todos los apartados disponibles están preparados.</p>`;
+  const tasks = document.getElementById("configuration-tasks");
+  tasks.hidden = pending.length === 0;
+  document.getElementById("configuration-task-list").innerHTML = pending.map(({ category, status }) => `<button type="button" data-configuration-target="${category.id}"><strong>${category.label}</strong><span>${escapeHtml(status.detail)}</span></button>`).join("");
   for (const { category, status } of states) {
     const badge = document.getElementById(`configuration-status-${category.id}`);
     if (badge) {
@@ -1398,6 +1388,10 @@ function setDashboardMetric(id, contextId, value, context) {
   if (contextElement) contextElement.textContent = context;
 }
 
+function setDashboardMetricVisibility(id, visible) {
+  document.getElementById(id)?.closest(".dashboard-metric")?.toggleAttribute("hidden", !visible);
+}
+
 function renderDashboardMetrics() {
   const metrics = document.querySelector(".dashboard-metrics");
   if (!metrics) return;
@@ -1406,16 +1400,22 @@ function renderDashboardMetrics() {
   if (bookingsReady) {
     const todayCount = getDashboardTodayBookings().length;
     const pendingCount = getDashboardPendingBookings().length;
+    setDashboardMetricVisibility("dashboard-stat-today", todayCount > 0);
+    setDashboardMetricVisibility("dashboard-stat-pending", pendingCount > 0);
     setDashboardMetric("dashboard-stat-today", "dashboard-stat-today-context", String(todayCount), todayCount === 1 ? "Una cita prevista para hoy." : `${todayCount} citas previstas para hoy.`);
     setDashboardMetric("dashboard-stat-pending", "dashboard-stat-pending-context", String(pendingCount), pendingCount ? "Solicitudes que esperan respuesta." : "No hay solicitudes pendientes.");
   } else if (dashboardDataState.bookings === "error") {
+    setDashboardMetricVisibility("dashboard-stat-today", true);
+    setDashboardMetricVisibility("dashboard-stat-pending", true);
     setDashboardMetric("dashboard-stat-today", "dashboard-stat-today-context", "—", "No se pudieron cargar las citas.");
     setDashboardMetric("dashboard-stat-pending", "dashboard-stat-pending-context", "—", "No se pudieron cargar las solicitudes.");
   }
   if (conversationsReady) {
     const pendingMessages = getDashboardPendingConversations().length;
+    setDashboardMetricVisibility("dashboard-stat-messages", pendingMessages > 0);
     setDashboardMetric("dashboard-stat-messages", "dashboard-stat-messages-context", String(pendingMessages), pendingMessages ? "Conversaciones que requieren respuesta." : "No hay conversaciones pendientes.");
   } else if (dashboardDataState.conversations === "error") {
+    setDashboardMetricVisibility("dashboard-stat-messages", true);
     setDashboardMetric("dashboard-stat-messages", "dashboard-stat-messages-context", "—", "No se pudieron cargar los mensajes.");
   }
   const businessStatus = getDashboardBusinessStatus();
@@ -1703,12 +1703,12 @@ function renderRecentActivity() {
     return;
   }
   container.setAttribute("aria-busy", "false");
-  container.innerHTML = `
-    <dl class="dashboard-activity-list">
-      <div><dt>Reservas recibidas</dt><dd>${created}</dd></div>
-      <div><dt>Citas completadas</dt><dd>${completed}</dd></div>
-      <div><dt>Canceladas o rechazadas</dt><dd>${cancelled}</dd></div>
-    </dl>`;
+  const rows = [
+    ["Reservas recibidas", created],
+    ["Citas completadas", completed],
+    ["Canceladas o rechazadas", cancelled]
+  ].filter(([_label, value]) => value > 0);
+  container.innerHTML = `<dl class="dashboard-activity-list">${rows.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join("")}</dl>`;
 }
 
 function announceDashboardUpdate() {
@@ -2111,8 +2111,11 @@ function renderGrowthAttentionAndOpportunities() {
   if (preview) {
     preview.setAttribute("aria-busy", "false");
     const empty = growthOpportunityEmptyCopy();
-    preview.innerHTML = opportunities.length
-      ? opportunities.slice(0, 3).map((item) => growthOpportunityPreviewMarkup(item)).join("")
+    const attentionIds = new Set(attentionOpportunities.map((item) => Number(item.id)));
+    const remainingOpportunities = opportunities.filter((item) => !attentionIds.has(Number(item.id)));
+    preview.closest(".growth-priority-card").hidden = opportunities.length > 0 && remainingOpportunities.length === 0;
+    preview.innerHTML = remainingOpportunities.length
+      ? remainingOpportunities.slice(0, 3).map((item) => growthOpportunityPreviewMarkup(item)).join("")
       : `<div class="growth-empty-state"><strong>${escapeHtml(empty.title)}</strong><p>${escapeHtml(empty.description)}</p></div>`;
   }
 }
@@ -2127,7 +2130,7 @@ function renderGrowthOverview(tasks) {
   const activeOpportunities = customerOpportunities.filter((item) => item.status === "pending");
   const actionCount = activeOpportunities.length + actionableSignals.length;
   document.getElementById("growth-progress-count").textContent = `${completed} de ${configurationTasks.length} condiciones de configuración resueltas`;
-  document.getElementById("growth-points").textContent = "Basado en datos operativos reales";
+  document.getElementById("growth-points").textContent = "";
   document.getElementById("growth-progress-percent").textContent = `${percentage}%`;
   const progress = document.querySelector(".growth-progress");
   progress.setAttribute("aria-valuenow", String(percentage));
@@ -2723,9 +2726,9 @@ function renderPilotReadiness() {
     return;
   }
   const blockers = pilotReadiness.blocking || [];
-  const warnings = pilotReadiness.warnings || [];
-  const checklist = (pilotReadiness.checks || []).filter((item) => ["identity", "contact", "services", "staff", "schedules", "branding", "landing", "integrations"].includes(item.key));
-  container.innerHTML = `<div class="configuration-summary-card"><div><h3>${pilotReadiness.booking_ready ? "Listo para recibir reservas" : "Completa la configuración inicial"}</h3><p>${blockers.length ? `${blockers.length} requisitos obligatorios pendientes.` : "Los requisitos obligatorios de reservas están completos."}</p></div><span class="ag-badge ag-badge--${pilotReadiness.booking_ready ? "success" : "warning"}">${pilotReadiness.booking_ready ? "Booking ready" : "Acción necesaria"}</span></div><div class="configuration-overview-list">${checklist.map((item) => `<article class="configuration-overview-item configuration-overview-item--${item.status === "passed" ? "complete" : item.blocking ? "missing" : "review"}"><div><h3>${escapeHtml(item.label)}</h3><p>${escapeHtml(item.message)}</p></div><span class="configuration-status">${item.status === "passed" ? "Completo" : item.blocking ? "Obligatorio" : "Opcional"}</span></article>`).join("")}</div>${warnings.length ? `<p class="helper">Avisos no bloqueantes: ${warnings.length}.</p>` : ""}`;
+  container.innerHTML = pilotReadiness.booking_ready
+    ? '<div class="configuration-summary-card"><h3>Listo para recibir reservas</h3></div>'
+    : `<div class="configuration-summary-card"><div><h3>Completa la configuración inicial</h3><p>${blockers.length} requisito${blockers.length === 1 ? "" : "s"} obligatorio${blockers.length === 1 ? "" : "s"} pendiente${blockers.length === 1 ? "" : "s"}.</p></div><span class="ag-badge ag-badge--warning">Acción necesaria</span></div>`;
 }
 
 function renderPilotValue() {
@@ -2735,12 +2738,16 @@ function renderPilotValue() {
   const growth = modules.growth;
   const social = modules.social;
   const essential = modules.essential;
+  const essentialCount = Number(essential?.metrics?.bookings_managed || 0);
+  const growthCount = Number(growth?.metrics?.bookings_attributed || 0);
+  const socialCount = Number(social?.metrics?.publications_recorded || 0);
   const rows = [
-    `<article><span>Reservas gestionadas</span><strong>${essential?.metrics?.bookings_managed ?? "—"}</strong><small>Volumen gestionado, no ingreso incremental</small></article>`,
-    growth?.state === "active" ? `<article><span>Growth · reservas atribuidas</span><strong>${growth.metrics?.bookings_attributed ?? 0}</strong><small>${growth.directly_attributable_revenue ? `${escapeHtml(growth.directly_attributable_revenue.amount)} ${escapeHtml(growth.directly_attributable_revenue.currency)} directamente atribuibles` : "Valor monetario aún incompleto"}</small></article>` : "",
-    social?.state === "active" ? `<article><span>Social · publicaciones</span><strong>${social.metrics?.publications_recorded ?? 0}</strong><small>Valor operativo; sin atribución de ventas suficiente</small></article>` : ""
-  ].join("");
-  container.innerHTML = rows;
+    essentialCount > 0 ? `<article><span>Reservas gestionadas</span><strong>${essentialCount}</strong><small>Volumen gestionado, no ingreso incremental</small></article>` : "",
+    growth?.state === "active" && growthCount > 0 ? `<article><span>Growth · reservas atribuidas</span><strong>${growthCount}</strong><small>${growth.directly_attributable_revenue ? `${escapeHtml(growth.directly_attributable_revenue.amount)} ${escapeHtml(growth.directly_attributable_revenue.currency)} directamente atribuibles` : "Valor monetario aún incompleto"}</small></article>` : "",
+    social?.state === "active" && socialCount > 0 ? `<article><span>Social · publicaciones</span><strong>${socialCount}</strong><small>Valor operativo; sin atribución de ventas suficiente</small></article>` : ""
+  ].filter(Boolean);
+  container.closest(".dashboard-panel").hidden = rows.length === 0;
+  container.innerHTML = rows.join("");
 }
 
 function channelHealthStatus(status) {
@@ -2853,11 +2860,11 @@ function renderChannelDetail(name) {
     ? `<div class="ag-alert ag-alert--warning"><div><strong>Canal no disponible</strong><p>Contacta con AutonoGrow si necesitas habilitarlo para este negocio.</p></div></div>`
     : channel?.status === "available" && channel.connector_policy === "owner_only"
       ? `<div class="ag-alert ag-alert--info"><div><strong>Conexión gestionada por AutonoGrow</strong><p>Tu configuración comercial actual no permite iniciar este flujo desde el Business Admin.</p></div></div>` : "";
-  const approval = channel?.status === "pending_approval" ? `<div class="ag-alert ag-alert--info"><div><strong>Conectado, pendiente de revisión</strong><p>No necesitas hacer nada más. Conectar una cuenta no activa el envío ni las respuestas automáticas; AutonoGrow revisará la conexión.</p></div></div>` : "";
+  const approval = channel?.status === "pending_approval" ? `<div class="ag-alert ag-alert--info"><div><strong>Conectado, pendiente de revisión</strong></div></div>` : "";
   const healthMarkup = `<article class="channel-health-card channel-health-card--${healthState.tone}"><div><p>Salud de la conexión</p><h3>${channelHubLoadState.health === "error" ? "No se ha podido comprobar" : healthState.label}</h3><p>${channelHubLoadState.health === "error" ? "Instagram y WhatsApp se cargan de forma independiente. Reintenta solo este diagnóstico." : healthState.message}</p>${health?.last_health_check_at ? `<small>Última comprobación: ${escapeHtml(formatDateTime(health.last_health_check_at))}</small>` : ""}</div></article>`;
   const delivery = name === "whatsapp" ? `<article class="channel-delivery-help"><h3>Cómo puedes responder</h3><p><strong>Envío desde AutonoGrow:</strong> ${escapeHtml(channelCapabilityLabel(channel, "integrated_delivery_enabled"))}.</p><p><strong>Modo asistido:</strong> disponible cuando la conversación tiene teléfono. “Abrir en WhatsApp” prepara el texto, pero la persona completa el envío fuera de AutonoGrow.</p><p>WhatsApp permite respuestas libres durante 24 horas desde el último mensaje del cliente.</p></article>` : "";
   const reconnect = health?.reconnection_required || channel?.status === "revoked" ? `<div class="ag-alert ag-alert--warning"><div><strong>Vuelve a conectar ${title}</strong><p>Volverás a iniciar sesión con Meta. La conexión actual seguirá funcionando hasta que la nueva conexión sea revisada y aprobada.</p></div></div>` : "";
-  container.innerHTML = `${availabilityHelp}${onboardingHelp}${approval}${reconnect}<article class="channel-detail-card"><div class="section-header"><div><h3>Estado y capacidades</h3><p>La conexión, la aprobación y cada capacidad se gestionan por separado.</p></div></div>${account}${channelStateRows(channel, health)}</article>${healthMarkup}${delivery}${channelActionMarkup(channel, health, name)}`;
+  container.innerHTML = `${availabilityHelp}${onboardingHelp}${approval}${reconnect}<article class="channel-detail-card"><div class="section-header"><div><h3>Estado y capacidades</h3></div></div>${account}${channelStateRows(channel, health)}</article>${healthMarkup}${delivery}${channelActionMarkup(channel, health, name)}`;
   container.setAttribute("aria-busy", "false");
 }
 
@@ -2879,7 +2886,7 @@ function renderBusinessChannelOnboarding() {
       return [];
     });
     attention.setAttribute("aria-busy", "false");
-    attention.innerHTML = pending.length ? `<div class="ag-alert ag-alert--warning"><div><strong>Requiere atención</strong><ul>${pending.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div></div>` : `<div class="ag-alert ag-alert--success"><div><strong>Sin acciones pendientes</strong><p>Esto no implica que el envío o las respuestas automáticas estén activados; consulta cada capacidad por separado.</p></div></div>`;
+    attention.innerHTML = pending.length ? `<div class="ag-alert ag-alert--warning"><div><strong>Requiere atención</strong><ul>${pending.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div></div>` : `<div class="ag-alert ag-alert--success"><div><strong>Sin acciones pendientes</strong></div></div>`;
   }
   renderChannelDetail("instagram");
   renderChannelDetail("whatsapp");
@@ -3597,9 +3604,7 @@ function renderBusinessSettings() {
   if (currentBusiness.logo_url) logo.src = resolveSafeAdminMediaUrl(currentBusiness.logo_url, true);
   document.getElementById("delete-admin-logo").disabled = !currentBusiness.logo_url;
   document.getElementById("public-page-preview-name").textContent = currentBusiness.name || "Tu negocio";
-  document.getElementById("public-page-publication-status").textContent = currentBusiness.active
-    ? "Publicada. La publicación global la gestiona Owner."
-    : "Despublicada. La publicación global la gestiona Owner.";
+  document.getElementById("public-page-publication-status").textContent = currentBusiness.active ? "Publicada" : "Despublicada";
   document.getElementById("public-page-preview-copy").textContent = currentBusiness.headline || currentBusiness.description || "Una estructura funcional con seis estilos visuales.";
   snapshotConfigurationForm("business-info");
   snapshotConfigurationForm("public-page");
@@ -6306,10 +6311,9 @@ function renderConversationTemplates() {
       <div class="conversation-template-heading"><div><p>Plantilla</p><h4>${escapeHtml(template.name)}</h4></div><span>${template.active ? "Activa" : "Desactivada"}</span></div>
       <label class="ag-field">Nombre<input class="conversation-template-item-name" maxlength="160" value="${escapeHtml(template.name)}" /></label>
       <label class="ag-field">Contenido<textarea class="conversation-template-item-body" maxlength="10000" rows="4">${escapeHtml(template.body)}</textarea></label>
-      <p><strong>Aplicación:</strong> canales con automatización autorizada.</p>
       <div class="template-preview"><strong>Vista previa</strong><p class="conversation-template-item-preview">${escapeHtml(templatePreviewText(template.body))}</p></div>
       <label class="active-setting"><input class="conversation-template-item-active" type="checkbox" ${template.active ? "checked" : ""} />Plantilla activa</label>
-      <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" data-admin-action="save-conversation-template" data-id="${template.id}">Guardar</button><button class="btn btn-small btn-danger" type="button" data-admin-action="delete-conversation-template" data-id="${template.id}">Eliminar</button><span class="configuration-item-save-state">Sin cambios</span></div>
+      <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" data-admin-action="save-conversation-template" data-id="${template.id}">Guardar</button><button class="btn btn-small btn-danger" type="button" data-admin-action="delete-conversation-template" data-id="${template.id}">Eliminar</button></div>
     </article>
   `).join("") || `<div class="empty-state"><strong>Aún no hay plantillas</strong><p>Crea la primera con las variables disponibles.</p></div>`;
   snapshotConfigurationForms("#conversation-templates-panel [data-config-dirty-key]");
@@ -6478,7 +6482,7 @@ function renderConversationAutomation() {
       <label>Umbral automático (%)<input id="conversation-automation-threshold" type="number" min="0" max="100" value="${settings.auto_threshold}" /></label>
       <label>Al alcanzar el límite<select id="conversation-automation-limit-mode" ${allowedLimitBehaviors.length === 1 ? "disabled" : ""}>${allowedLimitBehaviors.map((value) => `<option value="${value}" ${settings.on_limit_reached === value ? "selected" : ""}>${limitBehaviorLabels[value]}</option>`).join("")}</select></label>
       <label>Pausa tras respuesta humana<select id="conversation-human-reply-pause"><option value="0" ${settings.human_reply_pause_minutes === 0 ? "selected" : ""}>No pausar</option><option value="15" ${settings.human_reply_pause_minutes === 15 ? "selected" : ""}>15 minutos</option><option value="60" ${settings.human_reply_pause_minutes === 60 ? "selected" : ""}>1 hora</option><option value="240" ${settings.human_reply_pause_minutes === 240 ? "selected" : ""}>4 horas</option><option value="-1" ${settings.human_reply_pause_minutes === -1 ? "selected" : ""}>Hasta reactivarla</option></select></label>
-      <div class="settings-actions"><button class="btn btn-primary" type="button" data-admin-action="save-conversation-automation-settings">Guardar configuración</button><span class="configuration-item-save-state">Sin cambios</span></div>
+      <div class="settings-actions"><button class="btn btn-primary" type="button" data-admin-action="save-conversation-automation-settings">Guardar configuración</button></div>
     </div>
     <article class="conversation-automation-usage-card">
       <div><p>Créditos de automatización</p><strong>${usage.total_available} disponibles</strong><span class="conversation-automation-usage-state state-${escapeHtml(usage.status)}">${usageStatusLabels[usage.status] || "Estado no disponible"}</span></div>
@@ -6496,8 +6500,7 @@ function renderConversationAutomation() {
       <h3>Modo por intención</h3>
       ${(conversationAutomation.rules || []).map((rule) => `
         <article class="conversation-automation-rule" data-automation-intent="${escapeHtml(rule.intent)}" data-config-dirty-key="automation-rule-${escapeHtml(rule.intent)}">
-          <div><p>Regla</p><h4>${escapeHtml(rule.intent_label)}</h4><small>Se evalúa cuando el sistema reconoce esta intención en un canal autorizado.</small></div>
-          <p><strong>Canal:</strong> ${authorizedChannels.length ? authorizedChannels.map((name) => name === "instagram" ? "Instagram" : "WhatsApp").join(" y ") : "Bloqueada por el canal"}</p>
+          <div><p>Regla</p><h4>${escapeHtml(rule.intent_label)}</h4></div>
           <select class="conversation-automation-rule-mode">
             <option value="disabled" ${rule.mode === "disabled" ? "selected" : ""}>Desactivado</option>
             <option value="semi_automatic" ${rule.mode === "semi_automatic" ? "selected" : ""}>Sugerir</option>
@@ -6506,7 +6509,7 @@ function renderConversationAutomation() {
           <select class="conversation-automation-rule-template">${templateOptions(rule.template_id)}</select>
           <label class="active-setting"><input class="conversation-automation-rule-active" type="checkbox" ${rule.active ? "checked" : ""} ${canEnableAutomation || rule.active ? "" : "disabled"} />Activa</label>
           <p class="automation-message-excerpt">${escapeHtml((templates.find((template) => template.id === rule.template_id)?.body || "Se usará la plantilla recomendada.").slice(0, 180))}</p>
-          <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" data-admin-action="save-conversation-automation-rule" data-intent="${escapeHtml(rule.intent)}">Guardar</button><span class="configuration-item-save-state">Sin cambios</span></div>
+          <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" data-admin-action="save-conversation-automation-rule" data-intent="${escapeHtml(rule.intent)}">Guardar</button></div>
         </article>
       `).join("")}
     </div>
@@ -8544,8 +8547,10 @@ function adminInstagramFormatLabel(format) {
 
 function renderSocialContentProposals() {
   const container = document.getElementById("social-content-ideas-list");
+  const card = container.closest(".instagram-editorial-card");
+  card.hidden = socialContentProposals.length === 0;
   if (!socialContentProposals.length) {
-    container.innerHTML = `<div class="conversation-state conversation-state--compact"><strong>No hay decisiones pendientes</strong><p>Solo aparecerán aquí promociones u otras decisiones comerciales que necesiten tu respuesta.</p></div>`;
+    container.innerHTML = "";
     return;
   }
   container.innerHTML = socialContentProposals.map((item) => {
@@ -8571,7 +8576,8 @@ async function loadSocialContentProposals() {
     status.textContent = `${socialContentProposals.length} decisión${socialContentProposals.length === 1 ? "" : "es"} pendiente${socialContentProposals.length === 1 ? "" : "s"}`;
   } catch (error) {
     socialContentProposals = [];
-    renderSocialContentProposals();
+    document.getElementById("social-content-ideas-list").closest(".instagram-editorial-card").hidden = false;
+    document.getElementById("social-content-ideas-list").innerHTML = "";
     status.textContent = error.message;
   }
 }
@@ -8691,7 +8697,7 @@ function renderAdminInstagramCalendar() {
     document.getElementById("admin-instagram-period-label").textContent = `${dateLabel(keys[0], { day: "numeric", month: "short" })} – ${dateLabel(keys[6], { day: "numeric", month: "short", year: "numeric" })}`;
     calendar.className = "instagram-calendar instagram-calendar--week";
     const hasPlanned = keys.some((key) => byDate.get(key).length);
-    calendar.innerHTML = `${hasPlanned ? "" : `<div class="instagram-calendar-empty"><strong>No tienes publicaciones planificadas esta semana.</strong><p>Puedes revisar ideas o subir material de origen.</p></div>`}${keys.map((key) => `<section class="instagram-calendar-day${key === today ? " instagram-calendar-day--today" : ""}" aria-label="${escapeHtml(dateLabel(key, { weekday: "long", day: "numeric", month: "long" }))}"><header><span>${escapeHtml(dateLabel(key, { weekday: "short" }))}</span><strong>${escapeHtml(dateLabel(key, { day: "numeric" }))}</strong></header><div>${byDate.get(key).length ? byDate.get(key).map(adminInstagramCalendarBlock).join("") : `<span class="instagram-calendar-gap">Hueco libre</span>`}</div></section>`).join("")}`;
+    calendar.innerHTML = `${hasPlanned ? "" : `<div class="instagram-calendar-empty"><strong>No tienes publicaciones planificadas esta semana.</strong><p>Puedes revisar ideas o subir material de origen.</p></div>`}${keys.map((key) => `<section class="instagram-calendar-day${key === today ? " instagram-calendar-day--today" : ""}" aria-label="${escapeHtml(dateLabel(key, { weekday: "long", day: "numeric", month: "long" }))}"><header><span>${escapeHtml(dateLabel(key, { weekday: "short" }))}</span><strong>${escapeHtml(dateLabel(key, { day: "numeric" }))}</strong></header><div>${byDate.get(key).map(adminInstagramCalendarBlock).join("")}</div></section>`).join("")}`;
   } else {
     const activeMonth = adminInstagramCalendarDate.slice(0, 7);
     document.getElementById("admin-instagram-period-label").textContent = dateLabel(`${activeMonth}-01`, { month: "long", year: "numeric" });
@@ -8842,14 +8848,7 @@ function shiftAdminInstagramCalendar(direction) {
 async function loadAdminInstagramPanel() {
   if (adminAuthUser?.is_owner) return;
   const status = document.getElementById("admin-instagram-status");
-  if (isBusinessStaff()) {
-    document.getElementById("admin-instagram-disabled").hidden = true;
-    document.getElementById("admin-instagram-workspace").hidden = true;
-    document.getElementById("social-content-ideas-list").innerHTML = `<p class="helper">Las decisiones de contenido están reservadas al responsable del negocio.</p>`;
-    document.getElementById("social-content-ideas-status").textContent = "Acceso de consulta no disponible para este rol.";
-    status.textContent = "Las decisiones editoriales están reservadas al responsable del negocio.";
-    return;
-  }
+  if (isBusinessStaff()) return;
   const api = adminInstagramApi();
   status.textContent = "Cargando flujo editorial…";
   const proposalsPromise = loadSocialContentProposals();

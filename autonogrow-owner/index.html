@@ -158,7 +158,7 @@
 
     <section id="owner-operations-section" class="panel owner-operations-hub" data-panel="operations" aria-labelledby="owner-operations-title">
       <div class="section-heading">
-        <div><p class="eyebrow">Procesamiento y recuperación</p><h2 id="owner-operations-title">Operaciones</h2><p>Supervisa mensajes, workers, colas, jobs y mantenimiento sin exponer la implementación interna.</p></div>
+        <div><p class="eyebrow">Procesamiento y recuperación</p><h2 id="owner-operations-title">Operaciones</h2><p>Supervisa mensajes, workers, colas, jobs y mantenimiento.</p></div>
         <button id="operations-refresh" class="button button-secondary" type="button">Actualizar operaciones</button>
       </div>
       <div id="owner-operations-summary" class="owner-operations-summary" aria-busy="true"></div>
@@ -168,10 +168,10 @@
         <button type="button" data-owner-operations-view="jobs">Jobs de integración</button>
         <button type="button" data-owner-operations-view="maintenance">Mantenimiento</button>
       </nav>
-      <section data-owner-operations-panel="messages"><h3>Mensajes y outbox</h3><div id="owner-outbox-summary" class="owner-operation-grid" aria-busy="true"></div><p class="owner-source-note">El contrato actual no expone agregados de mensajes en curso, enviados, asistidos o claims caducados; no se presentan como cero.</p><div id="owner-outbox-problems" class="owner-operation-list" aria-busy="true"></div></section>
+      <section data-owner-operations-panel="messages"><h3>Mensajes y outbox</h3><div id="owner-outbox-summary" class="owner-operation-grid" aria-busy="true"></div><div id="owner-outbox-problems" class="owner-operation-list" aria-busy="true"></div></section>
       <section data-owner-operations-panel="workers" hidden><h3>Workers y colas</h3><div id="owner-workers-summary" class="owner-operation-grid" aria-busy="true"></div><div id="owner-workers-list" class="owner-operation-list"></div></section>
       <section data-owner-operations-panel="jobs" hidden><h3>Jobs de integración</h3><div id="owner-integration-jobs" class="owner-operation-list" aria-busy="true"></div></section>
-      <section data-owner-operations-panel="maintenance" hidden><h3>Mantenimiento</h3><div id="owner-maintenance-panel" aria-busy="true"></div><button id="maintenance-toggle" class="button button-secondary ag-button ag-button--danger" type="button">Cambiar mantenimiento</button><p class="helper ag-alert ag-alert--info">Backups, restauración, despliegues, rotación de secretos y rollback permanecen fuera del panel y usan scripts auditables del servidor.</p></section>
+      <section data-owner-operations-panel="maintenance" hidden><h3>Mantenimiento</h3><div id="owner-maintenance-panel" aria-busy="true"></div><button id="maintenance-toggle" class="button button-secondary ag-button ag-button--danger" type="button">Cambiar mantenimiento</button></section>
       <p id="operations-status" class="status-text" aria-live="polite"></p>
       <div id="operations-summary" hidden></div>
       <pre id="operations-details" hidden></pre>
@@ -220,8 +220,7 @@
     </section>
 
     <section id="owner-audit-section" class="panel owner-audit-hub" data-panel="audit" aria-labelledby="owner-audit-title">
-      <div class="section-heading"><div><p class="eyebrow">Trazabilidad disponible</p><h2 id="owner-audit-title">Auditoría operativa</h2><p>Hitos seguros derivados de fuentes consultables. El registro de auditoría completo permanece en servidor.</p></div><button id="owner-audit-refresh" class="button button-secondary" type="button">Actualizar actividad</button></div>
-      <div class="ag-alert ag-alert--info">El backend registra actor, entidad y acción, pero no expone actualmente un endpoint Owner de lectura de <code>AuditLog</code>. Esta vista no inventa actores ni payloads.</div>
+      <div class="section-heading"><div><p class="eyebrow">Trazabilidad disponible</p><h2 id="owner-audit-title">Auditoría operativa</h2></div><button id="owner-audit-refresh" class="button button-secondary" type="button">Actualizar actividad</button></div>
       <form id="owner-audit-filters" class="owner-operations-filters"><label>Negocio<select id="owner-audit-business"><option value="">Todos</option></select></label><label>Tipo de evento<select id="owner-audit-kind"><option value="">Todos</option><option value="channel">Canales</option><option value="incident">Incidencias</option><option value="job">Procesamiento</option><option value="maintenance">Mantenimiento</option></select></label></form>
       <div id="owner-audit-events" class="owner-audit-list" role="list" aria-busy="true"></div>
     </section>
@@ -474,9 +473,9 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js?v=10b5"></script>
   <script src="../autonogrow-shared/app-shell.js"></script>
-  <script src="owner.js?v=20260828-p123-a"></script>
-  <script src="owner-businesses.js?v=9d429323f26f"></script>
-  <script src="owner-operations.js?v=20260805-2"></script>
+  <script src="owner.js?v=a1b2c3d4e5f6"></script>
+  <script src="owner-businesses.js?v=a1b2c3d4e5f6"></script>
+  <script src="owner-operations.js?v=a1b2c3d4e5f6"></script>
   <script src="owner-onboarding.js?v=5f1"></script>
 </body>
 </html>

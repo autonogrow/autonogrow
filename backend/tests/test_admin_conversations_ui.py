@@ -198,12 +198,15 @@ def test_conversation_header_is_compact_without_redundant_breadcrumb() -> None:
     open_search = function_block(js, "function openConversationCustomerSearch", "async function updateConversationCustomer")
 
     assert "conversation.customer_id" in render
-    assert "Ver cliente" not in render
+    assert "Ver cliente" not in header
+    assert "Ver cliente" in render
     assert "Asociar cliente" in render
     assert "conversation-association-trigger" in render
     assert "open-conversation-customer-panel" in render
     assert "!isBusinessStaff()" in render
-    assert "Conversaciones" not in header
+    assert "conversation-detail-breadcrumb" not in header
+    assert 'data-admin-action="show-conversation-list"' in header
+    assert 'aria-label="Volver a conversaciones"' in header
     assert "conversation-mobile-back" not in header
     assert header.index("conversationAttentionBadges(conversation)") < header.index("${customerHeaderAction}")
     assert 'class="conversation-detail-meta"' in header

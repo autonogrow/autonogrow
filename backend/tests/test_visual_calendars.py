@@ -150,6 +150,7 @@ def test_editorial_calendars_use_bounded_ranges_without_detail_request_fanout() 
     assert "contents?${range.toString()}" in OWNER_JS
     assert "contents?${adminInstagramCalendarQuery().toString()}" in ADMIN_JS
     assert "Promise.all(contentList.contents.map" not in ADMIN_JS
+    assert "Hueco libre</span>" not in ADMIN_JS
 
 
 def test_editorial_states_are_not_expressed_by_color_alone() -> None:

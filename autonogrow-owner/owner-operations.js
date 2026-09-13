@@ -590,7 +590,7 @@ function renderOwnerOperationsSummary() {
   target.setAttribute("aria-busy", "false");
   const failed = Object.values(ownerOperationsState.sourceState).filter((status) => status === "error" || status === "partial").length;
   const warning = failed ? `<p class="owner-partial-notice">Actualización parcial: ${failed} fuente${failed === 1 ? "" : "s"} no pudo comprobarse por completo.</p>` : "";
-  target.innerHTML = warning + ownerOperationsMetrics().map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("");
+  target.innerHTML = warning + ownerOperationsMetrics().filter(([_label, value]) => value !== 0).map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("");
 }
 
 function renderOwnerOutboxSummary() {
@@ -598,16 +598,19 @@ function renderOwnerOutboxSummary() {
   if (!target) return;
   target.setAttribute("aria-busy", "false");
   if (ownerOperationsState.sourceState.queue === "error") {
+    target.hidden = false;
     target.innerHTML = '<div class="error-box">No se pudieron comprobar los agregados de outbox.</div>';
     return;
   }
   const queue = queueStatus || {};
-  target.innerHTML = [
+  const metrics = [
     ["Pendientes", Number(queue.pending_outbox || 0)],
     ["Reintentos programados", Number(queue.retry_outbox || 0)],
     ["Bloqueados", Number(queue.blocked_outbox || 0)],
     ["Reintentos agotados", Number(queue.dead_letter_outbox || 0)],
-  ].map(([label, value]) => `<article><strong>${escapeHtml(label)}</strong><span>${value}</span></article>`).join("");
+  ].filter(([_label, value]) => value > 0);
+  target.hidden = metrics.length === 0;
+  target.innerHTML = metrics.map(([label, value]) => `<article><strong>${escapeHtml(label)}</strong><span>${value}</span></article>`).join("");
 }
 
 function ownerQueueProblemRow(job) {
@@ -620,9 +623,10 @@ function renderOwnerOutboxProblems() {
   const target = byId("owner-outbox-problems");
   if (!target) return;
   target.setAttribute("aria-busy", "false");
-  if (ownerOperationsState.sourceState.queue === "error") { target.innerHTML = '<div class="error-box">No se pudo cargar mensajería. Workers y jobs conservan sus fuentes independientes.</div>'; return; }
+  if (ownerOperationsState.sourceState.queue === "error") { target.hidden = false; target.innerHTML = '<div class="error-box">No se pudo cargar mensajería. Workers y jobs conservan sus fuentes independientes.</div>'; return; }
   const jobs = (queueStatus?.jobs || []).filter((job) => job.job_type === "outbox");
-  target.innerHTML = jobs.length ? jobs.map(ownerQueueProblemRow).join("") : '<div class="empty-state"><strong>Sin mensajes problemáticos</strong><p>La cola problemática está vacía en la última comprobación.</p></div>';
+  target.hidden = jobs.length === 0;
+  target.innerHTML = jobs.map(ownerQueueProblemRow).join("");
 }
 
 function renderOwnerWorkers() {
@@ -632,7 +636,7 @@ function renderOwnerWorkers() {
   if (ownerOperationsState.sourceState.queue === "error") { summary.innerHTML = '<div class="error-box">No se pudieron comprobar workers y colas.</div>'; list.innerHTML = ""; return; }
   const queue = queueStatus || {};
   summary.setAttribute("aria-busy", "false");
-  summary.innerHTML = [["Procesamiento activo", queue.worker_active ? "Sí" : queue.last_heartbeat ? "Señal sin actividad reciente" : "No se pudo comprobar"], ["Última actividad", ownerOperationalDate(queue.last_heartbeat)], ["Pendientes", Number(queue.pending_inbox || 0) + Number(queue.pending_outbox || 0)], ["Reintentos", Number(queue.retry_inbox || 0) + Number(queue.retry_outbox || 0)], ["Agotados", Number(queue.dead_letter_inbox || 0) + Number(queue.dead_letter_outbox || 0)], ["Workers con señal antigua", Number(queue.stale_worker_count || 0)]].map(([label, value]) => `<article><strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span></article>`).join("");
+  summary.innerHTML = [["Procesamiento activo", queue.worker_active ? "Sí" : queue.last_heartbeat ? "Señal sin actividad reciente" : "No se pudo comprobar"], ["Última actividad", ownerOperationalDate(queue.last_heartbeat)], ["Pendientes", Number(queue.pending_inbox || 0) + Number(queue.pending_outbox || 0)], ["Reintentos", Number(queue.retry_inbox || 0) + Number(queue.retry_outbox || 0)], ["Agotados", Number(queue.dead_letter_inbox || 0) + Number(queue.dead_letter_outbox || 0)], ["Workers con señal antigua", Number(queue.stale_worker_count || 0)]].filter(([_label, value]) => value !== 0).map(([label, value]) => `<article><strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span></article>`).join("");
   list.innerHTML = (queue.workers || []).length ? (queue.workers || []).map((worker) => `<article class="owner-operation-row"><div><h4>${escapeHtml(worker.worker_type === "channel" ? "Procesamiento de canales" : "Worker de procesamiento")}</h4><p>${worker.stale ? "Sin actividad reciente" : "Operativo"}</p><small>Última señal: ${escapeHtml(ownerOperationalDate(worker.last_heartbeat))}</small></div><span class="ag-badge ${worker.stale ? "ag-badge--danger" : "ag-badge--success"}">${worker.stale ? "Necesita atención" : "Activo"}</span></article>`).join("") : '<div class="empty-state">No hay señales de workers disponibles.</div>';
 }
 
@@ -641,7 +645,8 @@ function renderOwnerIntegrationJobs() {
   if (!target) return;
   target.setAttribute("aria-busy", "false");
   const warning = ownerOperationsState.metaJobErrors ? `<p class="owner-partial-notice">No se pudieron cargar los jobs de ${ownerOperationsState.metaJobErrors} negocio${ownerOperationsState.metaJobErrors === 1 ? "" : "s"}. Outbox y workers permanecen visibles.</p>` : "";
-  target.innerHTML = warning + (ownerOperationsState.metaJobs.length ? ownerOperationsState.metaJobs.map((entry) => `<article class="owner-operation-row"><div><h4>${escapeHtml(OWNER_META_JOB_LABELS[entry.job.job_type] || "Job de integración")}</h4><p>${escapeHtml(entry.businessName)} · ${escapeHtml(OWNER_QUEUE_STATUS_LABELS[entry.job.status] || entry.job.status)}</p><small>Creado: ${escapeHtml(ownerOperationalDate(entry.job.created_at))}${entry.job.next_retry_at ? ` · Próxima ejecución: ${escapeHtml(ownerOperationalDate(entry.job.next_retry_at))}` : ""}</small></div><div><p>${escapeHtml(entry.job.safe_error_message || (entry.job.status === "completed" ? "Completado sin avisos" : "Sin resultado seguro disponible"))}</p><small>No existe un endpoint Owner seguro para reintentar este job manualmente.</small></div></article>`).join("") : ownerOperationsState.sourceState.jobs === "error" ? '<div class="error-box">No se pudieron comprobar los jobs de integración.</div>' : '<div class="empty-state">No hay jobs de integración recientes.</div>');
+  target.hidden = ownerOperationsState.metaJobs.length === 0 && ownerOperationsState.sourceState.jobs !== "error" && !warning;
+  target.innerHTML = warning + (ownerOperationsState.metaJobs.length ? ownerOperationsState.metaJobs.map((entry) => `<article class="owner-operation-row"><div><h4>${escapeHtml(OWNER_META_JOB_LABELS[entry.job.job_type] || "Job de integración")}</h4><p>${escapeHtml(entry.businessName)} · ${escapeHtml(OWNER_QUEUE_STATUS_LABELS[entry.job.status] || entry.job.status)}</p><small>Creado: ${escapeHtml(ownerOperationalDate(entry.job.created_at))}${entry.job.next_retry_at ? ` · Próxima ejecución: ${escapeHtml(ownerOperationalDate(entry.job.next_retry_at))}` : ""}</small></div><div><p>${escapeHtml(entry.job.safe_error_message || (entry.job.status === "completed" ? "Completado sin avisos" : "Sin resultado seguro disponible"))}</p></div></article>`).join("") : ownerOperationsState.sourceState.jobs === "error" ? '<div class="error-box">No se pudieron comprobar los jobs de integración.</div>' : "");
 }
 
 function renderOwnerMaintenance() {
@@ -651,7 +656,7 @@ function renderOwnerMaintenance() {
   if (ownerOperationsState.sourceState.maintenance === "error") { target.innerHTML = '<div class="error-box">No se pudo comprobar el modo mantenimiento.</div>'; byId("maintenance-toggle").disabled = true; return; }
   const maintenance = ownerOperationsState.maintenance || { enabled: false };
   byId("maintenance-toggle").disabled = false;
-  target.innerHTML = `<article class="owner-maintenance-state ${maintenance.enabled ? "active" : ""}"><span class="ag-badge ${maintenance.enabled ? "ag-badge--danger" : "ag-badge--success"}">${maintenance.enabled ? "Mantenimiento activo" : "Operación normal"}</span><dl class="owner-maintenance-details"><div><dt>Estado actual</dt><dd>${maintenance.enabled ? "El middleware aplica el alcance configurado por el backend." : "El modo mantenimiento está desactivado."}</dd></div><div><dt>Motivo</dt><dd>${escapeHtml(maintenance.reason || "Sin motivo registrado")}</dd></div><div><dt>Último cambio</dt><dd>${escapeHtml(ownerOperationalDate(maintenance.updated_at))}</dd></div></dl><p>Los datos se conservan. Este panel no ejecuta backups, restauraciones, despliegues ni consultas.</p></article>`;
+  target.innerHTML = `<article class="owner-maintenance-state ${maintenance.enabled ? "active" : ""}"><span class="ag-badge ${maintenance.enabled ? "ag-badge--danger" : "ag-badge--success"}">${maintenance.enabled ? "Mantenimiento activo" : "Operación normal"}</span><dl class="owner-maintenance-details"><div><dt>Estado actual</dt><dd>${maintenance.enabled ? "Mantenimiento activo" : "Operación normal"}</dd></div><div><dt>Motivo</dt><dd>${escapeHtml(maintenance.reason || "—")}</dd></div><div><dt>Último cambio</dt><dd>${escapeHtml(ownerOperationalDate(maintenance.updated_at))}</dd></div></dl></article>`;
   byId("maintenance-toggle").textContent = maintenance.enabled ? "Desactivar mantenimiento" : "Activar mantenimiento";
 }
 
@@ -744,7 +749,8 @@ function renderOwnerAuditEvents() {
   target.setAttribute("aria-busy", "false");
   const partial = ownerOperationsState.sourceState.jobs === "error" || ownerOperationsState.sourceState.jobs === "partial" || ownerOperationsState.sourceState.maintenance === "error";
   const warning = partial ? '<p class="owner-partial-notice">Actividad parcial: alguna fuente no pudo comprobarse. Se conservan los eventos confirmados.</p>' : "";
-  target.innerHTML = warning + (events.length ? events.map((event) => `<article class="owner-audit-event" role="listitem"><div><strong>${escapeHtml(event.label)}</strong><p>${escapeHtml(event.businessName)}</p></div><time datetime="${escapeHtml(event.at)}">${escapeHtml(ownerOperationalDate(event.at))}</time><span>Actor y resultado detallado: no expuestos por esta fuente</span>${event.businessId ? `<button class="button button-secondary button-small" type="button" data-owner-audit-business="${escapeHtml(event.businessId)}">Abrir negocio</button>` : ""}</article>`).join("") : '<div class="empty-state"><strong>Sin eventos disponibles</strong><p>Los filtros no tienen coincidencias o las fuentes aún no se han cargado.</p></div>');
+  target.hidden = events.length === 0 && !partial;
+  target.innerHTML = warning + events.map((event) => `<article class="owner-audit-event" role="listitem"><div><strong>${escapeHtml(event.label)}</strong><p>${escapeHtml(event.businessName)}</p></div><time datetime="${escapeHtml(event.at)}">${escapeHtml(ownerOperationalDate(event.at))}</time>${event.businessId ? `<button class="button button-secondary button-small" type="button" data-owner-audit-business="${escapeHtml(event.businessId)}">Abrir negocio</button>` : ""}</article>`).join("");
 }
 
 async function loadOwnerAuditHub(force = false) {
