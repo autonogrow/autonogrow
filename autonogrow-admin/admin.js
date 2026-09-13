@@ -5328,6 +5328,11 @@ function renderConversationDetail(conversation, uiState = null) {
   const customerAssociationMarkup = conversation.customer_id
     ? `<button class="conversation-customer-open conversation-association-trigger" type="button" data-admin-action="open-conversation-customer-panel" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">${escapeHtml(conversationAssociationLabel(conversation))}</button>`
     : `<span>${escapeHtml(conversationAssociationLabel(conversation))}</span>`;
+  const mobileCustomerAction = conversation.customer_id
+    ? `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-panel-mobile" aria-label="Información del cliente" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Ver cliente</button>`
+    : (!isBusinessStaff()
+      ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-search-mobile" aria-label="Asociar cliente">Asociar cliente</button>`
+      : "");
   const suggestionsMarkup = pendingSuggestions.length || conversationSuggestionNotice ? `
     <div class="conversation-suggestions">
       ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
@@ -5347,6 +5352,10 @@ function renderConversationDetail(conversation, uiState = null) {
   ` : "";
   detail.innerHTML = `
     <header class="conversation-detail-header">
+      <div class="conversation-mobile-toolbar">
+        <button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="show-conversation-list" aria-label="Volver a conversaciones"><span aria-hidden="true">←</span><span>Conversaciones</span></button>
+        ${mobileCustomerAction}
+      </div>
       <div class="conversation-detail-header-copy">
         <div class="conversation-detail-heading-row">
           <h3 id="conversation-detail-title" tabindex="-1">${escapeHtml(conversationDisplayName(conversation))}</h3>
@@ -6273,7 +6282,9 @@ async function loadConversationTemplates({ background = false } = {}) {
     conversationTemplates = body.templates || [];
     channelHubLoadState.templates = "ready";
     if (!background || !configurationSectionHasDirty("messages")) renderConversationTemplates();
-    if (!background && selectedConversationId) await selectConversation(selectedConversationId, false);
+    if (!background && selectedConversationId) {
+      await selectConversation(selectedConversationId, false, { focusDetail: false });
+    }
   } catch (error) {
     if (requestVersion !== conversationTemplatesLoadVersion) return;
     console.error(error);
@@ -6372,7 +6383,9 @@ async function mutateConversationTemplate(url, options) {
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar la plantilla."));
     showChannelAutomationFeedback("Plantillas actualizadas.");
     await Promise.all([loadConversationTemplates(), loadConversationAutomation()]);
-    if (selectedConversationId) await selectConversation(selectedConversationId, false);
+    if (selectedConversationId) {
+      await selectConversation(selectedConversationId, false, { focusDetail: false });
+    }
     return true;
   } catch (error) {
     showChannelAutomationFeedback("No se pudo guardar la plantilla. Revisa los datos e inténtalo de nuevo.", true);
@@ -8439,15 +8452,16 @@ function setupAdminDelegatedActions() {
     else if (action === "reset-conversation-filters") resetConversationFilters();
     else if (action === "retry-conversations") loadConversations();
     else if (action === "select-conversation" && Number.isInteger(id)) selectConversation(id);
+    else if (action === "show-conversation-list") closeConversationMobileDetail();
     else if (action === "send-conversation-reply") sendConversationReply();
     else if (action === "open-conversation-whatsapp") openConversationWhatsApp();
     else if (action === "fill-conversation-reply" && Number.isInteger(id)) fillConversationReply(id);
     else if (action === "send-conversation-suggestion" && Number.isInteger(id)) sendConversationSuggestion(id);
     else if (action === "modify-conversation-suggestion" && Number.isInteger(id)) modifyConversationSuggestion(id);
     else if (action === "dismiss-conversation-suggestion" && Number.isInteger(id)) dismissConversationSuggestion(id);
-    else if (action === "open-conversation-customer-panel") openConversationCustomerPanel(button);
+    else if (["open-conversation-customer-panel", "open-conversation-customer-panel-mobile"].includes(action)) openConversationCustomerPanel(button);
     else if (action === "view-growth-opportunity" && Number.isInteger(id)) focusGrowthOpportunity(id);
-    else if (action === "open-conversation-customer-search") openConversationCustomerSearch();
+    else if (["open-conversation-customer-search", "open-conversation-customer-search-mobile"].includes(action)) openConversationCustomerSearch();
     else if (action === "search-conversation-customers") void searchConversationCustomers();
     else if (action === "associate-conversation-customer" && Number.isInteger(id)) void updateConversationCustomer(id);
     else if (action === "detach-conversation-customer") void updateConversationCustomer(null);

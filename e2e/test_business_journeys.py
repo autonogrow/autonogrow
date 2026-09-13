@@ -1253,6 +1253,79 @@ def test_customer_details_drawer_keeps_final_content_above_mobile_navigation(
     _assert_no_horizontal_overflow(page)
 
 
+@pytest.mark.parametrize(
+    ("email", "role"),
+    (
+        ("admin-a@e2e.test", "business_admin"),
+        ("pro-1@e2e.test", "business_staff"),
+    ),
+)
+@pytest.mark.parametrize(
+    "viewport",
+    (
+        pytest.param({"width": 430, "height": 932}, id="430x932"),
+        pytest.param({"width": 390, "height": 844}, id="390x844"),
+        pytest.param({"width": 375, "height": 667}, id="375x667"),
+    ),
+)
+def test_mobile_conversations_expose_real_list_and_customer_navigation(
+    journey, email: str, role: str, viewport: dict[str, int]
+) -> None:
+    session = journey(email=email)
+    session.page.set_viewport_size(viewport)
+    page = session.goto("/autonogrow-admin/?b=salon-e2e#conversations")
+    expect(page.locator("#admin-app")).to_be_visible()
+    assert page.evaluate("adminMembership.role") == role
+
+    instagram_conversation = page.locator(".conversation-list-item").filter(
+        has_text="Consulta por Instagram."
+    )
+    whatsapp_conversation = page.locator(".conversation-list-item").filter(
+        has_text="Gracias, lo revisaré."
+    )
+    expect(instagram_conversation).to_be_visible(timeout=15_000)
+    expect(whatsapp_conversation).to_be_visible()
+
+    instagram_conversation.click()
+    detail = page.locator("#conversation-detail")
+    expect(detail).to_be_visible()
+    expect(detail.locator(".conversation-detail-meta")).to_contain_text("@mihii_mihii")
+
+    back_button = detail.get_by_role("button", name="Volver a conversaciones")
+    customer_button = detail.get_by_role("button", name="Información del cliente")
+    expect(back_button).to_be_visible()
+    expect(customer_button).to_be_visible()
+
+    back_button.click()
+    expect(instagram_conversation).to_be_visible()
+    expect(whatsapp_conversation).to_be_visible()
+    whatsapp_conversation.click()
+    expect(detail).to_be_visible()
+    expect(detail.locator(".conversation-detail-meta")).to_contain_text("+34 612 345 678")
+
+    customer_button = detail.get_by_role("button", name="Información del cliente")
+    customer_button.click()
+    panel = page.locator(".conversation-customer-panel.is-open")
+    final_content = panel.locator(".customer-memory--activity")
+    expect(panel).to_be_visible()
+    expect(final_content).to_contain_text("Comportamiento observado", timeout=15_000)
+    final_content.scroll_into_view_if_needed()
+    geometry = _customer_drawer_geometry(page)
+    assert geometry["lastBottom"] <= geometry["navTop"] + 1, geometry
+
+    panel.get_by_role("button", name="Cerrar información del cliente").click()
+    expect(panel).to_be_hidden()
+    expect(detail).to_be_visible()
+    expect(detail.locator(".conversation-detail-meta")).to_contain_text("+34 612 345 678")
+
+    back_button = detail.get_by_role("button", name="Volver a conversaciones")
+    back_button.click()
+    expect(instagram_conversation).to_be_visible()
+    instagram_conversation.click()
+    expect(detail.locator(".conversation-detail-meta")).to_contain_text("@mihii_mihii")
+    _assert_no_horizontal_overflow(page)
+
+
 def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> None:
     _session, page = _open_admin(journey)
     capabilities = page.request.get("/api/admin/businesses/salon-e2e/capabilities")
