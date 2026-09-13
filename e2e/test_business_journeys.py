@@ -59,14 +59,26 @@ def _assert_no_horizontal_overflow(page) -> None:
     offenders = page.evaluate(
         """() => {
           const openPanels = [...document.querySelectorAll('.conversation-customer-panel.is-open')];
-          const roots = openPanels.length ? openPanels : [...document.querySelectorAll('.admin-section-active')];
+          const activeAdminSections = [...document.querySelectorAll('.admin-section-active')];
+          const activeOwnerPanels = [...document.querySelectorAll('.panel.active')];
+          const roots = openPanels.length ? openPanels : activeAdminSections.length ? activeAdminSections : activeOwnerPanels;
           const elements = [...new Set(roots.flatMap((root) => [root, ...root.querySelectorAll('*')]))];
           return elements
           .filter((element) => {
             const style = getComputedStyle(element);
             if (style.display === 'none' || style.visibility === 'hidden') return false;
             const rect = element.getBoundingClientRect();
-            return rect.width > 0 && (rect.left < -1 || rect.right > innerWidth + 1);
+            if (!(rect.width > 0 && (rect.left < -1 || rect.right > innerWidth + 1))) return false;
+            let ancestor = element.parentElement;
+            while (ancestor && !roots.includes(ancestor)) {
+              const ancestorStyle = getComputedStyle(ancestor);
+              if (['auto', 'scroll'].includes(ancestorStyle.overflowX)) {
+                const ancestorRect = ancestor.getBoundingClientRect();
+                if (ancestorRect.left >= -1 && ancestorRect.right <= innerWidth + 1) return false;
+              }
+              ancestor = ancestor.parentElement;
+            }
+            return true;
           })
           .slice(0, 20)
           .map((element) => ({
@@ -78,6 +90,9 @@ def _assert_no_horizontal_overflow(page) -> None:
         }"""
     )
     assert not offenders, offenders
+    assert page.evaluate(
+        "document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"
+    )
 
 
 def test_admin_controlled_login_navigation_and_owner_separation(journey) -> None:
@@ -2075,3 +2090,227 @@ def test_mobile_admin_confirms_booking_and_opens_instagram(journey) -> None:
     expect(page.locator("#admin-instagram-workspace")).to_be_visible()
     expect(page.get_by_role("button", name=re.compile("SALON lanzamiento"))).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+
+
+def test_admin_browser_history_deep_links_roles_and_services_cta(journey) -> None:
+    session = journey(email="admin-a@e2e.test")
+    page = session.goto("/autonogrow-admin/?b=salon-e2e#summary")
+    expect(page.locator("#admin-app")).to_be_visible()
+    expect(page.locator('[data-admin-section="summary"]')).to_have_class(
+        re.compile(r"\badmin-section-active\b")
+    )
+
+    page.locator('.admin-tab[data-section="bookings"]').click()
+    expect(page).to_have_url(re.compile(r"\?b=salon-e2e#bookings$"))
+    page.locator('.admin-tab[data-section="conversations"]').click()
+    expect(page).to_have_url(re.compile(r"\?b=salon-e2e#conversations$"))
+
+    page.go_back(wait_until="domcontentloaded")
+    expect(page).to_have_url(re.compile(r"#bookings$"))
+    expect(page.locator('[data-admin-section="bookings"]')).to_have_class(
+        re.compile(r"\badmin-section-active\b")
+    )
+    page.go_back(wait_until="domcontentloaded")
+    expect(page).to_have_url(re.compile(r"#summary$"))
+    expect(page.locator('[data-admin-section="summary"]')).to_have_class(
+        re.compile(r"\badmin-section-active\b")
+    )
+    page.go_forward(wait_until="domcontentloaded")
+    expect(page).to_have_url(re.compile(r"#bookings$"))
+
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#admin-app")).to_be_visible()
+    expect(page).to_have_url(re.compile(r"\?b=salon-e2e#bookings$"))
+    expect(page.locator('[data-admin-section="bookings"]')).to_have_class(
+        re.compile(r"\badmin-section-active\b")
+    )
+
+    page.locator('.admin-tab[data-section="growth"]').click()
+    expect(page).to_have_url(re.compile(r"#growth$"))
+    page.locator('[data-admin-section="growth"] [data-growth-target="reviews"]').click()
+    expect(page).to_have_url(re.compile(r"#reviews$"))
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#admin-app")).to_be_visible()
+    expect(page).to_have_url(re.compile(r"\?b=salon-e2e#reviews$"))
+    expect(page.locator('[data-admin-section="reviews"]')).to_have_class(
+        re.compile(r"\badmin-section-active\b")
+    )
+    page.go_back(wait_until="domcontentloaded")
+    expect(page).to_have_url(re.compile(r"#growth$"))
+    expect(page.locator('[data-admin-section="growth"]')).to_have_class(
+        re.compile(r"\badmin-section-active\b")
+    )
+
+    page.locator('.admin-tab[data-section="configuration"]').click()
+    services_card = page.locator("#configuration-overview-list article").filter(
+        has_text="Servicios"
+    )
+    services_card.get_by_role("button", name="Revisar").click()
+    expect(page).to_have_url(re.compile(r"#services$"))
+    expect(page.locator('[data-admin-section="services"]')).to_have_class(
+        re.compile(r"\badmin-section-active\b")
+    )
+    expect(page.locator("#services-settings-title")).to_have_text("Servicios")
+    page.go_back(wait_until="domcontentloaded")
+    expect(page).to_have_url(re.compile(r"#configuration$"))
+    page.go_forward(wait_until="domcontentloaded")
+    expect(page).to_have_url(re.compile(r"#services$"))
+    expect(page.locator('[data-admin-section="services"]')).to_have_class(
+        re.compile(r"\badmin-section-active\b")
+    )
+    page.go_back(wait_until="domcontentloaded")
+    expect(page).to_have_url(re.compile(r"#configuration$"))
+
+    staff_session = journey(email="pro-1@e2e.test")
+    staff = staff_session.goto("/autonogrow-admin/?b=salon-e2e#services")
+    expect(staff.locator("#admin-app")).to_be_visible()
+    expect(staff).to_have_url(re.compile(r"\?b=salon-e2e#bookings$"))
+    expect(staff.locator('[data-admin-section="bookings"]')).to_have_class(
+        re.compile(r"\badmin-section-active\b")
+    )
+
+
+def test_growth_reviews_fit_every_supported_viewport_with_long_content(journey) -> None:
+    _session, page = _open_admin(journey)
+    page.evaluate("showAdminSection('reviews', 'replace')")
+    expect(page.locator("#growth-reviews-title")).to_be_visible()
+    expect(page.locator("#growth-review-link-card")).to_be_visible()
+    expect(page.locator(".growth-review-block").first).to_be_visible()
+    page.locator("#growth-review-link-card small").evaluate(
+        "element => { element.textContent = 'https://reviews.example.test/' + 'identificador-muy-largo-'.repeat(30); }"
+    )
+    first_card_title = page.locator(".review-summary-card h4").first
+    if first_card_title.count():
+        first_card_title.evaluate(
+            "element => { element.textContent = 'Cliente con un nombre deliberadamente largo para comprobar el ajuste correcto del contenido'; }"
+        )
+
+    for viewport in (
+        {"width": 1440, "height": 900},
+        {"width": 1280, "height": 800},
+        {"width": 1024, "height": 768},
+        {"width": 768, "height": 1024},
+        {"width": 390, "height": 844},
+    ):
+        page.set_viewport_size(viewport)
+        navigation = page.locator('[data-admin-section="reviews"] .growth-navigation')
+        expect(navigation).to_be_visible()
+        expect(navigation.locator("[data-growth-target='growth']")).to_be_visible()
+        expect(page.locator("#growth-review-link-card")).to_be_visible()
+        expect(page.locator(".growth-review-block").first).to_be_visible()
+        _assert_no_horizontal_overflow(page)
+
+
+def test_admin_social_formats_and_long_content_fit_responsive_matrix(journey) -> None:
+    _session, page = _open_admin(journey)
+    page.evaluate("showAdminSection('instagram-content', 'replace')")
+    expect(page.locator("#admin-instagram-workspace")).to_be_visible()
+    expect(page.locator("[data-admin-instagram-open]").first).to_be_visible(timeout=15_000)
+    page.evaluate(
+        """() => {
+          const base = adminInstagramContents[0];
+          const formats = ['single_image', 'carousel', 'reel', 'story'];
+          adminInstagramCalendarView = 'today';
+          adminInstagramCalendarDate = getMadridDateKey();
+          adminInstagramContents = formats.map((format, index) => ({
+            ...base,
+            id: 9100 + index,
+            title: `${format} ${'título editorial muy largo '.repeat(12)}`,
+            status: 'ready_for_review',
+            planned_publish_at: new Date(Date.now() + index * 60000).toISOString(),
+            current_version: { ...base.current_version, format }
+          }));
+          adminInstagramSelectedContentId = null;
+          renderAdminInstagramContents();
+        }"""
+    )
+    format_filter = page.locator("#admin-instagram-format-filter")
+    assert format_filter.locator("option").all_text_contents()[-4:] == [
+        "Imagen",
+        "Carrusel",
+        "Reel",
+        "Story",
+    ]
+    for label in ("Imagen", "Carrusel", "Reel", "Story"):
+        expect(page.locator(".instagram-calendar-item", has_text=label)).to_have_count(1)
+
+    for viewport in (
+        {"width": 1440, "height": 900},
+        {"width": 1280, "height": 800},
+        {"width": 1024, "height": 768},
+        {"width": 768, "height": 1024},
+        {"width": 390, "height": 844},
+    ):
+        page.set_viewport_size(viewport)
+        expect(page.locator("#admin-instagram-calendar")).to_be_visible()
+        expect(format_filter).to_be_visible()
+        _assert_no_horizontal_overflow(page)
+
+
+def test_schedule_time_inputs_are_named_and_keyboard_focusable(journey) -> None:
+    _session, page = _open_admin(journey)
+    page.evaluate("showAdminSection('schedule', 'replace')")
+    start = page.get_by_label(re.compile(r"Hora de inicio del tramo 1 de Lunes", re.I))
+    end = page.get_by_label(re.compile(r"Hora de fin del tramo 1 de Lunes", re.I))
+    expect(start).to_be_visible()
+    expect(end).to_be_visible()
+    start.focus()
+    expect(start).to_be_focused()
+    reached_end_with_keyboard = False
+    for _attempt in range(4):
+        page.keyboard.press("Tab")
+        if end.evaluate("element => document.activeElement === element"):
+            reached_end_with_keyboard = True
+            break
+    assert reached_end_with_keyboard
+
+    page.locator('#exception-type').select_option("custom_hours")
+    special_start = page.get_by_label("Hora de inicio del tramo especial 1")
+    special_end = page.get_by_label("Hora de fin del tramo especial 1")
+    expect(special_start).to_be_visible()
+    expect(special_end).to_be_visible()
+    page.locator('#exception-windows-panel [data-admin-action="add-exception-window"]').click()
+    expect(page.get_by_label("Hora de inicio del tramo especial 2")).to_be_visible()
+    expect(page.get_by_label("Hora de fin del tramo especial 2")).to_be_visible()
+
+
+def test_owner_business_detail_fits_complete_viewport_matrix(journey) -> None:
+    session = journey(email="owner@e2e.test")
+    session.expect_response_error(404, "GET", "/api/owner/businesses/1/integrations/instagram")
+    page = session.goto("/autonogrow-owner/")
+    expect(page.locator("#owner-app")).to_be_visible()
+    page.locator('[data-tab="businesses"]').click()
+    row = page.locator("[data-business-row-id]").filter(has_text="Salón E2E")
+    expect(row).to_be_visible()
+    row.get_by_role("button", name="Abrir negocio").click()
+    expect(page.locator("#business-detail")).to_be_visible()
+    page.locator("#business-detail-title").evaluate(
+        "element => { element.textContent = 'Certificación de negocio con un nombre deliberadamente largo para validar el layout Owner'; }"
+    )
+
+    for viewport in (
+        {"width": 1440, "height": 900},
+        {"width": 1280, "height": 800},
+        {"width": 1024, "height": 768},
+        {"width": 768, "height": 1024},
+        {"width": 390, "height": 844},
+    ):
+        page.set_viewport_size(viewport)
+        if viewport["width"] <= 1023:
+            page.locator("[data-ag-shell-open]").click()
+        page.locator('[data-tab="businesses"]').click()
+        page.locator("#business-detail-title").evaluate(
+            "element => { element.textContent = 'Certificación de negocio con un nombre deliberadamente largo para validar el layout Owner'; }"
+        )
+        for detail in ("summary", "activation", "modules", "users", "brand", "channels"):
+            page.locator(f'[data-owner-detail-tab="{detail}"]').click()
+            expect(page.locator(f'[data-owner-detail-panel="{detail}"]')).to_be_visible()
+            _assert_no_horizontal_overflow(page)
+        for main_view in ("overview", "integrations", "incidents", "operations", "audit"):
+            if viewport["width"] <= 1023:
+                page.locator("[data-ag-shell-open]").click()
+            page.locator(f'[data-tab="{main_view}"]').click()
+            active_panel = page.locator(f'[data-panel="{main_view}"]')
+            expect(active_panel).to_be_visible()
+            page.wait_for_timeout(100)
+            _assert_no_horizontal_overflow(page)

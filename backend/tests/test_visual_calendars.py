@@ -92,6 +92,26 @@ def test_business_admin_calendar_keeps_editorial_permissions_narrow() -> None:
     )
 
 
+def test_business_admin_uses_exact_labels_for_every_supported_format() -> None:
+    format_filter = ADMIN_HTML.split('id="admin-instagram-format-filter"', 1)[1].split(
+        "</select>", 1
+    )[0]
+    for value, label in (
+        ("single_image", "Imagen"),
+        ("carousel", "Carrusel"),
+        ("reel", "Reel"),
+        ("story", "Story"),
+    ):
+        assert f'<option value="{value}">{label}</option>' in format_filter
+        assert f'{value}: "{label}"' in ADMIN_JS
+    block = ADMIN_JS.split("function adminInstagramCalendarBlock", 1)[1].split(
+        "function renderAdminInstagramCalendar", 1
+    )[0]
+    assert "adminInstagramFormatLabel(item.current_version?.format)" in block
+    assert "${item.title}, ${format}, ${adminInstagramStateLabel(item.status)}" in block
+    assert "adminInstagramFormatLabel(version.format)" in ADMIN_JS
+
+
 def test_business_admin_review_reveals_only_action_specific_inputs() -> None:
     for marker in (
         "Añadir comentario",
@@ -148,3 +168,15 @@ def test_editorial_calendars_collapse_week_and_month_density_on_mobile() -> None
         assert ".instagram-calendar--week { grid-template-columns: 1fr; }" in css
         assert ".instagram-month-day .instagram-calendar-item__body { display: none; }" in css
         assert ".instagram-unscheduled > div:last-child { grid-template-columns: 1fr; }" in css
+
+
+def test_business_admin_social_layout_allows_long_content_to_shrink() -> None:
+    for selector in (
+        ".instagram-content-card header > div",
+        ".instagram-calendar-toolbar",
+        ".instagram-content-detail",
+        ".instagram-publish-job dd",
+    ):
+        assert selector in ADMIN_CSS
+    assert ".instagram-inline-form { align-items: stretch; flex-direction: column; }" in ADMIN_CSS
+    assert ".instagram-publish-job dl { grid-template-columns: minmax(0, 1fr); }" in ADMIN_CSS

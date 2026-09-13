@@ -155,8 +155,16 @@ def test_primary_navigation_has_one_synchronous_current_item_and_normalizes_bad_
         assert mapping in navigation
     assert 'if (isActive) tab.setAttribute("aria-current", "page")' in navigation
     assert 'else tab.removeAttribute("aria-current")' in navigation
-    assert "updateHash || (sectionName && !sectionExists)" in navigation
+    assert 'historyMode = "push"' in navigation
+    assert 'historyMode === "replace"' in navigation
+    assert 'historyMode === "push"' in navigation
+    assert 'window.location.hash.slice(1) !== targetSection' in navigation
+    assert 'window.history.pushState(null, "", `#${targetSection}`)' in navigation
     assert 'window.history.replaceState(null, "", `#${targetSection}`)' in navigation
+    setup = function_block(js, "function setupAdminNavigation", "function setupBookingViews")
+    assert 'window.addEventListener("popstate"' in setup
+    assert 'showAdminSection(window.location.hash.slice(1) || "summary", "none"' in setup
+    assert 'showAdminSection(window.location.hash.slice(1) || "summary", "replace")' in setup
 
 
 def test_secondary_navigation_uses_the_exact_active_context() -> None:
@@ -465,4 +473,4 @@ def test_responsive_contracts_cover_phone_tablet_desktop_zoom_and_safe_areas() -
 
 def test_admin_javascript_cachebuster_matches_this_cross_section_pass() -> None:
     html, _, _, _ = sources()
-    assert '<script src="admin.js?v=daae1788bfba"></script>' in html
+    assert re.search(r'<script src="admin\.js\?v=[a-f0-9]{12}"></script>', html)

@@ -428,7 +428,7 @@ def test_responsive_and_dialog_css_cover_desktop_tablet_mobile_and_safe_area() -
     _, css, _, _ = sources()
     for contract in (
         "grid-template-columns: minmax(13rem",
-        "@media (max-width: 1199px)",
+        "@media (max-width: 1399px)",
         "@media (max-width: 767px)",
         "100dvh",
         "env(safe-area-inset-top)",
@@ -437,6 +437,9 @@ def test_responsive_and_dialog_css_cover_desktop_tablet_mobile_and_safe_area() -
         assert contract in css
     assert "overflow-x: auto" in css
     assert ".owner-dialog" in css
+    assert css.count("@media (max-width: 1399px)") == 2
+    assert ".owner-users-list article { grid-template-columns: minmax(0, 1fr) minmax(9rem, .6fr); }" in css
+    assert ".owner-page :where(.ag-shell__main" in css
 
 
 def test_dom_contracts_are_unique_and_legacy_sections_coexist() -> None:

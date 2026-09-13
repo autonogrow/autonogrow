@@ -2364,7 +2364,17 @@ input {
 .growth-hub-overview,
 .growth-hub-category { padding: 0; overflow: visible; background: transparent; box-shadow: none; }
 .growth-hub-layout { display: grid; grid-template-columns: minmax(13.5rem, 16rem) minmax(0, 1fr); align-items: start; gap: var(--ag-space-5); }
-.growth-hub-content { display: grid; min-width: 0; max-width: 64rem; gap: var(--ag-space-5); }
+.growth-hub-layout,
+.growth-hub-content,
+.growth-navigation,
+.growth-priority-card,
+.growth-activity-card,
+.growth-review-block,
+.growth-review-link-card,
+.review-summary-card,
+.review-useful-data,
+.review-useful-data div { min-width: 0; max-width: 100%; }
+.growth-hub-content { display: grid; width: 100%; min-width: 0; max-width: 64rem; gap: var(--ag-space-5); }
 .growth-navigation { position: sticky; top: var(--ag-space-4); display: grid; gap: var(--ag-space-1); padding: var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-xl); background: var(--ag-color-surface); box-shadow: var(--ag-shadow-sm); }
 .growth-navigation > p { margin: var(--ag-space-2) var(--ag-space-3); color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); font-weight: var(--ag-font-weight-bold); letter-spacing: .06em; text-transform: uppercase; }
 .growth-navigation button { width: 100%; min-height: var(--ag-touch-target); padding: var(--ag-space-3); border: 0; border-radius: var(--ag-radius-md); background: transparent; color: var(--ag-color-text); font: inherit; text-align: left; cursor: pointer; }
@@ -2373,7 +2383,7 @@ input {
 .growth-navigation button span { display: grid; gap: .1rem; }
 .growth-navigation button small { overflow: hidden; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
 .growth-hub-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ag-space-5); }
-.growth-hub-header > div { display: grid; gap: var(--ag-space-1); }
+.growth-hub-header > div { display: grid; min-width: 0; gap: var(--ag-space-1); }
 .growth-hub-header h2,
 .growth-hub-header p { margin: 0; }
 .growth-hub-header > div > p:last-child { color: var(--ag-color-text-muted); }
@@ -2413,7 +2423,7 @@ input {
 .growth-partial-error[hidden] { display: none; }
 .growth-partial-error ul { margin: 0; }
 .growth-review-link-card { display: flex; align-items: center; justify-content: space-between; gap: var(--ag-space-4); }
-.growth-review-link-card > div { display: grid; gap: var(--ag-space-1); }
+.growth-review-link-card > div { display: grid; min-width: 0; gap: var(--ag-space-1); }
 .growth-review-link-card h3,
 .growth-review-link-card p,
 .growth-review-link-card small { margin: 0; }
@@ -2431,11 +2441,18 @@ input {
 .review-useful-data { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ag-space-3); margin: 0; }
 .review-useful-data div { display: grid; gap: var(--ag-space-1); }
 .review-useful-data dt { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-xs); font-weight: var(--ag-font-weight-semibold); }
-.review-useful-data dd { margin: 0; font-weight: var(--ag-font-weight-bold); }
+.review-useful-data dd { min-width: 0; margin: 0; font-weight: var(--ag-font-weight-bold); overflow-wrap: anywhere; }
 .review-delivery-note,
 .review-request-time { color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
 .review-message-details summary { min-height: var(--ag-touch-target); padding: var(--ag-space-2) 0; cursor: pointer; font-weight: var(--ag-font-weight-bold); }
 .review-message-details .review-message { padding: var(--ag-space-3); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); overflow-wrap: anywhere; }
+.growth-hub-header h2,
+.growth-hub-header p,
+.growth-review-link-card h3,
+.growth-review-link-card small,
+.review-summary-card h4,
+.review-summary-card p,
+#review-activity-list article > div { min-width: 0; overflow-wrap: anywhere; word-break: normal; }
 .growth-empty-state { display: grid; gap: var(--ag-space-2); padding: var(--ag-space-5); border: 1px dashed var(--ag-color-border-strong); border-radius: var(--ag-radius-lg); background: var(--ag-color-surface-subtle); }
 .growth-empty-state p { margin: 0; color: var(--ag-color-text-muted); }
 .growth-tasks-list { gap: var(--ag-space-3); }
@@ -2489,8 +2506,21 @@ input {
   .growth-hub-content *,
   .growth-navigation * { scroll-behavior: auto; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
-.instagram-editorial { gap: var(--ag-space-4); }
+.instagram-editorial { min-width: 0; max-width: 100%; gap: var(--ag-space-4); }
 .instagram-editorial-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ag-space-4); }
+.instagram-editorial-grid,
+.instagram-editorial-card,
+.instagram-content-card,
+.instagram-content-card header > div,
+.instagram-calendar-shell,
+.instagram-calendar-header,
+.instagram-calendar-toolbar,
+.instagram-calendar-filters,
+.instagram-unscheduled,
+.instagram-unscheduled > div,
+.instagram-content-detail,
+.instagram-publish-job,
+.instagram-publish-job dd { min-width: 0; max-width: 100%; }
 .instagram-editorial-card, .instagram-content-card { padding: var(--ag-space-4); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-lg); background: var(--ag-color-surface); }
 .instagram-editorial-card + .instagram-editorial-card, .instagram-content-card + .instagram-content-card { margin-top: var(--ag-space-4); }
 .instagram-editorial-card form, .instagram-content-card form { display: grid; gap: var(--ag-space-3); }
@@ -2550,7 +2580,12 @@ input {
 .instagram-publish-job { margin-top: var(--ag-space-3); padding: var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
 .instagram-publish-job dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--ag-space-1) var(--ag-space-3); }
 .instagram-asset-list, .instagram-final-assets { display: flex; flex-wrap: wrap; gap: var(--ag-space-2); margin-top: var(--ag-space-3); }
-.instagram-asset-chip, .instagram-final-preview { padding: var(--ag-space-2) var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
+.instagram-asset-chip, .instagram-final-preview { max-width: 100%; padding: var(--ag-space-2) var(--ag-space-3); border: 1px solid var(--ag-color-border); border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); overflow-wrap: anywhere; }
+.instagram-caption,
+.instagram-content-card h4,
+.instagram-content-card p,
+.instagram-content-card li,
+.instagram-publish-job dd { overflow-wrap: anywhere; word-break: normal; }
 .instagram-caption { padding: var(--ag-space-3); white-space: pre-wrap; border-radius: var(--ag-radius-md); background: var(--ag-color-surface-subtle); }
 .instagram-comments { padding-left: var(--ag-space-5); }
 @media (max-width: 760px) {
@@ -2570,6 +2605,10 @@ input {
   .instagram-month-day .instagram-calendar-item__state { width: .9rem; height: .9rem; font-size: .55rem; }
   .instagram-month-day .instagram-calendar-item__body { display: none; }
   .instagram-unscheduled > div:last-child { grid-template-columns: 1fr; }
+  .instagram-inline-form { align-items: stretch; flex-direction: column; }
+  .instagram-inline-form > label,
+  .instagram-inline-form > .btn { width: 100%; }
+  .instagram-publish-job dl { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Sprint 7 customer opportunities */

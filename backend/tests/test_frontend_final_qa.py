@@ -101,13 +101,13 @@ def test_all_real_frontend_surfaces_and_local_assets_are_present() -> None:
 def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
     expected = {
         "autonogrow-admin": (
-            "styles.css?v=20260831-p15b3-a",
+            "styles.css?v=889c29b73bfc",
             "responsive.css?v=5f1",
             "auth.js?v=10b5",
-            "admin.js?v=daae1788bfba",
+            "admin.js?v=e9b8434d9c7e",
         ),
         "autonogrow-owner": (
-            "styles.css?v=f89c4b84d664",
+            "styles.css?v=2a6d41a84285",
             "responsive.css?v=5f1",
             "auth.js?v=10b5",
             "owner.js?v=20260828-p123-a",
@@ -126,7 +126,7 @@ def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
         assert next(i for i, item in enumerate(scripts) if "auth.js" in item) < len(scripts) - 1
 
 
-def test_admin_script_cachebuster_matches_normalized_content_hash() -> None:
+def test_admin_changed_asset_cachebusters_match_normalized_content_hashes() -> None:
     html = text(ROOT / "autonogrow-admin" / "index.html")
     admin_js = text(ROOT / "autonogrow-admin" / "admin.js")
     expected = hashlib.sha256(admin_js.encode("utf-8")).hexdigest()[:12]
@@ -134,6 +134,15 @@ def test_admin_script_cachebuster_matches_normalized_content_hash() -> None:
 
     assert match is not None
     assert match.group(1) == expected
+
+    admin_css = text(ROOT / "autonogrow-admin" / "styles.css")
+    expected_css = hashlib.sha256(admin_css.encode("utf-8")).hexdigest()[:12]
+    css_match = re.search(
+        r'<link rel="stylesheet" href="styles\.css\?v=([a-f0-9]{12})" />', html
+    )
+
+    assert css_match is not None
+    assert css_match.group(1) == expected_css
 
 
 def test_owner_businesses_cachebuster_matches_content_hash() -> None:

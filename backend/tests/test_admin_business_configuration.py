@@ -238,6 +238,39 @@ def test_configuration_has_accessible_partial_states_and_responsive_structure() 
     assert ".configuration-navigation" in css
 
 
+def test_schedule_time_inputs_have_distinct_accessible_names() -> None:
+    _, _, js = read_sources()
+    weekly = function_block(js, "function appendWindowRow", "function removeWindowRow")
+    exceptions = function_block(
+        js, "function renderExceptionWindows", "function updateExceptionWindow"
+    )
+    for marker in (
+        "Hora de inicio del tramo ${windowNumber} de ${dayLabel}",
+        "Hora de fin del tramo ${windowNumber} de ${dayLabel}",
+        'aria-label="Eliminar tramo ${windowNumber} de ${dayLabel}"',
+    ):
+        assert marker in weekly
+    for marker in (
+        "Hora de inicio del tramo especial ${windowNumber}",
+        "Hora de fin del tramo especial ${windowNumber}",
+        'aria-label="Eliminar tramo especial ${windowNumber}"',
+    ):
+        assert marker in exceptions
+    assert weekly.count('<label><span class="ag-visually-hidden">') == 2
+    assert exceptions.count('<label><span class="ag-visually-hidden">') == 2
+
+
+def test_services_review_card_targets_the_dedicated_services_section() -> None:
+    html, _, js = read_sources()
+    assert '{ id: "services", label: "Servicios", description: "Catálogo, duración y precio" }' in js
+    assert 'data-admin-section="services"' in html
+    assert '<h2 id="services-settings-title">Servicios</h2>' in html
+    overview = function_block(js, "function renderConfigurationOverview", "function growthNavigationMarkup")
+    assert 'data-configuration-target="${category.id}"' in overview
+    navigation = function_block(js, "function setupBusinessConfiguration", "function applyRoleVisibility")
+    assert "showAdminSection(section)" in navigation
+
+
 def test_staff_removal_dialog_has_focus_trap_escape_and_return_focus() -> None:
     html, _, js = read_sources()
     modal = html.split('id="staff-removal-modal"', 1)[1]

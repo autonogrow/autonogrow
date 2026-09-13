@@ -200,6 +200,7 @@ let rescheduleState = {
 const CONFIGURATION_SECTIONS = new Set(["configuration", "business", "services", "staff", "schedule", "public-page"]);
 const CHANNEL_HUB_SECTIONS = new Set(["channels", "channel-instagram", "channel-whatsapp", "messages"]);
 const GROWTH_HUB_SECTIONS = new Set(["growth", "reviews", "growth-opportunities"]);
+const STAFF_ADMIN_SECTIONS = new Set(["summary", "growth", "growth-opportunities", "instagram-content", "bookings", "conversations"]);
 const GROWTH_HUB_CATEGORIES = [
   { id: "growth", label: "Resumen", description: "Prioridades y actividad" },
   { id: "reviews", label: "Reseñas", description: "Clientes y solicitudes" },
@@ -828,20 +829,19 @@ function setupBusinessConfiguration() {
 
 function applyRoleVisibility() {
   const staffOnly = isBusinessStaff();
-  const allowed = new Set(["summary", "growth", "growth-opportunities", "instagram-content", "bookings", "conversations"]);
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
     const growthDisabled = !moduleAvailable("growth");
     const socialDisabled = !moduleAvailable("social");
     const reviewsFallback = tab.dataset.section === "reviews" && growthDisabled && !staffOnly;
     if (tab.dataset.section === "reviews") tab.classList.toggle("admin-tab--legacy", !reviewsFallback);
     tab.hidden = (!reviewsFallback && tab.classList.contains("admin-tab--legacy")) ||
-      (staffOnly && !allowed.has(tab.dataset.section)) ||
+      (staffOnly && !STAFF_ADMIN_SECTIONS.has(tab.dataset.section)) ||
       (tab.dataset.section === "growth" && growthDisabled) ||
       (tab.dataset.section === "instagram-content" && socialDisabled);
     if (tab.dataset.section === "instagram-content" && adminAuthUser?.is_owner) tab.hidden = true;
   });
   document.querySelectorAll("[data-admin-section]").forEach((section) => {
-    if (staffOnly && !allowed.has(section.dataset.adminSection)) section.hidden = true;
+    if (staffOnly && !STAFF_ADMIN_SECTIONS.has(section.dataset.adminSection)) section.hidden = true;
     if (["growth", "growth-opportunities"].includes(section.dataset.adminSection)) section.hidden = !moduleAvailable("growth");
     if (["instagram-content", "channel-instagram"].includes(section.dataset.adminSection)) section.hidden = !moduleAvailable("social");
     if (section.dataset.adminSection === "instagram-content" && adminAuthUser?.is_owner) section.hidden = true;
@@ -854,9 +854,9 @@ function applyRoleVisibility() {
   document.querySelector(".growth-summary-card").hidden = staffOnly || !moduleAvailable("growth");
   ["stat-reviews-pending", "stat-reviews-copied", "stat-reviews-sent", "stat-messages-pending", "stat-messages-opened", "stat-messages-sent", "stat-services-active"]
     .forEach((id) => { document.getElementById(id)?.closest(".stat-card")?.toggleAttribute("hidden", staffOnly); });
-  if (staffOnly && !allowed.has(window.location.hash.slice(1))) showAdminSection("bookings");
-  if (!moduleAvailable("growth") && ["growth", "growth-opportunities"].includes(window.location.hash.slice(1))) showAdminSection("summary");
-  if (!moduleAvailable("social") && ["instagram-content", "channel-instagram"].includes(window.location.hash.slice(1))) showAdminSection("summary");
+  if (staffOnly && !STAFF_ADMIN_SECTIONS.has(window.location.hash.slice(1))) showAdminSection("bookings", "replace");
+  if (!moduleAvailable("growth") && ["growth", "growth-opportunities"].includes(window.location.hash.slice(1))) showAdminSection("summary", "replace");
+  if (!moduleAvailable("social") && ["instagram-content", "channel-instagram"].includes(window.location.hash.slice(1))) showAdminSection("summary", "replace");
 }
 
 function resolveMediaUrl(url, cacheBust = false) {
@@ -879,7 +879,9 @@ function resolveSafeAdminMediaUrl(url, cacheBust = false) {
   }
 }
 
-function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = false } = {}) {
+function showAdminSection(sectionName, historyMode = "push", { skipDirtyCheck = false } = {}) {
+  const requestedSection = sectionName;
+  if (isBusinessStaff() && !STAFF_ADMIN_SECTIONS.has(sectionName)) sectionName = "bookings";
   if (!moduleAvailable("growth") && ["growth", "growth-opportunities"].includes(sectionName)) sectionName = "summary";
   if (!moduleAvailable("social") && ["instagram-content", "channel-instagram"].includes(sectionName)) sectionName = "summary";
   const availableSections = Array.from(document.querySelectorAll("[data-admin-section]"));
@@ -909,8 +911,11 @@ function showAdminSection(sectionName, updateHash = true, { skipDirtyCheck = fal
     else tab.removeAttribute("aria-current");
   });
 
-  if (updateHash || (sectionName && !sectionExists)) {
+  const mustNormalize = requestedSection !== targetSection || (requestedSection && !sectionExists);
+  if (mustNormalize || historyMode === "replace") {
     window.history.replaceState(null, "", `#${targetSection}`);
+  } else if (historyMode === "push" && window.location.hash.slice(1) !== targetSection) {
+    window.history.pushState(null, "", `#${targetSection}`);
   }
   if (CONFIGURATION_SECTIONS.has(targetSection)) renderConfigurationOverview();
   if (CHANNEL_HUB_SECTIONS.has(targetSection)) renderChannelHubNavigation();
@@ -924,7 +929,11 @@ function setupAdminNavigation() {
     tab.addEventListener("click", () => showAdminSection(tab.dataset.section));
   });
 
-  showAdminSection(window.location.hash.slice(1) || "summary", false);
+  window.addEventListener("popstate", () => {
+    showAdminSection(window.location.hash.slice(1) || "summary", "none", { skipDirtyCheck: true });
+  });
+
+  showAdminSection(window.location.hash.slice(1) || "summary", "replace");
 }
 
 function setupBookingViews() {
@@ -3211,13 +3220,16 @@ function addScheduleWindow(weekday, start = "10:00", end = "14:00") {
 
 function appendWindowRow(containerId, start = "10:00", end = "14:00") {
   const container = document.getElementById(containerId);
+  const dayValue = container.closest(".schedule-day")?.dataset.weekday;
+  const dayLabel = WEEKDAYS.find((day) => day.value === dayValue)?.label || "el día";
+  const windowNumber = container.querySelectorAll(".window-row").length + 1;
   const row = document.createElement("div");
   row.className = "window-row";
   row.innerHTML = `
-    <input type="time" class="window-start" value="${escapeHtml(start)}" />
-    <span>hasta</span>
-    <input type="time" class="window-end" value="${escapeHtml(end)}" />
-    <button class="btn btn-small btn-danger" type="button" data-admin-action="remove-window-row">
+    <label><span class="ag-visually-hidden">Hora de inicio del tramo ${windowNumber} de ${dayLabel}</span><input type="time" class="window-start" value="${escapeHtml(start)}" /></label>
+    <span aria-hidden="true">hasta</span>
+    <label><span class="ag-visually-hidden">Hora de fin del tramo ${windowNumber} de ${dayLabel}</span><input type="time" class="window-end" value="${escapeHtml(end)}" /></label>
+    <button class="btn btn-small btn-danger" type="button" aria-label="Eliminar tramo ${windowNumber} de ${dayLabel}" data-admin-action="remove-window-row">
       Eliminar
     </button>
   `;
@@ -3396,13 +3408,14 @@ function renderExceptionWindows() {
   }
 
   exceptionDraftWindows.forEach((windowItem, index) => {
+    const windowNumber = index + 1;
     const row = document.createElement("div");
     row.className = "window-row";
     row.innerHTML = `
-      <input type="time" value="${escapeHtml(windowItem.start)}" data-admin-change="update-exception-window" data-index="${index}" data-field="start" />
-      <span>hasta</span>
-      <input type="time" value="${escapeHtml(windowItem.end)}" data-admin-change="update-exception-window" data-index="${index}" data-field="end" />
-      <button class="btn btn-small btn-danger" type="button" data-admin-action="remove-exception-window" data-index="${index}">
+      <label><span class="ag-visually-hidden">Hora de inicio del tramo especial ${windowNumber}</span><input type="time" value="${escapeHtml(windowItem.start)}" data-admin-change="update-exception-window" data-index="${index}" data-field="start" /></label>
+      <span aria-hidden="true">hasta</span>
+      <label><span class="ag-visually-hidden">Hora de fin del tramo especial ${windowNumber}</span><input type="time" value="${escapeHtml(windowItem.end)}" data-admin-change="update-exception-window" data-index="${index}" data-field="end" /></label>
+      <button class="btn btn-small btn-danger" type="button" aria-label="Eliminar tramo especial ${windowNumber}" data-admin-action="remove-exception-window" data-index="${index}">
         Eliminar
       </button>
     `;
@@ -8506,6 +8519,15 @@ function socialContentLabel(kind, value) {
   return labels[kind]?.[value] || value;
 }
 
+function adminInstagramFormatLabel(format) {
+  return ({
+    single_image: "Imagen",
+    carousel: "Carrusel",
+    reel: "Reel",
+    story: "Story"
+  })[format] || format || "Formato sin indicar";
+}
+
 function renderSocialContentProposals() {
   const container = document.getElementById("social-content-ideas-list");
   if (!socialContentProposals.length) {
@@ -8629,11 +8651,11 @@ function adminInstagramCalendarBlock(item) {
   const time = item.planned_publish_at
     ? new Intl.DateTimeFormat("es-ES", { timeStyle: "short", timeZone: item.business_timezone }).format(new Date(item.planned_publish_at))
     : "Sin hora";
-  const format = item.current_version?.format === "carousel" ? "Carrusel" : "Imagen";
+  const format = adminInstagramFormatLabel(item.current_version?.format);
   const icon = adminInstagramNeedsAttention(item) ? "!" : item.status === "published" ? "✓" : ["validated", "scheduled"].includes(item.status) ? "●" : "○";
   const action = item.status === "ready_for_review" ? "Revisar" : item.status === "changes_requested" ? "Ver cambios" : "Ver";
   const tone = adminInstagramNeedsAttention(item) ? "attention" : item.status;
-  return `<button class="instagram-calendar-item instagram-calendar-item--${escapeHtml(tone)}" type="button" data-admin-instagram-open="${item.id}" aria-label="${escapeHtml(`${item.title}, ${adminInstagramStateLabel(item.status)}, ${time}`)}"><span class="instagram-calendar-item__state" aria-hidden="true">${icon}</span><span class="instagram-calendar-item__body"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(time)} · ${escapeHtml(format)} · ${escapeHtml(adminInstagramStateLabel(item.status))}</small></span><span class="instagram-calendar-item__action">${action}</span></button>`;
+  return `<button class="instagram-calendar-item instagram-calendar-item--${escapeHtml(tone)}" type="button" data-admin-instagram-open="${item.id}" aria-label="${escapeHtml(`${item.title}, ${format}, ${adminInstagramStateLabel(item.status)}, ${time}`)}"><span class="instagram-calendar-item__state" aria-hidden="true">${icon}</span><span class="instagram-calendar-item__body"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(time)} · ${escapeHtml(format)} · ${escapeHtml(adminInstagramStateLabel(item.status))}</small></span><span class="instagram-calendar-item__action">${action}</span></button>`;
 }
 
 function renderAdminInstagramCalendar() {
@@ -8738,7 +8760,7 @@ function renderAdminInstagramContents() {
     const review = ["ready_for_review", "validated", "scheduled"].includes(item.status) ? `<section data-admin-instagram-review>${reviewBadge}<div class="growth-action-card-actions"><form data-admin-instagram-business-review><input type="hidden" name="version_id" value="${version.id}"><input type="hidden" name="decision" value="approve"><button class="btn btn-secondary" type="submit">Dar visto bueno</button></form><button class="btn btn-secondary" type="button" data-admin-instagram-review-toggle="changes_requested">Solicitar cambios</button><button class="btn btn-secondary" type="button" data-admin-instagram-review-toggle="reject">Rechazar esta versión</button></div><form data-admin-instagram-business-review data-admin-instagram-review-panel="changes_requested" hidden><input type="hidden" name="version_id" value="${version.id}"><input type="hidden" name="decision" value="changes_requested"><label>¿Qué quieres que cambiemos?<textarea name="note" maxlength="4000" required rows="3"></textarea></label><button class="btn btn-primary" type="submit">Confirmar solicitud</button></form><form data-admin-instagram-business-review data-admin-instagram-review-panel="reject" hidden><input type="hidden" name="version_id" value="${version.id}"><input type="hidden" name="decision" value="reject"><label>Cuéntanos brevemente por qué<textarea name="note" maxlength="4000" required rows="3"></textarea></label><button class="btn btn-primary" type="submit">Confirmar rechazo</button></form></section>` : reviewBadge;
     const hold = item.publication_hold ? `<form data-admin-instagram-hold="release"><div class="ag-alert ag-alert--info"><strong>Publicación detenida</strong><p>${escapeHtml(item.publication_hold.reason)}</p></div><label>Nota al reanudar<textarea name="note" maxlength="4000" rows="2"></textarea></label><button class="btn btn-primary" type="submit">Reanudar publicación</button></form>` : ["cancelled", "published"].includes(item.status) ? "" : `<div><button class="btn btn-secondary" type="button" data-admin-instagram-hold-toggle>Detener publicación</button><form data-admin-instagram-hold="create" data-admin-instagram-hold-panel hidden><label>Motivo para detener esta publicación<textarea name="reason" maxlength="4000" required rows="3"></textarea></label><button class="btn btn-primary" type="submit">Confirmar detención</button></form></div>`;
     const rawHistory = (item.raw_asset_history || []).map((raw) => `<li><strong>${escapeHtml(raw.display_status)}</strong> · ${escapeHtml(raw.original_filename)} · versiones ${raw.version_numbers.join(", ")}${raw.preview_url ? ` · <a href="${API_BASE_URL}${escapeHtml(raw.preview_url)}" target="_blank" rel="noopener">Ver original</a>` : ""}</li>`).join("");
-    return `<article class="instagram-content-card" data-admin-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(adminInstagramStateLabel(item.status))} · versión ${version.version_number}</p></div><span class="ag-badge ag-badge--neutral">${item.planned_publish_at ? escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(item.planned_publish_at))) : "Sin fecha"}</span></header><p class="instagram-caption">${escapeHtml(version.caption) || "Sin caption"}</p>${unsupported}${generatedEditorialPreview(item)}<div class="instagram-final-assets">${assets || "<p class='helper'>Sin assets finales.</p>"}</div>${adminInstagramJobPanel(item)}<details><summary>Historial de versiones y decisiones</summary><ul>${history}</ul>${rawHistory ? `<h5>Material de origen</h5><ul>${rawHistory}</ul>` : ""}</details>${events ? `<details><summary>Historial de publicación</summary><ul>${events}</ul></details>` : ""}${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong><p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}<button class="btn btn-ghost" type="button" data-admin-instagram-comment-toggle>Añadir comentario</button><form data-admin-instagram-comment data-admin-instagram-comment-panel hidden><input type="hidden" name="version_id" value="${version.id}"><label>Comentario<textarea name="body" maxlength="4000" required rows="3"></textarea></label><input type="hidden" name="kind" value="comment"><button class="btn btn-secondary" type="submit">Enviar comentario</button></form>${review}${hold}</article>`;
+    return `<article class="instagram-content-card" data-admin-instagram-content="${item.id}"><header><div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(adminInstagramStateLabel(item.status))} · ${escapeHtml(adminInstagramFormatLabel(version.format))} · versión ${version.version_number}</p></div><span class="ag-badge ag-badge--neutral">${item.planned_publish_at ? escapeHtml(new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: item.business_timezone }).format(new Date(item.planned_publish_at))) : "Sin fecha"}</span></header><p class="instagram-caption">${escapeHtml(version.caption) || "Sin caption"}</p>${unsupported}${generatedEditorialPreview(item)}<div class="instagram-final-assets">${assets || "<p class='helper'>Sin assets finales.</p>"}</div>${adminInstagramJobPanel(item)}<details><summary>Historial de versiones y decisiones</summary><ul>${history}</ul>${rawHistory ? `<h5>Material de origen</h5><ul>${rawHistory}</ul>` : ""}</details>${events ? `<details><summary>Historial de publicación</summary><ul>${events}</ul></details>` : ""}${item.comments.length ? `<ul class="instagram-comments">${item.comments.map((comment) => `<li><strong>${escapeHtml(comment.kind)}</strong><p>${escapeHtml(comment.body)}</p></li>`).join("")}</ul>` : ""}<button class="btn btn-ghost" type="button" data-admin-instagram-comment-toggle>Añadir comentario</button><form data-admin-instagram-comment data-admin-instagram-comment-panel hidden><input type="hidden" name="version_id" value="${version.id}"><label>Comentario<textarea name="body" maxlength="4000" required rows="3"></textarea></label><input type="hidden" name="kind" value="comment"><button class="btn btn-secondary" type="submit">Enviar comentario</button></form>${review}${hold}</article>`;
   }).join("");
 }
 
