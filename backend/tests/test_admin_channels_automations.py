@@ -215,6 +215,13 @@ def test_accessibility_and_responsive_structure_are_explicit() -> None:
     assert 'aria-current="page"' in js
     assert 'aria-busy="true"' in html
     assert 'role="status" aria-live="polite"' in html
+    automation = function_block(
+        js, "function renderConversationAutomation", "async function saveConversationAutomationSettings"
+    )
+    assert 'id="conversation-automation-rule-${escapeHtml(rule.intent)}-mode"' in automation
+    assert 'id="conversation-automation-rule-${escapeHtml(rule.intent)}-template"' in automation
+    assert automation.count('aria-labelledby="conversation-automation-rule-') == 2
+    assert automation.count('class="ag-visually-hidden" for="conversation-automation-rule-') == 2
     sprint_css = css.split("/* Sprint 5B.5", 1)[1].split("/* Sprint 5B.2", 1)[0]
     assert "@media (max-width: 1024px)" in sprint_css
     assert "@media (max-width: 639px)" in sprint_css

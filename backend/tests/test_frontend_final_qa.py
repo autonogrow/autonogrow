@@ -101,12 +101,12 @@ def test_all_real_frontend_surfaces_and_local_assets_are_present() -> None:
 def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
     expected = {
         "autonogrow-admin": (
-            "styles.css?v=3336ac027ee2",
+            "styles.css?v=c9dd4df269d1",
             "tokens.css?v=dba71b73bae0",
             "responsive.css?v=3e2eaa420c77",
             "app-shell.js?v=817f1c5536b8",
             "auth.js?v=10b5",
-            "admin.js?v=1347e4daa489",
+            "admin.js?v=5e32a93be933",
         ),
         "autonogrow-owner": (
             "styles.css?v=eaa84007cf8a",
@@ -115,7 +115,7 @@ def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
             "app-shell.js?v=817f1c5536b8",
             "auth.js?v=10b5",
             "owner.js?v=20260828-p123-a",
-            "owner-businesses.js?v=1c1826653b2e",
+            "owner-businesses.js?v=741ca33ebf63",
             "owner-onboarding.js?v=5f1",
         ),
         "autonogrow-landing": ("styles.css?v=10b6", "auth.js?v=10b5", "script.js?v=10b7"),

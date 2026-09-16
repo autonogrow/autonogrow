@@ -6,7 +6,7 @@
 
   <title>AutonoGrow Admin</title>
 
-  <link rel="stylesheet" href="styles.css?v=3336ac027ee2" />
+  <link rel="stylesheet" href="styles.css?v=c9dd4df269d1" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css?v=dba71b73bae0" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -753,19 +753,19 @@
     <div id="growth-action-modal" class="modal-overlay ag-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="growth-action-modal-title" aria-describedby="growth-action-modal-description" aria-hidden="true">
       <div class="modal-card ag-modal growth-action-modal-card">
         <button class="modal-close ag-modal__close" type="button" data-growth-action-modal="close" aria-label="Cerrar">×</button>
-        <p class="eyebrow">Acción asistida</p>
         <header class="growth-action-modal__header">
-        <h2 id="growth-action-modal-title">Preparar mensaje</h2>
-        <p id="growth-action-modal-description">Revisa el texto. Nada se enviará hasta que pulses Enviar. También puedes abrirlo en WhatsApp para enviarlo tú.</p>
+          <p class="eyebrow">Acción asistida</p>
+          <h2 id="growth-action-modal-title" tabindex="-1">Preparar mensaje</h2>
+          <p id="growth-action-modal-description">Revisa el texto. Nada se enviará hasta que pulses Enviar. También puedes abrirlo en WhatsApp para enviarlo tú.</p>
         </header>
         <div class="growth-action-modal__body">
-        <dl class="growth-action-context">
-          <div><dt>Canal</dt><dd id="growth-action-channel">Sin canal disponible</dd></div>
-          <div><dt>Motivo</dt><dd id="growth-action-reason">—</dd></div>
-          <div><dt>Estado</dt><dd id="growth-action-status">Borrador</dd></div>
-        </dl>
-        <label for="growth-action-text">Mensaje<textarea id="growth-action-text" maxlength="4096" rows="8"></textarea></label>
-        <p id="growth-action-notice" class="inline-feedback" role="status" aria-live="polite"></p>
+          <dl class="growth-action-context">
+            <div><dt>Canal</dt><dd id="growth-action-channel">Sin canal disponible</dd></div>
+            <div><dt>Motivo</dt><dd id="growth-action-reason">—</dd></div>
+            <div><dt>Estado</dt><dd id="growth-action-status">Borrador</dd></div>
+          </dl>
+          <label for="growth-action-text">Mensaje<textarea id="growth-action-text" maxlength="4096" rows="8"></textarea></label>
+          <p id="growth-action-notice" class="inline-feedback" role="status" aria-live="polite"></p>
         </div>
         <footer class="growth-action-modal-actions">
           <button id="growth-action-cancel" class="ag-button ag-button--ghost" type="button" data-growth-action-modal="cancel" hidden>Cancelar intento</button>
@@ -846,6 +846,6 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js?v=10b5"></script>
   <script src="../autonogrow-shared/app-shell.js?v=817f1c5536b8"></script>
-  <script src="admin.js?v=1347e4daa489"></script>
+  <script src="admin.js?v=5e32a93be933"></script>
 </body>
 </html>

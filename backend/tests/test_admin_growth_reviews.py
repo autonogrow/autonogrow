@@ -327,6 +327,11 @@ def test_growth_opportunity_copy_and_modal_handle_variable_content() -> None:
     assert "overflow-y: auto" in css
     assert "max-height: 32dvh" in css
     assert "overflow-wrap: anywhere" in css
+    assert 'id="growth-action-modal-title" tabindex="-1"' in html
+    modal = function_block(js, "function openGrowthActionModal", "function closeGrowthActionModal")
+    assert "body.scrollTop = 0" in modal
+    assert "title.focus({ preventScroll: true })" in modal
+    assert "growthActionModalFocusableElements" in js
 
 
 def test_accessibility_and_responsive_structure_are_explicit() -> None:

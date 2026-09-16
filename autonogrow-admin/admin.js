@@ -737,9 +737,36 @@ function setupGrowthHub() {
     if (event.target.id === "growth-action-modal") closeGrowthActionModal();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && document.getElementById("growth-action-modal")?.classList.contains("open")) {
+    const modal = document.getElementById("growth-action-modal");
+    if (!modal?.classList.contains("open")) return;
+    if (event.key === "Escape") {
       event.preventDefault();
       closeGrowthActionModal();
+      return;
+    }
+    if (event.key === "Tab") {
+      const focusable = growthActionModalFocusableElements(modal);
+      if (!focusable.length) {
+        event.preventDefault();
+        document.getElementById("growth-action-modal-title")?.focus({ preventScroll: true });
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const title = document.getElementById("growth-action-modal-title");
+      if (document.activeElement === title) {
+        event.preventDefault();
+        (event.shiftKey ? last : document.getElementById("growth-action-text") || first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      } else if (!modal.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      }
     }
   });
   renderGrowthNavigation();
@@ -2342,6 +2369,11 @@ function growthActionUnavailableMessage(action) {
   return messages[action?.unavailable_reason] || "El envío integrado no está disponible; puedes copiar el texto.";
 }
 
+function growthActionModalFocusableElements(modal) {
+  return [...modal.querySelectorAll('button:not([disabled]):not([hidden]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => element.getClientRects().length > 0);
+}
+
 function openGrowthActionModal(action, opportunity, trigger = null) {
   const modal = document.getElementById("growth-action-modal");
   selectedOpportunityAction = action;
@@ -2386,7 +2418,13 @@ function openGrowthActionModal(action, opportunity, trigger = null) {
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
   document.body.classList.add("modal-scroll-locked");
-  window.requestAnimationFrame(() => textarea.focus());
+  const body = modal.querySelector(".growth-action-modal__body");
+  const title = document.getElementById("growth-action-modal-title");
+  body.scrollTop = 0;
+  window.requestAnimationFrame(() => {
+    body.scrollTop = 0;
+    title.focus({ preventScroll: true });
+  });
 }
 
 function closeGrowthActionModal() {
@@ -2395,7 +2433,12 @@ function closeGrowthActionModal() {
   modal.classList.remove("open");
   modal.setAttribute("aria-hidden", "true");
   document.body.classList.remove("modal-scroll-locked");
-  const focus = growthActionReturnFocus;
+  const opportunityId = Number(growthActionReturnFocus?.dataset.opportunityId);
+  const replacementFocus = Number.isInteger(opportunityId)
+    ? [...document.querySelectorAll(`[data-opportunity-action="prepare"][data-opportunity-id="${opportunityId}"]`)]
+      .find((element) => element.getClientRects().length > 0)
+    : null;
+  const focus = growthActionReturnFocus?.isConnected ? growthActionReturnFocus : replacementFocus;
   growthActionReturnFocus = null;
   selectedOpportunityAction = null;
   selectedOpportunityForAction = null;
@@ -6500,13 +6543,15 @@ function renderConversationAutomation() {
       <h3>Modo por intención</h3>
       ${(conversationAutomation.rules || []).map((rule) => `
         <article class="conversation-automation-rule" data-automation-intent="${escapeHtml(rule.intent)}" data-config-dirty-key="automation-rule-${escapeHtml(rule.intent)}">
-          <div><p>Regla</p><h4>${escapeHtml(rule.intent_label)}</h4></div>
-          <select class="conversation-automation-rule-mode">
+          <div><p>Regla</p><h4 id="conversation-automation-rule-${escapeHtml(rule.intent)}-title">${escapeHtml(rule.intent_label)}</h4></div>
+          <label id="conversation-automation-rule-${escapeHtml(rule.intent)}-mode-label" class="ag-visually-hidden" for="conversation-automation-rule-${escapeHtml(rule.intent)}-mode">Modo para</label>
+          <select id="conversation-automation-rule-${escapeHtml(rule.intent)}-mode" class="conversation-automation-rule-mode" aria-labelledby="conversation-automation-rule-${escapeHtml(rule.intent)}-mode-label conversation-automation-rule-${escapeHtml(rule.intent)}-title">
             <option value="disabled" ${rule.mode === "disabled" ? "selected" : ""}>Desactivado</option>
             <option value="semi_automatic" ${rule.mode === "semi_automatic" ? "selected" : ""}>Sugerir</option>
             <option value="automatic" ${rule.mode === "automatic" ? "selected" : ""} ${canEnableAutomation || rule.mode === "automatic" ? "" : "disabled"}>Automático seguro</option>
           </select>
-          <select class="conversation-automation-rule-template">${templateOptions(rule.template_id)}</select>
+          <label id="conversation-automation-rule-${escapeHtml(rule.intent)}-template-label" class="ag-visually-hidden" for="conversation-automation-rule-${escapeHtml(rule.intent)}-template">Plantilla para</label>
+          <select id="conversation-automation-rule-${escapeHtml(rule.intent)}-template" class="conversation-automation-rule-template" aria-labelledby="conversation-automation-rule-${escapeHtml(rule.intent)}-template-label conversation-automation-rule-${escapeHtml(rule.intent)}-title">${templateOptions(rule.template_id)}</select>
           <label class="active-setting"><input class="conversation-automation-rule-active" type="checkbox" ${rule.active ? "checked" : ""} ${canEnableAutomation || rule.active ? "" : "disabled"} />Activa</label>
           <p class="automation-message-excerpt">${escapeHtml((templates.find((template) => template.id === rule.template_id)?.body || "Se usará la plantilla recomendada.").slice(0, 180))}</p>
           <div class="settings-actions"><button class="btn btn-small btn-secondary" type="button" data-admin-action="save-conversation-automation-rule" data-intent="${escapeHtml(rule.intent)}">Guardar</button></div>

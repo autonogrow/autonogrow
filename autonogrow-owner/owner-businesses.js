@@ -362,16 +362,30 @@ async function loadOwnerBusinessReadiness(businessId, force = false) {
     const cached = ownerBusinessHubState.onboarding.get(String(businessId)) || {};
     ownerBusinessHubState.onboarding.set(String(businessId), { ...cached, readiness });
     panel.querySelector("[data-owner-readiness-summary]").textContent = readiness.ready ? "Lista para activar" : `Bloqueada por ${readiness.blocking_count} comprobaciones`;
-    panel.querySelector("[data-owner-readiness-content]").innerHTML = (readiness.checks || []).map((item) => {
-      const passed = item.status === "passed";
-      return `<article class="readiness-item ${escapeHtml(item.status)}"><div><strong>${escapeHtml(item.label)}</strong><span class="ag-badge ${item.blocking ? "ag-badge--danger" : item.status === "warning" ? "ag-badge--warning" : "ag-badge--success"}">${item.blocking ? "Bloqueante" : item.status === "warning" ? "Recomendado" : passed ? "Correcto" : "No se pudo comprobar"}</span></div>${passed ? "" : `<p>${escapeHtml(item.message)}</p><small>${escapeHtml(item.remediation || "Revisa este apartado")}</small>${item.related_step ? `<button class="owner-metric-link" type="button" data-owner-readiness-step="${escapeHtml(item.related_step)}">Resolver en onboarding</button>` : ""}`}</article>`;
-    }).join("") || '<p class="owner-empty-inline">No hay comprobaciones disponibles.</p>';
+    panel.querySelector("[data-owner-readiness-content]").innerHTML = (readiness.checks || []).map(ownerReadinessCheckMarkup).join("") || '<p class="owner-empty-inline">No hay comprobaciones disponibles.</p>';
     const activate = panel.querySelector("[data-owner-activate]");
     if (activate) activate.disabled = !readiness.ready;
     return readiness;
   } finally {
     panel.removeAttribute("aria-busy");
   }
+}
+
+function ownerReadinessCheckMarkup(item) {
+  const status = item.status;
+  if (status === "passed") {
+    return `<article class="readiness-item passed"><div><strong>${escapeHtml(item.label)}</strong><span class="ag-badge ag-badge--success">Correcto</span></div></article>`;
+  }
+  if (status === "not_applicable") {
+    return `<article class="readiness-item not_applicable"><div><strong>${escapeHtml(item.label)}</strong><span class="ag-badge ag-badge--neutral">No aplica</span></div><p>${escapeHtml(item.message)}</p></article>`;
+  }
+  const warning = status === "warning" && !item.blocking;
+  const badge = warning ? "Recomendado" : item.blocking ? "Bloqueante" : "Necesita atención";
+  const badgeTone = warning ? "warning" : "danger";
+  const action = item.related_step
+    ? `<button class="owner-metric-link" type="button" data-owner-readiness-step="${escapeHtml(item.related_step)}">Resolver en onboarding</button>`
+    : "";
+  return `<article class="readiness-item ${escapeHtml(status)}"><div><strong>${escapeHtml(item.label)}</strong><span class="ag-badge ag-badge--${badgeTone}">${badge}</span></div><p>${escapeHtml(item.message)}</p><small>${escapeHtml(item.remediation || "Revisa este apartado")}</small>${action}</article>`;
 }
 
 async function showOwnerBusinessPreview(businessId) {

@@ -263,7 +263,7 @@ def test_onboarding_reuses_existing_wizard_and_all_real_steps() -> None:
     assert '"readiness_review"' in onboarding
 
 
-def test_readiness_maps_status_message_remediation_and_destination() -> None:
+def test_readiness_maps_real_states_to_distinct_semantics_and_actions() -> None:
     _, _, _, hub = sources()
     readiness = hub.split("async function loadOwnerBusinessReadiness", 1)[1].split(
         "async function showOwnerBusinessPreview", 1
@@ -277,12 +277,18 @@ def test_readiness_maps_status_message_remediation_and_destination() -> None:
         "Correcto",
         "Recomendado",
         "Bloqueante",
-        "No se pudo comprobar",
+        "No aplica",
     ):
         assert field in readiness
     assert "readiness.version" not in readiness
-    assert 'const passed = item.status === "passed"' in readiness
-    assert '${passed ? "" :' in readiness
+    assert 'status === "passed"' in readiness
+    assert 'status === "not_applicable"' in readiness
+    passed = readiness.split('if (status === "passed")', 1)[1].split(
+        'if (status === "not_applicable")', 1
+    )[0]
+    assert "item.message" not in passed
+    assert "item.remediation" not in passed
+    assert "data-owner-readiness-step" not in passed
 
 
 def test_preview_is_read_only_and_explains_guarantees() -> None:
