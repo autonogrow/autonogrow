@@ -101,17 +101,21 @@ def test_all_real_frontend_surfaces_and_local_assets_are_present() -> None:
 def test_script_order_and_changed_asset_cachebusters_are_explicit() -> None:
     expected = {
         "autonogrow-admin": (
-            "styles.css?v=889c29b73bfc",
-            "responsive.css?v=5f1",
+            "styles.css?v=3336ac027ee2",
+            "tokens.css?v=dba71b73bae0",
+            "responsive.css?v=3e2eaa420c77",
+            "app-shell.js?v=817f1c5536b8",
             "auth.js?v=10b5",
-            "admin.js?v=e9b8434d9c7e",
+            "admin.js?v=1347e4daa489",
         ),
         "autonogrow-owner": (
-            "styles.css?v=2a6d41a84285",
-            "responsive.css?v=5f1",
+            "styles.css?v=eaa84007cf8a",
+            "tokens.css?v=dba71b73bae0",
+            "responsive.css?v=3e2eaa420c77",
+            "app-shell.js?v=817f1c5536b8",
             "auth.js?v=10b5",
             "owner.js?v=20260828-p123-a",
-            "owner-businesses.js?v=9d429323f26f",
+            "owner-businesses.js?v=1c1826653b2e",
             "owner-onboarding.js?v=5f1",
         ),
         "autonogrow-landing": ("styles.css?v=10b6", "auth.js?v=10b5", "script.js?v=10b7"),
@@ -242,6 +246,8 @@ def test_admin_dynamic_actions_use_one_complete_delegated_contract() -> None:
     js = text(ROOT / "autonogrow-admin" / "admin.js")
     actions = set(re.findall(r'data-admin-action="([a-z0-9-]+)"', html + js))
     handled = set(re.findall(r'action === "([a-z0-9-]+)"', js))
+    for choices in re.findall(r'\[((?:"[a-z0-9-]+"\s*,?\s*)+)\]\.includes\(action\)', js):
+        handled.update(re.findall(r'"([a-z0-9-]+)"', choices))
     assert actions
     assert actions <= handled
     assert js.count("function setupAdminDelegatedActions") == 1
@@ -396,7 +402,7 @@ def test_external_links_are_safe_in_static_and_generated_markup() -> None:
 
 def test_responsive_reflow_touch_and_long_content_contracts_cover_all_shells() -> None:
     combined = "\n".join(text(path) for path in CSS_FILES)
-    for breakpoint in ("1199px", "1023px", "900px", "767px", "639px", "600px", "390px"):
+    for breakpoint in ("1199px", "1024px", "900px", "767px", "639px", "600px", "390px"):
         assert breakpoint in combined
     assert "minmax(0, 1fr)" in combined
     assert "overflow-x: auto" in combined

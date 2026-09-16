@@ -1299,6 +1299,67 @@ input {
   gap: 10px;
 }
 
+#reschedule-days.calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+#reschedule-days .calendar-day {
+  display: grid;
+  min-width: 0;
+  min-height: var(--ag-touch-target);
+  place-items: center;
+  align-content: center;
+  gap: 1px;
+  padding: 5px 2px;
+  border: 1px solid var(--ag-color-border);
+  border-radius: var(--ag-radius-md);
+  background: var(--ag-color-surface);
+  color: var(--ag-color-text);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.15;
+  text-align: center;
+}
+
+#reschedule-days .calendar-day strong {
+  font-size: var(--ag-font-size-xs);
+  text-transform: capitalize;
+}
+
+#reschedule-days .calendar-day span {
+  color: var(--ag-color-text-muted);
+  font-size: 0.68rem;
+}
+
+#reschedule-days .calendar-day:focus-visible {
+  border-color: var(--ag-color-blue-600);
+  outline: 3px solid var(--ag-color-info-bg);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) {
+  #reschedule-days .calendar-day:not(:disabled):hover {
+    border-color: var(--ag-color-blue-600);
+    background: var(--ag-color-info-bg);
+  }
+}
+
+#reschedule-days .calendar-day.today,
+#reschedule-days .calendar-day[aria-current="date"] {
+  box-shadow: inset 0 0 0 2px var(--ag-color-blue-500);
+}
+
+#reschedule-days .calendar-day:disabled,
+#reschedule-days .calendar-day.is-unavailable {
+  border-color: var(--ag-color-border);
+  background: var(--ag-color-surface-subtle);
+  color: var(--ag-color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .time-slot {
   border: 1px solid var(--border);
   background: #ffffff;
@@ -1316,10 +1377,16 @@ input {
 }
 
 .calendar-day.active,
+.calendar-day[aria-pressed="true"],
 .time-slot.active {
   background: var(--primary);
   color: #ffffff;
   border-color: var(--primary);
+}
+
+#reschedule-days .calendar-day.active span,
+#reschedule-days .calendar-day[aria-pressed="true"] span {
+  color: inherit;
 }
 
 .reschedule-summary {
@@ -1332,6 +1399,18 @@ input {
 }
 
 @media (max-width: 720px) {
+  #reschedule-modal {
+    padding-inline: var(--ag-space-1);
+  }
+
+  #reschedule-modal .ag-modal__body {
+    padding-inline: var(--ag-space-2);
+  }
+
+  #reschedule-days.calendar-days {
+    gap: 1px;
+  }
+
   .reschedule-slots {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -1636,7 +1715,7 @@ input {
 .dashboard-state-mark { display: grid; width: 2rem; height: 2rem; place-items: center; border-radius: 50%; color: var(--ag-color-success); background: var(--ag-color-success-bg); font-weight: var(--ag-font-weight-extrabold); }
 .dashboard-section > .growth-summary-card { margin-top: 0; }
 
-@media (min-width: 640px) and (max-width: 1023px) {
+@media (min-width: 640px) and (max-width: 1024px) {
   .dashboard-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1775,7 +1854,7 @@ input {
 .channel-assisted-outbox summary { min-height: var(--ag-touch-target); cursor: pointer; font-family: var(--ag-font-heading); font-weight: var(--ag-font-weight-bold); }
 .channel-assisted-outbox[open] summary { margin-bottom: var(--ag-space-3); }
 
-@media (max-width: 1023px) {
+@media (max-width: 1024px) {
   .channel-hub-layout { grid-template-columns: 1fr; }
   .channel-hub-navigation { position: static; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .channel-hub-navigation > p { grid-column: 1 / -1; }
@@ -1957,13 +2036,13 @@ input {
 .agenda-state--error { border-style: solid; border-color: var(--ag-color-danger); background: var(--ag-color-danger-bg); }
 
 .modal-scroll-locked { overflow: hidden; }
-#reschedule-modal .ag-modal { max-height: min(90dvh, 52rem); overflow: hidden; }
+#reschedule-modal .ag-modal { max-height: min(90dvh, 52rem); overflow: hidden; padding: 0; }
 #reschedule-modal .ag-modal__body { overflow-y: auto; overscroll-behavior: contain; }
 #reschedule-modal-description { margin: var(--ag-space-1) 0 0; color: var(--ag-color-text-muted); font-size: var(--ag-font-size-sm); }
 .reschedule-selection-summary { display: grid; gap: var(--ag-space-1); padding: var(--ag-space-3); border: 1px solid var(--ag-color-blue-500); border-radius: var(--ag-radius-md); background: var(--ag-color-info-bg); }
 .reschedule-selection-summary p { margin: 0; }
 
-@media (max-width: 1023px) {
+@media (max-width: 1024px) {
   .agenda-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .agenda-filters .ag-button { width: 100%; }
   .agenda-booking-details__grid { grid-template-columns: 1fr 1fr; }
@@ -2320,7 +2399,7 @@ input {
 .configuration-category .availability-rules label { align-content: start; }
 .configuration-category .availability-rules small { min-height: 2.2rem; }
 
-@media (max-width: 1023px) {
+@media (max-width: 1024px) {
   .business-configuration-layout { grid-template-columns: 1fr; }
   .configuration-navigation { position: static; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .configuration-navigation > p { grid-column: 1 / -1; }
@@ -2470,7 +2549,7 @@ input {
 .review-actions .ag-button,
 .review-actions .btn { min-height: var(--ag-touch-target); }
 
-@media (max-width: 1023px) {
+@media (max-width: 1024px) {
   .growth-hub-layout { grid-template-columns: 1fr; }
   .growth-navigation { position: static; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .growth-navigation > p { grid-column: 1 / -1; }
@@ -2695,7 +2774,7 @@ input {
 .growth-action-modal-card textarea { min-height: 9rem; max-height: 32dvh; overflow: auto; resize: vertical; overflow-wrap: anywhere; }
 .growth-action-modal-actions { position: relative; z-index: 1; flex-wrap: wrap; padding-top: var(--ag-space-3); border-top: 1px solid var(--ag-color-border); background: var(--ag-color-surface); }
 
-@media (max-width: 1023px) {
+@media (max-width: 1024px) {
   .dashboard-close-task { grid-template-columns: auto minmax(0, 1fr); }
   .dashboard-close-task__actions { grid-column: 1 / -1; justify-content: flex-start; }
 }

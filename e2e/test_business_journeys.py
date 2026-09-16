@@ -2591,7 +2591,7 @@ def test_owner_business_detail_fits_complete_viewport_matrix(journey) -> None:
         {"width": 390, "height": 844},
     ):
         page.set_viewport_size(viewport)
-        if viewport["width"] <= 1023:
+        if viewport["width"] <= 1024:
             page.locator("[data-ag-shell-open]").click()
         page.locator('[data-tab="businesses"]').click()
         page.locator("#business-detail-title").evaluate(
@@ -2602,7 +2602,7 @@ def test_owner_business_detail_fits_complete_viewport_matrix(journey) -> None:
             expect(page.locator(f'[data-owner-detail-panel="{detail}"]')).to_be_visible()
             _assert_no_horizontal_overflow(page)
         for main_view in ("overview", "integrations", "incidents", "operations", "audit"):
-            if viewport["width"] <= 1023:
+            if viewport["width"] <= 1024:
                 page.locator("[data-ag-shell-open]").click()
             page.locator(f'[data-tab="{main_view}"]').click()
             active_panel = page.locator(f'[data-panel="{main_view}"]')

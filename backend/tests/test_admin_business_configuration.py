@@ -233,7 +233,7 @@ def test_configuration_has_accessible_partial_states_and_responsive_structure() 
     for retry in ("Reintentar servicios", "Reintentar equipo", "Reintentar horarios", "Reintentar galería"):
         assert retry in js
     assert "configuration-empty-state" in js
-    assert "@media (max-width: 1023px)" in css
+    assert "@media (max-width: 1024px)" in css
     assert "@media (max-width: 639px)" in css
     assert "env(safe-area-inset-bottom)" in css
     assert ".business-configuration-layout" in css

@@ -457,9 +457,11 @@ def test_cross_section_mutations_reuse_shared_refresh_and_canonical_review_state
 def test_responsive_contracts_cover_phone_tablet_desktop_zoom_and_safe_areas() -> None:
     _, css, _, _ = sources()
     shared = SHARED_RESPONSIVE_CSS.read_text(encoding="utf-8")
-    for breakpoint in ("@media (max-width: 1023px)", "@media (max-width: 639px)"):
+    shell = SHARED_SHELL_JS.read_text(encoding="utf-8")
+    for breakpoint in ("@media (max-width: 1024px)", "@media (max-width: 639px)"):
         assert breakpoint in shared
         assert breakpoint in css
+    assert 'window.matchMedia("(min-width: 1025px)")' in shell
     for contract in (
         "env(safe-area-inset-bottom)",
         "max-height: calc(100dvh",

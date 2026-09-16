@@ -99,7 +99,7 @@
   --ag-duration-normal: 200ms;
   --ag-ease-standard: cubic-bezier(0.2, 0, 0, 1);
 
-  /* Referencia documental: tablet 640px; desktop 1024px. */
+  /* Referencia documental: tablet 640px; desktop tras el límite inclusivo de 1024px. */
   --ag-breakpoint-tablet: 640px;
-  --ag-breakpoint-desktop: 1024px;
+  --ag-breakpoint-desktop: 1025px;
 }

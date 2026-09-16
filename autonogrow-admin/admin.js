@@ -7983,6 +7983,11 @@ function renderRescheduleDays() {
     button.type = "button";
     button.className = "calendar-day";
     button.setAttribute("aria-pressed", "false");
+    button.setAttribute("aria-label", day.day_label);
+    if (day.date === getMadridDateKey()) {
+      button.classList.add("today");
+      button.setAttribute("aria-current", "date");
+    }
 
     const firstPart = day.day_label.split(" ")[0];
     const secondPart = day.day_label.replace(`${firstPart} `, "");

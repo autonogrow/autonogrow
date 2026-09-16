@@ -1,4 +1,4 @@
-@media (max-width: 1023px) {
+@media (max-width: 1024px) {
   .ag-shell { display: block; }
 
   .ag-shell__sidebar {
@@ -103,7 +103,7 @@
   .ag-shell :where(pre, code) { max-width: 100%; overflow-wrap: anywhere; }
 }
 
-@media (min-width: 640px) and (max-width: 1023px) {
+@media (min-width: 640px) and (max-width: 1024px) {
   .ag-shell__content { padding: var(--ag-space-6); }
   .ag-topbar.admin-header, .ag-topbar.owner-header, .ag-topbar { padding-inline: var(--ag-space-6); }
 }

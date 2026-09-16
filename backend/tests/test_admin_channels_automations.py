@@ -216,7 +216,7 @@ def test_accessibility_and_responsive_structure_are_explicit() -> None:
     assert 'aria-busy="true"' in html
     assert 'role="status" aria-live="polite"' in html
     sprint_css = css.split("/* Sprint 5B.5", 1)[1].split("/* Sprint 5B.2", 1)[0]
-    assert "@media (max-width: 1023px)" in sprint_css
+    assert "@media (max-width: 1024px)" in sprint_css
     assert "@media (max-width: 639px)" in sprint_css
     assert "env(safe-area-inset-bottom)" in sprint_css
     assert "@media (prefers-reduced-motion: reduce)" in sprint_css

@@ -181,7 +181,7 @@ def test_dashboard_css_covers_desktop_tablet_and_mobile() -> None:
         ".dashboard-block-state--error",
     ):
         assert selector in css
-    assert "@media (min-width: 640px) and (max-width: 1023px)" in css
+    assert "@media (min-width: 640px) and (max-width: 1024px)" in css
     assert "@media (max-width: 639px)" in css
     mobile = css.split("@media (max-width: 639px)", 1)[1]
     for area in ('"attention"', '"next"', '"agenda"', '"messages"', '"activity"'):
@@ -202,7 +202,7 @@ def test_dashboard_renders_derived_booking_close_tasks_with_closure_actions() ->
     assert "booking.staff_display_name" in dashboard
     assert "formatBookingSlot(booking)" in dashboard
     assert ".dashboard-close-task__actions" in css
-    assert "@media (max-width: 1023px)" in css
+    assert "@media (max-width: 1024px)" in css
     assert "grid-column: 1 / -1" in css
     assert "overflow-wrap: anywhere" in css
 

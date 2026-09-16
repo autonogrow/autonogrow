@@ -70,8 +70,8 @@ code { background: #eef1ed; border-radius: 6px; padding: 2px 6px; font-size: .84
 .onboarding-step-panel footer { margin-top: 22px; justify-content: flex-start; }
 #onboarding-step-content { margin-top: 20px; }
 .save-state { padding: 6px 10px; border-radius: 999px; color: var(--green); background: var(--green-soft); font-size: .8rem; font-weight: 800; }
-.readiness-list { display: grid; gap: 8px; }
-.readiness-item { padding: 11px; border: 1px solid var(--line); border-radius: 10px; }
+.readiness-list { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 8px; }
+.readiness-item { min-width: 0; max-width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 10px; }
 .readiness-item.failed { border-color: #efb4ae; background: #fff7f5; }
 .owner-brand-editor { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; max-width: 100%; overflow: hidden; }
 .owner-brand-editor summary { cursor: pointer; font-weight: 800; }
@@ -543,6 +543,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .owner-publication-control .button { flex: 0 0 auto; }
 .owner-empty-inline, .owner-loading-inline { margin: 0; padding: var(--ag-space-4); color: var(--ag-color-text-muted); text-align: center; }
 .readiness-item > div { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ag-space-3); }
+.readiness-item > div > strong { min-width: 0; overflow-wrap: anywhere; }
+.readiness-item > div > .ag-badge { flex: 0 0 auto; }
 .readiness-item p { margin: var(--ag-space-2) 0; }
 .readiness-item small { display: block; color: var(--ag-color-text-muted); }
 .readiness-item .owner-metric-link { margin-top: var(--ag-space-2); }

@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const desktopQuery = window.matchMedia("(min-width: 1024px)");
+  const desktopQuery = window.matchMedia("(min-width: 1025px)");
 
   function setInert(element, value) {
     if (!element || !("inert" in element)) return;
