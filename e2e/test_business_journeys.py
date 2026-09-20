@@ -486,13 +486,14 @@ def test_simplify_one_removes_noise_without_removing_operational_access(journey)
 
     admin.evaluate("showAdminSection('conversations', 'replace')")
     expect(admin.locator("#conversation-list")).to_be_visible()
-    expect(admin.locator("#conversation-detail")).to_be_visible()
+    expect(admin.locator("#conversation-detail")).to_be_hidden()
     admin.locator('#conversation-list [data-admin-action="select-conversation"]').last.click()
+    expect(admin.locator("#conversation-detail")).to_be_visible()
     expect(admin.locator("#conversation-detail")).to_contain_text("WhatsApp")
     assert admin.locator(".conversation-automation-shortcut").count() == 0
 
     admin.set_viewport_size({"width": 390, "height": 844})
-    admin.evaluate("closeConversationMobileDetail()")
+    admin.get_by_role("button", name="Volver a conversaciones").click()
     expect(admin.locator("#conversation-list")).to_be_visible()
     assert admin.locator(".conversation-automation-shortcut").count() == 0
     _assert_no_horizontal_overflow(admin)
@@ -1371,12 +1372,17 @@ def test_customer_details_drawer_keeps_final_content_above_mobile_navigation(
 @pytest.mark.parametrize(
     "viewport",
     (
+        pytest.param({"width": 1920, "height": 1080}, id="1920x1080"),
+        pytest.param({"width": 1440, "height": 900}, id="1440x900"),
+        pytest.param({"width": 1280, "height": 800}, id="1280x800"),
+        pytest.param({"width": 1024, "height": 768}, id="1024x768"),
+        pytest.param({"width": 768, "height": 1024}, id="768x1024"),
         pytest.param({"width": 430, "height": 932}, id="430x932"),
         pytest.param({"width": 390, "height": 844}, id="390x844"),
         pytest.param({"width": 375, "height": 667}, id="375x667"),
     ),
 )
-def test_mobile_conversations_expose_real_list_and_customer_navigation(
+def test_conversation_focus_workspace_navigation_for_admin_and_staff(
     journey, email: str, role: str, viewport: dict[str, int]
 ) -> None:
     session = journey(email=email)
@@ -1393,11 +1399,28 @@ def test_mobile_conversations_expose_real_list_and_customer_navigation(
     )
     expect(instagram_conversation).to_be_visible(timeout=15_000)
     expect(whatsapp_conversation).to_be_visible()
+    page.evaluate("window.__conversationFocusNavigationMarker = 'preserved'")
 
     instagram_conversation.click()
     detail = page.locator("#conversation-detail")
     expect(detail).to_be_visible()
+    expect(page.locator(".conversation-list-panel")).to_be_hidden()
+    expect(page.locator("#conversation-detail-title")).to_be_focused()
     expect(detail.locator(".conversation-detail-meta")).to_contain_text("@mihii_mihii")
+    expect(page).to_have_url(re.compile(r"[?&]conversation=\d+#conversations$"))
+
+    templates = page.locator("#conversation-templates-control")
+    automation = page.locator("#conversation-automation-control")
+    expect(templates).not_to_have_attribute("open", "")
+    expect(automation).not_to_have_attribute("open", "")
+    templates.locator("summary").click()
+    expect(templates).to_have_attribute("open", "")
+    expect(templates.locator("summary")).to_have_attribute("aria-expanded", "true")
+    templates.locator("summary").click()
+    automation.locator("summary").click()
+    expect(automation).to_have_attribute("open", "")
+    expect(automation.locator("summary")).to_have_attribute("aria-expanded", "true")
+    automation.locator("summary").click()
 
     back_button = detail.get_by_role("button", name="Volver a conversaciones")
     customer_button = detail.get_by_role("button", name="Información del cliente")
@@ -1407,9 +1430,55 @@ def test_mobile_conversations_expose_real_list_and_customer_navigation(
     back_button.click()
     expect(instagram_conversation).to_be_visible()
     expect(whatsapp_conversation).to_be_visible()
+    expect(page).to_have_url(re.compile(r"\?b=salon-e2e#conversations$"))
+    assert page.evaluate("window.__conversationFocusNavigationMarker") == "preserved"
     whatsapp_conversation.click()
     expect(detail).to_be_visible()
     expect(detail.locator(".conversation-detail-meta")).to_contain_text("+34 612 345 678")
+    expect(page.locator("#conversation-reply-body")).to_be_visible()
+
+    page.evaluate("history.back()")
+    expect(whatsapp_conversation).to_be_visible()
+    expect(page.locator(".conversation-list-panel")).to_be_visible()
+    page.evaluate("history.forward()")
+    expect(detail.locator(".conversation-detail-meta")).to_contain_text("+34 612 345 678")
+    expect(page.locator(".conversation-list-panel")).to_be_hidden()
+    assert page.evaluate("window.__conversationFocusNavigationMarker") == "preserved"
+    workspace_geometry = page.evaluate(
+        """() => {
+          const workspace = document.querySelector('#conversation-center').getBoundingClientRect();
+          const thread = document.querySelector('#conversation-thread');
+          const footer = document.querySelector('.conversation-footer').getBoundingClientRect();
+          const header = document.querySelector('.conversation-detail-header').getBoundingClientRect();
+          const context = document.querySelector('.conversation-contextual-banner').getBoundingClientRect();
+          const nav = document.querySelector('.ag-mobile-nav');
+          const navRect = nav?.getBoundingClientRect();
+          const navVisible = nav && getComputedStyle(nav).display !== 'none';
+          return {
+            workspace: { top: workspace.top, right: workspace.right, bottom: workspace.bottom, left: workspace.left },
+            threadClientHeight: thread.clientHeight,
+            threadScrollHeight: thread.scrollHeight,
+            threadOverflowY: getComputedStyle(thread).overflowY,
+            gridRows: getComputedStyle(document.querySelector('#conversation-detail')).gridTemplateRows,
+            headerHeight: header.height,
+            contextHeight: context.height,
+            footerHeight: footer.height,
+            footerChildren: [...document.querySelector('.conversation-footer').children].map(element => ({
+              className: element.className,
+              height: element.getBoundingClientRect().height,
+            })),
+            footerBottom: footer.bottom,
+            usableBottom: navVisible ? navRect.top : innerHeight,
+            documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          };
+        }"""
+    )
+    assert workspace_geometry["threadClientHeight"] > 0, workspace_geometry
+    assert workspace_geometry["threadOverflowY"] == "auto", workspace_geometry
+    assert workspace_geometry["footerBottom"] <= workspace_geometry["usableBottom"] + 1, json.dumps(
+        workspace_geometry, indent=2
+    )
+    assert workspace_geometry["documentOverflow"] <= 1, workspace_geometry
 
     customer_button = detail.get_by_role("button", name="Información del cliente")
     customer_button.click()
@@ -1426,12 +1495,97 @@ def test_mobile_conversations_expose_real_list_and_customer_navigation(
     expect(detail).to_be_visible()
     expect(detail.locator(".conversation-detail-meta")).to_contain_text("+34 612 345 678")
 
+    if role == "business_staff":
+        expect(page.locator("#toggle-conversation-create")).to_be_hidden()
+        expect(panel.get_by_role("button", name="Cambiar cliente")).to_have_count(0)
+
     back_button = detail.get_by_role("button", name="Volver a conversaciones")
     back_button.click()
     expect(instagram_conversation).to_be_visible()
     instagram_conversation.click()
     expect(detail.locator(".conversation-detail-meta")).to_contain_text("@mihii_mihii")
     _assert_no_horizontal_overflow(page)
+
+
+@pytest.mark.parametrize(
+    "email",
+    (
+        pytest.param("admin-a@e2e.test", id="admin"),
+        pytest.param("pro-1@e2e.test", id="staff"),
+    ),
+)
+def test_conversation_focus_deep_link_survives_reload_and_rejects_unknown_id(
+    journey, email: str
+) -> None:
+    session = journey(email=email)
+    page = session.goto("/autonogrow-admin/?b=salon-e2e#conversations")
+    conversation = page.locator(".conversation-list-item").filter(
+        has_text="Gracias, lo revisaré."
+    )
+    expect(conversation).to_be_visible(timeout=15_000)
+    conversation_id = int(conversation.get_attribute("data-id"))
+
+    page = session.goto(
+        f"/autonogrow-admin/?b=salon-e2e&conversation={conversation_id}#conversations"
+    )
+    expect(page.locator("#conversation-detail-title")).to_be_visible(timeout=15_000)
+    expect(page.locator(".conversation-list-panel")).to_be_hidden()
+    expect(page.locator(".conversation-detail-meta")).to_contain_text("+34 612 345 678")
+
+    page.reload()
+    expect(page.locator("#admin-app")).to_be_visible()
+    expect(page.locator("#conversation-detail-title")).to_be_visible(timeout=15_000)
+    expect(page.locator(".conversation-list-panel")).to_be_hidden()
+    expect(page).to_have_url(
+        re.compile(rf"[?&]conversation={conversation_id}#conversations$")
+    )
+
+    invalid_id = 999999999
+    session.expect_response_error(404, "GET", f"/conversations/{invalid_id}")
+    page = session.goto(
+        f"/autonogrow-admin/?b=salon-e2e&conversation={invalid_id}#conversations"
+    )
+    expect(page.locator(".conversation-list-panel")).to_be_visible(timeout=15_000)
+    expect(page).to_have_url(re.compile(r"\?b=salon-e2e#conversations$"))
+    expect(page.locator("#conversation-feedback")).to_contain_text(
+        "Has vuelto a la bandeja"
+    )
+
+
+def test_late_conversation_response_cannot_replace_new_focus(journey) -> None:
+    session = journey(email="admin-a@e2e.test")
+    page = session.goto("/autonogrow-admin/?b=salon-e2e#conversations")
+    first = page.locator(".conversation-list-item").filter(
+        has_text="Consulta por Instagram."
+    )
+    second = page.locator(".conversation-list-item").filter(
+        has_text="Gracias, lo revisaré."
+    )
+    expect(first).to_be_visible(timeout=15_000)
+    expect(second).to_be_visible()
+    first_id = int(first.get_attribute("data-id"))
+
+    delayed_routes = []
+
+    def delay_first_conversation(route) -> None:
+        delayed_routes.append(route)
+
+    route_pattern = f"**/conversations/{first_id}"
+    page.route(route_pattern, delay_first_conversation)
+
+    first.click()
+    expect(page.locator("#conversation-detail")).to_contain_text("Cargando conversación")
+    page.get_by_role("button", name="Volver a conversaciones").click()
+    expect(second).to_be_visible()
+    second.click()
+    expect(page.locator(".conversation-detail-meta")).to_contain_text("+34 612 345 678")
+
+    assert len(delayed_routes) == 1
+    delayed_routes[0].continue_()
+    page.wait_for_timeout(250)
+    expect(page.locator(".conversation-detail-meta")).to_contain_text("+34 612 345 678")
+    expect(page.locator(".conversation-detail-meta")).not_to_contain_text("@mihii_mihii")
+    page.unroute(route_pattern, delay_first_conversation)
 
 
 def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> None:

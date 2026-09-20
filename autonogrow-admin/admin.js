@@ -116,6 +116,7 @@ let conversationSuggestionNotice = null;
 const sendingConversationSuggestionIds = new Set();
 let selectedConversationId = null;
 let selectedConversation = null;
+let conversationListReturnFocusId = null;
 let conversationSearchTimer = null;
 let conversationReplySending = false;
 let conversationAssistedOpening = false;
@@ -286,6 +287,7 @@ function resetAdminSessionState() {
   selectedStaffFilter = "";
   selectedConversationId = null;
   selectedConversation = null;
+  conversationListReturnFocusId = null;
   selectedConversationSuggestionId = null;
   conversationSuggestionNotice = null;
   conversationReplySending = false;
@@ -367,7 +369,8 @@ function renderAdminSessionNeutralState() {
     control.disabled = control.dataset.businessStatusDisabled === "true";
     delete control.dataset.businessStatusDisabled;
   });
-  document.getElementById("conversation-center")?.classList.remove("conversation-mobile-detail-open");
+  document.getElementById("conversation-center")?.classList.remove("conversation-focus-open", "conversation-mobile-detail-open");
+  document.querySelector('[data-admin-section="conversations"]')?.classList.remove("conversation-focus-mode");
   document.getElementById("conversation-customer-panel")?.classList.remove("is-open");
   document.getElementById("conversation-customer-backdrop")?.setAttribute("hidden", "");
   document.getElementById("my-staff-availability")?.remove();
@@ -896,6 +899,42 @@ function resolveSafeAdminMediaUrl(url, cacheBust = false) {
   }
 }
 
+const CONVERSATION_ROUTE_PARAM = "conversation";
+
+function conversationIdFromRoute() {
+  if (window.location.hash.slice(1) !== "conversations") return null;
+  const value = Number(new URLSearchParams(window.location.search).get(CONVERSATION_ROUTE_PARAM));
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function adminRouteUrl(sectionName, conversationId = null) {
+  const url = new URL(window.location.href);
+  url.hash = `#${sectionName}`;
+  if (sectionName === "conversations" && Number.isInteger(Number(conversationId)) && Number(conversationId) > 0) {
+    url.searchParams.set(CONVERSATION_ROUTE_PARAM, String(Number(conversationId)));
+  } else {
+    url.searchParams.delete(CONVERSATION_ROUTE_PARAM);
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function setConversationWorkspaceMode(open) {
+  document.getElementById("conversation-center")?.classList.toggle("conversation-focus-open", open);
+  document.querySelector('[data-admin-section="conversations"]')?.classList.toggle("conversation-focus-mode", open);
+}
+
+function writeConversationRoute(conversationId, historyMode) {
+  if (!["push", "replace"].includes(historyMode)) return;
+  const nextUrl = adminRouteUrl("conversations", conversationId);
+  const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (historyMode === "push" && nextUrl === currentUrl) return;
+  const state = {
+    ...(window.history.state || {}),
+    agConversationWorkspace: conversationId ? Number(conversationId) : null
+  };
+  window.history[`${historyMode}State`](state, "", nextUrl);
+}
+
 function showAdminSection(sectionName, historyMode = "push", { skipDirtyCheck = false } = {}) {
   const requestedSection = sectionName;
   if (isBusinessStaff() && !STAFF_ADMIN_SECTIONS.has(sectionName)) sectionName = "bookings";
@@ -908,14 +947,13 @@ function showAdminSection(sectionName, historyMode = "push", { skipDirtyCheck = 
   if (targetSection !== "conversations" && conversationCustomerPanelOpen) {
     closeConversationCustomerPanel({ restoreFocus: false });
   }
+  if (targetSection !== "conversations" && selectedConversationId) {
+    closeConversationWorkspace({ historyMode: "none", restoreFocus: false });
+  }
 
   availableSections.forEach((section) => {
     section.classList.toggle("admin-section-active", section.dataset.adminSection === targetSection);
   });
-  if (targetSection === "conversations" && window.matchMedia("(max-width: 639px)").matches) {
-    closeConversationMobileDetail();
-  }
-
   const primarySection = CONFIGURATION_SECTIONS.has(targetSection) ? "configuration"
     : CHANNEL_HUB_SECTIONS.has(targetSection) ? "channels"
       : targetSection === "reviews" && !moduleAvailable("growth") ? "reviews"
@@ -929,10 +967,14 @@ function showAdminSection(sectionName, historyMode = "push", { skipDirtyCheck = 
   });
 
   const mustNormalize = requestedSection !== targetSection || (requestedSection && !sectionExists);
+  const targetUrl = adminRouteUrl(
+    targetSection,
+    targetSection === "conversations" ? conversationIdFromRoute() : null
+  );
   if (mustNormalize || historyMode === "replace") {
-    window.history.replaceState(null, "", `#${targetSection}`);
+    window.history.replaceState(window.history.state, "", targetUrl);
   } else if (historyMode === "push" && window.location.hash.slice(1) !== targetSection) {
-    window.history.pushState(null, "", `#${targetSection}`);
+    window.history.pushState(null, "", targetUrl);
   }
   if (CONFIGURATION_SECTIONS.has(targetSection)) renderConfigurationOverview();
   if (CHANNEL_HUB_SECTIONS.has(targetSection)) renderChannelHubNavigation();
@@ -943,11 +985,19 @@ function showAdminSection(sectionName, historyMode = "push", { skipDirtyCheck = 
 
 function setupAdminNavigation() {
   document.querySelectorAll(".admin-tab[data-section]").forEach((tab) => {
-    tab.addEventListener("click", () => showAdminSection(tab.dataset.section));
+    tab.addEventListener("click", () => {
+      if (tab.dataset.section === "conversations" && conversationIdFromRoute()) {
+        closeConversationWorkspace({ historyMode: "push" });
+        return;
+      }
+      showAdminSection(tab.dataset.section);
+    });
   });
 
   window.addEventListener("popstate", () => {
-    showAdminSection(window.location.hash.slice(1) || "summary", "none", { skipDirtyCheck: true });
+    const section = window.location.hash.slice(1) || "summary";
+    showAdminSection(section, "none", { skipDirtyCheck: true });
+    void syncConversationRoute();
   });
 
   showAdminSection(window.location.hash.slice(1) || "summary", "replace");
@@ -2610,8 +2660,8 @@ async function openOpportunityConversation(opportunityId) {
   const response = await fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/opportunities/${opportunityId}/open-conversation`, { method: "POST" });
   const body = await readAdminResponseBody(response);
   if (!response.ok || !body.conversation_id) return alert(conversationErrorMessage(body, "No se pudo abrir la conversación."));
-  showAdminSection("conversations");
-  await selectConversation(body.conversation_id);
+  if (!showAdminSection("conversations", "none")) return;
+  await selectConversation(body.conversation_id, true, { historyMode: "push" });
 }
 
 async function updateCustomerOpportunity(opportunityId, status) {
@@ -5053,6 +5103,74 @@ function updateConversationInboxSummary() {
   }
 }
 
+function renderConversationWorkspaceState(title, message, { error = false, retryId = null } = {}) {
+  const detail = document.getElementById("conversation-detail");
+  if (!detail) return;
+  detail.innerHTML = `
+    <header class="conversation-detail-header conversation-detail-header--state">
+      <div class="conversation-mobile-toolbar">
+        <button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="show-conversation-list" aria-label="Volver a conversaciones"><span aria-hidden="true">←</span><span>Conversaciones</span></button>
+      </div>
+    </header>
+    <div class="conversation-state${error ? " conversation-state--error" : ""}"${error ? ' role="alert"' : ""}>
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(message)}</p>
+      ${retryId ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="select-conversation" data-id="${Number(retryId)}">Reintentar</button>` : ""}
+    </div>`;
+}
+
+function closeConversationWorkspace({ historyMode = "none", restoreFocus = true } = {}) {
+  const returnFocusId = conversationListReturnFocusId || selectedConversationId;
+  conversationDetailVersion += 1;
+  selectedConversationId = null;
+  selectedConversation = null;
+  selectedConversationSuggestionId = null;
+  conversationSuggestionNotice = null;
+  conversationDetailFingerprint = "";
+  conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
+  closeConversationCustomerPanel({ restoreFocus: false });
+  setConversationWorkspaceMode(false);
+  writeConversationRoute(null, historyMode);
+  renderConversationList();
+  const detail = document.getElementById("conversation-detail");
+  if (detail) {
+    detail.innerHTML = `<div class="conversation-state"><strong>Selecciona una conversación</strong><p>Podrás revisar el historial y responder sin perder el contexto del cliente.</p></div>`;
+  }
+  renderConversationCustomerPanel(null);
+  if (restoreFocus && returnFocusId) {
+    queueMicrotask(() => document.getElementById(`conversation-list-item-${returnFocusId}`)?.focus({ preventScroll: true }));
+  }
+}
+
+function returnToConversationInbox() {
+  const routeConversationId = conversationIdFromRoute();
+  const historyConversationId = Number(window.history.state?.agConversationWorkspace);
+  if (routeConversationId && historyConversationId === routeConversationId && window.history.length > 1) {
+    window.history.back();
+    return;
+  }
+  closeConversationWorkspace({ historyMode: "replace" });
+}
+
+async function syncConversationRoute() {
+  if (window.location.hash.slice(1) !== "conversations") return;
+  const routeConversationId = conversationIdFromRoute();
+  if (!routeConversationId) {
+    if (selectedConversationId) closeConversationWorkspace({ historyMode: "none" });
+    else setConversationWorkspaceMode(false);
+    return;
+  }
+  if (!currentBusiness || selectedConversationId === routeConversationId) {
+    setConversationWorkspaceMode(Boolean(selectedConversationId));
+    return;
+  }
+  await selectConversation(routeConversationId, true, {
+    focusDetail: true,
+    historyMode: "none",
+    routeFallback: true
+  });
+}
+
 async function loadConversations({ background = false, refreshDetail = true } = {}) {
   const requestVersion = ++conversationLoadVersion;
   const container = document.getElementById("conversation-list");
@@ -5088,19 +5206,18 @@ async function loadConversations({ background = false, refreshDetail = true } = 
       updateConversationInboxSummary();
     }
     if (changed || !background) renderConversationList();
-    if (selectedConversationId && conversations.some((item) => item.id === selectedConversationId)) {
-      if (refreshDetail) await selectConversation(selectedConversationId, false, { background, focusDetail: false });
-    } else if (selectedConversationId && background) {
-      return;
-    } else if (conversations.length) {
-      await selectConversation(conversations[0].id, false, { background, focusDetail: false });
-    } else {
-      selectedConversationId = null;
-      selectedConversation = null;
-      const hasFilters = Boolean(status || channel || query);
-      document.getElementById("conversation-detail").innerHTML = hasFilters
-        ? `<div class="conversation-state"><strong>No hay conversaciones con estos filtros</strong><p>Prueba a limpiar la búsqueda.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="reset-conversation-filters">Limpiar filtros</button></div>`
-        : `<div class="conversation-state"><strong>Todavía no hay conversaciones</strong><p>Los mensajes de Instagram y WhatsApp aparecerán aquí.</p></div>`;
+    const routeConversationId = conversationIdFromRoute();
+    if (routeConversationId && refreshDetail) {
+      await selectConversation(routeConversationId, !background, {
+        background,
+        focusDetail: !background,
+        historyMode: "none",
+        routeFallback: true
+      });
+    } else if (!routeConversationId && selectedConversationId) {
+      closeConversationWorkspace({ historyMode: "none", restoreFocus: false });
+    } else if (!routeConversationId) {
+      setConversationWorkspaceMode(false);
       renderConversationCustomerPanel(null);
     }
   } catch (error) {
@@ -5186,22 +5303,30 @@ function scrollConversationThreadToBottom() {
   document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");
 }
 
-async function selectConversation(conversationId, showLoading = true, { background = false, focusDetail = true } = {}) {
+async function selectConversation(
+  conversationId,
+  showLoading = true,
+  { background = false, focusDetail = true, historyMode = "none", routeFallback = false } = {}
+) {
   const requestVersion = ++conversationDetailVersion;
   const uiState = captureConversationUiState(conversationId);
   const selectionChanged = selectedConversationId !== Number(conversationId);
   if (selectionChanged) {
+    selectedConversation = null;
     selectedConversationSuggestionId = null;
     conversationDetailFingerprint = "";
     conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
   }
+  if (!background && historyMode !== "none") writeConversationRoute(Number(conversationId), historyMode);
   selectedConversationId = Number(conversationId);
   if (focusDetail && !background) {
-    document.getElementById("conversation-center")?.classList.add("conversation-mobile-detail-open");
+    conversationListReturnFocusId = Number(conversationId);
+    setConversationWorkspaceMode(true);
   }
   if (selectionChanged) renderConversationList();
-  const detail = document.getElementById("conversation-detail");
-  if (showLoading && !background) detail.innerHTML = `<p class="empty-state">Cargando conversación...</p>`;
+  if (showLoading && !background) {
+    renderConversationWorkspaceState("Cargando conversación…", "Estamos preparando el historial y sus controles.");
+  }
   try {
     const [response, suggestionsResponse] = await Promise.all([
       fetch(`${API_BASE_URL}/api/admin/businesses/${getBusinessSlug()}/conversations/${selectedConversationId}`),
@@ -5235,9 +5360,18 @@ async function selectConversation(conversationId, showLoading = true, { backgrou
     }
   } catch (error) {
     if (requestVersion !== conversationDetailVersion) return;
-    console.error(error);
     if (background) throw error;
-    detail.innerHTML = `<div class="conversation-state conversation-state--error" role="alert"><strong>No pudimos abrir esta conversación</strong><p>El historial sigue intacto. Vuelve a intentarlo.</p><button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="select-conversation" data-id="${Number(conversationId)}">Reintentar</button></div>`;
+    if (routeFallback) {
+      closeConversationWorkspace({ historyMode: "replace", restoreFocus: false });
+      showConversationFeedback("No pudimos abrir la conversación enlazada. Has vuelto a la bandeja.", true);
+      return;
+    }
+    console.error(error);
+    renderConversationWorkspaceState(
+      "No pudimos abrir esta conversación",
+      "El historial sigue intacto. Vuelve a intentarlo o regresa a la bandeja.",
+      { error: true, retryId: conversationId }
+    );
   }
 }
 
@@ -5370,17 +5504,10 @@ function renderConversationDetail(conversation, uiState = null) {
   const automation = conversation.automation || { mode: "automatic", is_active: true };
   const automationDuration = uiState?.automationDuration || "60";
   const automationReason = conversationAutomationReason(automation);
-  const customerHeaderAction = !conversation.customer_id && !isBusinessStaff()
-    ? `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-search" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Asociar cliente</button>`
-    : "";
+  const customerHeaderAction = `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-panel" aria-label="Información del cliente" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Información del cliente</button>`;
   const customerAssociationMarkup = conversation.customer_id
-    ? `<button class="conversation-customer-open conversation-association-trigger" type="button" data-admin-action="open-conversation-customer-panel" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">${escapeHtml(conversationAssociationLabel(conversation))}</button>`
+    ? `<span class="conversation-association-status">${escapeHtml(conversationAssociationLabel(conversation))}</span>`
     : `<span>${escapeHtml(conversationAssociationLabel(conversation))}</span>`;
-  const mobileCustomerAction = conversation.customer_id
-    ? `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-panel-mobile" aria-label="Información del cliente" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Ver cliente</button>`
-    : (!isBusinessStaff()
-      ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-search-mobile" aria-label="Asociar cliente">Asociar cliente</button>`
-      : "");
   const suggestionsMarkup = pendingSuggestions.length || conversationSuggestionNotice ? `
     <div class="conversation-suggestions">
       ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
@@ -5402,7 +5529,7 @@ function renderConversationDetail(conversation, uiState = null) {
     <header class="conversation-detail-header">
       <div class="conversation-mobile-toolbar">
         <button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="show-conversation-list" aria-label="Volver a conversaciones"><span aria-hidden="true">←</span><span>Conversaciones</span></button>
-        ${mobileCustomerAction}
+        ${customerHeaderAction}
       </div>
       <div class="conversation-detail-header-copy">
         <div class="conversation-detail-heading-row">
@@ -5413,7 +5540,6 @@ function renderConversationDetail(conversation, uiState = null) {
       <div class="conversation-detail-header-lower">
         <div class="conversation-detail-meta"><span>${escapeHtml(channelIdentity)}</span><span aria-hidden="true">·</span>${customerAssociationMarkup}</div>
         <div class="conversation-detail-actions">
-          ${customerHeaderAction}
           <div class="conversation-operational-actions">
             ${conversation.status === "closed"
               ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="change-conversation-status" data-status="replied">Reabrir</button>`
@@ -5422,7 +5548,7 @@ function renderConversationDetail(conversation, uiState = null) {
         </div>
       </div>
     </header>
-    ${renderConversationGrowthFollowUp(conversation)}
+    <div class="conversation-contextual-banner">${renderConversationGrowthFollowUp(conversation)}</div>
     <div id="conversation-thread" class="conversation-thread" data-last-message-id="${messages.at(-1)?.id || ""}" data-message-count="${messages.length}">
       ${messages.length ? renderConversationMessages(messages) : `<div class="conversation-state conversation-state--compact"><p>Todavía no hay mensajes.</p></div>`}
       <button id="conversation-new-messages" class="ag-button ag-button--primary ag-button--small conversation-new-messages" type="button" data-admin-action="scroll-conversation-bottom" hidden>Hay mensajes nuevos</button>
@@ -5431,14 +5557,14 @@ function renderConversationDetail(conversation, uiState = null) {
       ${renderConversationComposer(conversation)}
       <div class="conversation-secondary-controls" role="group" aria-label="Controles secundarios de la conversación">
         <details id="conversation-templates-control" class="conversation-secondary-control"${uiState?.templatesOpen ? " open" : ""}>
-          <summary><span>Plantillas</span><span class="conversation-secondary-chevron" aria-hidden="true">⌄</span></summary>
-          <div class="conversation-secondary-panel">
+          <summary aria-expanded="${Boolean(uiState?.templatesOpen)}" aria-controls="conversation-templates-inline-panel"><span>Plantillas</span><span class="conversation-secondary-chevron" aria-hidden="true">⌄</span></summary>
+          <div id="conversation-templates-inline-panel" class="conversation-secondary-panel">
             <div class="conversation-quick-replies">${quickReplies || `<small>No hay respuestas rápidas activas.</small>`}</div>
           </div>
         </details>
         <details id="conversation-automation-control" class="conversation-secondary-control"${uiState?.automationOpen ? " open" : ""}>
-          <summary><span>Automatización · ${automation.is_active ? "Activa" : "Pausada"}</span><span class="conversation-secondary-chevron" aria-hidden="true">⌄</span></summary>
-          <div class="conversation-secondary-panel conversation-automation-panel-inline">
+          <summary aria-expanded="${Boolean(uiState?.automationOpen)}" aria-controls="conversation-automation-inline-panel"><span>Automatización<span class="conversation-automation-summary-state"> · ${automation.is_active ? "Activa" : "Pausada"}</span></span><span class="conversation-secondary-chevron" aria-hidden="true">⌄</span></summary>
+          <div id="conversation-automation-inline-panel" class="conversation-secondary-panel conversation-automation-panel-inline">
             <div class="conversation-automation-controls">
               <div class="conversation-automation-state-copy"><span class="conversation-automation-state ${automation.is_active ? "is-active" : "is-paused"}">${escapeHtml(conversationAutomationLabel(automation))}</span>${automationReason ? `<small>${escapeHtml(automationReason)}</small>` : ""}</div>
               <select id="conversation-automation-duration" aria-label="Duración de la pausa"><option value="15" ${automationDuration === "15" ? "selected" : ""}>15 min</option><option value="60" ${automationDuration === "60" ? "selected" : ""}>1 h</option><option value="240" ${automationDuration === "240" ? "selected" : ""}>4 h</option><option value="-1" ${automationDuration === "-1" ? "selected" : ""}>Hasta reactivarla</option></select>
@@ -5960,10 +6086,8 @@ function openConversationCustomerPanel(trigger) {
   panel?.classList.add("is-open");
   panel?.setAttribute("aria-hidden", "false");
   document.querySelectorAll(".conversation-customer-open").forEach((button) => button.setAttribute("aria-expanded", "true"));
-  if (window.matchMedia("(max-width: 1599px)").matches) {
-    backdrop?.removeAttribute("hidden");
-    document.body.classList.add("conversation-drawer-open");
-  }
+  backdrop?.removeAttribute("hidden");
+  document.body.classList.add("conversation-drawer-open");
   const title = document.getElementById("conversation-customer-title");
   title?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   title?.focus?.({ preventScroll: true });
@@ -5978,12 +6102,6 @@ function closeConversationCustomerPanel({ restoreFocus = true } = {}) {
   syncConversationCustomerPanelMode();
   if (restoreFocus) conversationCustomerReturnFocus?.focus?.({ preventScroll: true });
   conversationCustomerReturnFocus = null;
-}
-
-function closeConversationMobileDetail() {
-  closeConversationCustomerPanel({ restoreFocus: false });
-  document.getElementById("conversation-center")?.classList.remove("conversation-mobile-detail-open");
-  document.getElementById(`conversation-list-item-${selectedConversationId}`)?.focus({ preventScroll: true });
 }
 
 function resetConversationFilters() {
@@ -6220,12 +6338,12 @@ async function createConversation() {
     );
     const body = await readAdminResponseBody(response);
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo crear la conversación."));
-    selectedConversationId = body.conversation.id;
     ["conversation-create-name", "conversation-create-phone", "conversation-create-username", "conversation-create-message"]
       .forEach((id) => { document.getElementById(id).value = ""; });
     document.getElementById("conversation-create-panel").hidden = true;
     showConversationFeedback("Conversación creada.");
-    await requestAdminRefresh(["conversationList", "conversationThread"]);
+    await requestAdminRefresh(["conversationList", "operations"]);
+    await selectConversation(body.conversation.id, true, { historyMode: "push" });
   } catch (error) {
     showConversationFeedback(error.message, true);
   }
@@ -6330,7 +6448,7 @@ async function loadConversationTemplates({ background = false } = {}) {
     conversationTemplates = body.templates || [];
     channelHubLoadState.templates = "ready";
     if (!background || !configurationSectionHasDirty("messages")) renderConversationTemplates();
-    if (!background && selectedConversationId) {
+    if (!background && selectedConversationId && selectedConversation) {
       await selectConversation(selectedConversationId, false, { focusDetail: false });
     }
   } catch (error) {
@@ -6430,7 +6548,7 @@ async function mutateConversationTemplate(url, options) {
     if (!response.ok) throw new Error(conversationErrorMessage(body, "No se pudo guardar la plantilla."));
     showChannelAutomationFeedback("Plantillas actualizadas.");
     await Promise.all([loadConversationTemplates(), loadConversationAutomation()]);
-    if (selectedConversationId) {
+    if (selectedConversationId && selectedConversation) {
       await selectConversation(selectedConversationId, false, { focusDetail: false });
     }
     return true;
@@ -6901,7 +7019,7 @@ function ensureAdminPollingTasks() {
   if (adminPollingTasks.size) return;
   adminPollingTasks.set("conversationThread", {
     run: async () => {
-      if (selectedConversationId) {
+      if (selectedConversationId && selectedConversation) {
         await selectConversation(selectedConversationId, false, { background: true });
       }
     },
@@ -8406,14 +8524,13 @@ function syncConversationCustomerPanelMode() {
   const panel = document.getElementById("conversation-customer-panel");
   const backdrop = document.getElementById("conversation-customer-backdrop");
   if (!panel) return;
-  const drawerMode = window.matchMedia("(max-width: 1599px)").matches;
-  panel.setAttribute("aria-hidden", String(drawerMode && !conversationCustomerPanelOpen));
-  if (!drawerMode) {
-    backdrop?.setAttribute("hidden", "");
-    document.body.classList.remove("conversation-drawer-open");
-  } else if (conversationCustomerPanelOpen) {
+  panel.setAttribute("aria-hidden", String(!conversationCustomerPanelOpen));
+  if (conversationCustomerPanelOpen) {
     backdrop?.removeAttribute("hidden");
     document.body.classList.add("conversation-drawer-open");
+  } else {
+    backdrop?.setAttribute("hidden", "");
+    document.body.classList.remove("conversation-drawer-open");
   }
 }
 
@@ -8438,13 +8555,17 @@ function setupConversationInterface() {
     const distanceFromBottom = event.target.scrollHeight - event.target.scrollTop - event.target.clientHeight;
     if (distanceFromBottom <= 80) document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");
   }, true);
+  detail.addEventListener("toggle", (event) => {
+    if (!event.target.matches?.(".conversation-secondary-control")) return;
+    event.target.querySelector(":scope > summary")?.setAttribute("aria-expanded", String(event.target.open));
+  }, true);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && conversationCustomerPanelOpen) {
       event.preventDefault();
       closeConversationCustomerPanel();
       return;
     }
-    if (event.key !== "Tab" || !conversationCustomerPanelOpen || !window.matchMedia("(max-width: 1599px)").matches) return;
+    if (event.key !== "Tab" || !conversationCustomerPanelOpen) return;
     const panel = document.getElementById("conversation-customer-panel");
     const focusable = [...panel.querySelectorAll("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")];
     if (!focusable.length) return;
@@ -8458,7 +8579,6 @@ function setupConversationInterface() {
       first.focus();
     }
   });
-  window.addEventListener("resize", syncConversationCustomerPanelMode);
   syncConversationCustomerPanelMode();
 }
 
@@ -8504,8 +8624,8 @@ function setupAdminDelegatedActions() {
     else if (action === "retry-bookings") loadBookings();
     else if (action === "reset-conversation-filters") resetConversationFilters();
     else if (action === "retry-conversations") loadConversations();
-    else if (action === "select-conversation" && Number.isInteger(id)) selectConversation(id);
-    else if (action === "show-conversation-list") closeConversationMobileDetail();
+    else if (action === "select-conversation" && Number.isInteger(id)) selectConversation(id, true, { historyMode: "push" });
+    else if (action === "show-conversation-list") returnToConversationInbox();
     else if (action === "send-conversation-reply") sendConversationReply();
     else if (action === "open-conversation-whatsapp") openConversationWhatsApp();
     else if (action === "fill-conversation-reply" && Number.isInteger(id)) fillConversationReply(id);

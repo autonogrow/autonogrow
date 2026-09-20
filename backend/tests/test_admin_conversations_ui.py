@@ -59,7 +59,7 @@ def test_delegated_instagram_forms_use_the_submitted_form() -> None:
     assert "event.currentTarget" not in review
 
 
-def test_conversations_has_three_panel_architecture_and_preserves_contracts() -> None:
+def test_conversations_preserve_dom_contracts_for_inbox_and_focus_workspace() -> None:
     html, _, _ = read_sources()
     inventory = IdInventory()
     inventory.feed(html)
@@ -186,7 +186,7 @@ def test_conversation_composer_precedes_collapsed_secondary_controls() -> None:
     assert "conversation-automation-controls" not in header
     assert '${uiState?.templatesOpen ? " open" : ""}' in render
     assert '${uiState?.automationOpen ? " open" : ""}' in render
-    assert "grid-template-rows: auto minmax(0, 1fr) auto" in css
+    assert "grid-template-rows: auto auto minmax(0, 1fr) auto" in css
     assert ".conversation-secondary-controls" in css
 
 
@@ -198,17 +198,14 @@ def test_conversation_header_is_compact_without_redundant_breadcrumb() -> None:
     open_search = function_block(js, "function openConversationCustomerSearch", "async function updateConversationCustomer")
 
     assert "conversation.customer_id" in render
-    assert "Ver cliente" not in header
-    assert "Ver cliente" in render
-    assert "Asociar cliente" in render
-    assert "conversation-association-trigger" in render
+    assert "Información del cliente" in render
+    assert "${customerHeaderAction}" in header
     assert "open-conversation-customer-panel" in render
-    assert "!isBusinessStaff()" in render
     assert "conversation-detail-breadcrumb" not in header
     assert 'data-admin-action="show-conversation-list"' in header
     assert 'aria-label="Volver a conversaciones"' in header
     assert "conversation-mobile-back" not in header
-    assert header.index("conversationAttentionBadges(conversation)") < header.index("${customerHeaderAction}")
+    assert header.index("${customerHeaderAction}") < header.index("conversationAttentionBadges(conversation)")
     assert 'class="conversation-detail-meta"' in header
     assert 'class="conversation-detail-header-lower"' in header
     assert 'class="conversation-operational-actions"' in header
@@ -229,8 +226,9 @@ def test_conversation_badges_wrap_without_clipping_and_history_keeps_flexible_he
     assert ".conversation-attention-states { display: inline-flex; min-width: 0;" in css
     assert "min-height: 1.5rem; white-space: normal; overflow-wrap: anywhere;" in css
     assert ".conversation-detail-header-copy { min-width: 0;" in css
-    assert "grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr)" in css
-    assert "grid-template-rows: auto minmax(0, 1fr) auto" in css
+    assert ".conversation-center.conversation-focus-open .conversation-list-panel { display: none; }" in css
+    assert ".conversation-center.conversation-focus-open .conversation-detail { display: grid; }" in css
+    assert "grid-template-rows: auto auto minmax(0, 1fr) auto" in css
     assert ".conversations-section .conversation-thread { min-height: 0; max-height: none;" in css
 
 
@@ -357,13 +355,13 @@ def test_conversation_drawer_has_focus_escape_and_responsive_modes() -> None:
     assert 'event.key === "Escape"' in js
     assert 'event.key !== "Tab"' in js
     assert "conversationCustomerReturnFocus" in js
-    assert "@media (max-width: 1599px)" in css
     assert "@media (max-width: 639px)" in css
     assert ".conversation-mobile-back" not in css
+    assert ".conversation-customer-panel { box-sizing: border-box; position: fixed;" in css
+    assert 'panel.setAttribute("aria-hidden", String(!conversationCustomerPanelOpen))' in js
     navigation = function_block(js, "function showAdminSection", "function setupAdminNavigation")
     assert 'targetSection === "conversations"' in navigation
-    assert 'window.matchMedia("(max-width: 639px)").matches' in navigation
-    assert "closeConversationMobileDetail()" in navigation
+    assert "closeConversationWorkspace" in navigation
     assert "env(safe-area-inset-bottom)" in css
     assert ".conversation-customer-content { overflow-x: hidden; }" in css
     assert ".customer-memory-item > * { overflow-wrap: anywhere;" in css
@@ -392,3 +390,34 @@ def test_errors_are_safe_and_suggestion_failure_does_not_hide_thread() -> None:
     assert "suggestionsResponse.ok ?" in select
     assert "Puedes seguir revisando la conversación" in select
     assert "No pudimos abrir esta conversación" in select
+
+
+def test_conversation_focus_route_uses_history_without_auto_selecting_inbox() -> None:
+    _, css, js = read_sources()
+    load = function_block(js, "async function loadConversations", "function renderConversationList")
+    navigation = function_block(js, "const CONVERSATION_ROUTE_PARAM", "function showAdminSection")
+    selection = function_block(js, "async function selectConversation", "function conversationMessageKind")
+
+    assert '= "conversation"' in navigation
+    assert "window.history[`${historyMode}State`]" in navigation
+    assert "conversationIdFromRoute()" in load
+    assert "conversations[0].id" not in load
+    assert 'historyMode: "none"' in load
+    assert "routeFallback: true" in load
+    assert 'historyMode = "none"' in selection
+    assert "writeConversationRoute(Number(conversationId), historyMode)" in selection
+    assert "conversationDetailVersion += 1" in js
+    assert ".conversations-section.conversation-focus-mode" in css
+
+
+def test_secondary_conversation_tools_expose_explicit_expansion_state() -> None:
+    _, _, js = read_sources()
+    render = function_block(js, "function renderConversationDetail", "function customerMemoryCategoryLabel")
+    setup = function_block(js, "function setupConversationInterface", "function setupAdminDelegatedActions")
+
+    assert 'aria-controls="conversation-templates-inline-panel"' in render
+    assert 'aria-controls="conversation-automation-inline-panel"' in render
+    assert 'aria-expanded="${Boolean(uiState?.templatesOpen)}"' in render
+    assert 'aria-expanded="${Boolean(uiState?.automationOpen)}"' in render
+    assert 'event.target.matches?.(".conversation-secondary-control")' in setup
+    assert 'setAttribute("aria-expanded", String(event.target.open))' in setup

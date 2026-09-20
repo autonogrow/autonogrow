@@ -489,16 +489,16 @@
         <article id="conversation-detail" class="conversation-detail">
           <div class="conversation-state"><strong>Selecciona una conversación</strong><p>Podrás revisar el historial y responder sin perder el contexto del cliente.</p></div>
         </article>
-        <aside id="conversation-customer-panel" class="conversation-customer-panel" aria-labelledby="conversation-customer-title" aria-hidden="false">
-          <div class="conversation-customer-panel__header">
-            <h3 id="conversation-customer-title" tabindex="-1">Información del cliente</h3>
-            <button id="conversation-customer-close" class="ag-button ag-button--ghost ag-button--icon" type="button" aria-label="Cerrar información del cliente">×</button>
-          </div>
-          <div id="conversation-customer-content" class="conversation-customer-content">
-            <div class="conversation-state conversation-state--compact"><p>Selecciona una conversación para ver la información disponible.</p></div>
-          </div>
-        </aside>
       </div>
+      <aside id="conversation-customer-panel" class="conversation-customer-panel" role="dialog" aria-modal="true" aria-labelledby="conversation-customer-title" aria-hidden="true">
+        <div class="conversation-customer-panel__header">
+          <h3 id="conversation-customer-title" tabindex="-1">Información del cliente</h3>
+          <button id="conversation-customer-close" class="ag-button ag-button--ghost ag-button--icon" type="button" aria-label="Cerrar información del cliente">×</button>
+        </div>
+        <div id="conversation-customer-content" class="conversation-customer-content">
+          <div class="conversation-state conversation-state--compact"><p>Selecciona una conversación para ver la información disponible.</p></div>
+        </div>
+      </aside>
       <button id="conversation-customer-backdrop" class="conversation-customer-backdrop" type="button" aria-label="Cerrar información del cliente" hidden></button>
 
     </section>

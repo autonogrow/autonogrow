@@ -159,11 +159,11 @@ def test_primary_navigation_has_one_synchronous_current_item_and_normalizes_bad_
     assert 'historyMode === "replace"' in navigation
     assert 'historyMode === "push"' in navigation
     assert 'window.location.hash.slice(1) !== targetSection' in navigation
-    assert 'window.history.pushState(null, "", `#${targetSection}`)' in navigation
-    assert 'window.history.replaceState(null, "", `#${targetSection}`)' in navigation
+    assert 'window.history.pushState(null, "", targetUrl)' in navigation
+    assert 'window.history.replaceState(window.history.state, "", targetUrl)' in navigation
     setup = function_block(js, "function setupAdminNavigation", "function setupBookingViews")
     assert 'window.addEventListener("popstate"' in setup
-    assert 'showAdminSection(window.location.hash.slice(1) || "summary", "none"' in setup
+    assert 'showAdminSection(section, "none", { skipDirtyCheck: true })' in setup
     assert 'showAdminSection(window.location.hash.slice(1) || "summary", "replace")' in setup
 
 
