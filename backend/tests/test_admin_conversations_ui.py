@@ -175,19 +175,20 @@ def test_integrated_whatsapp_keeps_assisted_as_a_permanent_alternative() -> None
     assert "conversation-whatsapp-button" in render
 
 
-def test_conversation_composer_precedes_collapsed_secondary_controls() -> None:
+def test_conversation_composer_precedes_on_demand_tool_launchers() -> None:
     _, css, js = read_sources()
     render = function_block(js, "function renderConversationDetail", "function customerMemoryCategoryLabel")
     header = render.split('<header class="conversation-detail-header">', 1)[1].split("</header>", 1)[0]
 
     assert render.index('id="conversation-thread"') < render.index('class="conversation-footer"')
-    assert render.index("renderConversationComposer(conversation)") < render.index("conversation-secondary-controls")
+    assert render.index("renderConversationComposer(conversation)") < render.index("conversation-tool-launchers")
     assert render.index('id="conversation-templates-control"') < render.index('id="conversation-automation-control"')
     assert "conversation-automation-controls" not in header
-    assert '${uiState?.templatesOpen ? " open" : ""}' in render
-    assert '${uiState?.automationOpen ? " open" : ""}' in render
+    assert "<details" not in render
+    assert "conversation-secondary-panel" not in render
     assert "grid-template-rows: auto auto minmax(0, 1fr) auto" in css
-    assert ".conversation-secondary-controls" in css
+    assert ".conversation-tool-overlay { position: absolute;" in css
+    assert ".conversation-tool-sheet { display: grid;" in css
 
 
 def test_conversation_header_is_compact_without_redundant_breadcrumb() -> None:
@@ -199,17 +200,24 @@ def test_conversation_header_is_compact_without_redundant_breadcrumb() -> None:
 
     assert "conversation.customer_id" in render
     assert "Información del cliente" in render
-    assert "${customerHeaderAction}" in header
+    assert "${customerHeaderAction}" not in header
     assert "open-conversation-customer-panel" in render
     assert "conversation-detail-breadcrumb" not in header
     assert 'data-admin-action="show-conversation-list"' in header
     assert 'aria-label="Volver a conversaciones"' in header
     assert "conversation-mobile-back" not in header
-    assert header.index("${customerHeaderAction}") < header.index("conversationAttentionBadges(conversation)")
     assert 'class="conversation-detail-meta"' in header
-    assert 'class="conversation-detail-header-lower"' in header
+    assert 'class="conversation-detail-heading-row"' in header
+    assert 'class="conversation-detail-title-group"' in header
     assert 'class="conversation-operational-actions"' in header
+    heading = header.split('<div class="conversation-detail-heading-row">', 1)[1].split("</div>\n      <div class=\"conversation-detail-meta\"", 1)[0]
+    assert "conversation-detail-title" in heading
+    assert "Marcar pendiente" in heading
+    assert "Cerrar" in heading
     assert header.index("Marcar pendiente") < header.index("Cerrar")
+    assert "conversationProviderBadge" not in header
+    assert "conversationIntentBadge" not in header
+    assert "conversationAttentionBadges" not in header
     assert "scrollIntoView" in open_panel
     assert "title?.focus" in open_panel
     assert "openConversationCustomerPanel(document.activeElement)" in open_search
@@ -219,13 +227,18 @@ def test_conversation_header_is_compact_without_redundant_breadcrumb() -> None:
     assert "flex-wrap: nowrap" in css
 
 
-def test_conversation_badges_wrap_without_clipping_and_history_keeps_flexible_height() -> None:
-    _, css, _ = read_sources()
+def test_conversation_metadata_moves_to_customer_drawer_and_history_stays_flexible() -> None:
+    _, css, js = read_sources()
+    customer = function_block(js, "function renderConversationCustomerPanel", "function renderStandaloneCustomerPanel")
 
-    assert ".conversation-detail-badges { display: flex; min-width: 0;" in css
+    assert 'class="conversation-customer-context"' in customer
+    assert "conversationChannelLabel(conversation.channel)" in customer
+    assert "conversationProviderBadge(conversation)" in customer
+    assert "conversationIntentBadge(conversation)" in customer
+    assert "conversationAttentionBadges(conversation)" in customer
+    assert ".conversation-customer-badges { display: flex; min-width: 0;" in css
     assert ".conversation-attention-states { display: inline-flex; min-width: 0;" in css
     assert "min-height: 1.5rem; white-space: normal; overflow-wrap: anywhere;" in css
-    assert ".conversation-detail-header-copy { min-width: 0;" in css
     assert ".conversation-center.conversation-focus-open .conversation-list-panel { display: none; }" in css
     assert ".conversation-center.conversation-focus-open .conversation-detail { display: grid; }" in css
     assert "grid-template-rows: auto auto minmax(0, 1fr) auto" in css
@@ -271,7 +284,7 @@ def test_template_selection_only_fills_and_resizes_composer() -> None:
 
     assert "textarea.value = template.rendered_body || template.body" in fill
     assert "resizeConversationReplyTextarea(textarea)" in fill
-    assert 'getElementById("conversation-templates-control")?.removeAttribute("open")' in fill
+    assert "closeConversationToolPanel({ restoreFocus: false })" in fill
     assert "sendConversationReply" not in fill
 
 
@@ -410,14 +423,24 @@ def test_conversation_focus_route_uses_history_without_auto_selecting_inbox() ->
     assert ".conversations-section.conversation-focus-mode" in css
 
 
-def test_secondary_conversation_tools_expose_explicit_expansion_state() -> None:
-    _, _, js = read_sources()
+def test_secondary_conversation_tools_are_accessible_workspace_overlays() -> None:
+    html, _, js = read_sources()
     render = function_block(js, "function renderConversationDetail", "function customerMemoryCategoryLabel")
     setup = function_block(js, "function setupConversationInterface", "function setupAdminDelegatedActions")
+    opener = function_block(js, "function openConversationToolPanel", "function closeConversationToolPanel")
+    closer = function_block(js, "function closeConversationToolPanel", "function resetConversationFilters")
 
-    assert 'aria-controls="conversation-templates-inline-panel"' in render
-    assert 'aria-controls="conversation-automation-inline-panel"' in render
-    assert 'aria-expanded="${Boolean(uiState?.templatesOpen)}"' in render
-    assert 'aria-expanded="${Boolean(uiState?.automationOpen)}"' in render
-    assert 'event.target.matches?.(".conversation-secondary-control")' in setup
-    assert 'setAttribute("aria-expanded", String(event.target.open))' in setup
+    assert 'id="conversation-tool-overlay"' in html
+    assert 'role="dialog"' in html
+    assert 'aria-modal="true"' in html
+    assert render.count('aria-controls="conversation-tool-overlay"') == 2
+    assert 'data-admin-action="open-conversation-tool"' in render
+    assert 'data-tool="templates"' in render
+    assert 'data-tool="automation"' in render
+    assert 'document.getElementById("conversation-tool-close").addEventListener' in setup
+    assert 'event.key === "Escape" && conversationToolPanelOpen' in setup
+    assert 'event.key !== "Tab"' in setup
+    assert 'setAttribute("inert", "")' in opener
+    assert 'removeAttribute("inert")' in closer
+    assert 'focus({ preventScroll: true })' in opener
+    assert 'focus?.({ preventScroll: true })' in closer

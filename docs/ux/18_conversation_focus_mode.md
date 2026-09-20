@@ -13,7 +13,7 @@ El estado se concentraba en `selectedConversationId`, `selectedConversation`, la
 Hay dos estados excluyentes en todos los viewports:
 
 1. Bandeja: cabecera, resumen, búsqueda, filtros y lista completa de tarjetas de triage.
-2. Workspace focalizado: cabecera compacta, historial con scroll propio, compositor y herramientas secundarias plegadas.
+2. Workspace focalizado: cabecera compacta, historial con scroll propio, compositor y herramientas secundarias bajo demanda.
 
 `conversation-focus-mode` oculta los controles globales de bandeja y `conversation-focus-open` sustituye visualmente la lista por el detalle. No se abre otra pestaña ni se crea una arquitectura distinta para tablet. La lista ya no selecciona la primera conversación automáticamente.
 
@@ -33,11 +33,11 @@ Al cerrar el workspace se incrementa `conversationDetailVersion`, se limpia la s
 
 ## Workspace y contexto secundario
 
-La cabecera contiene Volver, nombre, canal, identidad, asociación, estados de atención y las acciones permitidas. ADMIN y STAFF comparten estructura; los controles de mutación continúan gobernados por los permisos existentes.
+La cabecera tiene dos líneas: nombre y acciones operativas en la primera; identidad mínima y asociación en la segunda. Canal, estado de integración, intención, confianza y estados de atención viven en **Información del cliente**. ADMIN y STAFF comparten estructura; los controles de mutación continúan gobernados por los permisos existentes.
 
 El historial ocupa la fila flexible `minmax(0, 1fr)` y tiene scroll propio. El compositor permanece en el footer. En móvil, la altura útil descuenta `--ag-topbar-min-height`, `--ag-mobile-nav-height`, padding y `safe-area-inset-bottom`, evitando que la navegación inferior tape el composer.
 
-Plantillas y Automatización continúan como `details` cerrados al abrir una conversación. Sus `summary` exponen `aria-expanded` y `aria-controls`, y conservan borrador, selección, permisos y lógica de negocio.
+Plantillas y Automatización son botones compactos que abren un overlay dentro del workspace. Comparten un sheet amplio, con scroll propio, backdrop, Escape, contención y restauración de foco. Seleccionar una plantilla cierra el sheet, conserva la conversación y lleva el texto editable al composer. Automatización conserva sus controles, sugerencias, permisos y lógica de negocio sin ocupar altura cuando está cerrada.
 
 Información del cliente es siempre un drawer modal bajo demanda, también en desktop. Conserva asociación, Customer Memory, visitas/contexto disponible, Growth y todas sus acciones. Tiene backdrop, cierre con Escape, contención de foco, devolución de foco y scroll independiente; en móvil termina por encima de la navegación fija.
 
@@ -47,7 +47,7 @@ Información del cliente es siempre un drawer modal bajo demanda, también en de
 
 ## Contratos preservados
 
-- IDs DOM de lista, detalle, hilo, compositor, filtros, feedback, Plantillas, Automatización y ficha de cliente.
+- IDs DOM de lista, detalle, hilo, compositor, filtros, feedback, lanzadores de Plantillas/Automatización y ficha de cliente.
 - Endpoints y payloads de conversación, mensajes, estado, asociación, automatización, sugerencias, plantillas y Customer Memory.
 - Aislamiento por `business slug`, autorización backend y visibilidad ADMIN/STAFF.
 - `conversationLoadVersion`, `conversationDetailVersion`, fingerprints, polling único, borrador y posición del hilo.

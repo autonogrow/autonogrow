@@ -1408,24 +1408,49 @@ def test_conversation_focus_workspace_navigation_for_admin_and_staff(
     expect(page.locator("#conversation-detail-title")).to_be_focused()
     expect(detail.locator(".conversation-detail-meta")).to_contain_text("@mihii_mihii")
     expect(page).to_have_url(re.compile(r"[?&]conversation=\d+#conversations$"))
+    assert detail.locator(".conversation-channel").count() == 0
+    assert detail.locator(".conversation-provider").count() == 0
+    assert detail.locator(".conversation-intent-badge").count() == 0
+    assert detail.locator(".conversation-attention-states").count() == 0
 
     templates = page.locator("#conversation-templates-control")
     automation = page.locator("#conversation-automation-control")
-    expect(templates).not_to_have_attribute("open", "")
-    expect(automation).not_to_have_attribute("open", "")
-    templates.locator("summary").click()
-    expect(templates).to_have_attribute("open", "")
-    expect(templates.locator("summary")).to_have_attribute("aria-expanded", "true")
-    templates.locator("summary").click()
-    automation.locator("summary").click()
-    expect(automation).to_have_attribute("open", "")
-    expect(automation.locator("summary")).to_have_attribute("aria-expanded", "true")
-    automation.locator("summary").click()
+    tool_overlay = page.locator("#conversation-tool-overlay")
+    expect(tool_overlay).to_be_hidden()
+    expect(templates).to_have_attribute("aria-expanded", "false")
+    expect(automation).to_have_attribute("aria-expanded", "false")
+    conversation_title = page.locator("#conversation-detail-title").text_content()
+    templates.click()
+    expect(tool_overlay).to_be_visible()
+    expect(tool_overlay).to_have_attribute("aria-hidden", "false")
+    expect(templates).to_have_attribute("aria-expanded", "true")
+    expect(page.locator("#conversation-tool-title")).to_have_text("Plantillas")
+    expect(page.locator("#conversation-tool-title")).to_be_focused()
+    expect(page.locator(".conversation-template-option").first).to_be_visible()
+    page.get_by_role("button", name="Cerrar herramienta").click()
+    expect(tool_overlay).to_be_hidden()
+    expect(templates).to_be_focused()
+    expect(page.locator("#conversation-detail-title")).to_have_text(conversation_title)
+    automation.click()
+    expect(tool_overlay).to_be_visible()
+    expect(automation).to_have_attribute("aria-expanded", "true")
+    expect(page.locator("#conversation-tool-title")).to_have_text("Automatización")
+    expect(page.locator("#conversation-automation-duration")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(tool_overlay).to_be_hidden()
+    expect(automation).to_be_focused()
 
     back_button = detail.get_by_role("button", name="Volver a conversaciones")
     customer_button = detail.get_by_role("button", name="Información del cliente")
     expect(back_button).to_be_visible()
     expect(customer_button).to_be_visible()
+    customer_button.click()
+    instagram_customer_panel = page.locator(".conversation-customer-panel.is-open")
+    expect(instagram_customer_panel.locator(".conversation-customer-context")).to_contain_text("Instagram")
+    expect(instagram_customer_panel.locator(".conversation-customer-context")).to_contain_text("Requiere seguimiento")
+    expect(instagram_customer_panel.locator(".conversation-provider")).to_be_visible()
+    instagram_customer_panel.get_by_role("button", name="Cerrar información del cliente").click()
+    expect(customer_button).to_be_focused()
 
     back_button.click()
     expect(instagram_conversation).to_be_visible()
@@ -1436,6 +1461,11 @@ def test_conversation_focus_workspace_navigation_for_admin_and_staff(
     expect(detail).to_be_visible()
     expect(detail.locator(".conversation-detail-meta")).to_contain_text("+34 612 345 678")
     expect(page.locator("#conversation-reply-body")).to_be_visible()
+    templates.click()
+    expect(tool_overlay).to_be_visible()
+    page.locator(".conversation-template-option").first.click()
+    expect(tool_overlay).to_be_hidden()
+    expect(page.locator("#conversation-reply-body")).not_to_have_value("")
 
     page.evaluate("history.back()")
     expect(whatsapp_conversation).to_be_visible()
@@ -1461,6 +1491,8 @@ def test_conversation_focus_workspace_navigation_for_admin_and_staff(
             threadOverflowY: getComputedStyle(thread).overflowY,
             gridRows: getComputedStyle(document.querySelector('#conversation-detail')).gridTemplateRows,
             headerHeight: header.height,
+            titleCenter: (() => { const rect = document.querySelector('#conversation-detail-title').getBoundingClientRect(); return rect.top + rect.height / 2; })(),
+            actionCenter: (() => { const rect = document.querySelector('.conversation-operational-actions').getBoundingClientRect(); return rect.top + rect.height / 2; })(),
             contextHeight: context.height,
             footerHeight: footer.height,
             footerChildren: [...document.querySelector('.conversation-footer').children].map(element => ({
@@ -1474,6 +1506,7 @@ def test_conversation_focus_workspace_navigation_for_admin_and_staff(
         }"""
     )
     assert workspace_geometry["threadClientHeight"] > 0, workspace_geometry
+    assert abs(workspace_geometry["titleCenter"] - workspace_geometry["actionCenter"]) <= 2, workspace_geometry
     assert workspace_geometry["threadOverflowY"] == "auto", workspace_geometry
     assert workspace_geometry["footerBottom"] <= workspace_geometry["usableBottom"] + 1, json.dumps(
         workspace_geometry, indent=2

@@ -123,6 +123,8 @@ let conversationAssistedOpening = false;
 let conversationStatusUpdating = false;
 let conversationCustomerPanelOpen = false;
 let conversationCustomerReturnFocus = null;
+let conversationToolPanelOpen = null;
+let conversationToolReturnFocus = null;
 let conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
 let conversationCustomerAssociationUpdating = false;
 const customerMemorySummaries = new Map();
@@ -295,6 +297,8 @@ function resetAdminSessionState() {
   conversationStatusUpdating = false;
   conversationCustomerPanelOpen = false;
   conversationCustomerReturnFocus = null;
+  conversationToolPanelOpen = null;
+  conversationToolReturnFocus = null;
   conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
   conversationCustomerAssociationUpdating = false;
   customerMemoryFormState = null;
@@ -373,6 +377,8 @@ function renderAdminSessionNeutralState() {
   document.querySelector('[data-admin-section="conversations"]')?.classList.remove("conversation-focus-mode");
   document.getElementById("conversation-customer-panel")?.classList.remove("is-open");
   document.getElementById("conversation-customer-backdrop")?.setAttribute("hidden", "");
+  document.getElementById("conversation-tool-overlay")?.setAttribute("hidden", "");
+  document.getElementById("conversation-tool-overlay")?.setAttribute("aria-hidden", "true");
   document.getElementById("my-staff-availability")?.remove();
   for (const id of ["growth-action-modal", "reschedule-modal", "staff-removal-modal"]) {
     const modal = document.getElementById(id);
@@ -5128,6 +5134,7 @@ function closeConversationWorkspace({ historyMode = "none", restoreFocus = true 
   conversationSuggestionNotice = null;
   conversationDetailFingerprint = "";
   conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
+  closeConversationToolPanel({ restoreFocus: false });
   closeConversationCustomerPanel({ restoreFocus: false });
   setConversationWorkspaceMode(false);
   writeConversationRoute(null, historyMode);
@@ -5287,8 +5294,6 @@ function captureConversationUiState(conversationId) {
     lastMessageId: thread?.dataset.lastMessageId || "",
     messageCount: Number(thread?.dataset.messageCount || 0),
     newMessagesVisible: Boolean(newMessagesIndicator && !newMessagesIndicator.hidden),
-    templatesOpen: Boolean(document.getElementById("conversation-templates-control")?.open),
-    automationOpen: Boolean(document.getElementById("conversation-automation-control")?.open),
     automationDuration: document.getElementById("conversation-automation-duration")?.value || "60",
     automationControlFocusId: document.activeElement?.closest?.(".conversation-automation-controls")
       ? document.activeElement.id
@@ -5312,6 +5317,7 @@ async function selectConversation(
   const uiState = captureConversationUiState(conversationId);
   const selectionChanged = selectedConversationId !== Number(conversationId);
   if (selectionChanged) {
+    closeConversationToolPanel({ restoreFocus: false });
     selectedConversation = null;
     selectedConversationSuggestionId = null;
     conversationDetailFingerprint = "";
@@ -5492,53 +5498,75 @@ function renderConversationComposer(conversation) {
   </div>`;
 }
 
+function renderConversationSuggestions(conversation) {
+  const composer = conversationComposerModel(conversation);
+  const pendingSuggestions = conversationSuggestions.filter((item) => item.status === "pending");
+  if (!pendingSuggestions.length && !conversationSuggestionNotice) return "";
+  return `<div class="conversation-suggestions">
+    ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
+    ${pendingSuggestions.map((suggestion) => `
+      <article class="conversation-suggestion">
+        <strong>Respuesta sugerida</strong>
+        <span class="conversation-intent-badge">${escapeHtml(suggestion.intent_label)} · ${Number(suggestion.confidence)}%</span>
+        <p>${escapeHtml(suggestion.body)}</p>
+        <div class="conversation-suggestion-actions">
+          ${composer.canSend ? `<button class="ag-button ag-button--primary ag-button--small" type="button" data-admin-action="send-conversation-suggestion" data-id="${Number(suggestion.id)}">Enviar sugerencia</button>` : ""}
+          ${composer.canCompose ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="modify-conversation-suggestion" data-id="${Number(suggestion.id)}">Modificar</button>` : ""}
+          <button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="dismiss-conversation-suggestion" data-id="${Number(suggestion.id)}">Descartar</button>
+        </div>
+      </article>
+    `).join("")}
+  </div>`;
+}
+
+function renderConversationToolPanel({ automationDuration = null } = {}) {
+  if (!conversationToolPanelOpen || !selectedConversation) return;
+  const title = document.getElementById("conversation-tool-title");
+  const content = document.getElementById("conversation-tool-content");
+  if (!title || !content) return;
+  if (conversationToolPanelOpen === "templates") {
+    const quickReplies = conversationTemplates.filter((item) => item.active).map((template) => `
+      <button class="conversation-template-option" type="button" data-admin-action="fill-conversation-reply" data-id="${template.id}">
+        <strong>${escapeHtml(template.name)}</strong>
+        <span>${escapeHtml(template.rendered_body || template.body)}</span>
+      </button>
+    `).join("");
+    title.textContent = "Plantillas";
+    content.innerHTML = `<p class="conversation-tool-intro">Elige una respuesta para llevarla al composer. Podrás editarla antes de enviarla.</p><div class="conversation-template-picker">${quickReplies || `<p class="conversation-tool-empty">No hay respuestas rápidas activas.</p>`}</div>`;
+    return;
+  }
+  const automation = selectedConversation.automation || { mode: "automatic", is_active: true };
+  const duration = automationDuration || document.getElementById("conversation-automation-duration")?.value || "60";
+  const reason = conversationAutomationReason(automation);
+  title.textContent = "Automatización";
+  content.innerHTML = `
+    <p class="conversation-tool-intro">Controla la automatización de esta conversación sin reducir el espacio de mensajes.</p>
+    <div class="conversation-automation-controls">
+      <div class="conversation-automation-state-copy"><span class="conversation-automation-state ${automation.is_active ? "is-active" : "is-paused"}">${escapeHtml(conversationAutomationLabel(automation))}</span>${reason ? `<small>${escapeHtml(reason)}</small>` : ""}</div>
+      <label for="conversation-automation-duration">Duración de la pausa</label>
+      <select id="conversation-automation-duration"><option value="15" ${duration === "15" ? "selected" : ""}>15 min</option><option value="60" ${duration === "60" ? "selected" : ""}>1 h</option><option value="240" ${duration === "240" ? "selected" : ""}>4 h</option><option value="-1" ${duration === "-1" ? "selected" : ""}>Hasta reactivarla</option></select>
+      <button id="conversation-automation-toggle" class="ag-button ${automation.is_active ? "ag-button--secondary" : "ag-button--primary"}" type="button" data-admin-action="toggle-conversation-automation" data-active="${automation.is_active ? "true" : "false"}">${automation.is_active ? "Pausar automatización" : "Activar automatización"}</button>
+      <small class="conversation-automation-suggestion-note">Las sugerencias pueden seguir apareciendo durante la pausa.</small>
+    </div>
+    ${renderConversationSuggestions(selectedConversation)}`;
+}
+
 function renderConversationDetail(conversation, uiState = null) {
   const detail = document.getElementById("conversation-detail");
   const channelIdentity = conversationChannelIdentity(conversation);
   const messages = conversation.messages || [];
-  const composer = conversationComposerModel(conversation);
-  const quickReplies = conversationTemplates.filter((item) => item.active).map((template) => `
-    <button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="fill-conversation-reply" data-id="${template.id}">${escapeHtml(template.name)}</button>
-  `).join("");
-  const pendingSuggestions = conversationSuggestions.filter((item) => item.status === "pending");
-  const automation = conversation.automation || { mode: "automatic", is_active: true };
   const automationDuration = uiState?.automationDuration || "60";
-  const automationReason = conversationAutomationReason(automation);
-  const customerHeaderAction = `<button class="conversation-customer-open ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="open-conversation-customer-panel" aria-label="Información del cliente" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Información del cliente</button>`;
+  const customerHeaderAction = `<button class="conversation-customer-open ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="open-conversation-customer-panel" aria-label="Información del cliente" aria-controls="conversation-customer-panel" aria-expanded="${conversationCustomerPanelOpen}">Cliente</button>`;
   const customerAssociationMarkup = conversation.customer_id
     ? `<span class="conversation-association-status">${escapeHtml(conversationAssociationLabel(conversation))}</span>`
     : `<span>${escapeHtml(conversationAssociationLabel(conversation))}</span>`;
-  const suggestionsMarkup = pendingSuggestions.length || conversationSuggestionNotice ? `
-    <div class="conversation-suggestions">
-      ${conversationSuggestionNotice ? `<p class="conversation-automation-warning">${escapeHtml(conversationSuggestionNotice)}</p>` : ""}
-      ${pendingSuggestions.map((suggestion) => `
-        <article class="conversation-suggestion">
-          <strong>Respuesta sugerida</strong>
-          <span class="conversation-intent-badge">${escapeHtml(suggestion.intent_label)} · ${Number(suggestion.confidence)}%</span>
-          <p>${escapeHtml(suggestion.body)}</p>
-          <div class="conversation-suggestion-actions">
-            ${composer.canSend ? `<button class="ag-button ag-button--primary ag-button--small" type="button" data-admin-action="send-conversation-suggestion" data-id="${Number(suggestion.id)}">Enviar sugerencia</button>` : ""}
-            ${composer.canCompose ? `<button class="ag-button ag-button--secondary ag-button--small" type="button" data-admin-action="modify-conversation-suggestion" data-id="${Number(suggestion.id)}">Modificar</button>` : ""}
-            <button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="dismiss-conversation-suggestion" data-id="${Number(suggestion.id)}">Descartar</button>
-          </div>
-        </article>
-      `).join("")}
-    </div>
-  ` : "";
   detail.innerHTML = `
     <header class="conversation-detail-header">
-      <div class="conversation-mobile-toolbar">
-        <button class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="show-conversation-list" aria-label="Volver a conversaciones"><span aria-hidden="true">←</span><span>Conversaciones</span></button>
-        ${customerHeaderAction}
-      </div>
-      <div class="conversation-detail-header-copy">
-        <div class="conversation-detail-heading-row">
+      <div class="conversation-detail-heading-row">
+        <div class="conversation-detail-title-group">
+          <button class="conversation-back-button ag-button ag-button--ghost ag-button--icon" type="button" data-admin-action="show-conversation-list" aria-label="Volver a conversaciones" title="Volver a conversaciones"><span aria-hidden="true">←</span></button>
           <h3 id="conversation-detail-title" tabindex="-1">${escapeHtml(conversationDisplayName(conversation))}</h3>
-          <div class="conversation-detail-badges"><span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>${conversationProviderBadge(conversation)}${conversationIntentBadge(conversation)}${conversationAttentionBadges(conversation)}</div>
         </div>
-      </div>
-      <div class="conversation-detail-header-lower">
-        <div class="conversation-detail-meta"><span>${escapeHtml(channelIdentity)}</span><span aria-hidden="true">·</span>${customerAssociationMarkup}</div>
         <div class="conversation-detail-actions">
           <div class="conversation-operational-actions">
             ${conversation.status === "closed"
@@ -5547,6 +5575,7 @@ function renderConversationDetail(conversation, uiState = null) {
           </div>
         </div>
       </div>
+      <div class="conversation-detail-meta"><span>${escapeHtml(channelIdentity)}</span><span aria-hidden="true">·</span>${customerAssociationMarkup}</div>
     </header>
     <div class="conversation-contextual-banner">${renderConversationGrowthFollowUp(conversation)}</div>
     <div id="conversation-thread" class="conversation-thread" data-last-message-id="${messages.at(-1)?.id || ""}" data-message-count="${messages.length}">
@@ -5555,25 +5584,10 @@ function renderConversationDetail(conversation, uiState = null) {
     </div>
     <div class="conversation-footer">
       ${renderConversationComposer(conversation)}
-      <div class="conversation-secondary-controls" role="group" aria-label="Controles secundarios de la conversación">
-        <details id="conversation-templates-control" class="conversation-secondary-control"${uiState?.templatesOpen ? " open" : ""}>
-          <summary aria-expanded="${Boolean(uiState?.templatesOpen)}" aria-controls="conversation-templates-inline-panel"><span>Plantillas</span><span class="conversation-secondary-chevron" aria-hidden="true">⌄</span></summary>
-          <div id="conversation-templates-inline-panel" class="conversation-secondary-panel">
-            <div class="conversation-quick-replies">${quickReplies || `<small>No hay respuestas rápidas activas.</small>`}</div>
-          </div>
-        </details>
-        <details id="conversation-automation-control" class="conversation-secondary-control"${uiState?.automationOpen ? " open" : ""}>
-          <summary aria-expanded="${Boolean(uiState?.automationOpen)}" aria-controls="conversation-automation-inline-panel"><span>Automatización<span class="conversation-automation-summary-state"> · ${automation.is_active ? "Activa" : "Pausada"}</span></span><span class="conversation-secondary-chevron" aria-hidden="true">⌄</span></summary>
-          <div id="conversation-automation-inline-panel" class="conversation-secondary-panel conversation-automation-panel-inline">
-            <div class="conversation-automation-controls">
-              <div class="conversation-automation-state-copy"><span class="conversation-automation-state ${automation.is_active ? "is-active" : "is-paused"}">${escapeHtml(conversationAutomationLabel(automation))}</span>${automationReason ? `<small>${escapeHtml(automationReason)}</small>` : ""}</div>
-              <select id="conversation-automation-duration" aria-label="Duración de la pausa"><option value="15" ${automationDuration === "15" ? "selected" : ""}>15 min</option><option value="60" ${automationDuration === "60" ? "selected" : ""}>1 h</option><option value="240" ${automationDuration === "240" ? "selected" : ""}>4 h</option><option value="-1" ${automationDuration === "-1" ? "selected" : ""}>Hasta reactivarla</option></select>
-              <button id="conversation-automation-toggle" class="ag-button ag-button--small ${automation.is_active ? "ag-button--secondary" : "ag-button--primary"}" type="button" data-admin-action="toggle-conversation-automation" data-active="${automation.is_active ? "true" : "false"}">${automation.is_active ? "Pausar automatización" : "Activar automatización"}</button>
-              <small class="conversation-automation-suggestion-note">Las sugerencias pueden seguir apareciendo durante la pausa.</small>
-            </div>
-            ${suggestionsMarkup}
-          </div>
-        </details>
+      <div class="conversation-tool-launchers" role="group" aria-label="Herramientas de la conversación">
+        <button id="conversation-templates-control" class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="open-conversation-tool" data-tool="templates" aria-controls="conversation-tool-overlay" aria-expanded="${conversationToolPanelOpen === "templates"}">Plantillas</button>
+        <button id="conversation-automation-control" class="ag-button ag-button--ghost ag-button--small" type="button" data-admin-action="open-conversation-tool" data-tool="automation" aria-controls="conversation-tool-overlay" aria-expanded="${conversationToolPanelOpen === "automation"}">Automatización</button>
+        ${customerHeaderAction}
       </div>
     </div>
   `;
@@ -5587,6 +5601,7 @@ function renderConversationDetail(conversation, uiState = null) {
     }
   }
   resizeConversationReplyTextarea(textarea);
+  if (conversationToolPanelOpen) renderConversationToolPanel({ automationDuration });
   if (uiState?.automationControlFocusId) document.getElementById(uiState.automationControlFocusId)?.focus({ preventScroll: true });
   if (thread) {
     const lastMessageId = String(messages.at(-1)?.id || "");
@@ -5975,6 +5990,15 @@ function renderConversationCustomerPanel(conversation) {
       <strong class="conversation-association-status">${escapeHtml(conversationAssociationLabel(conversation))}</strong>
       ${controls}
     </section>
+    <section class="conversation-customer-context" aria-labelledby="conversation-customer-context-title">
+      <h4 id="conversation-customer-context-title">Contexto de la conversación</h4>
+      <div class="conversation-customer-badges">
+        <span class="conversation-channel">${escapeHtml(conversationChannelLabel(conversation.channel))}</span>
+        ${conversationProviderBadge(conversation)}
+        ${conversationIntentBadge(conversation)}
+        ${conversationAttentionBadges(conversation)}
+      </div>
+    </section>
     <dl class="conversation-customer-stats">
       ${associated ? `<div><dt>Nombre</dt><dd>${escapeHtml(customer.name)}</dd></div><div><dt>Teléfono</dt><dd>${escapeHtml(formatConversationPhone(customer.phone_normalized || customer.phone) || "No disponible")}</dd></div><div><dt>Email</dt><dd>${escapeHtml(customer.email || "No disponible")}</dd></div>` : ""}
       <div><dt>Última actividad</dt><dd>${escapeHtml(formatConversationDate(conversation.last_message_at))}</dd></div>
@@ -6079,6 +6103,7 @@ async function submitCustomerMemoryForm(form) {
 }
 
 function openConversationCustomerPanel(trigger) {
+  closeConversationToolPanel({ restoreFocus: false });
   conversationCustomerPanelOpen = true;
   conversationCustomerReturnFocus = trigger || document.activeElement;
   const panel = document.getElementById("conversation-customer-panel");
@@ -6102,6 +6127,41 @@ function closeConversationCustomerPanel({ restoreFocus = true } = {}) {
   syncConversationCustomerPanelMode();
   if (restoreFocus) conversationCustomerReturnFocus?.focus?.({ preventScroll: true });
   conversationCustomerReturnFocus = null;
+}
+
+function openConversationToolPanel(kind, trigger) {
+  if (!selectedConversation || !["templates", "automation"].includes(kind)) return;
+  closeConversationCustomerPanel({ restoreFocus: false });
+  conversationToolPanelOpen = kind;
+  conversationToolReturnFocus = trigger || document.activeElement;
+  renderConversationToolPanel();
+  const overlay = document.getElementById("conversation-tool-overlay");
+  overlay?.removeAttribute("hidden");
+  overlay?.setAttribute("aria-hidden", "false");
+  document.getElementById("conversation-detail")?.setAttribute("inert", "");
+  document.querySelectorAll("[data-admin-action='open-conversation-tool']").forEach((button) => {
+    button.setAttribute("aria-expanded", String(button.dataset.tool === kind));
+  });
+  queueMicrotask(() => document.getElementById("conversation-tool-title")?.focus({ preventScroll: true }));
+}
+
+function closeConversationToolPanel({ restoreFocus = true } = {}) {
+  const kind = conversationToolPanelOpen;
+  conversationToolPanelOpen = null;
+  const overlay = document.getElementById("conversation-tool-overlay");
+  overlay?.setAttribute("hidden", "");
+  overlay?.setAttribute("aria-hidden", "true");
+  document.getElementById("conversation-detail")?.removeAttribute("inert");
+  document.querySelectorAll("[data-admin-action='open-conversation-tool']").forEach((button) => {
+    button.setAttribute("aria-expanded", "false");
+  });
+  if (restoreFocus) {
+    const currentTrigger = kind
+      ? document.querySelector(`[data-admin-action="open-conversation-tool"][data-tool="${kind}"]`)
+      : null;
+    (currentTrigger || conversationToolReturnFocus)?.focus?.({ preventScroll: true });
+  }
+  conversationToolReturnFocus = null;
 }
 
 function resetConversationFilters() {
@@ -6150,7 +6210,7 @@ function fillConversationReply(templateId) {
   selectedConversationSuggestionId = null;
   textarea.value = template.rendered_body || template.body;
   resizeConversationReplyTextarea(textarea);
-  document.getElementById("conversation-templates-control")?.removeAttribute("open");
+  closeConversationToolPanel({ restoreFocus: false });
   textarea.focus();
 }
 
@@ -8542,6 +8602,10 @@ function setupConversationInterface() {
   document.getElementById("conversation-reset-filters").addEventListener("click", resetConversationFilters);
   document.getElementById("conversation-customer-close").addEventListener("click", () => closeConversationCustomerPanel());
   document.getElementById("conversation-customer-backdrop").addEventListener("click", () => closeConversationCustomerPanel());
+  document.getElementById("conversation-tool-close").addEventListener("click", () => closeConversationToolPanel());
+  document.getElementById("conversation-tool-overlay").addEventListener("click", (event) => {
+    if (event.target.id === "conversation-tool-overlay") closeConversationToolPanel();
+  });
   document.addEventListener("submit", (event) => {
     if (event.target?.id !== "customer-memory-form") return;
     event.preventDefault();
@@ -8555,18 +8619,21 @@ function setupConversationInterface() {
     const distanceFromBottom = event.target.scrollHeight - event.target.scrollTop - event.target.clientHeight;
     if (distanceFromBottom <= 80) document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");
   }, true);
-  detail.addEventListener("toggle", (event) => {
-    if (!event.target.matches?.(".conversation-secondary-control")) return;
-    event.target.querySelector(":scope > summary")?.setAttribute("aria-expanded", String(event.target.open));
-  }, true);
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && conversationToolPanelOpen) {
+      event.preventDefault();
+      closeConversationToolPanel();
+      return;
+    }
     if (event.key === "Escape" && conversationCustomerPanelOpen) {
       event.preventDefault();
       closeConversationCustomerPanel();
       return;
     }
-    if (event.key !== "Tab" || !conversationCustomerPanelOpen) return;
-    const panel = document.getElementById("conversation-customer-panel");
+    if (event.key !== "Tab" || (!conversationCustomerPanelOpen && !conversationToolPanelOpen)) return;
+    const panel = conversationToolPanelOpen
+      ? document.getElementById("conversation-tool-overlay")
+      : document.getElementById("conversation-customer-panel");
     const focusable = [...panel.querySelectorAll("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")];
     if (!focusable.length) return;
     const first = focusable[0];
@@ -8632,6 +8699,7 @@ function setupAdminDelegatedActions() {
     else if (action === "send-conversation-suggestion" && Number.isInteger(id)) sendConversationSuggestion(id);
     else if (action === "modify-conversation-suggestion" && Number.isInteger(id)) modifyConversationSuggestion(id);
     else if (action === "dismiss-conversation-suggestion" && Number.isInteger(id)) dismissConversationSuggestion(id);
+    else if (action === "open-conversation-tool") openConversationToolPanel(button.dataset.tool, button);
     else if (["open-conversation-customer-panel", "open-conversation-customer-panel-mobile"].includes(action)) openConversationCustomerPanel(button);
     else if (action === "view-growth-opportunity" && Number.isInteger(id)) focusGrowthOpportunity(id);
     else if (["open-conversation-customer-search", "open-conversation-customer-search-mobile"].includes(action)) openConversationCustomerSearch();

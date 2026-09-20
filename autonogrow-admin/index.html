@@ -489,6 +489,18 @@
         <article id="conversation-detail" class="conversation-detail">
           <div class="conversation-state"><strong>Selecciona una conversación</strong><p>Podrás revisar el historial y responder sin perder el contexto del cliente.</p></div>
         </article>
+        <div id="conversation-tool-overlay" class="conversation-tool-overlay" role="dialog" aria-modal="true" aria-labelledby="conversation-tool-title" aria-hidden="true" hidden>
+          <section class="conversation-tool-sheet">
+            <header class="conversation-tool-header">
+              <div>
+                <p class="eyebrow">Herramientas de conversación</p>
+                <h3 id="conversation-tool-title" tabindex="-1">Herramienta</h3>
+              </div>
+              <button id="conversation-tool-close" class="ag-button ag-button--ghost ag-button--icon" type="button" aria-label="Cerrar herramienta">&times;</button>
+            </header>
+            <div id="conversation-tool-content" class="conversation-tool-content"></div>
+          </section>
+        </div>
       </div>
       <aside id="conversation-customer-panel" class="conversation-customer-panel" role="dialog" aria-modal="true" aria-labelledby="conversation-customer-title" aria-hidden="true">
         <div class="conversation-customer-panel__header">
