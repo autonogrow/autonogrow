@@ -120,8 +120,11 @@ def test_conversation_messages_are_grouped_and_translated_for_people() -> None:
     ):
         assert label in js
     block = function_block(js, "function renderConversationMessages", "function conversationComposerModel")
+    content = function_block(
+        js, "function renderConversationMessageContent", "function renderConversationMessages"
+    )
     assert "conversation-date-separator" in block
-    assert "escapeHtml(message.body)" in block
+    assert "escapeHtml(message.body)" in content
     assert ".sort(" in block
 
 
@@ -444,3 +447,52 @@ def test_secondary_conversation_tools_are_accessible_workspace_overlays() -> Non
     assert 'removeAttribute("inert")' in closer
     assert 'focus({ preventScroll: true })' in opener
     assert 'focus?.({ preventScroll: true })' in closer
+
+
+def test_conversation_media_renderer_supports_all_v1_kinds_and_safe_fallbacks() -> None:
+    _, css, js = read_sources()
+    renderer = function_block(
+        js, "function conversationMediaUrl", "function renderConversationMessages"
+    )
+    messages = function_block(
+        js, "function renderConversationMessages", "function conversationComposerModel"
+    )
+
+    assert 'value.startsWith("/api/admin/businesses/")' in renderer
+    assert 'attachment.kind === "image"' in renderer
+    assert 'attachment.kind === "video"' in renderer
+    assert 'attachment.kind === "audio"' in renderer
+    assert 'conversation-media-file' in renderer
+    assert "no disponible" in renderer
+    assert 'loading="lazy"' in renderer
+    assert '<video controls preload="metadata"' in renderer
+    assert '<audio controls preload="none"' in renderer
+    assert 'target="_blank" rel="noopener"' in renderer
+    assert "body_is_attachment_fallback" in renderer
+    assert "renderConversationMessageContent(message)" in messages
+    assert ".conversation-media-image { position: relative; display: grid;" in css
+    assert ".conversation-media-card--player audio" in css
+    assert "max-width: 100%" in css
+
+
+def test_conversation_image_viewer_has_modal_focus_and_error_semantics() -> None:
+    html, _, js = read_sources()
+    opener = function_block(
+        js, "function openConversationMediaViewer", "function closeConversationMediaViewer"
+    )
+    closer = function_block(
+        js, "function closeConversationMediaViewer", "function markConversationMediaUnavailable"
+    )
+    setup = function_block(js, "function setupConversationInterface", "function setupAdminDelegatedActions")
+
+    assert 'id="conversation-media-viewer"' in html
+    assert 'role="dialog"' in html
+    assert 'aria-modal="true"' in html
+    assert 'aria-labelledby="conversation-media-viewer-title"' in html
+    assert 'aria-label="Cerrar imagen"' in html
+    assert 'setAttribute("inert", "")' in opener
+    assert "conversation-media-viewer-title" in opener
+    assert 'removeAttribute("inert")' in closer
+    assert 'event.key === "Escape" && conversationMediaViewerOpen' in setup
+    assert "markConversationMediaUnavailable" in setup
+    assert "conversationMediaReturnFocus" in closer

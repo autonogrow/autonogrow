@@ -24,6 +24,18 @@ def _horizontal_png() -> bytes:
     return output.getvalue()
 
 
+def _route_conversation_media(page) -> None:
+    page.route(
+        "**/attachments/*/content*",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="image/png",
+            body=_horizontal_png(),
+            headers={"Content-Disposition": 'inline; filename="resultado-e2e.png"'},
+        ),
+    )
+
+
 def _open_admin(journey, *, mobile: bool = False):
     session = journey(email="admin-a@e2e.test", mobile=mobile)
     page = session.goto("/autonogrow-admin/?b=salon-e2e#bookings")
@@ -528,7 +540,8 @@ def test_simplify_one_removes_noise_without_removing_operational_access(journey)
     admin.evaluate("showAdminSection('summary', 'replace')")
     expect(admin.locator("#dashboard-stat-today").locator("xpath=ancestor::article")).to_be_hidden()
     expect(admin.locator("#dashboard-stat-pending").locator("xpath=ancestor::article")).to_be_visible()
-    expect(admin.locator("#dashboard-stat-messages").locator("xpath=ancestor::article")).to_be_hidden()
+    expect(admin.locator("#dashboard-stat-messages").locator("xpath=ancestor::article")).to_be_visible()
+    expect(admin.locator("#dashboard-stat-messages")).to_have_text("1")
     expect(admin.locator("#dashboard-weekly-activity")).not_to_contain_text(
         "Canceladas o rechazadas"
     )
@@ -1218,8 +1231,14 @@ def test_growth_action_cancel_expire_and_safe_retry_journeys(journey) -> None:
     modal.get_by_role("button", name="Reintentar envío").click()
     expect(page.locator("#growth-action-status")).to_have_text("Pendiente de entrega")
     with SessionLocal() as db:
-        assert db.get(OpportunityAction, action_id).status == "approved"
-        assert db.query(ConversationMessage).count() == 1
+        persisted_action = db.get(OpportunityAction, action_id)
+        assert persisted_action.status == "approved"
+        assert (
+            db.query(ConversationMessage)
+            .filter(ConversationMessage.conversation_id == persisted_action.conversation_id)
+            .count()
+            == 1
+        )
         assert db.query(ChannelOutboxMessage).count() == 1
         assert db.query(ChannelOutboxMessage).one().status == "pending"
 
@@ -1306,6 +1325,7 @@ def test_customer_details_drawer_keeps_final_content_above_mobile_navigation(
     journey, email: str, role: str, viewport: dict[str, int]
 ) -> None:
     session = journey(email=email)
+    _route_conversation_media(session.page)
     page = session.goto("/autonogrow-admin/?b=salon-e2e#conversations")
     page.set_viewport_size(viewport)
     expect(page.locator("#admin-app")).to_be_visible()
@@ -1619,6 +1639,63 @@ def test_late_conversation_response_cannot_replace_new_focus(journey) -> None:
     expect(page.locator(".conversation-detail-meta")).to_contain_text("+34 612 345 678")
     expect(page.locator(".conversation-detail-meta")).not_to_contain_text("@mihii_mihii")
     page.unroute(route_pattern, delay_first_conversation)
+
+
+@pytest.mark.parametrize(
+    "email",
+    (
+        pytest.param("admin-a@e2e.test", id="admin"),
+        pytest.param("pro-1@e2e.test", id="staff"),
+    ),
+)
+@pytest.mark.parametrize(
+    "viewport",
+    (
+        pytest.param({"width": 1440, "height": 900}, id="desktop"),
+        pytest.param({"width": 390, "height": 844}, id="mobile"),
+    ),
+)
+def test_inbound_conversation_media_is_usable_for_admin_and_staff(
+    journey, email: str, viewport: dict[str, int]
+) -> None:
+    session = journey(email=email)
+    session.page.set_viewport_size(viewport)
+    page = session.page
+    _route_conversation_media(page)
+    page = session.goto("/autonogrow-admin/?b=salon-e2e#conversations")
+    media_conversation = page.locator(".conversation-list-item").filter(
+        has_text="@media_cliente_e2e"
+    )
+    expect(media_conversation).to_be_visible(timeout=15_000)
+    expect(media_conversation).to_contain_text("Imagen")
+
+    media_conversation.click()
+    detail = page.locator("#conversation-detail")
+    image = detail.get_by_role("button", name="Ver imagen")
+    document = detail.get_by_role("link", name="Abrir documento presupuesto-e2e.pdf")
+    unavailable = detail.get_by_text("Adjunto no disponible", exact=True)
+    expect(image).to_be_visible()
+    expect(document).to_be_visible()
+    expect(unavailable).to_be_visible()
+    expect(detail).not_to_contain_text("[Adjunto recibido]")
+    image_geometry = image.evaluate(
+        "element => { const rect = element.getBoundingClientRect(); return { width: rect.width, right: rect.right, viewport: innerWidth }; }"
+    )
+    assert image_geometry["width"] > 0
+    assert image_geometry["right"] <= image_geometry["viewport"] + 1
+    _assert_no_horizontal_overflow(page)
+
+    image.click()
+    viewer = page.locator("#conversation-media-viewer")
+    expect(viewer).to_be_visible()
+    expect(page.locator("#conversation-media-viewer-title")).to_be_focused()
+    expect(viewer.locator("img")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(viewer).to_be_hidden()
+    expect(image).to_be_focused()
+    expect(detail).to_be_visible()
+    expect(page.locator("#conversation-reply-body")).to_have_count(0)
+    expect(detail.get_by_role("button", name="Volver a conversaciones")).to_be_visible()
 
 
 def test_admin_booking_day_week_month_and_confirm_without_reload(journey) -> None:

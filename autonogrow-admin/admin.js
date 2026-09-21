@@ -125,6 +125,8 @@ let conversationCustomerPanelOpen = false;
 let conversationCustomerReturnFocus = null;
 let conversationToolPanelOpen = null;
 let conversationToolReturnFocus = null;
+let conversationMediaViewerOpen = false;
+let conversationMediaReturnFocus = null;
 let conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
 let conversationCustomerAssociationUpdating = false;
 const customerMemorySummaries = new Map();
@@ -299,6 +301,8 @@ function resetAdminSessionState() {
   conversationCustomerReturnFocus = null;
   conversationToolPanelOpen = null;
   conversationToolReturnFocus = null;
+  conversationMediaViewerOpen = false;
+  conversationMediaReturnFocus = null;
   conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
   conversationCustomerAssociationUpdating = false;
   customerMemoryFormState = null;
@@ -379,6 +383,8 @@ function renderAdminSessionNeutralState() {
   document.getElementById("conversation-customer-backdrop")?.setAttribute("hidden", "");
   document.getElementById("conversation-tool-overlay")?.setAttribute("hidden", "");
   document.getElementById("conversation-tool-overlay")?.setAttribute("aria-hidden", "true");
+  document.getElementById("conversation-media-viewer")?.setAttribute("hidden", "");
+  document.getElementById("conversation-media-viewer")?.setAttribute("aria-hidden", "true");
   document.getElementById("my-staff-availability")?.remove();
   for (const id of ["growth-action-modal", "reschedule-modal", "staff-removal-modal"]) {
     const modal = document.getElementById(id);
@@ -5134,6 +5140,7 @@ function closeConversationWorkspace({ historyMode = "none", restoreFocus = true 
   conversationSuggestionNotice = null;
   conversationDetailFingerprint = "";
   conversationCustomerSearchState = { open: false, loading: false, query: "", results: [] };
+  closeConversationMediaViewer({ restoreFocus: false });
   closeConversationToolPanel({ restoreFocus: false });
   closeConversationCustomerPanel({ restoreFocus: false });
   setConversationWorkspaceMode(false);
@@ -5317,6 +5324,7 @@ async function selectConversation(
   const uiState = captureConversationUiState(conversationId);
   const selectionChanged = selectedConversationId !== Number(conversationId);
   if (selectionChanged) {
+    closeConversationMediaViewer({ restoreFocus: false });
     closeConversationToolPanel({ restoreFocus: false });
     selectedConversation = null;
     selectedConversationSuggestionId = null;
@@ -5411,6 +5419,62 @@ function conversationDayLabel(value) {
   return date.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
 }
 
+function conversationMediaUrl(value) {
+  if (typeof value !== "string" || !value.startsWith("/api/admin/businesses/")) return "";
+  return `${API_BASE_URL}${value}`;
+}
+
+function conversationMediaSize(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function conversationMediaKindLabel(kind) {
+  return { image: "Imagen", video: "Vídeo", audio: "Audio", document: "Documento", unknown: "Adjunto" }[kind] || "Adjunto";
+}
+
+function renderConversationAttachment(message, attachment) {
+  const label = conversationMediaKindLabel(attachment.kind);
+  const filename = attachment.filename || label;
+  const size = conversationMediaSize(attachment.size_bytes);
+  const detail = [attachment.mime_type, size].filter(Boolean).join(" · ");
+  const accessUrl = conversationMediaUrl(attachment.access_url);
+  const thumbnailUrl = conversationMediaUrl(attachment.thumbnail_url) || accessUrl;
+  const unavailable = attachment.status !== "available" || !accessUrl;
+  if (unavailable) {
+    return `<div class="conversation-media-card conversation-media-card--unavailable" role="status"><span class="conversation-media-icon" aria-hidden="true">📎</span><span><strong>${escapeHtml(label)} no disponible</strong><small>${attachment.status === "unsupported" ? "Tipo de adjunto no compatible" : "El archivo ha expirado o ya no está disponible"}</small></span></div>`;
+  }
+  if (attachment.kind === "image") {
+    return `<button class="conversation-media-image" type="button" data-admin-action="open-conversation-media" data-message-id="${Number(message.id)}" data-attachment-id="${escapeHtml(attachment.id)}" aria-label="Ver imagen"><span class="conversation-media-loading">Cargando imagen…</span><img src="${escapeHtml(thumbnailUrl)}" alt="Imagen recibida" loading="lazy" /></button>`;
+  }
+  if (attachment.kind === "video") {
+    return `<div class="conversation-media-card conversation-media-card--player"><video controls preload="metadata" aria-label="Vídeo recibido"><source src="${escapeHtml(accessUrl)}"${attachment.mime_type ? ` type="${escapeHtml(attachment.mime_type)}"` : ""} /></video><span class="conversation-media-error" hidden>Vídeo no disponible</span></div>`;
+  }
+  if (attachment.kind === "audio") {
+    return `<div class="conversation-media-card conversation-media-card--player"><audio controls preload="none" aria-label="Audio recibido"><source src="${escapeHtml(accessUrl)}"${attachment.mime_type ? ` type="${escapeHtml(attachment.mime_type)}"` : ""} /></audio><span class="conversation-media-error" hidden>Audio no disponible</span></div>`;
+  }
+  const actionLabel = attachment.kind === "document" ? `Abrir documento ${filename}` : `Abrir adjunto ${filename}`;
+  return `<a class="conversation-media-card conversation-media-file" href="${escapeHtml(accessUrl)}" target="_blank" rel="noopener" aria-label="${escapeHtml(actionLabel)}"><span class="conversation-media-icon" aria-hidden="true">📎</span><span><strong>${escapeHtml(filename)}</strong><small>${escapeHtml(detail || label)}</small></span><span aria-hidden="true">↗</span></a>`;
+}
+
+function renderConversationMessageContent(message) {
+  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  const text = message.body && !message.body_is_attachment_fallback
+    ? `<span class="conversation-message-text">${escapeHtml(message.body)}</span>`
+    : "";
+  const media = attachments.length
+    ? `<div class="conversation-message-media">${attachments.map((attachment) => renderConversationAttachment(message, attachment)).join("")}</div>`
+    : "";
+  const captions = attachments
+    .filter((attachment) => attachment.caption && attachment.caption !== message.body)
+    .map((attachment) => `<span class="conversation-media-caption">${escapeHtml(attachment.caption)}</span>`)
+    .join("");
+  return `${text}${media}${captions}` || `<span class="conversation-message-text">${escapeHtml(message.body || "Mensaje sin contenido")}</span>`;
+}
+
 function renderConversationMessages(messages) {
   let previousDay = "";
   return [...messages]
@@ -5425,7 +5489,7 @@ function renderConversationMessages(messages) {
       const delivery = message.delivery_status
         ? ` · <span class="conversation-delivery conversation-delivery-${escapeHtml(message.delivery_status)}">${escapeHtml(conversationDeliveryLabel(message.delivery_status))}</span>`
         : "";
-      return `${separator}<div class="conversation-message conversation-message-${escapeHtml(message.direction)} conversation-message--${kind}"><span>${escapeHtml(message.body)}</span><small>${escapeHtml(conversationMessageLabel(message))} · ${escapeHtml(formatConversationMessageTime(message.created_at))}${delivery}</small></div>`;
+      return `${separator}<div class="conversation-message conversation-message-${escapeHtml(message.direction)} conversation-message--${kind}"><div class="conversation-message-content">${renderConversationMessageContent(message)}</div><small>${escapeHtml(conversationMessageLabel(message))} · ${escapeHtml(formatConversationMessageTime(message.created_at))}${delivery}</small></div>`;
     })
     .join("");
 }
@@ -6103,6 +6167,7 @@ async function submitCustomerMemoryForm(form) {
 }
 
 function openConversationCustomerPanel(trigger) {
+  closeConversationMediaViewer({ restoreFocus: false });
   closeConversationToolPanel({ restoreFocus: false });
   conversationCustomerPanelOpen = true;
   conversationCustomerReturnFocus = trigger || document.activeElement;
@@ -6131,6 +6196,7 @@ function closeConversationCustomerPanel({ restoreFocus = true } = {}) {
 
 function openConversationToolPanel(kind, trigger) {
   if (!selectedConversation || !["templates", "automation"].includes(kind)) return;
+  closeConversationMediaViewer({ restoreFocus: false });
   closeConversationCustomerPanel({ restoreFocus: false });
   conversationToolPanelOpen = kind;
   conversationToolReturnFocus = trigger || document.activeElement;
@@ -6162,6 +6228,52 @@ function closeConversationToolPanel({ restoreFocus = true } = {}) {
     (currentTrigger || conversationToolReturnFocus)?.focus?.({ preventScroll: true });
   }
   conversationToolReturnFocus = null;
+}
+
+function openConversationMediaViewer(messageId, attachmentId, trigger) {
+  const message = selectedConversation?.messages?.find((item) => Number(item.id) === Number(messageId));
+  const attachment = message?.attachments?.find((item) => String(item.id) === String(attachmentId));
+  const url = conversationMediaUrl(attachment?.access_url);
+  if (!attachment || attachment.kind !== "image" || attachment.status !== "available" || !url) return;
+  closeConversationToolPanel({ restoreFocus: false });
+  closeConversationCustomerPanel({ restoreFocus: false });
+  conversationMediaViewerOpen = true;
+  conversationMediaReturnFocus = trigger || document.activeElement;
+  const viewer = document.getElementById("conversation-media-viewer");
+  const content = document.getElementById("conversation-media-viewer-content");
+  if (content) {
+    content.innerHTML = `<span class="conversation-media-viewer__loading">Cargando imagen…</span><img src="${escapeHtml(url)}" alt="Imagen recibida en la conversación" />`;
+  }
+  viewer?.removeAttribute("hidden");
+  viewer?.setAttribute("aria-hidden", "false");
+  document.getElementById("conversation-detail")?.setAttribute("inert", "");
+  queueMicrotask(() => document.getElementById("conversation-media-viewer-title")?.focus({ preventScroll: true }));
+}
+
+function closeConversationMediaViewer({ restoreFocus = true } = {}) {
+  conversationMediaViewerOpen = false;
+  const viewer = document.getElementById("conversation-media-viewer");
+  viewer?.setAttribute("hidden", "");
+  viewer?.setAttribute("aria-hidden", "true");
+  document.getElementById("conversation-media-viewer-content")?.replaceChildren();
+  document.getElementById("conversation-detail")?.removeAttribute("inert");
+  if (restoreFocus) conversationMediaReturnFocus?.focus?.({ preventScroll: true });
+  conversationMediaReturnFocus = null;
+}
+
+function markConversationMediaUnavailable(target) {
+  if (!(target instanceof Element) || target.dataset.mediaFailed === "true") return;
+  target.dataset.mediaFailed = "true";
+  if (target.closest("#conversation-media-viewer-content")) {
+    document.getElementById("conversation-media-viewer-content").innerHTML = `<div class="conversation-media-card conversation-media-card--unavailable" role="status"><strong>Imagen no disponible</strong><small>El archivo ha expirado o no se pudo recuperar.</small></div>`;
+    return;
+  }
+  const card = target.closest(".conversation-media-image, .conversation-media-card--player");
+  if (!card) return;
+  target.removeAttribute("src");
+  if (card.matches("button")) card.disabled = true;
+  card.classList.add("conversation-media-card--unavailable");
+  card.innerHTML = `<span class="conversation-media-icon" aria-hidden="true">📎</span><span><strong>Adjunto no disponible</strong><small>El archivo ha expirado o no se pudo recuperar.</small></span>`;
 }
 
 function resetConversationFilters() {
@@ -8606,6 +8718,15 @@ function setupConversationInterface() {
   document.getElementById("conversation-tool-overlay").addEventListener("click", (event) => {
     if (event.target.id === "conversation-tool-overlay") closeConversationToolPanel();
   });
+  document.getElementById("conversation-media-viewer-close").addEventListener("click", () => closeConversationMediaViewer());
+  document.getElementById("conversation-media-viewer").addEventListener("click", (event) => {
+    if (event.target.id === "conversation-media-viewer") closeConversationMediaViewer();
+  });
+  document.getElementById("conversation-center").addEventListener("error", (event) => {
+    if (event.target.matches?.(".conversation-media-image img, .conversation-media-card--player :is(source, video, audio), #conversation-media-viewer-content img")) {
+      markConversationMediaUnavailable(event.target);
+    }
+  }, true);
   document.addEventListener("submit", (event) => {
     if (event.target?.id !== "customer-memory-form") return;
     event.preventDefault();
@@ -8620,6 +8741,11 @@ function setupConversationInterface() {
     if (distanceFromBottom <= 80) document.getElementById("conversation-new-messages")?.setAttribute("hidden", "");
   }, true);
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && conversationMediaViewerOpen) {
+      event.preventDefault();
+      closeConversationMediaViewer();
+      return;
+    }
     if (event.key === "Escape" && conversationToolPanelOpen) {
       event.preventDefault();
       closeConversationToolPanel();
@@ -8630,10 +8756,12 @@ function setupConversationInterface() {
       closeConversationCustomerPanel();
       return;
     }
-    if (event.key !== "Tab" || (!conversationCustomerPanelOpen && !conversationToolPanelOpen)) return;
-    const panel = conversationToolPanelOpen
-      ? document.getElementById("conversation-tool-overlay")
-      : document.getElementById("conversation-customer-panel");
+    if (event.key !== "Tab" || (!conversationCustomerPanelOpen && !conversationToolPanelOpen && !conversationMediaViewerOpen)) return;
+    const panel = conversationMediaViewerOpen
+      ? document.getElementById("conversation-media-viewer")
+      : conversationToolPanelOpen
+        ? document.getElementById("conversation-tool-overlay")
+        : document.getElementById("conversation-customer-panel");
     const focusable = [...panel.querySelectorAll("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")];
     if (!focusable.length) return;
     const first = focusable[0];
@@ -8699,6 +8827,7 @@ function setupAdminDelegatedActions() {
     else if (action === "send-conversation-suggestion" && Number.isInteger(id)) sendConversationSuggestion(id);
     else if (action === "modify-conversation-suggestion" && Number.isInteger(id)) modifyConversationSuggestion(id);
     else if (action === "dismiss-conversation-suggestion" && Number.isInteger(id)) dismissConversationSuggestion(id);
+    else if (action === "open-conversation-media") openConversationMediaViewer(Number(button.dataset.messageId), button.dataset.attachmentId, button);
     else if (action === "open-conversation-tool") openConversationToolPanel(button.dataset.tool, button);
     else if (["open-conversation-customer-panel", "open-conversation-customer-panel-mobile"].includes(action)) openConversationCustomerPanel(button);
     else if (action === "view-growth-opportunity" && Number.isInteger(id)) focusGrowthOpportunity(id);

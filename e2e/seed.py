@@ -27,6 +27,7 @@ from app.models import (  # noqa: E402
     BusinessUserAvailability,
     BusinessUserService,
     Conversation,
+    ConversationMessage,
     Customer,
     CustomerAccountLink,
     CustomerOpportunity,
@@ -509,6 +510,87 @@ def reset_database() -> None:
                 last_message_text="Consulta por Instagram.",
                 last_message_at=growth_now.replace(tzinfo=None) - timedelta(days=1),
             )
+        )
+        media_conversation = Conversation(
+            business_id=business_a.id,
+            customer_id=customer_a.id,
+            channel="instagram",
+            external_user_id="media-customer-instagram-e2e",
+            customer_name="Media Cliente E2E",
+            customer_username="media_cliente_e2e",
+            status="replied",
+            last_message_text="Imagen recibida",
+            last_message_at=growth_now.replace(tzinfo=None) - timedelta(hours=2),
+            last_inbound_at=growth_now.replace(tzinfo=None) - timedelta(hours=2),
+        )
+        db.add(media_conversation)
+        db.flush()
+        db.add_all(
+            [
+                ConversationMessage(
+                    conversation_id=media_conversation.id,
+                    direction="inbound",
+                    sender_type="customer",
+                    body="Adjunto no compatible",
+                    created_at=growth_now.replace(tzinfo=None) - timedelta(hours=4),
+                    raw_payload_json=json.dumps(
+                        {
+                            "message": {
+                                "attachments": [
+                                    {"type": "share", "status": "unavailable", "payload": {}}
+                                ]
+                            }
+                        }
+                    ),
+                ),
+                ConversationMessage(
+                    conversation_id=media_conversation.id,
+                    direction="inbound",
+                    sender_type="customer",
+                    body="Documento recibido",
+                    created_at=growth_now.replace(tzinfo=None) - timedelta(hours=3),
+                    raw_payload_json=json.dumps(
+                        {
+                            "message": {
+                                "attachments": [
+                                    {
+                                        "type": "file",
+                                        "payload": {
+                                            "url": "https://lookaside.fbsbx.com/e2e/document",
+                                            "filename": "presupuesto-e2e.pdf",
+                                            "mime_type": "application/pdf",
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ),
+                ),
+                ConversationMessage(
+                    conversation_id=media_conversation.id,
+                    direction="inbound",
+                    sender_type="customer",
+                    body="Imagen recibida",
+                    created_at=growth_now.replace(tzinfo=None) - timedelta(hours=2),
+                    raw_payload_json=json.dumps(
+                        {
+                            "message": {
+                                "attachments": [
+                                    {
+                                        "type": "image",
+                                        "payload": {
+                                            "url": "https://lookaside.fbsbx.com/e2e/image",
+                                            "thumbnail_url": "https://lookaside.fbsbx.com/e2e/thumb",
+                                            "filename": "resultado-e2e.jpg",
+                                            "mime_type": "image/jpeg",
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ),
+                ),
+            ]
         )
         db.add(
             CustomerOpportunity(

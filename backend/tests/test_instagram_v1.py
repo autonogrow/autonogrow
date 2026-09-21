@@ -331,7 +331,7 @@ class InstagramV1Test(unittest.TestCase):
         )
         result = self.post_webhook(attachment_payload, self.settings())
         self.assertEqual(result["processed"], 1)
-        self.assertEqual(self.db.query(ConversationMessage).one().body, "[Adjunto recibido]")
+        self.assertEqual(self.db.query(ConversationMessage).one().body, "Imagen recibida")
 
         ignored_payload = {
             "object": "instagram",
@@ -500,7 +500,7 @@ class InstagramV1Test(unittest.TestCase):
 
         self.assertEqual(result["echoes"], 1)
         self.assertEqual(result["automation"], [])
-        self.assertEqual(message.body, "[Adjunto enviado]")
+        self.assertEqual(message.body, "Imagen enviada")
         self.assertIn('"attachments"', message.raw_payload_json)
 
     def test_echo_provider_id_is_isolated_between_businesses(self):

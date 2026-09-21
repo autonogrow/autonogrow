@@ -216,7 +216,7 @@ def test_get_verification_success_and_rejections():
     assert disabled.value.status_code == 503
 
 
-def test_parser_normalizes_text_contacts_batches_unsupported_and_statuses():
+def test_parser_normalizes_text_contacts_batches_media_and_statuses():
     first = whatsapp_payload(
         messages=[message("wamid-1"), message("wamid-2", sender="34600000002")]
     )
@@ -239,11 +239,61 @@ def test_parser_normalizes_text_contacts_batches_unsupported_and_statuses():
         statuses=[status("wamid-outbound", "read")],
     )
     mixed_events = parse_whatsapp_webhook(mixed)
-    assert [event.event_type for event in mixed_events] == ["unsupported_message", "status"]
+    assert [event.event_type for event in mixed_events] == ["message", "status"]
     assert mixed_events[0].text is None
+    assert mixed_events[0].attachments == (
+        {
+            "kind": "image",
+            "provider_media_id": "media-wamid-image",
+            "mime_type": None,
+            "filename": None,
+            "caption": None,
+            "sha256": None,
+            "voice": False,
+            "original_type": "image",
+            "status": "available",
+        },
+    )
     assert mixed_events[1].status == "read"
     assert parse_whatsapp_webhook({"object": "whatsapp_business_account", "entry": []}) == []
     assert parse_whatsapp_webhook({"object": "instagram", "entry": []}) == []
+
+
+@pytest.mark.parametrize(
+    ("message_type", "expected_kind", "expected_status"),
+    (
+        ("image", "image", "available"),
+        ("video", "video", "available"),
+        ("audio", "audio", "available"),
+        ("document", "document", "available"),
+        ("contacts", "unknown", "unsupported"),
+    ),
+)
+def test_parser_preserves_supported_and_unknown_media_metadata(
+    message_type, expected_kind, expected_status
+):
+    inbound = message(f"wamid-{message_type}", message_type=message_type)
+    inbound[message_type].update(
+        {
+            "mime_type": "application/octet-stream",
+            "filename": "archivo seguro.bin",
+            "caption": "Contexto del cliente",
+            "sha256": "digest",
+        }
+    )
+    if message_type == "audio":
+        inbound[message_type]["voice"] = True
+
+    event = parse_whatsapp_webhook(whatsapp_payload(messages=[inbound]))[0]
+
+    assert event.event_type == "message"
+    assert event.text == "Contexto del cliente"
+    assert event.attachments[0]["kind"] == expected_kind
+    assert event.attachments[0]["status"] == expected_status
+    assert event.attachments[0]["mime_type"] == "application/octet-stream"
+    assert event.attachments[0]["filename"] == "archivo seguro.bin"
+    assert event.attachments[0]["sha256"] == "digest"
+    assert event.attachments[0]["voice"] is (message_type == "audio")
 
 
 def test_post_signature_valid_optional_invalid_missing_and_modified(database):
@@ -365,8 +415,9 @@ def test_processor_resolves_business_creates_and_reuses_conversation_without_tok
     assert db.query(ChannelOutboxMessage).count() == 0
 
 
-def test_status_and_unsupported_messages_do_not_create_conversations(database):
+def test_status_and_media_messages_create_conversation_without_outbox(database):
     db, _ = database
+    add_integration(db)
     payload = whatsapp_payload(
         messages=[message("wamid-document", message_type="document")],
         statuses=[status("wamid-sent", "sent")],
@@ -378,9 +429,21 @@ def test_status_and_unsupported_messages_do_not_create_conversations(database):
         actions.append(process_channel_inbox_event(db, job_id).action)
         db.commit()
 
-    assert actions == ["ignored", "status_recorded"]
-    assert db.query(Conversation).count() == 0
-    assert db.query(ConversationMessage).count() == 0
+    assert actions == ["processed", "status_recorded"]
+    assert db.query(Conversation).count() == 1
+    stored = db.query(ConversationMessage).one()
+    assert stored.body == "Documento recibido"
+    assert json.loads(stored.raw_payload_json)["attachments"][0] == {
+        "kind": "document",
+        "provider_media_id": "media-wamid-document",
+        "mime_type": None,
+        "filename": None,
+        "caption": None,
+        "sha256": None,
+        "voice": False,
+        "original_type": "document",
+        "status": "available",
+    }
     assert db.query(ChannelOutboxMessage).count() == 0
 
 

@@ -29,6 +29,13 @@ WHATSAPP_PROVIDER = "whatsapp"
 WHATSAPP_CHANNEL = "whatsapp"
 USABLE_INTEGRATION_STATUSES = {"connected", "degraded"}
 WHATSAPP_DELIVERY_STATUS_RANK = {"sent": 1, "delivered": 2, "read": 3}
+WHATSAPP_MEDIA_BODY = {
+    "image": "Imagen recibida",
+    "video": "Vídeo recibido",
+    "audio": "Audio recibido",
+    "document": "Documento recibido",
+    "unknown": "Adjunto no compatible",
+}
 
 
 def _required_text(payload: dict, field: str, *, max_length: int = 255) -> str:
@@ -215,18 +222,34 @@ def process_whatsapp_inbox_event(db: Session, inbox_id: int) -> InboxProcessResu
     if row.event_type == "status":
         return _reconcile_whatsapp_status(db, inbox=row, payload=payload)
 
-    if row.event_type == "unsupported_message":
-        row.last_error_code = "whatsapp_unsupported_message"
-        row.safe_error_message = "WhatsApp message type is not supported"
-        finish_inbox_job(row, status="ignored")
-        return InboxProcessResult("ignored")
-    if row.event_type != "message":
+    if row.event_type not in {"message", "unsupported_message"}:
         raise InvalidChannelInboxPayload("Stored WhatsApp event type is invalid")
 
     message_id = _required_text(payload, "message_id")
     phone_number_id = _required_text(payload, "phone_number_id")
     sender_id = _required_text(payload, "sender_id")
-    text = _required_text(payload, "text", max_length=10_000)
+    raw_text = payload.get("text")
+    text = raw_text.strip() if isinstance(raw_text, str) and raw_text.strip() else None
+    if text and len(text) > 10_000:
+        raise InvalidChannelInboxPayload("Stored WhatsApp text is invalid")
+    attachments = payload.get("attachments")
+    attachments = (
+        [item for item in attachments if isinstance(item, dict)]
+        if isinstance(attachments, list)
+        else []
+    )
+    if not attachments and row.event_type == "unsupported_message":
+        attachments = [
+            {
+                "kind": "unknown",
+                "original_type": payload.get("message_type"),
+                "status": "unsupported",
+            }
+        ]
+        payload["attachments"] = attachments
+    if not text:
+        first_kind = str(attachments[0].get("kind", "unknown")) if attachments else "unknown"
+        text = WHATSAPP_MEDIA_BODY.get(first_kind, WHATSAPP_MEDIA_BODY["unknown"])
     integration = _resolve_whatsapp_integration(db, phone_number_id=phone_number_id)
     row.integration_id = integration.id
     row.business_id = integration.business_id

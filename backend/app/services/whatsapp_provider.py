@@ -29,8 +29,9 @@ class WhatsAppWebhookEvent:
     status: str | None
     status_error_code: str | None = None
     status_error_type: str | None = None
+    attachments: tuple[dict[str, Any], ...] = ()
 
-    def normalized_payload(self) -> dict[str, str | None]:
+    def normalized_payload(self) -> dict[str, Any]:
         return {
             "message_id": self.message_id,
             "phone_number_id": self.phone_number_id,
@@ -43,6 +44,7 @@ class WhatsAppWebhookEvent:
             "status": self.status,
             "status_error_code": self.status_error_code,
             "status_error_type": self.status_error_type,
+            "attachments": [dict(item) for item in self.attachments],
         }
 
 
@@ -78,6 +80,32 @@ def _contact_names(value: dict[str, Any]) -> dict[str, str]:
         if wa_id and name:
             result[wa_id] = name
     return result
+
+
+def _message_attachment(message: dict[str, Any], message_type: str | None) -> dict[str, Any] | None:
+    if not message_type or message_type == "text":
+        return None
+    payload = message.get(message_type)
+    payload = payload if isinstance(payload, dict) else {}
+    kind = {
+        "image": "image",
+        "sticker": "image",
+        "video": "video",
+        "audio": "audio",
+        "document": "document",
+    }.get(message_type, "unknown")
+    attachment = {
+        "kind": kind,
+        "provider_media_id": _clean_string(payload.get("id")),
+        "mime_type": _clean_string(payload.get("mime_type"), max_length=120),
+        "filename": _clean_string(payload.get("filename"), max_length=180),
+        "caption": _clean_text(payload.get("caption")),
+        "sha256": _clean_string(payload.get("sha256"), max_length=180),
+        "voice": payload.get("voice") is True,
+        "original_type": message_type,
+        "status": "available" if payload.get("id") and kind != "unknown" else "unsupported",
+    }
+    return attachment
 
 
 def parse_whatsapp_webhook(payload: dict[str, Any]) -> list[WhatsAppWebhookEvent]:
@@ -122,11 +150,12 @@ def parse_whatsapp_webhook(payload: dict[str, Any]) -> list[WhatsAppWebhookEvent
                         if message_type == "text" and isinstance(text_payload, dict)
                         else None
                     )
+                    attachment = _message_attachment(message, message_type)
+                    if attachment and attachment.get("caption"):
+                        text = str(attachment["caption"])
                     result.append(
                         WhatsAppWebhookEvent(
-                            event_type=(
-                                "message" if message_type == "text" else "unsupported_message"
-                            ),
+                            event_type="message",
                             provider_event_id=message_id,
                             message_id=message_id,
                             phone_number_id=phone_number_id,
@@ -137,6 +166,7 @@ def parse_whatsapp_webhook(payload: dict[str, Any]) -> list[WhatsAppWebhookEvent
                             timestamp=_clean_string(message.get("timestamp"), max_length=40),
                             message_type=message_type,
                             status=None,
+                            attachments=(attachment,) if attachment else (),
                         )
                     )
             statuses = value.get("statuses")

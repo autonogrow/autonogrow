@@ -33,6 +33,12 @@ from app.services.channel_provider_service import (
 from app.services.conversation_automation_state_service import (
     serialize_conversation_automation_state,
 )
+from app.services.conversation_media_service import (
+    LEGACY_MEDIA_FALLBACKS,
+    message_has_media_fallback,
+    message_media_preview,
+    serialize_message_attachments,
+)
 from app.services.customer_identity_service import normalize_phone
 from app.services.growth_opportunity_service import opportunity_ordering
 from app.services.idempotent_insert_service import insert_rows_ignore_conflicts
@@ -216,7 +222,11 @@ def serialize_conversation_customer(customer: Customer | None) -> dict[str, Any]
     }
 
 
-def serialize_message(message: ConversationMessage) -> dict[str, Any]:
+def serialize_message(
+    message: ConversationMessage,
+    *,
+    business_slug: str | None = None,
+) -> dict[str, Any]:
     labels = {
         "queued": "En cola",
         "processing": "Enviando",
@@ -228,12 +238,16 @@ def serialize_message(message: ConversationMessage) -> dict[str, Any]:
         "failed": "Error definitivo",
         "cancelled": "Error definitivo",
     }
+    slug = business_slug or message.conversation.business.slug
+    attachments = serialize_message_attachments(message, business_slug=slug)
     return {
         "id": message.id,
         "conversation_id": message.conversation_id,
         "direction": message.direction,
         "sender_type": message.sender_type,
         "body": message.body,
+        "body_is_attachment_fallback": message_has_media_fallback(message),
+        "attachments": attachments,
         "provider_message_id": message.provider_message_id,
         "delivery_status": message.delivery_status,
         "delivery_status_label": labels.get(message.delivery_status or "", message.delivery_status),
@@ -382,6 +396,16 @@ def serialize_conversation(
         attention_state = "closed"
     else:
         attention_state = "none"
+    last_message_text = conversation.last_message_text
+    if last_message_text in LEGACY_MEDIA_FALLBACKS:
+        latest_message = (
+            db.query(ConversationMessage)
+            .filter(ConversationMessage.conversation_id == conversation.id)
+            .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
+            .first()
+        )
+        if latest_message is not None:
+            last_message_text = message_media_preview(latest_message) or last_message_text
     result = {
         "id": conversation.id,
         "business_id": conversation.business_id,
@@ -410,7 +434,7 @@ def serialize_conversation(
             growth_opportunity if growth_follow_up else None
         ),
         "attention_state": attention_state,
-        "last_message_text": conversation.last_message_text,
+        "last_message_text": last_message_text,
         "last_message_at": (
             conversation.last_message_at.isoformat() if conversation.last_message_at else None
         ),
@@ -446,7 +470,10 @@ def serialize_conversation(
         "updated_at": conversation.updated_at.isoformat(),
     }
     if include_messages:
-        result["messages"] = [serialize_message(item) for item in conversation.messages]
+        result["messages"] = [
+            serialize_message(item, business_slug=conversation.business.slug)
+            for item in conversation.messages
+        ]
     return result
 
 

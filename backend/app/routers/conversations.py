@@ -1,7 +1,9 @@
+import logging
 from secrets import compare_digest
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -10,6 +12,7 @@ from app.core.database import get_db
 from app.core.security import require_business_access, require_business_admin
 from app.models import (
     Business,
+    ConversationMessage,
     ConversationSuggestion,
     ConversationTemplate,
     Customer,
@@ -59,6 +62,11 @@ from app.services.conversation_intent_service import (
     AVAILABLE_INTENTS,
     INTENT_LABELS,
 )
+from app.services.conversation_media_service import (
+    ConversationMediaError,
+    fetch_message_attachment,
+    get_message_attachment,
+)
 from app.services.conversation_service import (
     ConversationDeliveryUnavailable,
     add_message,
@@ -89,6 +97,7 @@ admin_router = APIRouter(
     dependencies=[Depends(require_business_access)],
 )
 webhook_router = APIRouter(prefix="/api/webhooks/test", tags=["test-webhooks"])
+logger = logging.getLogger(__name__)
 
 
 def get_business_or_404(db: Session, business_slug: str) -> Business:
@@ -186,6 +195,73 @@ def admin_get_conversation(
         "business_slug": business.slug,
         "conversation": serialize_conversation(db, conversation, include_messages=True),
     }
+
+
+@admin_router.get(
+    "/conversations/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/content"
+)
+def admin_get_conversation_attachment(
+    business_slug: str,
+    conversation_id: int,
+    message_id: int,
+    attachment_id: str,
+    variant: str = Query(default="content", pattern="^(content|thumbnail)$"),
+    db: Session = Depends(get_db),
+):
+    business = get_business_or_404(db, business_slug)
+    conversation = get_conversation_or_404(
+        db, business_id=business.id, conversation_id=conversation_id
+    )
+    message = (
+        db.query(ConversationMessage)
+        .filter(
+            ConversationMessage.id == message_id,
+            ConversationMessage.conversation_id == conversation.id,
+        )
+        .first()
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    attachment = get_message_attachment(message, attachment_id)
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    try:
+        media = fetch_message_attachment(
+            db,
+            message=message,
+            attachment=attachment,
+            variant=variant,
+        )
+    except ConversationMediaError as error:
+        logger.warning(
+            "conversation_media_fetch_failed business_id=%s provider=%s message_id=%s attachment_id=%s attachment_kind=%s error_class=%s error_code=%s",
+            business.id,
+            conversation.channel,
+            message.id,
+            attachment_id,
+            attachment.get("kind"),
+            type(error).__name__,
+            error.code,
+        )
+        detail = {
+            410: "Adjunto no disponible",
+            413: "Adjunto demasiado grande",
+            504: "No se pudo recuperar el adjunto a tiempo",
+        }.get(error.status_code, "No se pudo recuperar el adjunto")
+        raise HTTPException(status_code=error.status_code, detail=detail) from error
+    encoded_filename = quote(media.filename, safe="")
+    return Response(
+        content=media.content,
+        media_type=media.content_type,
+        headers={
+            "Content-Disposition": (
+                f"{media.disposition}; filename*=UTF-8''{encoded_filename}"
+            ),
+            "Cache-Control": "private, max-age=300",
+            "Content-Security-Policy": "sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @admin_router.patch("/conversations/{conversation_id}/customer")

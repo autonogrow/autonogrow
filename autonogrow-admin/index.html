@@ -6,7 +6,7 @@
 
   <title>AutonoGrow Admin</title>
 
-  <link rel="stylesheet" href="styles.css?v=c9dd4df269d1" />
+  <link rel="stylesheet" href="styles.css?v=cd086eb1f411" />
   <link rel="stylesheet" href="../autonogrow-shared/tokens.css?v=dba71b73bae0" />
   <link rel="stylesheet" href="../autonogrow-shared/base.css" />
   <link rel="stylesheet" href="../autonogrow-shared/components.css" />
@@ -501,6 +501,15 @@
             <div id="conversation-tool-content" class="conversation-tool-content"></div>
           </section>
         </div>
+        <div id="conversation-media-viewer" class="conversation-media-viewer" role="dialog" aria-modal="true" aria-labelledby="conversation-media-viewer-title" aria-hidden="true" hidden>
+          <section class="conversation-media-viewer__card">
+            <header>
+              <h3 id="conversation-media-viewer-title" tabindex="-1">Imagen recibida</h3>
+              <button id="conversation-media-viewer-close" class="ag-button ag-button--ghost ag-button--icon" type="button" aria-label="Cerrar imagen">&times;</button>
+            </header>
+            <div id="conversation-media-viewer-content" class="conversation-media-viewer__content" aria-live="polite"></div>
+          </section>
+        </div>
       </div>
       <aside id="conversation-customer-panel" class="conversation-customer-panel" role="dialog" aria-modal="true" aria-labelledby="conversation-customer-title" aria-hidden="true">
         <div class="conversation-customer-panel__header">
@@ -858,6 +867,6 @@
   <script src="https://accounts.google.com/gsi/client" async></script>
   <script src="../autonogrow-shared/auth.js?v=10b5"></script>
   <script src="../autonogrow-shared/app-shell.js?v=817f1c5536b8"></script>
-  <script src="admin.js?v=5e32a93be933"></script>
+  <script src="admin.js?v=cfebec891c1a"></script>
 </body>
 </html>

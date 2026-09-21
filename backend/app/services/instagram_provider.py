@@ -66,6 +66,22 @@ def verify_meta_signature(
     return hmac.compare_digest(expected, signature_header)
 
 
+def _instagram_attachment_text(attachments: list[Any], *, is_echo: bool) -> str:
+    first = attachments[0] if attachments and isinstance(attachments[0], dict) else {}
+    payload = first.get("payload") if isinstance(first.get("payload"), dict) else {}
+    caption = payload.get("caption")
+    if isinstance(caption, str) and caption.strip():
+        return caption.strip()
+    kind = str(first.get("type", "")).lower()
+    received, sent = {
+        "image": ("Imagen recibida", "Imagen enviada"),
+        "video": ("Vídeo recibido", "Vídeo enviado"),
+        "audio": ("Audio recibido", "Audio enviado"),
+        "file": ("Documento recibido", "Documento enviado"),
+    }.get(kind, ("Adjunto recibido", "Adjunto enviado"))
+    return sent if is_echo else received
+
+
 def parse_instagram_webhook(
     payload: dict[str, Any],
     *,
@@ -106,7 +122,7 @@ def parse_instagram_webhook(
             if isinstance(text, str) and text.strip():
                 body = text.strip()
             elif has_attachments:
-                body = "[Adjunto enviado]" if is_echo else "[Adjunto recibido]"
+                body = _instagram_attachment_text(attachments, is_echo=is_echo)
             else:
                 continue
             timestamp = event.get("timestamp")
